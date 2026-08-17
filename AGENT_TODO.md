@@ -18,12 +18,22 @@ a large one strictly in order.
 
 ## Next increments
 
-- [ ] Stand up the walking skeleton: VIX ingestion adapter
+- [x] Stand up the walking skeleton: VIX ingestion adapter
       (`ingestion/vix_complex.py`) → bronze → silver (validated against
       `contracts/datasets.py::VolComplexRow`) → one gold mart → one
-      dashboard tile reading it, deployed to Fly (`docs/adr/0011`).
-- [ ] Add the underlying OHLCV ingestion adapter (Stooq, keyless), following
-      the VIX adapter's pattern (`docs/DATA_CONTRACTS.md` #1).
+      dashboard tile reading it, deployed to Fly (`docs/adr/0011`). Code
+      side shipped in the initial scaffold commit (`ingestion/vix.py` →
+      `transforms/vix.py` → `research/vix_stretch.py` → API/dashboard);
+      the Fly deploy itself is a human action, tracked in `HUMAN_TODO.md`.
+- [x] Add the underlying OHLCV ingestion adapter (Stooq, keyless), following
+      the VIX adapter's pattern (`docs/DATA_CONTRACTS.md` #1). **Deviation:**
+      built against Yahoo Finance's chart JSON endpoint instead of Stooq —
+      Stooq's CSV export now serves a JavaScript proof-of-work anti-bot
+      challenge to plain HTTP clients for symbol downloads too (confirmed
+      live), the same failure mode the VIX adapter already hit and
+      documented; Yahoo is README's named keyless fallback. `docs/DATA_CONTRACTS.md`
+      still lists Stooq as primary — worth a doc update if this pattern
+      holds across more adapters.
 - [ ] Add a downside-beta sensitivity metric in `research/metrics/`, pinned
       by a test against a synthetic price path with a known analytic value.
 - [ ] Add the sensitivity-leaderboard gold mart (`transforms/marts/`) + API
@@ -40,9 +50,11 @@ a large one strictly in order.
 - [ ] Add the Black-Scholes put pricer (`research/pricing/black_scholes.py`)
       behind the `OptionPricer` protocol, pinned against the closed-form BS
       put formula for a hand-computable (S, K, T, r, σ).
-- [ ] Wire up `import-linter` in CI to machine-check the module dependency
+- [x] Wire up `import-linter` in CI to machine-check the module dependency
       direction in `ARCHITECTURE.md`, including the `api` ↛ `ingestion`
-      carve-out.
+      carve-out. Shipped in the initial scaffold commit (`pyproject.toml`
+      `[tool.importlinter]` + the `lint-imports` step in
+      `.github/workflows/ci.yml`).
 - [ ] Add a second sensitivity metric (co-skewness) and the first
       cross-metric backtest comparison (`research/backtest/compare.py`),
       answering research question 1 for two metrics.

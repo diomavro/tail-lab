@@ -26,6 +26,16 @@ computed from.
 key required. Yahoo Finance (via `yfinance`, unofficial/keyless) as a
 fallback/cross-check adapter for symbols Stooq covers poorly.
 
+**Implementation note (v1 deviation).** As of this writing, Stooq's CSV
+export serves a JavaScript proof-of-work anti-bot challenge to plain HTTP
+clients for symbol downloads (confirmed live, the same failure mode
+`ingestion/vix.py` already hit for the VIX series and documents in
+`README.md`). `ingestion/ohlcv.py` uses Yahoo Finance's public chart JSON
+endpoint (`query1.finance.yahoo.com/v8/finance/chart/<SYMBOL>`) instead —
+still free and keyless, and the fallback named above, just promoted to
+primary until Stooq's block lifts or a `yfinance`-package adapter is
+built.
+
 **Cadence.** Daily, after US market close (~21:00 UTC).
 
 **Schema — `OhlcvRow`:**
