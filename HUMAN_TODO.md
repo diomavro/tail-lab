@@ -7,13 +7,12 @@ acts on, removes, or reorders anything in this file.**
 
 ## Setup needed for v1
 
-- [ ] Create the GitHub repo `diomavro/tail-lab`, add it as `origin`, and
-      push `main`. The daily agent runs as a GitHub Actions workflow against
-      this repo (same pattern as `quizkit`), so it cannot exist until the
-      repo does. Then enable "Allow GitHub Actions to create and approve
-      pull requests" (Settings → Actions → General) so the agent can open
-      its PRs, and add the `CLAUDE_CODE_OAUTH_TOKEN` secret (`claude
-      setup-token`).
+- [x] Create the GitHub repo `diomavro/tail-lab`, push `main`, enable
+      Actions-can-create-PRs, add `CLAUDE_CODE_OAUTH_TOKEN`.
+      **Done 2026-08-17** (private repo, PR-creation enabled, secret reuses
+      the subscription token from the quizkit setup). Remaining before the
+      daily agent runs: commit its GitHub Actions workflow (mirrors quizkit's
+      hardened pattern; uses `docs/AGENT_MISSION.md` as the prompt).
 - [ ] Create a lakeFS Cloud account + repo for the tail-lab lakehouse
       (`docs/adr/0006`).
 - [ ] Create the object-storage bucket (Fly Tigris or Cloudflare R2) that
