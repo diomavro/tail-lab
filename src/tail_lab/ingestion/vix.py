@@ -22,7 +22,6 @@ from __future__ import annotations
 
 import datetime as dt
 from dataclasses import dataclass
-from pathlib import Path
 from typing import Any
 
 import pandas as pd
@@ -34,16 +33,17 @@ from tail_lab.lake.store import LakeStore
 
 YAHOO_CHART_URL = "https://query1.finance.yahoo.com/v8/finance/chart/%5EVIX"
 DATASET = "vix"
+QUARANTINE_DATASET = f"{DATASET}__quarantine"
 
 
 @dataclass(frozen=True)
 class IngestResult:
     """Outcome of one ingestion run: what was committed vs. quarantined."""
 
-    bronze_path: Path
+    bronze_path: str
     valid_rows: int
     quarantined_rows: int
-    quarantine_path: Path | None
+    quarantine_path: str | None
 
 
 def fetch_vix_raw(*, range_: str = "6mo", interval: str = "1d", timeout: float = 15.0) -> Any:
@@ -122,10 +122,13 @@ def ingest_vix(
 
     bronze_path = store.write_bronze(DATASET, ingest_date, valid)
 
-    quarantine_path: Path | None = None
+    # Quarantined rows are committed through the store too (as an immutable
+    # bronze snapshot under a sibling dataset name), never via a raw
+    # filesystem write — the lake abstraction is the only thing allowed to
+    # touch storage, local or object-storage alike (ARCHITECTURE.md).
+    quarantine_path: str | None = None
     if not quarantined.empty:
-        quarantine_path = bronze_path.parent / "quarantine.parquet"
-        quarantined.to_parquet(quarantine_path, index=False)
+        quarantine_path = store.write_bronze(QUARANTINE_DATASET, ingest_date, quarantined)
 
     return IngestResult(
         bronze_path=bronze_path,

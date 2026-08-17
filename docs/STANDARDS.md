@@ -19,10 +19,10 @@ data **as it was known on the simulation date.**
   direct DuckDB query against silver/gold from backtest code, bypassing
   `asof.py`, is a bug even if it happens to produce a plausible number.
 - `asof.py`'s query primitive takes an explicit `as_of: date` (the
-  simulation clock) and returns only rows whose lakeFS commit — or,
-  equivalently, whose ingestion timestamp — predates it. Point-in-time
-  correctness is a property of the *read*, not of a filter applied after
-  the fact.
+  simulation clock) and returns only rows whose bronze snapshot — i.e.
+  whose ingestion timestamp — predates it (`ParquetSnapshotLakeStore`,
+  `docs/adr/0012`). Point-in-time correctness is a property of the *read*,
+  not of a filter applied after the fact.
 - **Adversarial tests are mandatory, not optional.** For every backtest
   code path, there must be a test that *tries to cheat* — constructs a
   scenario where future data would change the answer if leaked, runs the
@@ -70,10 +70,11 @@ by construction — e.g.:
 - All randomness (simulation paths, any stochastic backtest component) is
   seeded; the seed is a recorded parameter, not a hidden default.
 - Every result the cockpit displays, and every artifact a backtest run
-  produces, carries the **lakeFS commit** it read and the **code SHA**
-  that computed it. A result without both is not trustworthy and should
-  not be surfaced.
-- Given the same (lakeFS commit, code SHA, seed), a result must be
+  produces, carries the **bronze snapshot id(s)** it read
+  (`LakeStore.bronze_snapshot_id` — the ingest-date partition plus a
+  content hash, `docs/adr/0012`) and the **code SHA** that computed it. A
+  result without both is not trustworthy and should not be surfaced.
+- Given the same (snapshot id(s), code SHA, seed), a result must be
   re-runnable bit-for-bit. Non-determinism (unseeded randomness, wall-clock
   reads inside a backtest, unordered set/dict iteration affecting output)
   is a bug.

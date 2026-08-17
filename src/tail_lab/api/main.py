@@ -14,8 +14,8 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
 from tail_lab.api.schemas import HealthResponse, VixStretchResponse
-from tail_lab.config import get_settings
-from tail_lab.lake.store import LakeStore, LocalParquetLakeStore
+from tail_lab.config import get_lake_store as _get_configured_lake_store
+from tail_lab.lake.store import LakeStore
 from tail_lab.research.vix_stretch import compute_vix_stretch
 
 app = FastAPI(title="tail-lab API")
@@ -30,7 +30,7 @@ app.add_middleware(
 
 @lru_cache(maxsize=1)
 def get_lake_store() -> LakeStore:
-    return LocalParquetLakeStore(get_settings().lake_root)
+    return _get_configured_lake_store()
 
 
 @app.get("/api/health")

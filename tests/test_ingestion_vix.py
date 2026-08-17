@@ -71,8 +71,14 @@ def test_ingest_vix_commits_bronze_and_quarantines_bad_rows(tmp_path: Any) -> No
     assert result.valid_rows == 2
     assert result.quarantined_rows == 1
     assert result.quarantine_path is not None
-    assert result.quarantine_path.exists()
 
     bronze = store.read_bronze_as_of("vix", ingest_date)
     assert len(bronze) == 2
     assert -3.0 not in bronze["close"].tolist()
+
+    # Quarantined rows are committed through the store (backend-agnostic —
+    # never a raw filesystem write, see ingestion/vix.py), so they're
+    # readable back through the same abstraction as any other bronze data.
+    quarantined = store.read_bronze_as_of("vix__quarantine", ingest_date)
+    assert len(quarantined) == 1
+    assert quarantined["close"].iloc[0] == -3.0
