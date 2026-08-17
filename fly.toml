@@ -1,7 +1,7 @@
 # Fly.io app config for tail-lab (single container: FastAPI serves the built
-# SPA directly). HUMAN_TODO: `fly launch` to create the app + volume before
-# `fly deploy` — this file describes the target shape, deploy itself is not
-# attempted by the agent (no Fly account wired up in this walking skeleton).
+# SPA directly). The lakehouse lives on Fly Tigris object storage
+# (bucket tail-lab-lake) — no volume needed; the AWS_* credentials are Fly
+# secrets on this app (set by `fly storage create`). See docs/adr/0012.
 app = "tail-lab"
 primary_region = "fra"
 
@@ -9,7 +9,8 @@ primary_region = "fra"
   dockerfile = "Dockerfile"
 
 [env]
-  TAIL_LAB_LAKE_ROOT = "/data"
+  TAIL_LAB_LAKE_BACKEND = "tigris"
+  TAIL_LAB_S3_BUCKET = "tail-lab-lake"
   PORT = "8080"
 
 [http_service]
@@ -25,10 +26,6 @@ primary_region = "fra"
     grace_period = "30s"
     method = "GET"
     path = "/api/health"
-
-[mounts]
-  source = "tail_lab_data"
-  destination = "/data"
 
 [[vm]]
   size = "shared-cpu-1x"
