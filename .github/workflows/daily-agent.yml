@@ -1,0 +1,100 @@
+name: Daily platform agent
+
+# The autonomous platform agent (docs/AGENT_MISSION.md is its charter). Each
+# run it picks ONE account-free item from AGENT_TODO.md, implements it to the
+# strict standards, self-validates against the same gate CI enforces, and
+# opens a reviewed PR. It never merges, never trades, never touches money or
+# credentials, and never changes the constitution (ARCHITECTURE.md / ADRs /
+# STANDARDS) without a human-approved ADR. Proposing nothing is a valid day.
+#
+# Its inputs are the repo's own trusted backlog + code (not untrusted external
+# data), so it is allowed shell + file tools to do real dev work; the leash is
+# CI-on-PR + human merge, not a tool sandbox.
+#
+# Needs the CLAUDE_CODE_OAUTH_TOKEN secret. Deliberately does NOT receive
+# FRED_API_KEY or any data/deploy credential — code tasks don't need them
+# (least privilege).
+
+on:
+  schedule:
+    - cron: "0 7 * * *"   # daily 07:00 UTC = 09:00 Europe/Budapest (summer)
+  workflow_dispatch: {}
+
+permissions:
+  contents: write        # push the agent/* branch
+  pull-requests: write   # open the PR
+  issues: write          # (rarely) open a blocker note
+  id-token: write        # OIDC for the Claude action's subscription auth
+
+concurrency:
+  group: daily-agent
+  cancel-in-progress: false
+
+jobs:
+  improve:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      # Same environment the CI gate uses, so the agent's self-check == the merge gate.
+      - name: Install the full toolchain
+        run: |
+          pip install -e ".[dev]"
+          cd frontend && npm ci
+
+      - name: Run the platform agent
+        uses: anthropics/claude-code-action@v1
+        env:
+          GH_TOKEN: ${{ github.token }}
+        with:
+          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          claude_args: '--allowedTools Bash,Read,Write,Edit,Grep,Glob'
+          prompt: |
+            You are the tail-lab **daily platform agent**. Your complete operating charter is
+            `docs/AGENT_MISSION.md` in this repo — read it FIRST and follow it EXACTLY: the value
+            bar, the wall (never trade, never touch money or credentials), the two-backlog rule,
+            the constitution rule (never change ARCHITECTURE.md, docs/adr/*, or docs/STANDARDS.md
+            without a human-approved ADR — you may PROPOSE an ADR, never enact one), and PRs-only
+            (never merge, never force-push, never touch a branch that isn't your own).
+
+            Today's run, precisely:
+
+            1. Read `docs/AGENT_MISSION.md`, `README.md`, `ARCHITECTURE.md`, `docs/STANDARDS.md`,
+               and `AGENT_TODO.md`.
+            2. Choose the SINGLE highest-value item from `AGENT_TODO.md` that (a) advances a
+               documented research question or measurably sharpens the put-buying cockpit, AND
+               (b) needs NO account, API key, or paid service. If an item needs a real-world
+               credential, skip it (that is the human's queue). If nothing clears the value bar
+               today, STOP and open nothing — proposing nothing is a valid, expected outcome.
+            3. Implement exactly that ONE item — minimal, faithful, extending the proven
+               walking-skeleton patterns (do NOT invent new architecture). Add tests that pin
+               behavior against a known/independent value per `docs/STANDARDS.md`. Respect the
+               module dependency rule (import-linter enforces it). Check the item off in
+               `AGENT_TODO.md`. If you discover a real-world/account blocker, append it to
+               `HUMAN_TODO.md` and stop that thread.
+            4. VALIDATE before proposing — run exactly what CI runs, and do not open a red PR:
+                 ruff check src tests
+                 ruff format --check src tests
+                 mypy src/tail_lab
+                 lint-imports
+                 python -m pytest --cov=tail_lab --cov-report=term-missing
+               and, only if you touched the frontend:
+                 cd frontend && npm run typecheck && npm run build
+               If any of these fail, fix it or reduce the change until they pass. Never open a red PR.
+            5. Open ONE pull request from a branch named `agent/<short-slug>` using `gh pr create`.
+               Title: a one-line summary of the increment. Body: what you changed and WHY (which
+               research question or cockpit improvement it serves), how you validated it, and the
+               closing line "Auto-generated daily. Review before merging — do NOT auto-merge."
+               Do not merge it.
