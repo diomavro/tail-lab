@@ -44,7 +44,9 @@ def vix_stretch(
     as_of: dt.date | None = Query(default=None, description="Simulation date; defaults to today."),
     store: LakeStore = Depends(get_lake_store),
 ) -> VixStretchResponse:
-    resolved_as_of = as_of or dt.date.today()
+    # UTC, not local: the as-of clock must agree with the ingest clock
+    # (ingestion stamps snapshots in UTC) or point-in-time reads mismatch.
+    resolved_as_of = as_of or dt.datetime.now(dt.UTC).date()
     try:
         result = compute_vix_stretch(store, as_of=resolved_as_of)
     except LookupError as exc:

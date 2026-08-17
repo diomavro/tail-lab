@@ -19,7 +19,9 @@ def client(tmp_path: Path) -> Iterator[TestClient]:
     store = LocalParquetLakeStore(tmp_path)
     rng = np.random.default_rng(seed=1)
     n = STRETCH_WINDOW + 3
-    today = dt.date.today()
+    # UTC to match the endpoint's as-of default (and the ingest default) —
+    # a local-tz date here mismatches the UTC as-of clock and 404s.
+    today = dt.datetime.now(dt.UTC).date()
     closes = (18.0 + rng.normal(size=n)).round(4)
     dates = pd.date_range(end=today, periods=n, freq="D")
     df = pd.DataFrame({"date": dates, "close": closes})

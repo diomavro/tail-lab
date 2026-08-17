@@ -115,7 +115,9 @@ def ingest_vix(
     payload instead of hitting the network; ``fetch_vix_raw`` is called only
     when ``raw`` is omitted.
     """
-    ingest_date = ingest_date or dt.date.today()
+    # UTC, not local: snapshot dates must be timezone-consistent with the
+    # as-of clock the API/backtest read with, or point-in-time reads mismatch.
+    ingest_date = ingest_date or dt.datetime.now(dt.UTC).date()
     payload = raw if raw is not None else fetch_vix_raw()
     parsed = parse_yahoo_chart(payload)
     valid, quarantined = validate_and_quarantine(parsed)
