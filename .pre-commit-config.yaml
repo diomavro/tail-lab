@@ -1,0 +1,23 @@
+repos:
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.6.9
+    hooks:
+      - id: ruff
+        args: [--fix]
+      - id: ruff-format
+
+  - repo: local
+    hooks:
+      - id: mypy
+        name: mypy (strict, src/tail_lab)
+        entry: env -u PYTHONPATH .venv/bin/mypy src/tail_lab
+        language: system
+        pass_filenames: false
+        types: [python]
+
+      - id: import-linter
+        name: import-linter (module layering)
+        entry: env -u PYTHONPATH .venv/bin/lint-imports
+        language: system
+        pass_filenames: false
+        types: [python]

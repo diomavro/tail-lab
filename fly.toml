@@ -1,0 +1,35 @@
+# Fly.io app config for tail-lab (single container: FastAPI serves the built
+# SPA directly). HUMAN_TODO: `fly launch` to create the app + volume before
+# `fly deploy` — this file describes the target shape, deploy itself is not
+# attempted by the agent (no Fly account wired up in this walking skeleton).
+app = "tail-lab"
+primary_region = "fra"
+
+[build]
+  dockerfile = "Dockerfile"
+
+[env]
+  TAIL_LAB_LAKE_ROOT = "/data"
+  PORT = "8080"
+
+[http_service]
+  internal_port = 8080
+  force_https = true
+  auto_stop_machines = "stop"
+  auto_start_machines = true
+  min_machines_running = 0
+
+  [[http_service.checks]]
+    interval = "30s"
+    timeout = "5s"
+    grace_period = "30s"
+    method = "GET"
+    path = "/api/health"
+
+[mounts]
+  source = "tail_lab_data"
+  destination = "/data"
+
+[[vm]]
+  size = "shared-cpu-1x"
+  memory = "512mb"

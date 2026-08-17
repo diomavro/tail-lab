@@ -1,0 +1,60 @@
+"""The FastAPI app: one health check, one gold-metric endpoint.
+
+The one dashboard tile (frontend/) fetches ``GET /api/vix/stretch``.
+"""
+
+from __future__ import annotations
+
+import datetime as dt
+from functools import lru_cache
+from pathlib import Path
+
+from fastapi import Depends, FastAPI, HTTPException, Query
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
+
+from tail_lab.api.schemas import HealthResponse, VixStretchResponse
+from tail_lab.config import get_settings
+from tail_lab.lake.store import LakeStore, LocalParquetLakeStore
+from tail_lab.research.vix_stretch import compute_vix_stretch
+
+app = FastAPI(title="tail-lab API")
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_methods=["GET"],
+    allow_headers=["*"],
+)
+
+
+@lru_cache(maxsize=1)
+def get_lake_store() -> LakeStore:
+    return LocalParquetLakeStore(get_settings().lake_root)
+
+
+@app.get("/api/health")
+def health() -> HealthResponse:
+    return HealthResponse(status="ok")
+
+
+@app.get("/api/vix/stretch")
+def vix_stretch(
+    as_of: dt.date | None = Query(default=None, description="Simulation date; defaults to today."),
+    store: LakeStore = Depends(get_lake_store),
+) -> VixStretchResponse:
+    resolved_as_of = as_of or dt.date.today()
+    try:
+        result = compute_vix_stretch(store, as_of=resolved_as_of)
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    return VixStretchResponse(**result.model_dump())
+
+
+# Serve the built React SPA directly (single-container Fly deploy, matching
+# the sibling tip_app pattern) when frontend/dist exists. Absent in tests
+# and local `make api` runs against an unbuilt frontend — routes above are
+# registered first so /api/* always takes precedence.
+_dist_dir = Path(__file__).resolve().parents[3] / "frontend" / "dist"
+if _dist_dir.is_dir():
+    app.mount("/", StaticFiles(directory=_dist_dir, html=True), name="spa")

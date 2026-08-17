@@ -1,0 +1,62 @@
+name: CI
+
+# Every gate in `make check`, plus the frontend build — nothing merges red.
+# No external accounts are needed: the VIX adapter's network call is only
+# exercised by `make ingest-vix` (a human-run target), never here — tests
+# run entirely against the committed fixture.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  backend:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install backend deps
+        run: pip install -e ".[dev]"
+
+      - name: ruff check
+        run: ruff check src tests
+
+      - name: ruff format --check
+        run: ruff format --check src tests
+
+      - name: mypy --strict (src/tail_lab)
+        run: mypy src/tail_lab
+
+      - name: import-linter (module layering)
+        run: lint-imports
+
+      - name: pytest (with coverage)
+        run: python -m pytest --cov=tail_lab --cov-report=term-missing --cov-report=xml
+
+  frontend:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: npm ci
+        run: npm ci
+
+      - name: tsc --noEmit
+        run: npm run typecheck
+
+      - name: npm run build
+        run: npm run build
