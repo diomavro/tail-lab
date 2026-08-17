@@ -20,8 +20,11 @@ acts on, removes, or reorders anything in this file.**
 - [ ] Create the Fly.io app(s) for the API/dashboard and set the required
       secrets (lakeFS credentials, object-storage credentials, FRED API
       key once obtained).
-- [ ] Get a free FRED API key (fred.stlouisfed.org) — unblocks the rates
-      (`docs/DATA_CONTRACTS.md` #3) and credit (#4) ingestion adapters.
+- [x] Get a free FRED API key — unblocks the rates (`docs/DATA_CONTRACTS.md`
+      #3) and credit (#4) ingestion adapters. **Done — already existed** in
+      the `fred-data` MCP config (`~/.claude.json`); reused it and set it as
+      the `FRED_API_KEY` repo secret (2026-08-17). For local dev, export
+      `FRED_API_KEY` from that same value.
 
 ## Later / optional
 
