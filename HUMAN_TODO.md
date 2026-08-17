@@ -27,10 +27,11 @@ acts on, removes, or reorders anything in this file.**
       gitignored `.env` at the repo root for local dev
       (`AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `AWS_ENDPOINT_URL_S3`,
       `AWS_REGION`, `TAIL_LAB_S3_BUCKET`, `TAIL_LAB_LAKE_BACKEND=tigris`).
-- [ ] Deploy the Fly.io app for the API/dashboard. **Partially done
-      2026-08-18**: the `tail-lab` Fly app already exists and the Tigris +
-      FRED secrets are staged on it — what's left is the actual `fly deploy`
-      (still a HUMAN_TODO item; the agent never deploys).
+- [x] Deploy the Fly.io app for the API/dashboard. **Done 2026-08-18** —
+      live at https://tail-lab.fly.dev on the Tigris backend (SPA + `/api/*`,
+      health-checked). The lake is seeded with VIX; the dashboard renders a
+      real z-score. Redeploy with `flyctl deploy -a tail-lab --remote-only`.
+      (The daily *agent* still never deploys — deploys stay human/operator.)
 - [x] Get a free FRED API key — unblocks the rates (`docs/DATA_CONTRACTS.md`
       #3) and credit (#4) ingestion adapters. **Done — already existed** in
       the `fred-data` MCP config (`~/.claude.json`); reused it and set it as

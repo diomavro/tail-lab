@@ -21,7 +21,7 @@ export function VixStretchTile() {
   }, [])
 
   return (
-    <div className="tile">
+    <div className="tile" role="status" aria-live="polite">
       <h2>VIX stretch</h2>
       {state.status === 'loading' && <p>Loading…</p>}
       {state.status === 'error' && <p className="tile-error">{state.message}</p>}

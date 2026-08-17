@@ -46,6 +46,36 @@ def test_no_look_ahead(tmp_path: Path) -> None:
         store.read_bronze_as_of(DATASET, dt.date(2026, 1, 1))
 
 
+def test_restated_value_does_not_leak_into_earlier_asof_read(tmp_path: Path) -> None:
+    """A restated/revised observation (docs/adr/0009: 'restated events are a
+    new bronze write with a later timestamp') must not change an as-of read
+    of the original ingest date -- even though the *same calendar date* is
+    revised, not just extended with new dates. Adversarial: the revision is
+    constructed so it WOULD change the answer if it leaked."""
+    store = LocalParquetLakeStore(tmp_path)
+
+    day1 = dt.date(2026, 1, 5)
+    day2 = dt.date(2026, 1, 6)  # a later ingest that restates 2026-01-02
+
+    original = _frame(["2026-01-02", "2026-01-05"], [15.0, 16.0])
+    restated = _frame(["2026-01-02", "2026-01-05"], [999.0, 16.0])  # 2026-01-02 revised
+
+    store.write_bronze(DATASET, day1, original)
+    store.write_bronze(DATASET, day2, restated)
+
+    as_of_day1 = store.read_bronze_as_of(DATASET, day1)
+    close_by_date = dict(zip(as_of_day1["date"].dt.date, as_of_day1["close"], strict=True))
+    assert close_by_date[dt.date(2026, 1, 2)] == 15.0  # the original value, not 999.0
+    assert 999.0 not in as_of_day1["close"].tolist()
+
+    # The restatement IS visible once the simulation clock reaches day2.
+    as_of_day2 = store.read_bronze_as_of(DATASET, day2)
+    assert (
+        dict(zip(as_of_day2["date"].dt.date, as_of_day2["close"], strict=True))[dt.date(2026, 1, 2)]
+        == 999.0
+    )
+
+
 def test_bronze_is_immutable(tmp_path: Path) -> None:
     """Re-ingesting the same day must never mutate the existing bronze file."""
     store = LocalParquetLakeStore(tmp_path)
