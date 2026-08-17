@@ -55,6 +55,6 @@ def vix_stretch(
 # the sibling tip_app pattern) when frontend/dist exists. Absent in tests
 # and local `make api` runs against an unbuilt frontend — routes above are
 # registered first so /api/* always takes precedence.
-_dist_dir = Path(__file__).resolve().parents[3] / "frontend" / "dist"
+_dist_dir = get_settings().static_dir or (Path(__file__).resolve().parents[3] / "frontend" / "dist")
 if _dist_dir.is_dir():
     app.mount("/", StaticFiles(directory=_dist_dir, html=True), name="spa")

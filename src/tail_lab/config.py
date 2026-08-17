@@ -32,6 +32,13 @@ class Settings(BaseSettings):
     #: Only used by the ``"local"`` backend.
     lake_root: Path = Path("data")
 
+    #: Directory of the built React SPA to serve (env: TAIL_LAB_STATIC_DIR).
+    #: When None, the app falls back to the in-repo ``frontend/dist`` (local
+    #: dev / source runs). The Docker image sets it explicitly, because the
+    #: package is pip-installed away from the repo root so the relative
+    #: fallback cannot find ``dist``.
+    static_dir: Path | None = None
+
     #: Which concrete LakeStore backend to use. "local" needs no credentials
     #: and is the default so CI and plain local dev never need any; "tigris"
     #: reads/writes S3-compatible object storage (see the fields below).
