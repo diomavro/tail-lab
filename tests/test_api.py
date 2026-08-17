@@ -46,6 +46,13 @@ def test_health(client: TestClient) -> None:
     assert resp.json() == {"status": "ok"}
 
 
+def test_security_headers_present(client: TestClient) -> None:
+    resp = client.get("/api/health")
+    assert resp.headers["x-content-type-options"] == "nosniff"
+    assert resp.headers["x-frame-options"] == "DENY"
+    assert resp.headers["referrer-policy"] == "no-referrer"
+
+
 def test_vix_stretch_returns_metric(client: TestClient) -> None:
     resp = client.get("/api/vix/stretch")
     assert resp.status_code == 200
