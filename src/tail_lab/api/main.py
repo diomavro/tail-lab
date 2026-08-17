@@ -15,6 +15,7 @@ from fastapi.staticfiles import StaticFiles
 
 from tail_lab.api.schemas import HealthResponse, VixStretchResponse
 from tail_lab.config import get_lake_store as _get_configured_lake_store
+from tail_lab.config import get_settings
 from tail_lab.lake.store import LakeStore
 from tail_lab.research.vix_stretch import compute_vix_stretch
 
