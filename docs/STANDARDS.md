@@ -10,7 +10,7 @@ merges red.
 > **end-state targets** the daily agent builds toward, not files that exist
 > in today's walking skeleton. Where a target isn't built yet, the same
 > guarantee already lives elsewhere: the point-in-time as-of primitive is
-> `lake/store.py::ParquetSnapshotLakeStore.read_bronze_as_of`, and the
+> `lake/store.py::DeltaLakeStore.read_bronze_as_of`, and the
 > frontend's typed API client is `frontend/src/api/client.ts`. "Enforced in
 > CI" applies to what exists now — typing, ruff, import-linter, the pytest
 > suite (incl. the adversarial point-in-time + Hypothesis tests), and the
@@ -32,8 +32,8 @@ data **as it was known on the simulation date.**
   `asof.py`, is a bug even if it happens to produce a plausible number.
 - `asof.py`'s query primitive takes an explicit `as_of: date` (the
   simulation clock) and returns only rows whose bronze snapshot — i.e.
-  whose ingestion timestamp — predates it (`ParquetSnapshotLakeStore`,
-  `docs/adr/0012`). Point-in-time correctness is a property of the *read*,
+  whose ingestion timestamp — predates it (`DeltaLakeStore`,
+  `docs/adr/0012`, `docs/adr/0013`). Point-in-time correctness is a property of the *read*,
   not of a filter applied after the fact.
 - **Adversarial tests are mandatory, not optional.** For every backtest
   code path, there must be a test that *tries to cheat* — constructs a
@@ -85,7 +85,12 @@ by construction — e.g.:
   produces, carries the **bronze snapshot id(s)** it read
   (`LakeStore.bronze_snapshot_id` — the ingest-date partition plus a
   content hash, `docs/adr/0012`) and the **code SHA** that computed it. A
-  result without both is not trustworthy and should not be surfaced.
+  result without both is not trustworthy and should not be surfaced. Since
+  `docs/adr/0013`, bronze is a Delta table; the snapshot id's format is
+  unchanged, but the underlying Delta table's own version
+  (`DeltaTable(uri).version()`) is available as an additional debugging
+  aid — the snapshot id, not the raw Delta version, is still what a result
+  cites.
 - Given the same (snapshot id(s), code SHA, seed), a result must be
   re-runnable bit-for-bit. Non-determinism (unseeded randomness, wall-clock
   reads inside a backtest, unordered set/dict iteration affecting output)

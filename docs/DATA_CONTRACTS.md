@@ -7,11 +7,17 @@ validation constraints. Deferred datasets are listed at the end — do not
 build adapters for them until `docs/END_STATE.md` §2.2 pulls one off the
 backlog.
 
-Every dataset's bronze write lands under
-`bronze/<source_id>/<partition_key>/...` and is **immutable** — a
-correction is a new bronze write with a later `ingested_at`, never an
-edit. `transforms/validate.py` is the only path from bronze into silver,
-and it validates against the schema below, quarantining rows that fail
+Every dataset's bronze write lands in that dataset's Delta table
+(`docs/adr/0013`), one `ingest_date` partition per ingest, and is
+**immutable** — a correction is a new bronze write (a new `ingest_date`
+partition) with a later `ingested_at`, never an edit to an existing
+partition. The "Bronze partition key" listed per dataset below is that
+dataset's logical natural key (what an adapter must ingest to avoid
+overwriting a *different* real-world observation under the same
+`ingest_date`) — distinct from, and layered on top of, the physical
+`ingest_date` Delta partition every dataset's table shares.
+`transforms/validate.py` is the only path from bronze into silver, and it
+validates against the schema below, quarantining rows that fail
 (`docs/STANDARDS.md` §Data contracts).
 
 ---

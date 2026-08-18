@@ -92,3 +92,9 @@ a large one strictly in order.
       answering research question 1 for two metrics.
 - [ ] Add the regime-panel gold mart + API endpoint + dashboard tile, using
       the vol complex + credit spreads once dataset #4 exists.
+- [ ] Storage-growth optimization (not urgent): `DeltaLakeStore.write_bronze`
+      still stores each ingest's **full** history for that date, not a diff,
+      matching the pre-Delta Parquet layout's semantics (`docs/adr/0013`).
+      Once a dataset's ingest volume makes this costly, consider a
+      diff/merge write for that dataset specifically — must not change the
+      as-of/immutability contract or the point-in-time tests.

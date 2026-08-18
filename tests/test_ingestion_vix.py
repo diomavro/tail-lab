@@ -7,7 +7,7 @@ import pandas as pd
 import pytest
 
 from tail_lab.ingestion.vix import ingest_vix, parse_yahoo_chart, validate_and_quarantine
-from tail_lab.lake.store import LocalParquetLakeStore
+from tail_lab.lake.store import DeltaLakeStore
 
 
 def test_parse_yahoo_chart_against_fixture(vix_yahoo_sample: dict[str, Any]) -> None:
@@ -69,7 +69,7 @@ def test_validate_and_quarantine_all_valid_quarantines_nothing() -> None:
 
 
 def test_ingest_vix_commits_bronze_and_quarantines_bad_rows(tmp_path: Any) -> None:
-    store = LocalParquetLakeStore(tmp_path)
+    store = DeltaLakeStore(tmp_path)
     raw = {
         "chart": {
             "result": [
@@ -103,7 +103,7 @@ def test_ingest_vix_commits_bronze_and_quarantines_bad_rows(tmp_path: Any) -> No
 def test_ingest_vix_all_valid_writes_no_quarantine_partition(tmp_path: Any) -> None:
     """When nothing is quarantined, ingest_vix must not write a (spurious,
     empty) quarantine snapshot and must report ``quarantine_path=None``."""
-    store = LocalParquetLakeStore(tmp_path)
+    store = DeltaLakeStore(tmp_path)
     raw = {
         "chart": {
             "result": [

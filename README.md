@@ -26,7 +26,7 @@ Two **independent** strategies (not a combined portfolio):
 These are inviolable. Changing any requires a human-approved ADR.
 
 - **The agent never trades and never touches money or credentials.** It improves the *platform* only — data, backtests, metrics, dashboard, docs, tests. Every trade is placed by a human. There is a permanent wall between research/tooling and execution. (`docs/adr/0007`)
-- **No look-ahead / point-in-time correctness is the #1 invariant.** A backtest may only ever read data *as it was known on the simulation date* — enforced architecturally via the lakehouse's as-of reads (`ParquetSnapshotLakeStore`), with tests that try to cheat and must fail. Get this wrong and every result is garbage. (`docs/adr/0009`)
+- **No look-ahead / point-in-time correctness is the #1 invariant.** A backtest may only ever read data *as it was known on the simulation date* — enforced architecturally via the lakehouse's as-of reads (`DeltaLakeStore`), with tests that try to cheat and must fail. Get this wrong and every result is garbage. (`docs/adr/0009`)
 - **Never overwrite historical observations.** Raw ingested data is immutable (bronze — never overwritten, a correction is a new bronze snapshot).
 - **Free-data first; account/paid needs go to the human backlog.** The platform is built on free sources. Anything requiring an account, API key, or money is written to `HUMAN_TODO.md` (Dio's queue) — never attempted by the agent, and kept separate from `AGENT_TODO.md`.
 - **Reproducibility.** Every result carries the bronze snapshot id it read (`docs/adr/0012`) + code SHA that produced it and can be re-run bit-for-bit.
@@ -42,7 +42,7 @@ These are inviolable. Changing any requires a human-approved ADR.
 
 ## Tech stack
 
-- **Storage:** DuckDB (query/compute engine) over a **medallion lakehouse** — bronze (immutable raw) → silver (validated, typed) → gold (research-ready marts) — stored as immutable Parquet on **Fly Tigris** (S3-compatible object storage; no versioning service in front of it). Point-in-time correctness and bronze immutability are enforced in one shared place (`ParquetSnapshotLakeStore`), not by a git-style data-branching layer. (`docs/adr/0005`, `0006`, `0012`)
+- **Storage:** DuckDB (query/compute engine) over a **medallion lakehouse** — bronze (immutable raw) → silver (validated, typed) → gold (research-ready marts) — stored as **Delta Lake** tables (delta-rs, no Spark) on **Fly Tigris** (S3-compatible object storage; no versioning service in front of it). Point-in-time correctness and bronze immutability are enforced in one shared place (`DeltaLakeStore`), not by a git-style data-branching layer. (`docs/adr/0005`, `0006`, `0012`, `0013`)
 - **Backend:** Python (pandas/numpy, pydantic, pandera, FastAPI), strictly typed.
 - **Frontend:** React + TypeScript (strict).
 - **Hosting:** Fly.io.
@@ -59,7 +59,7 @@ The initial setup is **end-state documentation + a deployed walking skeleton** (
 ## Implementation notes (v1 deviations)
 
 - **VIX source is Yahoo Finance's public chart JSON** (`query1.finance.yahoo.com/v8/finance/chart/%5EVIX`), keyless — *not* the Stooq CSV first considered, which now serves a JavaScript anti-bot challenge to plain HTTP clients. Both are keyless; Yahoo's still returns clean JSON. Per-dataset source choices live in `docs/DATA_CONTRACTS.md`.
-- **The lakehouse defaults to local disk; Tigris is available now.** `lake/` exposes a `LakeStore` interface; `LocalParquetLakeStore` (immutable bronze parquet on disk) is the default — no credentials needed, so CI and plain local dev always work. `TigrisLakeStore` (immutable bronze parquet on Fly Tigris, S3-compatible) is the second implementation, selected via `TAIL_LAB_LAKE_BACKEND=tigris` (`tail_lab.config.get_lake_store`) — no other layer changes when switching. (`docs/adr/0012`)
+- **The lakehouse defaults to local disk; Tigris is available now.** `lake/` exposes a `LakeStore` interface with one concrete implementation, `DeltaLakeStore` (Delta Lake via delta-rs, immutable bronze partitioned by `ingest_date`), rooted at a local directory by default — no credentials needed, so CI and plain local dev always work — or at `s3://tail-lab-lake` on Fly Tigris (S3-compatible) when `TAIL_LAB_LAKE_BACKEND=tigris` (`tail_lab.config.get_lake_store`) — no other layer changes when switching. (`docs/adr/0012`, `docs/adr/0013`)
 
 ## Documentation map
 

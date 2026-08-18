@@ -1,13 +1,15 @@
 """Application settings (pydantic-settings, env-overridable) and the
 lakehouse-backend factory.
 
-``TAIL_LAB_LAKE_BACKEND`` selects the concrete :class:`~tail_lab.lake.store.LakeStore`:
-``"local"`` (default — no credentials needed, what CI and plain local dev
-use) or ``"tigris"`` (S3-compatible object storage on Fly Tigris,
-``docs/adr/0012``). The Tigris connection settings below read the *plain*
-AWS-style env var names (``AWS_ACCESS_KEY_ID`` etc.) rather than the
-``TAIL_LAB_`` prefix, since those are the names Fly sets as secrets and the
-names already used in the local ``.env`` — one set of credentials, not two.
+``TAIL_LAB_LAKE_BACKEND`` selects how the single :class:`~tail_lab.lake.store.DeltaLakeStore`
+is rooted: ``"local"`` (default — no credentials needed, what CI and plain
+local dev use) roots it at a local filesystem directory; ``"tigris"``
+(S3-compatible object storage on Fly Tigris, ``docs/adr/0012``, ``docs/adr/0013``)
+roots it at ``s3://<bucket>`` with ``storage_options`` built from the AWS_*
+settings below. The Tigris connection settings read the *plain* AWS-style
+env var names (``AWS_ACCESS_KEY_ID`` etc.) rather than the ``TAIL_LAB_``
+prefix, since those are the names Fly sets as secrets and the names already
+used in the local ``.env`` — one set of credentials, not two.
 """
 
 from __future__ import annotations
@@ -18,8 +20,7 @@ from typing import Literal
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
-from tail_lab.lake.store import LakeStore, LocalParquetLakeStore
-from tail_lab.lake.tigris_store import TigrisLakeStore
+from tail_lab.lake.store import DeltaLakeStore, LakeStore
 
 
 class Settings(BaseSettings):
@@ -76,7 +77,7 @@ def get_lake_store(settings: Settings | None = None) -> LakeStore:
 
 
 def _local_lake_store(settings: Settings) -> LakeStore:
-    return LocalParquetLakeStore(settings.lake_root)
+    return DeltaLakeStore(settings.lake_root)
 
 
 def _tigris_lake_store(settings: Settings) -> LakeStore:
@@ -103,10 +104,15 @@ def _tigris_lake_store(settings: Settings) -> LakeStore:
     assert settings.s3_region is not None
     assert settings.aws_access_key_id is not None
     assert settings.aws_secret_access_key is not None
-    return TigrisLakeStore(
-        bucket=settings.s3_bucket,
-        endpoint_url=settings.s3_endpoint_url,
-        region=settings.s3_region,
-        access_key_id=settings.aws_access_key_id,
-        secret_access_key=settings.aws_secret_access_key,
-    )
+    storage_options = {
+        "AWS_ACCESS_KEY_ID": settings.aws_access_key_id,
+        "AWS_SECRET_ACCESS_KEY": settings.aws_secret_access_key,
+        "AWS_ENDPOINT_URL": settings.s3_endpoint_url,
+        "AWS_REGION": settings.s3_region,
+        # delta-rs writing to S3 with a single writer needs either this flag
+        # or the (newer, not-yet-default-everywhere) conditional-put path —
+        # safe here because bronze ingestion is single-writer (the daily
+        # agent / `make ingest-vix`), never concurrent (docs/adr/0013).
+        "AWS_S3_ALLOW_UNSAFE_RENAME": "true",
+    }
+    return DeltaLakeStore(f"s3://{settings.s3_bucket}", storage_options=storage_options)

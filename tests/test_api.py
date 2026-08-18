@@ -11,13 +11,13 @@ from fastapi.testclient import TestClient
 
 from tail_lab.api.main import app, get_lake_store
 from tail_lab.api.schemas import VixStretchResponse
-from tail_lab.lake.store import LocalParquetLakeStore
+from tail_lab.lake.store import DeltaLakeStore
 from tail_lab.transforms.vix import STRETCH_WINDOW
 
 
 @pytest.fixture
 def client(tmp_path: Path) -> Iterator[TestClient]:
-    store = LocalParquetLakeStore(tmp_path)
+    store = DeltaLakeStore(tmp_path)
     rng = np.random.default_rng(seed=1)
     n = STRETCH_WINDOW + 3
     # UTC to match the endpoint's as-of default (and the ingest default) —
@@ -69,7 +69,7 @@ def test_vix_stretch_returns_metric(client: TestClient) -> None:
 
 
 def test_vix_stretch_404_when_no_data(tmp_path: Path) -> None:
-    store = LocalParquetLakeStore(tmp_path)
+    store = DeltaLakeStore(tmp_path)
     get_lake_store.cache_clear()
     app.dependency_overrides[get_lake_store] = lambda: store
     try:
@@ -83,7 +83,7 @@ def test_vix_stretch_404_when_no_data(tmp_path: Path) -> None:
 def test_vix_stretch_404_when_as_of_predates_any_snapshot(tmp_path: Path) -> None:
     """Data exists, but only *after* the requested as_of -- must 404, not
     silently fall back to the earliest (future-relative-to-as_of) snapshot."""
-    store = LocalParquetLakeStore(tmp_path)
+    store = DeltaLakeStore(tmp_path)
     ingest_date = dt.date(2026, 6, 15)
     n = STRETCH_WINDOW + 1
     df = pd.DataFrame(
@@ -105,7 +105,7 @@ def test_vix_stretch_as_of_respects_point_in_time(tmp_path: Path) -> None:
     """A later snapshot with a different metric value must not leak into a
     request for an earlier ``as_of`` -- the API-level counterpart to the
     lake/research adversarial tests, exercised through the real HTTP path."""
-    store = LocalParquetLakeStore(tmp_path)
+    store = DeltaLakeStore(tmp_path)
     day1 = dt.date(2026, 6, 15)
     day2 = dt.date(2026, 6, 16)
     n = STRETCH_WINDOW + 1

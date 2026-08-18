@@ -11,6 +11,16 @@ the cross-reference; `docs/adr/0001`'s general "ADRs are immutable once
 accepted" rule is deliberately set aside for this one case rather than
 left silently broken).
 
+**Partially superseded by `docs/adr/0013`** (2026-08-18): the *storage
+format* decided below — hand-rolled immutable Parquet via
+`ParquetSnapshotLakeStore`/`LocalParquetLakeStore`/`TigrisLakeStore` — was
+replaced by Delta Lake (delta-rs, one `DeltaLakeStore` class). Tigris as the
+object-storage backend, and the core decision to keep point-in-time +
+immutability as application logic rather than a versioning service, are
+**unaffected** and still described accurately below; read
+`ParquetSnapshotLakeStore`/`LocalParquetLakeStore`/`TigrisLakeStore` in what
+follows as historical class names now replaced by `DeltaLakeStore`.
+
 ## Context
 
 `docs/adr/0006` planned to version the lakehouse with **lakeFS Cloud** on

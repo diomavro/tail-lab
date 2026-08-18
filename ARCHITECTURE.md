@@ -82,7 +82,7 @@ flowchart TB
     CRON -- "opens a code PR<br/>(data changes: immutable bronze writes,<br/>no data branch — docs/adr/0012)" --> REPO
     CI -- "gates every PR, nothing merges red" --> REPO
     REPO -- "human merges main, human deploys" --> APIAPP
-    APIAPP -- "DuckDB reads/writes Parquet directly<br/>(httpfs/S3, via lake/)" --> OBJ
+    APIAPP -- "DuckDB reads/delta-rs writes Delta tables<br/>(delta ext./S3, via lake/)" --> OBJ
 ```
 
 ## Backend — `src/tail_lab/`
@@ -118,15 +118,17 @@ src/tail_lab/
 │   │                         # manual unscheduled table.
 │   └── option_chains.py      # Forward-collected chains, narrow tradable set.
 │
-├── lake/                     # DuckDB + object-storage glue. The ONLY place
-│   │                         # that talks to object storage (docs/adr/0012).
+├── lake/                     # DuckDB + Delta Lake (delta-rs) + object-storage
+│   │                         # glue. The ONLY place that talks to object
+│   │                         # storage (docs/adr/0012, docs/adr/0013).
 │   ├── store.py              # LakeStore (the abstract interface) +
-│   │                         # ParquetSnapshotLakeStore (the SHARED as-of /
-│   │                         # immutable-bronze / medallion-path logic) +
-│   │                         # LocalParquetLakeStore (default backend).
-│   ├── tigris_store.py       # TigrisLakeStore — same shared logic against
-│   │                         # Fly Tigris (S3-compatible), selected via
-│   │                         # TAIL_LAB_LAKE_BACKEND=tigris.
+│   │                         # DeltaLakeStore — the ONE implementation
+│   │                         # (as-of resolution, immutable-bronze,
+│   │                         # medallion path scheme, content-hash snapshot
+│   │                         # id), rooted at either a local directory
+│   │                         # (default) or s3://tail-lab-lake on Fly
+│   │                         # Tigris, selected via TAIL_LAB_LAKE_BACKEND
+│   │                         # (tail_lab.config.get_lake_store).
 │   └── asof.py               # THE as-of query primitive. Every backtest
 │                              # read goes through this module — see
 │                              # docs/STANDARDS.md and docs/adr/0009.
@@ -232,10 +234,12 @@ comparison, conventional-strategy tab) each get their own component under
 
 ## The medallion lakehouse
 
-- **Bronze — immutable raw.** Exactly what an adapter fetched, timestamped,
-  partitioned by `source_id`/ingestion date. **Never overwritten, never
-  edited in place** — a re-fetch or a correction is a new bronze write, not
-  a mutation. This is what makes point-in-time reads possible at all.
+- **Bronze — immutable raw.** Exactly what an adapter fetched, one Delta
+  table per dataset, **partitioned by `ingest_date`**. **Never overwritten,
+  never edited in place** — a re-fetch or a correction is a new
+  `ingest_date` partition (a new Delta commit), never a mutation; re-ingesting
+  an `ingest_date` that already has a partition is a no-op. This is what
+  makes point-in-time reads possible at all.
 - **Silver — validated, typed.** Bronze rows pass through the
   `contracts/` schema; rows that fail are quarantined (written aside with
   the validation error attached), never silently dropped and never allowed
@@ -245,16 +249,19 @@ comparison, conventional-strategy tab) each get their own component under
   `transforms/marts/` for a specific consumer: the sensitivity leaderboard,
   the OOM-put candidate list, the regime panel. `api/` reads gold (or, for
   simple cases, silver) — never bronze.
-- **Engine:** DuckDB, embedded, reading/writing Parquet directly on object
-  storage — no separate database server to run or deploy, and no
-  versioning service between the app and the bucket.
-- **Storage/versioning:** immutable Parquet on Fly Tigris (S3-compatible
-  object storage, bucket `tail-lab-lake`) — no lakeFS, no git-style data
-  branching. Point-in-time correctness and bronze immutability are
-  implemented once, in application code (`ParquetSnapshotLakeStore`,
-  shared by the local and Tigris backends), and every result cites a
-  content-hash **snapshot id** instead of a lakeFS commit. See
-  `docs/adr/0005`, `docs/adr/0006`, `docs/adr/0012`.
+- **Engine:** DuckDB, embedded, reading Delta tables directly on object
+  storage via its `delta` extension (`delta_scan()`) — no separate database
+  server to run or deploy, and no versioning service between the app and
+  the bucket.
+- **Storage format/versioning:** Delta Lake tables (delta-rs — no Spark, no
+  JVM) on Fly Tigris (S3-compatible object storage, bucket `tail-lab-lake`)
+  — no lakeFS, no git-style data branching. Point-in-time correctness and
+  bronze immutability are implemented once, in application code
+  (`DeltaLakeStore`, the same class rooted at either a local directory or
+  the Tigris bucket), on top of Delta's ACID commits and native time
+  travel; every result cites a content-hash **snapshot id** instead of a
+  lakeFS commit or a raw Delta version. See `docs/adr/0005`, `docs/adr/0006`,
+  `docs/adr/0012`, `docs/adr/0013`.
 
 ## Hard rules — do not deviate
 

@@ -26,7 +26,7 @@ from fastapi.testclient import TestClient
 
 import tail_lab.api.main as api_main
 import tail_lab.ingestion.vix as ingestion_vix
-from tail_lab.lake.store import LocalParquetLakeStore
+from tail_lab.lake.store import DeltaLakeStore
 from tail_lab.transforms.vix import STRETCH_WINDOW
 
 # A fixed instant chosen close to UTC midnight: under a simulated local
@@ -104,7 +104,7 @@ def test_ingest_default_and_api_default_both_derive_from_utc_clock(
 ) -> None:
     _assert_dates_differ_by_construction()
 
-    store = LocalParquetLakeStore(tmp_path)
+    store = DeltaLakeStore(tmp_path)
 
     # 1) ingest_vix with no explicit ingest_date: must commit bronze under
     #    the UTC date, not the (one-day-earlier) simulated local date.

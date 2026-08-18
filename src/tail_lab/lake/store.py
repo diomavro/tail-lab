@@ -5,23 +5,23 @@ Everything above this layer (``ingestion``, ``transforms``, ``research``,
 concrete implementation.
 
 The point-in-time / immutability logic — the platform's #1 invariant
-(``docs/adr/0009``) — lives in exactly one place: :class:`ParquetSnapshotLakeStore`.
-It implements the medallion path scheme, the as-of resolution (latest
-bronze snapshot ingested on or before ``as_of``), the immutable-bronze
-write (never overwrite an existing snapshot), and a content-hash snapshot
-id for reproducibility (``docs/adr/0012``) — all on top of five small
-storage primitives a backend must supply (``_exists``, ``_list_subpartitions``,
-``_write_bytes``, ``_read_bytes``, ``_location``). A concrete backend never
-reimplements the as-of/immutability rules; it only tells the base class how
-to touch bytes.
+(``docs/adr/0009``) — lives in exactly one place: :class:`DeltaLakeStore`.
+Bronze is one **Delta table per dataset**, partitioned by ``ingest_date``
+(``docs/adr/0013``): each :meth:`DeltaLakeStore.write_bronze` call appends a
+new ``ingest_date`` partition; an ingest date that already has a partition is
+a no-op (immutable bronze). ``read_bronze_as_of`` resolves the latest
+``ingest_date`` partition on or before the requested ``as_of`` and reads only
+that partition. Silver/gold are single Delta tables per dataset, overwritten
+on every write (matching the previous Parquet backends' semantics).
 
-Two concrete backends implement those primitives:
-
-- :class:`LocalParquetLakeStore` — local filesystem under ``root``. The
-  DEFAULT backend (no credentials needed), used by CI and local dev.
-- :class:`tail_lab.lake.tigris_store.TigrisLakeStore` — S3-compatible
-  object storage on Fly Tigris (``docs/adr/0012``). Selected via
-  ``TAIL_LAB_LAKE_BACKEND=tigris`` (``tail_lab.config.get_lake_store``).
+One implementation works against both a local filesystem root (the default,
+no credentials, used by CI and local dev) and an ``s3://`` root on Fly Tigris
+(``docs/adr/0012``, ``docs/adr/0013``) — selected by whether ``root`` is
+prefixed with ``s3://`` and whether ``storage_options`` is supplied, both
+decided once in :func:`tail_lab.config.get_lake_store`. Delta-rs
+(the ``deltalake`` package) supplies ACID writes, time travel, and a
+standard on-disk format DuckDB reads natively via its ``delta`` extension;
+see ``docs/adr/0013`` for the rationale over hand-rolled immutable Parquet.
 """
 
 from __future__ import annotations
@@ -30,13 +30,20 @@ import datetime as dt
 import hashlib
 import io
 from abc import ABC, abstractmethod
+from collections.abc import Mapping
 from pathlib import Path
 
 import duckdb
 import pandas as pd
+from deltalake import DeltaTable, write_deltalake
+from deltalake.exceptions import TableNotFoundError
 
 #: The three medallion layers, in read/write order.
 Layer = str  # "bronze" | "silver" | "gold"
+
+#: The bronze partition column. Not a data column of any dataset — added on
+#: write, stripped on read — so callers never see it in a returned frame.
+_INGEST_DATE_COL = "ingest_date"
 
 
 class LakeStore(ABC):
@@ -49,10 +56,10 @@ class LakeStore(ABC):
     propagates.
 
     Write methods return a ``str`` **location** for the data just written —
-    an absolute local filesystem path for :class:`LocalParquetLakeStore`, an
-    ``s3://...`` URI for an object-storage backend. It is an opaque
-    identifier suitable for logging or building a follow-up ``query()``; do
-    not assume it is a local filesystem path.
+    an absolute local filesystem path for the local backend, an ``s3://...``
+    URI for the Tigris backend. It is an opaque identifier suitable for
+    logging or building a follow-up ``query()``; do not assume it is a local
+    filesystem path.
     """
 
     @abstractmethod
@@ -93,60 +100,94 @@ class LakeStore(ABC):
 
     @abstractmethod
     def query(self, sql: str) -> pd.DataFrame:
-        """Run a read-only SQL query (DuckDB) over the lake's parquet files."""
+        """Run a read-only SQL query (DuckDB) over the lake's Delta tables."""
 
 
-class ParquetSnapshotLakeStore(LakeStore):
-    """Shared as-of / immutability / medallion-path logic for any Parquet-backed
-    lakehouse, parameterized over a minimal storage primitive set.
+def _strip_scheme(endpoint_url: str) -> str:
+    """DuckDB's S3 secret ``ENDPOINT`` (and ``pyarrow.fs.S3FileSystem``'s
+    ``endpoint_override``) want a bare ``host[:port]``, not a ``https://`` URL."""
+    return endpoint_url.removeprefix("https://").removeprefix("http://")
 
-    Subclasses implement exactly five primitives operating on a ``key``
-    (a POSIX-style relative path such as ``"bronze/vix/2026-01-05/data.parquet"``):
 
-    - :meth:`_exists` — does this key exist?
-    - :meth:`_list_subpartitions` — immediate child names under a key prefix.
-    - :meth:`_write_bytes` / :meth:`_read_bytes` — raw byte I/O.
-    - :meth:`_location` — the backend-specific location string for a key.
+class DeltaLakeStore(LakeStore):
+    """Delta Lake (delta-rs, no Spark) implementation of :class:`LakeStore`.
 
-    Everything else (as-of resolution, the never-overwrite rule, parquet
-    (de)serialization, the snapshot id, and ``query()``'s connection setup
-    hook) is implemented here, once.
+    Works against either a local filesystem ``root`` (pass a ``Path`` /
+    plain string, no ``storage_options``) or an ``s3://<bucket>`` ``root``
+    on Fly Tigris (pass ``storage_options`` built from AWS_* credentials —
+    see :func:`tail_lab.config.get_lake_store`). The as-of resolution, the
+    never-overwrite immutability rule, and the content-hash snapshot id are
+    implemented once, here, identically for both.
+
+    **Bronze model.** One Delta table per dataset at ``<root>/bronze/<dataset>``,
+    partitioned by an ``ingest_date`` column added on write and stripped on
+    read. Each ``write_bronze`` call appends a new partition; a partition
+    that already exists is left untouched (immutable bronze) and the write
+    is a no-op. This means each ingest still stores that day's *full*
+    snapshot (not a diff) — same storage-growth tradeoff the previous
+    Parquet-per-day layout had. A future optimization (out of scope here,
+    tracked in ``AGENT_TODO.md``) could switch to a diff/merge write once
+    the snapshot semantics are no longer load-bearing for a given dataset.
+
+    **As-of reads.** ``read_bronze_as_of`` lists the table's ``ingest_date``
+    partitions from the Delta log (via ``get_add_actions`` — log metadata
+    only, no data read), picks the latest one on or before ``as_of``, and
+    reads only that partition.
+
+    **Snapshot id.** Content-addressed: sha256 of the resolved partition's
+    canonical Parquet bytes, truncated to 16 hex chars — the same shape the
+    Parquet backends used, computed from the logical row content instead of
+    a single physical file's bytes (robust to a future ``OPTIMIZE``/compaction
+    changing file layout without changing content).
+
+    **Silver/gold.** A single non-partitioned Delta table per dataset,
+    overwritten (``mode="overwrite"``) on every write — same "current
+    derived view" semantics as before, now with the crash-safety of a Delta
+    commit instead of a bare file overwrite.
     """
 
-    # ---- medallion path scheme ------------------------------------------------
+    def __init__(
+        self,
+        root: Path | str,
+        *,
+        storage_options: Mapping[str, str] | None = None,
+    ) -> None:
+        root_str = str(root)
+        self._is_s3 = root_str.startswith("s3://")
+        self._root: Path | str = root_str.rstrip("/") if self._is_s3 else Path(root)
+        self._storage_options: dict[str, str] | None = (
+            dict(storage_options) if storage_options is not None else None
+        )
+
+    @property
+    def root(self) -> Path | str:
+        return self._root
+
+    @property
+    def storage_options(self) -> dict[str, str] | None:
+        return self._storage_options
+
+    # ---- medallion path scheme --------------------------------------------
+
+    def _table_uri(self, key: str) -> str:
+        if self._is_s3:
+            return f"{self._root}/{key}"
+        assert isinstance(self._root, Path)
+        return str(self._root / key)
 
     @staticmethod
-    def _bronze_prefix(dataset: str) -> str:
+    def _bronze_table_key(dataset: str) -> str:
         return f"bronze/{dataset}"
 
-    @classmethod
-    def _bronze_key(cls, dataset: str, ingest_date: dt.date) -> str:
-        return f"{cls._bronze_prefix(dataset)}/{ingest_date.isoformat()}/data.parquet"
+    @staticmethod
+    def _derived_table_key(layer: Layer, dataset: str) -> str:
+        return f"{layer}/{dataset}"
 
     @staticmethod
-    def _derived_key(layer: Layer, dataset: str) -> str:
-        return f"{layer}/{dataset}/data.parquet"
+    def _partition_location(table_uri: str, ingest_date: dt.date) -> str:
+        return f"{table_uri}/{_INGEST_DATE_COL}={ingest_date.isoformat()}"
 
-    # ---- storage primitives concrete backends must supply ---------------------
-
-    @abstractmethod
-    def _exists(self, key: str) -> bool: ...
-
-    @abstractmethod
-    def _list_subpartitions(self, prefix: str) -> list[str]:
-        """Immediate child names under ``prefix`` (a key with no trailing
-        slash). Returns ``[]`` if ``prefix`` doesn't exist."""
-
-    @abstractmethod
-    def _write_bytes(self, key: str, data: bytes) -> None: ...
-
-    @abstractmethod
-    def _read_bytes(self, key: str) -> bytes: ...
-
-    @abstractmethod
-    def _location(self, key: str) -> str: ...
-
-    # ---- parquet <-> bytes, centralized so both backends serialize identically
+    # ---- parquet <-> bytes, for the content-hash snapshot id --------------
 
     @staticmethod
     def _serialize(df: pd.DataFrame) -> bytes:
@@ -154,26 +195,39 @@ class ParquetSnapshotLakeStore(LakeStore):
         df.to_parquet(buf, index=False)
         return buf.getvalue()
 
-    @staticmethod
-    def _deserialize(data: bytes) -> pd.DataFrame:
-        return pd.read_parquet(io.BytesIO(data))
+    # ---- Delta table access -------------------------------------------------
+
+    def _open_delta_table(self, table_uri: str) -> DeltaTable | None:
+        try:
+            return DeltaTable(table_uri, storage_options=self._storage_options)
+        except TableNotFoundError:
+            return None
+
+    def _existing_bronze_ingest_date_strings(self, table_uri: str) -> set[str]:
+        table = self._open_delta_table(table_uri)
+        if table is None:
+            return set()
+        actions = table.get_add_actions(flatten=True)
+        col = f"partition.{_INGEST_DATE_COL}"
+        if col not in actions.column_names:
+            return set()
+        return {v for v in actions.column(col).to_pylist() if v is not None}
 
     # ---- as-of resolution -------------------------------------------------
 
-    def _list_bronze_ingest_dates(self, dataset: str) -> list[dt.date]:
-        names = self._list_subpartitions(self._bronze_prefix(dataset))
+    def _list_bronze_ingest_dates(self, table_uri: str) -> list[dt.date]:
         dates: list[dt.date] = []
-        for name in names:
+        for raw in self._existing_bronze_ingest_date_strings(table_uri):
             try:
-                candidate = dt.date.fromisoformat(name)
+                dates.append(dt.date.fromisoformat(raw))
             except ValueError:
+                # Defensive: a partition value that isn't a parseable ISO
+                # date is ignored rather than crashing as-of resolution.
                 continue
-            if self._exists(self._bronze_key(dataset, candidate)):
-                dates.append(candidate)
         return sorted(dates)
 
-    def _resolve_bronze_snapshot(self, dataset: str, as_of: dt.date) -> dt.date:
-        dates = self._list_bronze_ingest_dates(dataset)
+    def _resolve_bronze_snapshot(self, table_uri: str, dataset: str, as_of: dt.date) -> dt.date:
+        dates = self._list_bronze_ingest_dates(table_uri)
         if not dates:
             raise LookupError(f"no bronze data for dataset {dataset!r}")
         eligible = [d for d in dates if d <= as_of]
@@ -183,25 +237,40 @@ class ParquetSnapshotLakeStore(LakeStore):
             )
         return max(eligible)
 
+    def _read_bronze_partition(self, table_uri: str, snapshot_date: dt.date) -> pd.DataFrame:
+        table = DeltaTable(table_uri, storage_options=self._storage_options)
+        df = table.to_pandas(partitions=[(_INGEST_DATE_COL, "=", snapshot_date.isoformat())])
+        return df.drop(columns=[_INGEST_DATE_COL]).reset_index(drop=True)
+
     # ---- LakeStore implementation ------------------------------------------
 
     def write_bronze(self, dataset: str, ingest_date: dt.date, df: pd.DataFrame) -> str:
-        key = self._bronze_key(dataset, ingest_date)
-        if self._exists(key):
+        table_uri = self._table_uri(self._bronze_table_key(dataset))
+        if ingest_date.isoformat() in self._existing_bronze_ingest_date_strings(table_uri):
             # Immutable: never overwrite an existing snapshot. Re-ingesting
             # the same day is a no-op that preserves the original data.
-            return self._location(key)
-        self._write_bytes(key, self._serialize(df))
-        return self._location(key)
+            return self._partition_location(table_uri, ingest_date)
+        to_write = df.copy()
+        to_write[_INGEST_DATE_COL] = ingest_date.isoformat()
+        write_deltalake(
+            table_uri,
+            to_write,
+            mode="append",
+            partition_by=[_INGEST_DATE_COL],
+            storage_options=self._storage_options,
+        )
+        return self._partition_location(table_uri, ingest_date)
 
     def read_bronze_as_of(self, dataset: str, as_of: dt.date) -> pd.DataFrame:
-        snapshot_date = self._resolve_bronze_snapshot(dataset, as_of)
-        return self._deserialize(self._read_bytes(self._bronze_key(dataset, snapshot_date)))
+        table_uri = self._table_uri(self._bronze_table_key(dataset))
+        snapshot_date = self._resolve_bronze_snapshot(table_uri, dataset, as_of)
+        return self._read_bronze_partition(table_uri, snapshot_date)
 
     def bronze_snapshot_id(self, dataset: str, as_of: dt.date) -> str:
-        snapshot_date = self._resolve_bronze_snapshot(dataset, as_of)
-        key = self._bronze_key(dataset, snapshot_date)
-        digest = hashlib.sha256(self._read_bytes(key)).hexdigest()[:16]
+        table_uri = self._table_uri(self._bronze_table_key(dataset))
+        snapshot_date = self._resolve_bronze_snapshot(table_uri, dataset, as_of)
+        df = self._read_bronze_partition(table_uri, snapshot_date)
+        digest = hashlib.sha256(self._serialize(df)).hexdigest()[:16]
         return f"{dataset}@{snapshot_date.isoformat()}#{digest}"
 
     def write_silver(self, dataset: str, df: pd.DataFrame) -> str:
@@ -217,15 +286,21 @@ class ParquetSnapshotLakeStore(LakeStore):
         return self._read_derived("gold", dataset)
 
     def _write_derived(self, layer: Layer, dataset: str, df: pd.DataFrame) -> str:
-        key = self._derived_key(layer, dataset)
-        self._write_bytes(key, self._serialize(df))
-        return self._location(key)
+        table_uri = self._table_uri(self._derived_table_key(layer, dataset))
+        write_deltalake(
+            table_uri,
+            df,
+            mode="overwrite",
+            storage_options=self._storage_options,
+        )
+        return table_uri
 
     def _read_derived(self, layer: Layer, dataset: str) -> pd.DataFrame:
-        key = self._derived_key(layer, dataset)
-        if not self._exists(key):
+        table_uri = self._table_uri(self._derived_table_key(layer, dataset))
+        table = self._open_delta_table(table_uri)
+        if table is None:
             raise LookupError(f"no {layer} data for dataset {dataset!r}")
-        return self._deserialize(self._read_bytes(key))
+        return table.to_pandas()
 
     def query(self, sql: str) -> pd.DataFrame:
         con = duckdb.connect(database=":memory:")
@@ -236,41 +311,28 @@ class ParquetSnapshotLakeStore(LakeStore):
             con.close()
 
     def _configure_connection(self, con: duckdb.DuckDBPyConnection) -> None:
-        """Hook for backends that need to prepare the DuckDB session before
-        ``query()`` runs ``sql`` (e.g. installing ``httpfs`` and setting S3
-        credentials). No-op for local disk."""
-
-
-class LocalParquetLakeStore(ParquetSnapshotLakeStore):
-    """Local-disk implementation: bronze/silver/gold as parquet under ``root``,
-    queried with an in-process DuckDB connection. No external account needed."""
-
-    def __init__(self, root: Path | str) -> None:
-        self._root = Path(root)
-
-    @property
-    def root(self) -> Path:
-        return self._root
-
-    def _full_path(self, key: str) -> Path:
-        return self._root / key
-
-    def _exists(self, key: str) -> bool:
-        return self._full_path(key).exists()
-
-    def _list_subpartitions(self, prefix: str) -> list[str]:
-        directory = self._full_path(prefix)
-        if not directory.exists():
-            return []
-        return [p.name for p in directory.iterdir() if p.is_dir()]
-
-    def _write_bytes(self, key: str, data: bytes) -> None:
-        path = self._full_path(key)
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_bytes(data)
-
-    def _read_bytes(self, key: str) -> bytes:
-        return self._full_path(key).read_bytes()
-
-    def _location(self, key: str) -> str:
-        return str(self._full_path(key))
+        con.execute("INSTALL delta;")
+        con.execute("LOAD delta;")
+        if self._storage_options is None:
+            return
+        # The `delta` extension resolves S3 credentials through DuckDB's
+        # secrets manager, NOT the `httpfs` extension's `SET s3_*` pragmas
+        # (those only apply to `read_parquet`/`read_csv` over httpfs) — the
+        # delta-rs/S3 quirk this migration had to solve. Without a secret,
+        # `delta_scan()` against Tigris falls through delta-rs's default AWS
+        # credential chain to an IMDS (EC2 instance-metadata) lookup, which
+        # hangs/fails outside AWS.
+        con.execute("INSTALL httpfs;")
+        con.execute("LOAD httpfs;")
+        con.execute(
+            "CREATE OR REPLACE SECRET tail_lab_s3 ("
+            "TYPE S3, KEY_ID ?, SECRET ?, REGION ?, ENDPOINT ?, "
+            "URL_STYLE 'path', USE_SSL true"
+            ");",
+            [
+                self._storage_options["AWS_ACCESS_KEY_ID"],
+                self._storage_options["AWS_SECRET_ACCESS_KEY"],
+                self._storage_options["AWS_REGION"],
+                _strip_scheme(self._storage_options["AWS_ENDPOINT_URL"]),
+            ],
+        )

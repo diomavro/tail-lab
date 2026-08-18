@@ -8,12 +8,12 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from tail_lab.lake.store import LocalParquetLakeStore
+from tail_lab.lake.store import DeltaLakeStore
 from tail_lab.research.vix_stretch import compute_vix_stretch
 from tail_lab.transforms.vix import STRETCH_WINDOW
 
 
-def _seed_bronze(store: LocalParquetLakeStore, ingest_date: dt.date, n: int) -> pd.DataFrame:
+def _seed_bronze(store: DeltaLakeStore, ingest_date: dt.date, n: int) -> pd.DataFrame:
     rng = np.random.default_rng(seed=7)
     closes = (18.0 + rng.normal(size=n)).round(4)
     dates = pd.date_range(end=ingest_date, periods=n, freq="D")
@@ -23,7 +23,7 @@ def _seed_bronze(store: LocalParquetLakeStore, ingest_date: dt.date, n: int) -> 
 
 
 def test_compute_vix_stretch_end_to_end(tmp_path: Path) -> None:
-    store = LocalParquetLakeStore(tmp_path)
+    store = DeltaLakeStore(tmp_path)
     ingest_date = dt.date(2026, 3, 1)
     df = _seed_bronze(store, ingest_date, n=STRETCH_WINDOW + 5)
 
@@ -44,7 +44,7 @@ def test_compute_vix_stretch_end_to_end(tmp_path: Path) -> None:
 def test_compute_vix_stretch_flat_window_is_undefined_not_missing(tmp_path: Path) -> None:
     """A flat trailing window (std == 0) makes the z-score genuinely undefined
     — distinct from insufficient history. The error must say so, not misdiagnose."""
-    store = LocalParquetLakeStore(tmp_path)
+    store = DeltaLakeStore(tmp_path)
     ingest_date = dt.date(2026, 3, 1)
     n = STRETCH_WINDOW + 2
     df = pd.DataFrame(
@@ -59,7 +59,7 @@ def test_compute_vix_stretch_flat_window_is_undefined_not_missing(tmp_path: Path
 def test_compute_vix_stretch_respects_no_look_ahead(tmp_path: Path) -> None:
     """Point-in-time: a stretch computed as-of an earlier ingest date must
     never reflect data from a later ingest."""
-    store = LocalParquetLakeStore(tmp_path)
+    store = DeltaLakeStore(tmp_path)
     day1 = dt.date(2026, 3, 1)
     day2 = dt.date(2026, 3, 2)
 
@@ -80,7 +80,7 @@ def test_compute_vix_stretch_rejects_leaked_restatement(tmp_path: Path) -> None:
     a value *inside* the trailing window in a way that would flip the
     z-score's sign if it leaked, then prove an as-of read of the earlier
     date is unaffected."""
-    store = LocalParquetLakeStore(tmp_path)
+    store = DeltaLakeStore(tmp_path)
     day1 = dt.date(2026, 3, 1)
     day2 = dt.date(2026, 3, 2)
 
@@ -114,7 +114,7 @@ def test_compute_vix_stretch_rejects_leaked_restatement(tmp_path: Path) -> None:
 
 
 def test_compute_vix_stretch_raises_on_insufficient_history(tmp_path: Path) -> None:
-    store = LocalParquetLakeStore(tmp_path)
+    store = DeltaLakeStore(tmp_path)
     ingest_date = dt.date(2026, 3, 1)
     _seed_bronze(store, ingest_date, n=STRETCH_WINDOW - 1)
 
@@ -128,7 +128,7 @@ def test_compute_vix_stretch_pinned_hand_computable_case(tmp_path: Path) -> None
     Expected mean/std/z computed with the stdlib ``statistics`` module, a
     code path that shares nothing with ``transforms.vix.silver_to_gold``'s
     pandas ``.rolling()`` implementation."""
-    store = LocalParquetLakeStore(tmp_path)
+    store = DeltaLakeStore(tmp_path)
     ingest_date = dt.date(2026, 4, 1)
     closes = [10.0] * (STRETCH_WINDOW - 1) + [20.0]
     dates = pd.date_range(end=ingest_date, periods=STRETCH_WINDOW, freq="D")

@@ -10,7 +10,7 @@ from pathlib import Path
 import pandas as pd
 import pytest
 
-from tail_lab.lake.store import LocalParquetLakeStore
+from tail_lab.lake.store import DeltaLakeStore
 
 DATASET = "vix"
 
@@ -22,7 +22,7 @@ def _frame(dates: list[str], closes: list[float]) -> pd.DataFrame:
 def test_no_look_ahead(tmp_path: Path) -> None:
     """A backtest reading as-of an earlier date must never see a snapshot
     ingested later — the #1 invariant (README)."""
-    store = LocalParquetLakeStore(tmp_path)
+    store = DeltaLakeStore(tmp_path)
 
     day1 = dt.date(2026, 1, 5)
     day2 = dt.date(2026, 1, 6)
@@ -52,7 +52,7 @@ def test_restated_value_does_not_leak_into_earlier_asof_read(tmp_path: Path) -> 
     of the original ingest date -- even though the *same calendar date* is
     revised, not just extended with new dates. Adversarial: the revision is
     constructed so it WOULD change the answer if it leaked."""
-    store = LocalParquetLakeStore(tmp_path)
+    store = DeltaLakeStore(tmp_path)
 
     day1 = dt.date(2026, 1, 5)
     day2 = dt.date(2026, 1, 6)  # a later ingest that restates 2026-01-02
@@ -77,23 +77,38 @@ def test_restated_value_does_not_leak_into_earlier_asof_read(tmp_path: Path) -> 
 
 
 def test_bronze_is_immutable(tmp_path: Path) -> None:
-    """Re-ingesting the same day must never mutate the existing bronze file."""
-    store = LocalParquetLakeStore(tmp_path)
+    """Re-ingesting the same day must never mutate the existing bronze
+    partition. Verified at the Delta transaction-log level (the physical
+    equivalent of the old "raw file bytes/mtime unchanged" check): a no-op
+    write issues no new Delta commit, so the table version and the resolved
+    partition's file listing are byte-for-byte identical before and after."""
+    from deltalake import DeltaTable
+
+    store = DeltaLakeStore(tmp_path)
     ingest_date = dt.date(2026, 1, 5)
+    table_uri = str(tmp_path / "bronze" / DATASET)
 
     original = _frame(["2026-01-05"], [16.0])
     location = store.write_bronze(DATASET, ingest_date, original)
-    path = Path(location)
-    original_mtime_ns = path.stat().st_mtime_ns
-    original_bytes = path.read_bytes()
 
-    # A second ingest for the same day, with DIFFERENT data, must be a no-op.
+    table_after_first_write = DeltaTable(table_uri)
+    version_after_first_write = table_after_first_write.version()
+    files_after_first_write = sorted(
+        table_after_first_write.get_add_actions(flatten=True).column("path").to_pylist()
+    )
+
+    # A second ingest for the same day, with DIFFERENT data, must be a no-op:
+    # no new Delta commit, same location, same files on disk.
     different = _frame(["2026-01-05"], [999.0])
     second_location = store.write_bronze(DATASET, ingest_date, different)
 
+    table_after_second_write = DeltaTable(table_uri)
     assert second_location == location
-    assert path.read_bytes() == original_bytes
-    assert path.stat().st_mtime_ns == original_mtime_ns
+    assert table_after_second_write.version() == version_after_first_write
+    assert (
+        sorted(table_after_second_write.get_add_actions(flatten=True).column("path").to_pylist())
+        == files_after_first_write
+    )
 
     stored = store.read_bronze_as_of(DATASET, ingest_date)
     assert stored["close"].iloc[0] == 16.0
@@ -103,7 +118,7 @@ def test_bronze_snapshot_id_is_stable_and_content_addressed(tmp_path: Path) -> N
     """Reproducibility (docs/adr/0012): the snapshot id must be stable for the
     same resolved snapshot, and must change when the snapshot content changes
     — this is what a result cites in place of a lakeFS commit id."""
-    store = LocalParquetLakeStore(tmp_path)
+    store = DeltaLakeStore(tmp_path)
     day1 = dt.date(2026, 1, 5)
     day2 = dt.date(2026, 1, 6)
 
@@ -129,7 +144,7 @@ def test_bronze_snapshot_id_is_stable_and_content_addressed(tmp_path: Path) -> N
 
 
 def test_silver_and_gold_round_trip(tmp_path: Path) -> None:
-    store = LocalParquetLakeStore(tmp_path)
+    store = DeltaLakeStore(tmp_path)
     df = _frame(["2026-01-02", "2026-01-05"], [15.0, 16.0])
 
     store.write_silver(DATASET, df)
@@ -139,24 +154,33 @@ def test_silver_and_gold_round_trip(tmp_path: Path) -> None:
     assert store.read_gold(DATASET).equals(df)
 
 
-def test_as_of_ignores_non_date_bronze_subdirectories(tmp_path: Path) -> None:
-    """A stray non-date subdirectory under bronze/<dataset>/ (e.g. a manual
-    scratch folder) must be ignored by as-of resolution, not crash it —
-    exercises the shared-base defensive path all backends share."""
-    store = LocalParquetLakeStore(tmp_path)
+def test_as_of_ignores_non_date_bronze_partition_values(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A partition value that isn't a parseable ISO date must be ignored by
+    as-of resolution, not crash it -- the Delta-backed equivalent of the old
+    "stray non-date subdirectory" defensive test. Under Delta the
+    transaction log is authoritative, so a stray value can't land there
+    through the public API; this exercises the same defensive parsing
+    (`dt.date.fromisoformat` inside a try/except) directly by injecting one
+    via the partition-listing seam."""
+    store = DeltaLakeStore(tmp_path)
     ingest_date = dt.date(2026, 1, 5)
     store.write_bronze(DATASET, ingest_date, _frame(["2026-01-05"], [16.0]))
 
-    stray = tmp_path / "bronze" / DATASET / "not-a-date"
-    stray.mkdir(parents=True)
-    (stray / "data.parquet").write_bytes(b"not actually parquet")
+    real = store._existing_bronze_ingest_date_strings
+    monkeypatch.setattr(
+        store,
+        "_existing_bronze_ingest_date_strings",
+        lambda table_uri: real(table_uri) | {"not-a-date"},
+    )
 
     result = store.read_bronze_as_of(DATASET, ingest_date)
     assert result["close"].iloc[0] == 16.0
 
 
 def test_read_missing_dataset_raises(tmp_path: Path) -> None:
-    store = LocalParquetLakeStore(tmp_path)
+    store = DeltaLakeStore(tmp_path)
     with pytest.raises(LookupError):
         store.read_bronze_as_of("nonexistent", dt.date(2026, 1, 1))
     with pytest.raises(LookupError):
@@ -166,9 +190,9 @@ def test_read_missing_dataset_raises(tmp_path: Path) -> None:
 
 
 def test_query_via_duckdb(tmp_path: Path) -> None:
-    store = LocalParquetLakeStore(tmp_path)
+    store = DeltaLakeStore(tmp_path)
     df = _frame(["2026-01-02", "2026-01-05"], [15.0, 16.0])
     location = store.write_silver(DATASET, df)
 
-    result = store.query(f"SELECT COUNT(*) AS n FROM read_parquet('{Path(location).as_posix()}')")
+    result = store.query(f"SELECT COUNT(*) AS n FROM delta_scan('{Path(location).as_posix()}')")
     assert int(result["n"].iloc[0]) == 2

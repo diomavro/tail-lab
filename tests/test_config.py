@@ -9,8 +9,7 @@ from pathlib import Path
 import pytest
 
 from tail_lab.config import Settings, get_lake_store
-from tail_lab.lake.store import LocalParquetLakeStore
-from tail_lab.lake.tigris_store import TigrisLakeStore
+from tail_lab.lake.store import DeltaLakeStore
 
 
 def test_default_backend_is_local(tmp_path: Path) -> None:
@@ -20,8 +19,9 @@ def test_default_backend_is_local(tmp_path: Path) -> None:
     # happens to have configured.
     settings = Settings(_env_file=None, lake_root=tmp_path)  # type: ignore[call-arg]
     store = get_lake_store(settings)
-    assert isinstance(store, LocalParquetLakeStore)
+    assert isinstance(store, DeltaLakeStore)
     assert store.root == tmp_path
+    assert store.storage_options is None
 
 
 def test_tigris_backend_requires_all_connection_settings() -> None:
@@ -41,4 +41,8 @@ def test_tigris_backend_constructs_when_fully_configured() -> None:
         aws_secret_access_key="dummy",
     )
     store = get_lake_store(settings)
-    assert isinstance(store, TigrisLakeStore)
+    assert isinstance(store, DeltaLakeStore)
+    assert store.root == "s3://test-bucket"
+    assert store.storage_options is not None
+    assert store.storage_options["AWS_S3_ALLOW_UNSAFE_RENAME"] == "true"
+    assert store.storage_options["AWS_ACCESS_KEY_ID"] == "dummy"

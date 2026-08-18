@@ -1,4 +1,4 @@
-"""Integration test for :class:`TigrisLakeStore` against the real
+"""Integration test for :class:`DeltaLakeStore` against the real
 ``tail-lab-lake`` bucket on Fly Tigris.
 
 Skipped unless ``TAIL_LAB_LAKE_BACKEND=tigris`` and full Tigris credentials
@@ -19,8 +19,8 @@ import pandas as pd
 import pyarrow.fs as pafs
 import pytest
 
-from tail_lab.config import Settings, get_settings
-from tail_lab.lake.tigris_store import TigrisLakeStore, _strip_scheme
+from tail_lab.config import Settings, get_lake_store, get_settings
+from tail_lab.lake.store import DeltaLakeStore, _strip_scheme
 
 _SETTINGS: Settings = get_settings()
 
@@ -43,7 +43,7 @@ pytestmark = pytest.mark.skipif(
 
 
 @pytest.fixture
-def tigris_store() -> Iterator[tuple[TigrisLakeStore, str]]:
+def tigris_store() -> Iterator[tuple[DeltaLakeStore, str]]:
     # mypy: only constructed when _tigris_configured() is True, so these are
     # all non-None; assert narrows for the type checker.
     settings = _SETTINGS
@@ -54,13 +54,8 @@ def tigris_store() -> Iterator[tuple[TigrisLakeStore, str]]:
     assert settings.aws_secret_access_key is not None
 
     dataset = f"_integration_test_{uuid.uuid4().hex[:12]}"
-    store = TigrisLakeStore(
-        bucket=settings.s3_bucket,
-        endpoint_url=settings.s3_endpoint_url,
-        region=settings.s3_region,
-        access_key_id=settings.aws_access_key_id,
-        secret_access_key=settings.aws_secret_access_key,
-    )
+    store = get_lake_store(settings)
+    assert isinstance(store, DeltaLakeStore)  # the "tigris" backend, per config
     cleanup_fs = pafs.S3FileSystem(
         access_key=settings.aws_access_key_id,
         secret_key=settings.aws_secret_access_key,
@@ -82,7 +77,9 @@ def tigris_store() -> Iterator[tuple[TigrisLakeStore, str]]:
                 pass
 
 
-def test_tigris_round_trip_write_read_and_as_of(tigris_store: tuple[TigrisLakeStore, str]) -> None:
+def test_tigris_round_trip_write_read_and_as_of(
+    tigris_store: tuple[DeltaLakeStore, str],
+) -> None:
     store, dataset = tigris_store
 
     day1 = dt.date(2026, 1, 5)
@@ -98,7 +95,8 @@ def test_tigris_round_trip_write_read_and_as_of(tigris_store: tuple[TigrisLakeSt
     store.write_bronze(dataset, day2, snapshot_day2)
 
     # As-of day1 must not see day2's snapshot (no-look-ahead), even though
-    # it now exists in the same real bucket.
+    # it now exists in the same real bucket, as a later partition of the
+    # same Delta table.
     as_of_day1 = store.read_bronze_as_of(dataset, day1)
     assert len(as_of_day1) == 1
     assert as_of_day1["close"].iloc[0] == 16.0
@@ -106,7 +104,8 @@ def test_tigris_round_trip_write_read_and_as_of(tigris_store: tuple[TigrisLakeSt
     as_of_day2 = store.read_bronze_as_of(dataset, day2)
     assert len(as_of_day2) == 2
 
-    # Immutability: re-ingesting day1 with different data must be a no-op.
+    # Immutability: re-ingesting day1 with different data must be a no-op —
+    # no new Delta commit, same partition location, original data intact.
     different = pd.DataFrame({"date": pd.to_datetime(["2026-01-05"]), "close": [999.0]})
     location1_again = store.write_bronze(dataset, day1, different)
     assert location1_again == location1
@@ -121,10 +120,10 @@ def test_tigris_round_trip_write_read_and_as_of(tigris_store: tuple[TigrisLakeSt
         store.read_bronze_as_of(dataset, dt.date(2026, 1, 1))
 
 
-def test_tigris_query_via_duckdb_httpfs(tigris_store: tuple[TigrisLakeStore, str]) -> None:
+def test_tigris_query_via_duckdb_delta_scan(tigris_store: tuple[DeltaLakeStore, str]) -> None:
     store, dataset = tigris_store
     df = pd.DataFrame({"date": pd.to_datetime(["2026-01-05"]), "close": [16.0]})
     location = store.write_silver(dataset, df)
 
-    result = store.query(f"SELECT COUNT(*) AS n FROM read_parquet('{location}')")
+    result = store.query(f"SELECT COUNT(*) AS n FROM delta_scan('{location}')")
     assert int(result["n"].iloc[0]) == 1

@@ -15,6 +15,7 @@ dependencies = [
     "pyarrow>=17.0.0",
     "scipy>=1.13.0",
     "requests>=2.32.0",
+    "deltalake>=1.0.0",
 ]
 
 [project.optional-dependencies]
@@ -78,6 +79,10 @@ ignore_missing_imports = true
 
 [[tool.mypy.overrides]]
 module = "pyarrow.*"
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module = ["deltalake", "deltalake.*"]
 ignore_missing_imports = true
 
 # ---------------------------------------------------------------------------
