@@ -24,13 +24,13 @@ a large one strictly in order.
       (`docs/adr/0011`). **Done** — live at https://tail-lab.fly.dev
       (`HUMAN_TODO.md`); this item was already shipped but still listed
       unchecked, fixed for bookkeeping accuracy.
-- [ ] Add the underlying OHLCV ingestion adapter, following the VIX
-      adapter's pattern (`docs/DATA_CONTRACTS.md` #1). **In flight — PR #1
-      open, unmerged as of 2026-08-18.** Do not re-attempt this until that
-      PR is either merged (then check it off here) or closed; the source
-      turned out to need the same Yahoo-chart-JSON deviation as VIX (Stooq
-      is anti-bot-blocked for symbol downloads too, same as it was for
-      VIX), already documented in that PR.
+- [x] Add the underlying OHLCV ingestion adapter, following the VIX
+      adapter's pattern (`docs/DATA_CONTRACTS.md` #1). **Done 2026-08-18
+      (PR #1 merged.)** Built against Yahoo Finance's chart JSON (keyless),
+      not Stooq — Stooq now serves an anti-bot challenge to plain HTTP
+      clients for symbol downloads too (same as VIX); Yahoo is README's
+      named keyless fallback. Adapter + tests updated to the Delta store
+      (`docs/adr/0013`) at merge time.
 - [x] Add a downside-beta sensitivity metric in `research/metrics/`, pinned
       by a test against a synthetic price path with a known analytic value.
       **Done 2026-08-18** (`research/metrics/downside_beta.py`) — a pure
