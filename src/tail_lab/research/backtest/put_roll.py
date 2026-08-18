@@ -235,6 +235,25 @@ def _adj_close_series(bronze: pd.DataFrame) -> pd.Series:
     )
 
 
+def load_asof_series(store: LakeStore, asset: str, as_of: dt.date) -> tuple[pd.Series, pd.Series]:
+    """Point-in-time ``(prices, iv_proxy)`` for ``asset`` as of ``as_of``.
+
+    Reads only the bronze OHLCV snapshot known on or before ``as_of`` (one
+    lake read), returning the adjusted-close path and its trailing-realized-
+    vol IV proxy. Factored out so a parameter sweep can read the path once and
+    roll many strategies over it, rather than re-reading per cell. Raises
+    ``LookupError`` if no snapshot exists as of that date.
+    """
+    try:
+        bronze = store.read_bronze_as_of(dataset_id(asset), as_of)
+    except LookupError as exc:
+        raise LookupError(f"no OHLCV for {asset} known as of {as_of.isoformat()}") from exc
+    if bronze.empty:
+        raise LookupError(f"no OHLCV for {asset} known as of {as_of.isoformat()}")
+    prices = _adj_close_series(bronze)
+    return prices, trailing_realized_vol(prices)
+
+
 def compute_put_backtest(
     store: LakeStore,
     *,
@@ -249,20 +268,11 @@ def compute_put_backtest(
 ) -> PutBacktestResult:
     """Point-in-time Put Lab backtest for ``asset`` as of ``as_of``.
 
-    Reads only the bronze OHLCV snapshot known on or before ``as_of``, builds
-    the adjusted-close path and its trailing-realized-vol IV proxy, and rolls
-    the strategy. Raises ``LookupError`` if no snapshot exists as of that date
-    or the window is too short for a single roll.
+    Reads the as-of price path and its IV proxy and rolls the strategy. Raises
+    ``LookupError`` if no snapshot exists as of that date or the window is too
+    short for a single roll.
     """
-    try:
-        bronze = store.read_bronze_as_of(dataset_id(asset), as_of)
-    except LookupError as exc:
-        raise LookupError(f"no OHLCV for {asset} known as of {as_of.isoformat()}") from exc
-    if bronze.empty:
-        raise LookupError(f"no OHLCV for {asset} known as of {as_of.isoformat()}")
-
-    prices = _adj_close_series(bronze)
-    iv_proxy = trailing_realized_vol(prices)
+    prices, iv_proxy = load_asof_series(store, asset, as_of)
     return run_put_roll(
         prices,
         iv_proxy,

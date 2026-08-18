@@ -21,6 +21,24 @@ class VixStretchResponse(BaseModel):
     z_score: float
 
 
+class SweepCell(BaseModel):
+    """One (moneyness, tenor) combination's total return on premium — a cell
+    of the Put Lab strike x tenor heatmap."""
+
+    moneyness_pct: float
+    tenor_weeks: float
+    roi_on_premium: float
+    n_cycles: int
+
+
+class SweepResponse(BaseModel):
+    asset: str
+    as_of: dt.date
+    notional: float
+    lookback_years: float
+    cells: list[SweepCell]
+
+
 class FeedbackCreateRequest(BaseModel):
     text: str = Field(min_length=1, max_length=4000)
     kind: FeedbackKind
