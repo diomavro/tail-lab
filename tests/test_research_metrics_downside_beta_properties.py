@@ -13,7 +13,14 @@ from hypothesis import strategies as st
 
 from tail_lab.research.metrics.downside_beta import downside_beta
 
-_return = st.floats(min_value=-0.5, max_value=0.5, allow_nan=False, allow_infinity=False)
+# Realistic daily returns: bounded, and either exactly zero or at least 1bp in
+# magnitude. Without the magnitude floor, Hypothesis generates denormal-tiny
+# values (~1e-277) whose downside variance underflows, so cov/var stops being
+# numerically 1.0 — a floating-point artifact of impossible inputs, not a bug
+# in the metric (real returns are never that small).
+_return = st.floats(min_value=-0.5, max_value=0.5, allow_nan=False, allow_infinity=False).filter(
+    lambda x: x == 0.0 or abs(x) >= 1e-4
+)
 _panel = st.lists(st.tuples(_return, _return), min_size=8, max_size=40)
 
 

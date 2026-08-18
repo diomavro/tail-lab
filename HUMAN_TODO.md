@@ -38,6 +38,17 @@ acts on, removes, or reorders anything in this file.**
       the `FRED_API_KEY` repo secret (2026-08-17). For local dev, export
       `FRED_API_KEY` from that same value.
 
+- [ ] Provision `TAIL_LAB_FEEDBACK_TOKEN` (`docs/adr/0014`, in-app feedback):
+      generate a random secret and set it in **two** places — a Fly secret
+      on the `tail-lab` app (`flyctl secrets set TAIL_LAB_FEEDBACK_TOKEN=...
+      -a tail-lab`, so `GET /api/feedback` and the resolve endpoint stop
+      404ing in prod) and a GitHub Actions repo secret of the same name +
+      value (so `.github/workflows/daily-agent.yml`'s `Run the platform
+      agent` step can read it — it's the one new secret the daily agent
+      gets, deliberately not FRED/AWS/deploy creds). Until this is set, the
+      feedback panel's writes (`POST /api/feedback`) still work — only the
+      agent's read/resolve calls no-op (404, treated as "nothing pending").
+
 ## Later / optional
 
 - [ ] Budget for a historical option-data source (ORATS, CBOE, or

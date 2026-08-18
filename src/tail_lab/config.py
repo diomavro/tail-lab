@@ -20,6 +20,8 @@ from typing import Literal
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+from tail_lab.feedback.store import FeedbackStore
+from tail_lab.lake.blob_store import BlobStore
 from tail_lab.lake.store import DeltaLakeStore, LakeStore
 
 
@@ -58,6 +60,12 @@ class Settings(BaseSettings):
         default=None, validation_alias="AWS_SECRET_ACCESS_KEY"
     )
 
+    #: Bearer token gating GET /api/feedback and POST /api/feedback/{id}/resolve
+    #: (env: TAIL_LAB_FEEDBACK_TOKEN). Unset (the default, e.g. in CI/local
+    #: dev) means those routes 404 rather than advertise themselves — see
+    #: tail_lab.api.feedback_routes.
+    feedback_token: str | None = None
+
 
 def get_settings() -> Settings:
     return Settings()
@@ -70,17 +78,33 @@ def get_lake_store(settings: Settings | None = None) -> LakeStore:
     freshly loaded :class:`Settings` if omitted).
     """
     settings = settings or get_settings()
+    root, storage_options = _lake_root_and_storage_options(settings)
+    return DeltaLakeStore(root, storage_options=storage_options)
 
+
+def get_feedback_store(settings: Settings | None = None) -> FeedbackStore:
+    """Construct the :class:`~tail_lab.feedback.store.FeedbackStore`, rooted
+    at the same local directory / Tigris bucket ``get_lake_store`` uses (a
+    ``BlobStore`` under ``ops/feedback/`` rather than a Delta table — see
+    ``tail_lab.lake.blob_store``)."""
+    settings = settings or get_settings()
+    root, storage_options = _lake_root_and_storage_options(settings)
+    return FeedbackStore(BlobStore(root, storage_options=storage_options))
+
+
+def _lake_root_and_storage_options(
+    settings: Settings,
+) -> tuple[Path | str, dict[str, str] | None]:
+    """The one place ``TAIL_LAB_LAKE_BACKEND`` is resolved into a concrete
+    root + ``storage_options`` pair — shared by :func:`get_lake_store` and
+    :func:`get_feedback_store` so the two storage clients built on top of it
+    (Delta tables, JSON blobs) always agree on where "the lake" is."""
     if settings.lake_backend == "local":
-        return _local_lake_store(settings)
-    return _tigris_lake_store(settings)
+        return settings.lake_root, None
+    return _tigris_root_and_storage_options(settings)
 
 
-def _local_lake_store(settings: Settings) -> LakeStore:
-    return DeltaLakeStore(settings.lake_root)
-
-
-def _tigris_lake_store(settings: Settings) -> LakeStore:
+def _tigris_root_and_storage_options(settings: Settings) -> tuple[str, dict[str, str]]:
     missing = [
         name
         for name, value in [
@@ -115,4 +139,4 @@ def _tigris_lake_store(settings: Settings) -> LakeStore:
         # agent / `make ingest-vix`), never concurrent (docs/adr/0013).
         "AWS_S3_ALLOW_UNSAFE_RENAME": "true",
     }
-    return DeltaLakeStore(f"s3://{settings.s3_bucket}", storage_options=storage_options)
+    return f"s3://{settings.s3_bucket}", storage_options

@@ -14,6 +14,7 @@ from fastapi import Depends, FastAPI, HTTPException, Query, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
+from tail_lab.api.feedback_routes import router as feedback_router
 from tail_lab.api.schemas import HealthResponse, VixStretchResponse
 from tail_lab.config import get_lake_store as _get_configured_lake_store
 from tail_lab.config import get_settings
@@ -25,9 +26,13 @@ app = FastAPI(title="tail-lab API")
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
-    allow_methods=["GET"],
+    # POST for the feedback window's public write endpoint
+    # (api/feedback_routes.py); everything else the dashboard calls is GET.
+    allow_methods=["GET", "POST"],
     allow_headers=["*"],
 )
+
+app.include_router(feedback_router)
 
 
 @app.middleware("http")

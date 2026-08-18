@@ -56,6 +56,8 @@ Full detail in `docs/STANDARDS.md`. Headline: point-in-time correctness enforced
 
 The initial setup is **end-state documentation + a deployed walking skeleton** (`docs/adr/0011`): one data source (VIX, keyless) ingested bronze→silver→gold through the lakehouse, one computed metric, one dashboard tile reading it — paper-thin but **complete, typed, tested, CI-gated**, and deployable to Fly. It does almost nothing; it *proves every layer connects correctly* and gives the agent a concrete, correct pattern to extend. The agent's job is to grow this toward the end state one reviewed PR at a time.
 
+- **In-app feedback (`docs/adr/0014`).** A feedback panel on the dashboard lets Dio write the daily agent a note directly: a permanent **big-picture/goal** directive (never auto-resolved — read as always-on context every run until Dio retires it) or a transient **bug/issue** (the agent fixes and resolves it, then it drops off the list). The agent pulls `GET /api/feedback` (token-gated) at the start of every run per `docs/AGENT_MISSION.md`.
+
 ## Implementation notes (v1 deviations)
 
 - **VIX source is Yahoo Finance's public chart JSON** (`query1.finance.yahoo.com/v8/finance/chart/%5EVIX`), keyless — *not* the Stooq CSV first considered, which now serves a JavaScript anti-bot challenge to plain HTTP clients. Both are keyless; Yahoo's still returns clean JSON. Per-dataset source choices live in `docs/DATA_CONTRACTS.md`.

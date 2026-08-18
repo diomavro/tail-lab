@@ -12,9 +12,11 @@ name: Daily platform agent
 # data), so it is allowed shell + file tools to do real dev work; the leash is
 # CI-on-PR + human merge, not a tool sandbox.
 #
-# Needs the CLAUDE_CODE_OAUTH_TOKEN secret. Deliberately does NOT receive
-# FRED_API_KEY or any data/deploy credential — code tasks don't need them
-# (least privilege).
+# Needs the CLAUDE_CODE_OAUTH_TOKEN secret, plus TAIL_LAB_FEEDBACK_TOKEN (the
+# one exception to "no data credentials" below — a read-only pull of Dio's
+# in-app feedback plus the ability to resolve issues it fixes; see
+# docs/adr/0014). Deliberately does NOT receive FRED_API_KEY or any
+# data/deploy credential — code tasks don't need them (least privilege).
 
 on:
   schedule:
@@ -59,6 +61,10 @@ jobs:
         uses: anthropics/claude-code-action@v1
         env:
           GH_TOKEN: ${{ github.token }}
+          # The ONE new secret this agent gets, alongside the OAuth token
+          # above — read-only feedback pull + resolving issues it fixes.
+          # Deliberately NOT FRED/AWS/deploy creds (least privilege).
+          TAIL_LAB_FEEDBACK_TOKEN: ${{ secrets.TAIL_LAB_FEEDBACK_TOKEN }}
         with:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           claude_args: '--allowedTools Bash,Read,Write,Edit,Grep,Glob'
@@ -72,20 +78,40 @@ jobs:
 
             Today's run, precisely:
 
-            1. Read `docs/AGENT_MISSION.md`, `README.md`, `ARCHITECTURE.md`, `docs/STANDARDS.md`,
+            1. Before anything else, pull your standing directives and open issues:
+                 curl -s -H "Authorization: Bearer $TAIL_LAB_FEEDBACK_TOKEN" \
+                   https://tail-lab.fly.dev/api/feedback
+               (If `TAIL_LAB_FEEDBACK_TOKEN` is unset or the call fails, treat it as "nothing
+               pending" and continue — this is best-effort context, not a blocker.) The response
+               has two lists, each with a different lifecycle:
+                 - `standing` (`kind: "big_picture"`) — Dio's permanent goal/design directives.
+                   Treat EVERY one as always-on context for this entire run, the same weight as
+                   `README.md`/`docs/END_STATE.md`. NEVER resolve one yourself — only Dio does,
+                   from the dashboard or by calling resolve himself. They stay open forever until
+                   he retires them.
+                 - `issues` (`kind: "issue"`) — transient bug/small-fix notes. If one clearly fits
+                   this run's scope and value bar, prefer it over the next `AGENT_TODO.md` item and
+                   say so in the PR description; if you fix it, resolve it in the SAME run via
+                     curl -s -X POST -H "Authorization: Bearer $TAIL_LAB_FEEDBACK_TOKEN" \
+                       https://tail-lab.fly.dev/api/feedback/<id>/resolve
+                   so it drops out of the open list. If an issue needs a human decision or a
+                   constitution change, leave it open (do NOT resolve it) and say why in the PR
+                   body or as a note — resolving is a claim that it's actually fixed.
+            2. Read `docs/AGENT_MISSION.md`, `README.md`, `ARCHITECTURE.md`, `docs/STANDARDS.md`,
                and `AGENT_TODO.md`.
-            2. Choose the SINGLE highest-value item from `AGENT_TODO.md` that (a) advances a
-               documented research question or measurably sharpens the put-buying cockpit, AND
-               (b) needs NO account, API key, or paid service. If an item needs a real-world
-               credential, skip it (that is the human's queue). If nothing clears the value bar
-               today, STOP and open nothing — proposing nothing is a valid, expected outcome.
-            3. Implement exactly that ONE item — minimal, faithful, extending the proven
+            3. Choose the SINGLE highest-value item — an open `issue` from step 1 that fits this
+               run, or otherwise the top of `AGENT_TODO.md` — that (a) advances a documented
+               research question or measurably sharpens the put-buying cockpit, AND (b) needs NO
+               account, API key, or paid service. If an item needs a real-world credential, skip it
+               (that is the human's queue). If nothing clears the value bar today, STOP and open
+               nothing — proposing nothing is a valid, expected outcome.
+            4. Implement exactly that ONE item — minimal, faithful, extending the proven
                walking-skeleton patterns (do NOT invent new architecture). Add tests that pin
                behavior against a known/independent value per `docs/STANDARDS.md`. Respect the
                module dependency rule (import-linter enforces it). Check the item off in
-               `AGENT_TODO.md`. If you discover a real-world/account blocker, append it to
-               `HUMAN_TODO.md` and stop that thread.
-            4. VALIDATE before proposing — run exactly what CI runs, and do not open a red PR:
+               `AGENT_TODO.md` (or resolve the feedback issue per step 1). If you discover a
+               real-world/account blocker, append it to `HUMAN_TODO.md` and stop that thread.
+            5. VALIDATE before proposing — run exactly what CI runs, and do not open a red PR:
                  ruff check src tests
                  ruff format --check src tests
                  mypy src/tail_lab
@@ -95,7 +121,7 @@ jobs:
                and, only if you touched the frontend:
                  cd frontend && npm run typecheck && npm run build
                If any of these fail, fix it or reduce the change until they pass. Never open a red PR.
-            5. Open ONE pull request from a branch named `agent/<short-slug>` using `gh pr create`.
+            6. Open ONE pull request from a branch named `agent/<short-slug>` using `gh pr create`.
                Do NOT merge it yourself — a separate `automerge` workflow squash-merges it
                automatically once CI is fully green, and leaves it open if any check fails. You
                never merge manually, never `--admin`/force a merge, never bypass a red check.
@@ -103,5 +129,6 @@ jobs:
                research question or cockpit improvement it serves), how you validated it, and the
                closing line "Auto-generated daily; auto-merges on green CI."
                NOTE: a `constitution-guard` check blocks auto-merge for any agent PR that edits the
-               constitution (docs/adr/**, ARCHITECTURE.md, docs/STANDARDS.md, README.md). Do NOT edit
-               those — if a change needs one, describe it in the PR body / propose an ADR for a human.
+               constitution (docs/adr/**, ARCHITECTURE.md, docs/STANDARDS.md, README.md,
+               docs/AGENT_MISSION.md, docs/END_STATE.md). Do NOT edit those — if a change needs one,
+               describe it in the PR body / propose an ADR for a human.

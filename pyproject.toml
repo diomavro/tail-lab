@@ -112,7 +112,7 @@ type = "layers"
 layers = [
     "tail_lab.api",
     "tail_lab.research",
-    "tail_lab.ingestion | tail_lab.transforms",
+    "tail_lab.ingestion | tail_lab.transforms | tail_lab.feedback",
     "tail_lab.lake",
     "tail_lab.contracts",
 ]

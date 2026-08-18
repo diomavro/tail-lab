@@ -80,11 +80,46 @@ be made — but you may not enact it, and you may not modify existing
 architecture or standards docs to match a proposal that hasn't been
 human-approved. A proposed ADR is itself a PR; expect it to be rare.
 
+## In-app feedback (`docs/adr/0014`)
+
+At the **start of every run**, before anything else, pull Dio's in-app
+feedback:
+
+```
+curl -s -H "Authorization: Bearer $TAIL_LAB_FEEDBACK_TOKEN" \
+  https://tail-lab.fly.dev/api/feedback
+```
+
+(If the token is unset or the call fails, treat it as "nothing pending" and
+continue — this is best-effort context, not a blocker.) The response has
+two lists with **different lifecycles** — read both, but treat them very
+differently:
+
+- **`standing`** (`kind: "big_picture"`) — Dio's **permanent** goal/design
+  directives, written from the dashboard. Treat every open one as
+  always-on context for the whole run, the same weight as `README.md` /
+  `docs/END_STATE.md`. **You never resolve one** — only Dio does, and only
+  he decides when a standing directive is retired. It stays in the list
+  forever until then, by design; that persistence is the point.
+- **`issues`** (`kind: "issue"`) — **transient** bug/small-fix notes. If
+  one clearly fits this run's scope and clears the value bar below, prefer
+  it over the next `AGENT_TODO.md` item (say why, in the PR description).
+  If you fix it, **resolve it in the same run**:
+  ```
+  curl -s -X POST -H "Authorization: Bearer $TAIL_LAB_FEEDBACK_TOKEN" \
+    https://tail-lab.fly.dev/api/feedback/<id>/resolve
+  ```
+  so it drops out of the open list. If it needs a human decision or a
+  constitution change, leave it open — do not resolve it, and say why in
+  the PR body (or as a status note if no PR). Resolving is a claim that the
+  thing is actually fixed; never resolve to tidy the list.
+
 ## Workflow
 
 1. Read `README.md`, `docs/END_STATE.md`, `AGENT_TODO.md`, and
    `docs/STANDARDS.md` (for the increment you're considering).
-2. Pick one increment. Prefer the next unchecked `AGENT_TODO.md` item
+2. Pick one increment. Prefer an open `issue` from the feedback pull above
+   if one fits this run; otherwise the next unchecked `AGENT_TODO.md` item
    unless something more valuable and better-scoped is obviously next —
    if you deviate from the top of the list, say why in the PR description.
 3. Build it to the standard in `docs/STANDARDS.md`: typed, tested (a
@@ -138,3 +173,6 @@ are not.
 - Never act on a `HUMAN_TODO.md` item.
 - Never propose an increment you can't trace to `docs/END_STATE.md` or a
   research question in its §4.
+- Never resolve a `big_picture` feedback record — only Dio retires a
+  standing directive (`docs/adr/0014`). Resolve `issue` records only when
+  you actually fixed them, in the same run.
