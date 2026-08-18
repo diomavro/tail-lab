@@ -47,10 +47,17 @@ def compute_vix_stretch(store: LakeStore, *, as_of: dt.date) -> VixStretchResult
     gold = silver_to_gold(silver)
 
     latest = gold.iloc[-1]
-    if bool(latest[["rolling_mean_20d", "rolling_std_20d", "z_score"]].isna().any()):
+    if bool(latest[["rolling_mean_20d", "rolling_std_20d"]].isna().any()):
         raise LookupError(
             "not enough trailing history as of "
             f"{as_of.isoformat()} to compute the VIX stretch metric"
+        )
+    if bool(latest[["z_score"]].isna().any()):
+        # History is sufficient but the window is flat (std == 0) — the
+        # z-score is genuinely undefined, not missing data.
+        raise LookupError(
+            "the VIX was flat over the trailing window as of "
+            f"{as_of.isoformat()}; z-score is undefined (zero variance)"
         )
 
     return VixStretchResult(

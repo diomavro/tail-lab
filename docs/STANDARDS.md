@@ -5,6 +5,18 @@ The agent's leash. Full detail behind the headline in `README.md`
 violation fails the build, not that it's a style preference. Nothing
 merges red.
 
+> **Note on paths — current vs end-state.** Some modules named below (e.g.
+> `lake/asof.py`, `transforms/validate.py`, `frontend/src/types.ts`) are
+> **end-state targets** the daily agent builds toward, not files that exist
+> in today's walking skeleton. Where a target isn't built yet, the same
+> guarantee already lives elsewhere: the point-in-time as-of primitive is
+> `lake/store.py::DeltaLakeStore.read_bronze_as_of`, and the
+> frontend's typed API client is `frontend/src/api/client.ts`. "Enforced in
+> CI" applies to what exists now — typing, ruff, import-linter, the pytest
+> suite (incl. the adversarial point-in-time + Hypothesis tests), and the
+> coverage floors. A rule that names a not-yet-built path becomes CI-enforced
+> when the agent builds that path.
+
 ---
 
 ## (a) Correctness
@@ -19,10 +31,10 @@ data **as it was known on the simulation date.**
   direct DuckDB query against silver/gold from backtest code, bypassing
   `asof.py`, is a bug even if it happens to produce a plausible number.
 - `asof.py`'s query primitive takes an explicit `as_of: date` (the
-  simulation clock) and returns only rows whose lakeFS commit — or,
-  equivalently, whose ingestion timestamp — predates it. Point-in-time
-  correctness is a property of the *read*, not of a filter applied after
-  the fact.
+  simulation clock) and returns only rows whose bronze snapshot — i.e.
+  whose ingestion timestamp — predates it (`DeltaLakeStore`,
+  `docs/adr/0012`, `docs/adr/0013`). Point-in-time correctness is a property of the *read*,
+  not of a filter applied after the fact.
 - **Adversarial tests are mandatory, not optional.** For every backtest
   code path, there must be a test that *tries to cheat* — constructs a
   scenario where future data would change the answer if leaked, runs the
@@ -70,10 +82,16 @@ by construction — e.g.:
 - All randomness (simulation paths, any stochastic backtest component) is
   seeded; the seed is a recorded parameter, not a hidden default.
 - Every result the cockpit displays, and every artifact a backtest run
-  produces, carries the **lakeFS commit** it read and the **code SHA**
-  that computed it. A result without both is not trustworthy and should
-  not be surfaced.
-- Given the same (lakeFS commit, code SHA, seed), a result must be
+  produces, carries the **bronze snapshot id(s)** it read
+  (`LakeStore.bronze_snapshot_id` — the ingest-date partition plus a
+  content hash, `docs/adr/0012`) and the **code SHA** that computed it. A
+  result without both is not trustworthy and should not be surfaced. Since
+  `docs/adr/0013`, bronze is a Delta table; the snapshot id's format is
+  unchanged, but the underlying Delta table's own version
+  (`DeltaTable(uri).version()`) is available as an additional debugging
+  aid — the snapshot id, not the raw Delta version, is still what a result
+  cites.
+- Given the same (snapshot id(s), code SHA, seed), a result must be
   re-runnable bit-for-bit. Non-determinism (unseeded randomness, wall-clock
   reads inside a backtest, unordered set/dict iteration affecting output)
   is a bug.
@@ -142,6 +160,7 @@ by construction — e.g.:
   every keystroke.
 - **CI runs the full gate on every PR:** ruff, mypy/tsc, import-linter,
   pytest (including the adversarial point-in-time tests and Hypothesis
-  properties), coverage thresholds, frontend build + vitest. **Nothing
+  properties), coverage thresholds, frontend typecheck + build (plus vitest
+  once a frontend test suite exists). **Nothing
   merges red** — this applies to the agent's PRs exactly as it applies to
   Dio's.

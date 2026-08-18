@@ -90,6 +90,7 @@ jobs:
                  mypy src/tail_lab
                  lint-imports
                  python -m pytest --cov=tail_lab --cov-report=term-missing
+                 coverage report --include="src/tail_lab/research/*,src/tail_lab/transforms/*" --fail-under=90
                and, only if you touched the frontend:
                  cd frontend && npm run typecheck && npm run build
                If any of these fail, fix it or reduce the change until they pass. Never open a red PR.

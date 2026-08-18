@@ -11,7 +11,7 @@ from tail_lab.ingestion.ohlcv import (
     parse_yahoo_chart_ohlcv,
     validate_and_quarantine,
 )
-from tail_lab.lake.store import LocalParquetLakeStore
+from tail_lab.lake.store import DeltaLakeStore
 
 
 def _synthetic_raw(
@@ -114,7 +114,7 @@ def test_dataset_id_is_one_per_symbol() -> None:
 
 
 def test_ingest_ohlcv_commits_bronze_and_quarantines_bad_rows(tmp_path: Any) -> None:
-    store = LocalParquetLakeStore(tmp_path)
+    store = DeltaLakeStore(tmp_path)
     raw = _synthetic_raw(
         opens=[100.0, -5.0, 102.0],
         highs=[105.0, 106.0, 106.0],
@@ -129,15 +129,20 @@ def test_ingest_ohlcv_commits_bronze_and_quarantines_bad_rows(tmp_path: Any) -> 
     assert result.valid_rows == 2
     assert result.quarantined_rows == 1
     assert result.quarantine_path is not None
-    assert result.quarantine_path.exists()
 
     bronze = store.read_bronze_as_of("ohlcv_aapl", ingest_date)
     assert len(bronze) == 2
     assert -5.0 not in bronze["open"].tolist()
 
+    # Quarantined rows are committed through the store (backend-agnostic —
+    # never a raw filesystem write), readable back through the same abstraction.
+    quarantined = store.read_bronze_as_of("ohlcv_aapl__quarantine", ingest_date)
+    assert len(quarantined) == 1
+    assert -5.0 in quarantined["open"].tolist()
+
 
 def test_ingest_ohlcv_keeps_symbols_in_separate_datasets(tmp_path: Any) -> None:
-    store = LocalParquetLakeStore(tmp_path)
+    store = DeltaLakeStore(tmp_path)
     raw = _synthetic_raw(
         opens=[100.0],
         highs=[105.0],

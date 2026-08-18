@@ -38,6 +38,9 @@ jobs:
       - name: pytest (with coverage)
         run: python -m pytest --cov=tail_lab --cov-report=term-missing --cov-report=xml
 
+      - name: coverage floors (research/ + transforms/ >= 90%, STANDARDS §e)
+        run: coverage report --include="src/tail_lab/research/*,src/tail_lab/transforms/*" --fail-under=90
+
   frontend:
     runs-on: ubuntu-latest
     defaults:

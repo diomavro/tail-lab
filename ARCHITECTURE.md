@@ -75,17 +75,14 @@ flowchart TB
         APIAPP["tail-lab API app<br/>FastAPI, serves /api/* and the built SPA"]
     end
 
-    LAKEFS[["lakeFS Cloud<br/>versions bronze/silver/gold"]]
-    OBJ[("Object storage<br/>Fly Tigris or Cloudflare R2, S3-compatible")]
+    OBJ[("Fly Tigris<br/>S3-compatible object storage<br/>bucket: tail-lab-lake")]
 
     REPO --> CI
     REPO --> CRON
-    CRON -- "opens a data PR or code PR<br/>(lakeFS data branch for data changes)" --> REPO
+    CRON -- "opens a code PR<br/>(data changes: immutable bronze writes,<br/>no data branch — docs/adr/0012)" --> REPO
     CI -- "gates every PR, nothing merges red" --> REPO
     REPO -- "human merges main, human deploys" --> APIAPP
-    APIAPP -- "DuckDB reads/writes via lakeFS" --> LAKEFS
-    LAKEFS --> OBJ
-    APIAPP -. "no direct object-storage access —<br/>always through lakeFS" .-> OBJ
+    APIAPP -- "DuckDB reads/delta-rs writes Delta tables<br/>(delta ext./S3, via lake/)" --> OBJ
 ```
 
 ## Backend — `src/tail_lab/`
@@ -121,14 +118,17 @@ src/tail_lab/
 │   │                         # manual unscheduled table.
 │   └── option_chains.py      # Forward-collected chains, narrow tradable set.
 │
-├── lake/                     # DuckDB + lakeFS glue. The ONLY place that
-│   │                         # talks to object storage or lakeFS.
-│   ├── duckdb_engine.py      # Connection/session management.
-│   ├── lakefs_client.py      # Repo/branch/commit wrappers; "data branch"
-│   │                         # helpers the agent's data PRs use.
-│   ├── bronze.py             # Append-only writer, partitioned by
-│   │                         # source_id/ingested_date. Never overwritten.
-│   ├── silver.py             # Typed, validated read/write.
+├── lake/                     # DuckDB + Delta Lake (delta-rs) + object-storage
+│   │                         # glue. The ONLY place that talks to object
+│   │                         # storage (docs/adr/0012, docs/adr/0013).
+│   ├── store.py              # LakeStore (the abstract interface) +
+│   │                         # DeltaLakeStore — the ONE implementation
+│   │                         # (as-of resolution, immutable-bronze,
+│   │                         # medallion path scheme, content-hash snapshot
+│   │                         # id), rooted at either a local directory
+│   │                         # (default) or s3://tail-lab-lake on Fly
+│   │                         # Tigris, selected via TAIL_LAB_LAKE_BACKEND
+│   │                         # (tail_lab.config.get_lake_store).
 │   └── asof.py               # THE as-of query primitive. Every backtest
 │                              # read goes through this module — see
 │                              # docs/STANDARDS.md and docs/adr/0009.
@@ -234,10 +234,12 @@ comparison, conventional-strategy tab) each get their own component under
 
 ## The medallion lakehouse
 
-- **Bronze — immutable raw.** Exactly what an adapter fetched, timestamped,
-  partitioned by `source_id`/ingestion date. **Never overwritten, never
-  edited in place** — a re-fetch or a correction is a new bronze write, not
-  a mutation. This is what makes point-in-time reads possible at all.
+- **Bronze — immutable raw.** Exactly what an adapter fetched, one Delta
+  table per dataset, **partitioned by `ingest_date`**. **Never overwritten,
+  never edited in place** — a re-fetch or a correction is a new
+  `ingest_date` partition (a new Delta commit), never a mutation; re-ingesting
+  an `ingest_date` that already has a partition is a no-op. This is what
+  makes point-in-time reads possible at all.
 - **Silver — validated, typed.** Bronze rows pass through the
   `contracts/` schema; rows that fail are quarantined (written aside with
   the validation error attached), never silently dropped and never allowed
@@ -247,12 +249,19 @@ comparison, conventional-strategy tab) each get their own component under
   `transforms/marts/` for a specific consumer: the sensitivity leaderboard,
   the OOM-put candidate list, the regime panel. `api/` reads gold (or, for
   simple cases, silver) — never bronze.
-- **Engine:** DuckDB, embedded, reading/writing through lakeFS-versioned
-  object storage — no separate database server to run or deploy.
-- **Versioning:** lakeFS Cloud on top of S3-compatible object storage (Fly
-  Tigris or Cloudflare R2). The agent's data-producing PRs work on a lakeFS
-  **data branch** ("data PR") rather than touching the main branch of data
-  directly. See `docs/adr/0005`, `docs/adr/0006`.
+- **Engine:** DuckDB, embedded, reading Delta tables directly on object
+  storage via its `delta` extension (`delta_scan()`) — no separate database
+  server to run or deploy, and no versioning service between the app and
+  the bucket.
+- **Storage format/versioning:** Delta Lake tables (delta-rs — no Spark, no
+  JVM) on Fly Tigris (S3-compatible object storage, bucket `tail-lab-lake`)
+  — no lakeFS, no git-style data branching. Point-in-time correctness and
+  bronze immutability are implemented once, in application code
+  (`DeltaLakeStore`, the same class rooted at either a local directory or
+  the Tigris bucket), on top of Delta's ACID commits and native time
+  travel; every result cites a content-hash **snapshot id** instead of a
+  lakeFS commit or a raw Delta version. See `docs/adr/0005`, `docs/adr/0006`,
+  `docs/adr/0012`, `docs/adr/0013`.
 
 ## Hard rules — do not deviate
 
@@ -265,13 +274,15 @@ human-approved ADR — the agent may propose one, never enact it
    backtest reads data only as of its simulation clock, via
    `lake/asof.py`. Tests that try to cheat (read tomorrow's data today)
    must fail. (`docs/adr/0009`)
-2. **Bronze is never overwritten.** Raw ingested data is immutable,
-   versioned by lakeFS commit history. Corrections are new writes.
+2. **Bronze is never overwritten.** Raw ingested data is immutable — a
+   correction is a new bronze snapshot, never an edit in place
+   (`docs/adr/0012`).
 3. **The agent never trades and never touches money or credentials.** It
    improves the platform only. There is a permanent wall between
    research/tooling and execution. (`docs/adr/0007`)
-4. **Reproducibility.** Every result carries the lakeFS commit + code SHA
-   that produced it and can be re-run bit-for-bit.
+4. **Reproducibility.** Every result carries the bronze snapshot id
+   (`docs/adr/0012`) + code SHA that produced it and can be re-run
+   bit-for-bit.
 5. **Two backlogs, kept separate.** The agent manages `AGENT_TODO.md`.
    Anything needing an account, API key, or money goes to `HUMAN_TODO.md`
    and is never attempted by the agent. (`docs/adr/0002`)

@@ -91,10 +91,16 @@ human-approved. A proposed ADR is itself a PR; expect it to be rare.
    safe if it touches backtest data paths, coverage floor met.
 4. **Code changes:** open a normal PR against `main`, gated by CI. Never
    push directly to `main`. Never merge your own PR. Never deploy.
-5. **Data changes:** work on a **lakeFS data branch** — a "data PR" — so
-   the diff to bronze/silver/gold is reviewable and versioned the same way
-   a code diff is. Never write directly to a lakeFS branch a human hasn't
-   designated for agent data changes.
+5. **Data changes:** there is no data-branching layer to stage them on
+   (`docs/adr/0012`) — bronze writes go straight through `LakeStore`, which
+   is safe by construction: a write is either a new immutable snapshot or a
+   no-op (an existing snapshot is never overwritten), so there is no
+   destructive diff a human needs to approve before it lands. What still
+   needs review is the **code** that produces a data change (a new
+   ingestion adapter, a backfill script) — that's an ordinary code PR like
+   any other. You do not currently have data-source credentials in this
+   workflow, so in practice your data-shaped increments are the adapter
+   code itself, not a live ingestion run.
 6. Update `AGENT_TODO.md` in the same PR: check off what you did, add
    anything you learned that belongs on the backlog.
 7. If nothing clears the value bar, do nothing — no PR, no filler commit.

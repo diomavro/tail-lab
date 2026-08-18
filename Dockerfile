@@ -47,6 +47,8 @@ USER taillab
 
 EXPOSE 8080
 
-ENV TAIL_LAB_LAKE_ROOT=/data
+# The package is pip-installed into site-packages, so main.py's relative
+# fallback can't find the SPA — point it at where dist was copied.
+ENV TAIL_LAB_STATIC_DIR=/app/frontend/dist
 
 CMD ["uvicorn", "tail_lab.api.main:app", "--host", "0.0.0.0", "--port", "8080", "--proxy-headers"]

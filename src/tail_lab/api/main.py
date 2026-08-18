@@ -6,16 +6,18 @@ The one dashboard tile (frontend/) fetches ``GET /api/vix/stretch``.
 from __future__ import annotations
 
 import datetime as dt
+from collections.abc import Awaitable, Callable
 from functools import lru_cache
 from pathlib import Path
 
-from fastapi import Depends, FastAPI, HTTPException, Query
+from fastapi import Depends, FastAPI, HTTPException, Query, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
 from tail_lab.api.schemas import HealthResponse, VixStretchResponse
+from tail_lab.config import get_lake_store as _get_configured_lake_store
 from tail_lab.config import get_settings
-from tail_lab.lake.store import LakeStore, LocalParquetLakeStore
+from tail_lab.lake.store import LakeStore
 from tail_lab.research.vix_stretch import compute_vix_stretch
 
 app = FastAPI(title="tail-lab API")
@@ -28,9 +30,21 @@ app.add_middleware(
 )
 
 
+@app.middleware("http")
+async def security_headers(
+    request: Request, call_next: Callable[[Request], Awaitable[Response]]
+) -> Response:
+    """Defense-in-depth response headers on every response (API + SPA)."""
+    response = await call_next(request)
+    response.headers["X-Content-Type-Options"] = "nosniff"
+    response.headers["X-Frame-Options"] = "DENY"
+    response.headers["Referrer-Policy"] = "no-referrer"
+    return response
+
+
 @lru_cache(maxsize=1)
 def get_lake_store() -> LakeStore:
-    return LocalParquetLakeStore(get_settings().lake_root)
+    return _get_configured_lake_store()
 
 
 @app.get("/api/health")
@@ -43,7 +57,9 @@ def vix_stretch(
     as_of: dt.date | None = Query(default=None, description="Simulation date; defaults to today."),
     store: LakeStore = Depends(get_lake_store),
 ) -> VixStretchResponse:
-    resolved_as_of = as_of or dt.date.today()
+    # UTC, not local: the as-of clock must agree with the ingest clock
+    # (ingestion stamps snapshots in UTC) or point-in-time reads mismatch.
+    resolved_as_of = as_of or dt.datetime.now(dt.UTC).date()
     try:
         result = compute_vix_stretch(store, as_of=resolved_as_of)
     except LookupError as exc:
@@ -55,6 +71,6 @@ def vix_stretch(
 # the sibling tip_app pattern) when frontend/dist exists. Absent in tests
 # and local `make api` runs against an unbuilt frontend — routes above are
 # registered first so /api/* always takes precedence.
-_dist_dir = Path(__file__).resolve().parents[3] / "frontend" / "dist"
+_dist_dir = get_settings().static_dir or (Path(__file__).resolve().parents[3] / "frontend" / "dist")
 if _dist_dir.is_dir():
     app.mount("/", StaticFiles(directory=_dist_dir, html=True), name="spa")

@@ -11,7 +11,7 @@ VENV := .venv
 PY := env -u PYTHONPATH $(VENV)/bin/python
 PIP := env -u PYTHONPATH $(VENV)/bin/pip
 
-.PHONY: setup lint format typecheck import-lint test check ingest-vix ingest-ohlcv api frontend clean
+.PHONY: setup lint format typecheck import-lint test check cov-floors ingest-vix ingest-ohlcv api frontend clean
 
 help:
 	@echo "Targets:"
@@ -50,14 +50,20 @@ import-lint:
 test:
 	env -u PYTHONPATH $(VENV)/bin/python -m pytest --cov=tail_lab --cov-report=term-missing
 
-check: lint typecheck import-lint test
+# STANDARDS §e: >=90% on the correctness-critical layers (research/, transforms/).
+# Reuses the .coverage data written by `test`, so run it after `test`.
+cov-floors:
+	env -u PYTHONPATH $(VENV)/bin/coverage report \
+		--include="src/tail_lab/research/*,src/tail_lab/transforms/*" --fail-under=90
+
+check: lint typecheck import-lint test cov-floors
 
 ingest-vix:
-	env -u PYTHONPATH $(VENV)/bin/python -c "from tail_lab.ingestion.vix import ingest_vix; from tail_lab.lake.store import LocalParquetLakeStore; from tail_lab.config import get_settings; r = ingest_vix(LocalParquetLakeStore(get_settings().lake_root)); print(f'committed {r.valid_rows} rows -> {r.bronze_path} ({r.quarantined_rows} quarantined)')"
+	env -u PYTHONPATH $(VENV)/bin/python -c "from tail_lab.ingestion.vix import ingest_vix; from tail_lab.config import get_lake_store; r = ingest_vix(get_lake_store()); print(f'committed {r.valid_rows} rows -> {r.bronze_path} ({r.quarantined_rows} quarantined)')"
 
 SYMBOL ?= AAPL
 ingest-ohlcv:
-	env -u PYTHONPATH $(VENV)/bin/python -c "from tail_lab.ingestion.ohlcv import ingest_ohlcv; from tail_lab.lake.store import LocalParquetLakeStore; from tail_lab.config import get_settings; r = ingest_ohlcv(LocalParquetLakeStore(get_settings().lake_root), '$(SYMBOL)'); print(f'committed {r.valid_rows} rows -> {r.bronze_path} ({r.quarantined_rows} quarantined)')"
+	env -u PYTHONPATH $(VENV)/bin/python -c "from tail_lab.ingestion.ohlcv import ingest_ohlcv; from tail_lab.config import get_lake_store; r = ingest_ohlcv(get_lake_store(), '$(SYMBOL)'); print(f'committed {r.valid_rows} rows -> {r.bronze_path} ({r.quarantined_rows} quarantined)')"
 
 api:
 	env -u PYTHONPATH $(VENV)/bin/uvicorn tail_lab.api.main:app --reload --port 8000

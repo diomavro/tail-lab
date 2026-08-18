@@ -28,7 +28,6 @@ from __future__ import annotations
 
 import datetime as dt
 from dataclasses import dataclass
-from pathlib import Path
 from typing import Any
 
 import pandas as pd
@@ -45,10 +44,10 @@ YAHOO_CHART_URL_TEMPLATE = "https://query1.finance.yahoo.com/v8/finance/chart/{s
 class IngestResult:
     """Outcome of one ingestion run: what was committed vs. quarantined."""
 
-    bronze_path: Path
+    bronze_path: str
     valid_rows: int
     quarantined_rows: int
-    quarantine_path: Path | None
+    quarantine_path: str | None
 
 
 def dataset_id(symbol: str) -> str:
@@ -161,17 +160,23 @@ def ingest_ohlcv(
     payload instead of hitting the network; ``fetch_ohlcv_raw`` is called
     only when ``raw`` is omitted.
     """
-    ingest_date = ingest_date or dt.date.today()
+    # UTC, not local: snapshot dates must be timezone-consistent with the
+    # as-of clock the API/backtest read with (matches vix.py; docs/adr/0009).
+    ingest_date = ingest_date or dt.datetime.now(dt.UTC).date()
     payload = raw if raw is not None else fetch_ohlcv_raw(symbol)
     parsed = parse_yahoo_chart_ohlcv(symbol, payload)
     valid, quarantined = validate_and_quarantine(parsed)
 
     bronze_path = store.write_bronze(dataset_id(symbol), ingest_date, valid)
 
-    quarantine_path: Path | None = None
+    # Quarantined rows go through the store as an immutable bronze snapshot
+    # under a sibling dataset name — never a raw filesystem write (matches
+    # vix.py; the lake is the only thing allowed to touch storage).
+    quarantine_path: str | None = None
     if not quarantined.empty:
-        quarantine_path = bronze_path.parent / "quarantine.parquet"
-        quarantined.to_parquet(quarantine_path, index=False)
+        quarantine_path = store.write_bronze(
+            f"{dataset_id(symbol)}__quarantine", ingest_date, quarantined
+        )
 
     return IngestResult(
         bronze_path=bronze_path,
