@@ -34,8 +34,16 @@ import pandas as pd
 import requests
 from pandera.errors import SchemaErrors
 
-from tail_lab.contracts.ohlcv import OhlcvSchema
+from tail_lab.contracts.ohlcv import OhlcvSchema, dataset_id
 from tail_lab.lake.store import LakeStore
+
+__all__ = [
+    "IngestResult",
+    "dataset_id",
+    "fetch_ohlcv_raw",
+    "ingest_ohlcv",
+    "parse_yahoo_chart_ohlcv",
+]
 
 YAHOO_CHART_URL_TEMPLATE = "https://query1.finance.yahoo.com/v8/finance/chart/{symbol}"
 
@@ -48,11 +56,6 @@ class IngestResult:
     valid_rows: int
     quarantined_rows: int
     quarantine_path: str | None
-
-
-def dataset_id(symbol: str) -> str:
-    """The bronze dataset id for ``symbol`` — one dataset per symbol."""
-    return f"ohlcv_{symbol.lower()}"
 
 
 def fetch_ohlcv_raw(

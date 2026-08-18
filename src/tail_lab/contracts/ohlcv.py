@@ -53,3 +53,13 @@ class OhlcvRowSchema(pa.DataFrameModel):
 
 
 OhlcvSchema = OhlcvRowSchema.to_schema()
+
+
+def dataset_id(symbol: str) -> str:
+    """The bronze dataset id for ``symbol`` — one dataset per symbol.
+
+    Part of the OHLCV dataset's contract (its lake identity), so it lives in
+    this leaf layer where both the writer (``ingestion``) and the readers
+    (``research``) can import it — ``research`` may not import ``ingestion``
+    (``pyproject.toml`` forbidden contract / ``ARCHITECTURE.md``)."""
+    return f"ohlcv_{symbol.lower()}"
