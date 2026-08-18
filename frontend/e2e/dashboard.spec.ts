@@ -28,8 +28,12 @@ test('VIX stretch tile renders a z-score with no console errors', async ({ page 
   // The z-score renders as e.g. "-0.73σ" or "1.20σ".
   await expect(page.locator('.tile-zscore')).toHaveText(/^-?\d+\.\d{2}σ$/, { timeout: 30_000 })
 
-  // The stat rows (date/close/rolling mean/rolling std) all have values.
-  await expect(page.locator('.tile dd')).toHaveCount(4)
+  // The as-of date is surfaced prominently under the heading (not buried in
+  // the stat list) so the reader always knows how stale the reading is.
+  await expect(page.locator('.tile-asof')).toHaveText(/^as of \d{4}-\d{2}-\d{2}$/)
+
+  // The remaining stat rows (close/rolling mean/rolling std) all have values.
+  await expect(page.locator('.tile dd')).toHaveCount(3)
 
   expect(consoleErrors).toEqual([])
 })

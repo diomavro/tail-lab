@@ -27,10 +27,9 @@ export function VixStretchTile() {
       {state.status === 'error' && <p className="tile-error">{state.message}</p>}
       {state.status === 'ready' && (
         <>
+          <p className="tile-asof">as of {state.data.date}</p>
           <p className="tile-zscore">{state.data.z_score.toFixed(2)}σ</p>
           <dl>
-            <dt>Date</dt>
-            <dd>{state.data.date}</dd>
             <dt>Close</dt>
             <dd>{state.data.close.toFixed(2)}</dd>
             <dt>20d mean</dt>
