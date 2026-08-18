@@ -58,7 +58,7 @@ cov-floors:
 check: lint typecheck import-lint test cov-floors
 
 ingest-vix:
-	env -u PYTHONPATH $(VENV)/bin/python -c "from tail_lab.ingestion.vix import ingest_vix; from tail_lab.lake.store import LocalParquetLakeStore; from tail_lab.config import get_settings; r = ingest_vix(LocalParquetLakeStore(get_settings().lake_root)); print(f'committed {r.valid_rows} rows -> {r.bronze_path} ({r.quarantined_rows} quarantined)')"
+	env -u PYTHONPATH $(VENV)/bin/python -c "from tail_lab.ingestion.vix import ingest_vix; from tail_lab.config import get_lake_store; r = ingest_vix(get_lake_store()); print(f'committed {r.valid_rows} rows -> {r.bronze_path} ({r.quarantined_rows} quarantined)')"
 
 api:
 	env -u PYTHONPATH $(VENV)/bin/uvicorn tail_lab.api.main:app --reload --port 8000

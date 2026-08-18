@@ -41,6 +41,21 @@ def test_compute_vix_stretch_end_to_end(tmp_path: Path) -> None:
     assert result.z_score == pytest.approx((expected_close - expected_mean) / expected_std)
 
 
+def test_compute_vix_stretch_flat_window_is_undefined_not_missing(tmp_path: Path) -> None:
+    """A flat trailing window (std == 0) makes the z-score genuinely undefined
+    — distinct from insufficient history. The error must say so, not misdiagnose."""
+    store = LocalParquetLakeStore(tmp_path)
+    ingest_date = dt.date(2026, 3, 1)
+    n = STRETCH_WINDOW + 2
+    df = pd.DataFrame(
+        {"date": pd.date_range(end=ingest_date, periods=n, freq="D"), "close": [20.0] * n}
+    )
+    store.write_bronze("vix", ingest_date, df)
+
+    with pytest.raises(LookupError, match="zero variance"):
+        compute_vix_stretch(store, as_of=ingest_date)
+
+
 def test_compute_vix_stretch_respects_no_look_ahead(tmp_path: Path) -> None:
     """Point-in-time: a stretch computed as-of an earlier ingest date must
     never reflect data from a later ingest."""
