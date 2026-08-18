@@ -1,0 +1,47 @@
+name: Auto-merge agent PRs
+
+# Merges the daily agent's PRs automatically once CI is fully green — no human
+# in the loop for ordinary increments. Fires when the CI workflow completes;
+# only acts on `agent/*` branches, and only when CI *succeeded* (so a failed
+# constitution-guard / test / lint job leaves the PR open for a human). This
+# is the free-plan stand-in for branch-protection-gated auto-merge (private
+# repos need GitHub Pro for required-status-check protection).
+
+on:
+  workflow_run:
+    workflows: ["CI"]
+    types: [completed]
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  merge:
+    # Only agent branches, only when the whole CI run passed.
+    if: >
+      github.event.workflow_run.conclusion == 'success' &&
+      startsWith(github.event.workflow_run.head_branch, 'agent/')
+    runs-on: ubuntu-latest
+    steps:
+      - name: Squash-merge the agent PR
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BRANCH: ${{ github.event.workflow_run.head_branch }}
+          REPO: ${{ github.repository }}
+        run: |
+          pr=$(gh pr list --repo "$REPO" --head "$BRANCH" --state open \
+                 --json number -q '.[0].number')
+          if [ -z "$pr" ]; then
+            echo "No open PR for $BRANCH — nothing to merge."
+            exit 0
+          fi
+          # Belt-and-suspenders: the constitution-guard CI job already fails
+          # (→ this workflow never runs) for such PRs, but re-check here too.
+          files=$(gh pr view "$pr" --repo "$REPO" --json files -q '.files[].path')
+          if echo "$files" | grep -qE '^docs/adr/|^ARCHITECTURE\.md$|^docs/STANDARDS\.md$|^README\.md$|^docs/AGENT_MISSION\.md$|^docs/END_STATE\.md$'; then
+            echo "PR #$pr edits the constitution — leaving it for a human."
+            exit 0
+          fi
+          echo "Merging PR #$pr (CI green)…"
+          gh pr merge "$pr" --repo "$REPO" --squash --delete-branch

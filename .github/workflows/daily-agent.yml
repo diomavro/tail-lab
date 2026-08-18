@@ -95,11 +95,10 @@ jobs:
                and, only if you touched the frontend:
                  cd frontend && npm run typecheck && npm run build
                If any of these fail, fix it or reduce the change until they pass. Never open a red PR.
-            5. Open ONE pull request from a branch named `agent/<short-slug>` using `gh pr create`,
-               then enable auto-merge on it: `gh pr merge --auto --squash --delete-branch`.
-               CI is the gate: the PR merges automatically once ALL required checks pass, and stays
-               open (unmerged) if any check fails. You never merge manually, never `--admin`/force a
-               merge, never bypass a red check.
+            5. Open ONE pull request from a branch named `agent/<short-slug>` using `gh pr create`.
+               Do NOT merge it yourself — a separate `automerge` workflow squash-merges it
+               automatically once CI is fully green, and leaves it open if any check fails. You
+               never merge manually, never `--admin`/force a merge, never bypass a red check.
                Title: a one-line summary of the increment. Body: what you changed and WHY (which
                research question or cockpit improvement it serves), how you validated it, and the
                closing line "Auto-generated daily; auto-merges on green CI."

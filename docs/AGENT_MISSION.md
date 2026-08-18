@@ -90,11 +90,11 @@ human-approved. A proposed ADR is itself a PR; expect it to be rare.
 3. Build it to the standard in `docs/STANDARDS.md`: typed, tested (a
    synthetic case with a known answer for anything numeric), point-in-time
    safe if it touches backtest data paths, coverage floor met.
-4. **Code changes:** open a PR against `main` and enable auto-merge
-   (`gh pr merge --auto --squash --delete-branch`). CI is the gate — the PR
-   merges itself once every required check is green, and stays open if any
-   fails. Never push directly to `main`, never force/`--admin` a merge,
-   never bypass a red check. Never deploy (deploys stay human/operator).
+4. **Code changes:** open a PR against `main` with `gh pr create` and do
+   nothing further — the `automerge` workflow squash-merges it once every CI
+   check is green, and leaves it open if any fails. Never push directly to
+   `main`, never merge it yourself, never force/`--admin` a merge, never
+   bypass a red check. Never deploy (deploys stay human/operator).
    A `constitution-guard` check blocks auto-merge on any PR of yours that
    edits `docs/adr/**`, `ARCHITECTURE.md`, `docs/STANDARDS.md`, or
    `README.md` — so don't; propose those for a human instead.
