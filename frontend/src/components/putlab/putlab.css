@@ -1,0 +1,530 @@
+/* Put Lab design system, ported from the approved mock (put-lab.html).
+   Every token and rule is scoped under .putlab-root so it can't leak onto
+   the rest of the SPA (the VIX tile, feedback panel, etc. keep App.css). */
+
+.putlab-root {
+  --ink: #f7f8fb;
+  --surface: #ffffff;
+  --surface-2: #f0f2f7;
+  --line: #e2e6ef;
+  --line-strong: #cbd2e0;
+  --text: #141824;
+  --muted: #5c6577;
+  --faint: #8a94a8;
+  --accent: #c77800;
+  --accent-soft: #ffe6b0;
+  --gain: #1e9e64;
+  --loss: #d23b49;
+  --cool: #2ca6a4;
+  --warm: #e08a1e;
+  --hot: #d23b49;
+  --grid: #eaedf4;
+  --shadow: 0 1px 2px rgba(16, 22, 40, 0.06), 0 8px 30px rgba(16, 22, 40, 0.06);
+  color-scheme: light;
+
+  display: block;
+  background: var(--ink);
+  color: var(--text);
+  font-family: system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+}
+
+@media (prefers-color-scheme: dark) {
+  .putlab-root {
+    --ink: #0a0d13;
+    --surface: #131824;
+    --surface-2: #1b2231;
+    --line: #273043;
+    --line-strong: #38445e;
+    --text: #e6eaf2;
+    --muted: #8a94a8;
+    --faint: #6a7488;
+    --accent: #ffb020;
+    --accent-soft: #3a2f14;
+    --gain: #3dd68c;
+    --loss: #f0616d;
+    --cool: #35c7c4;
+    --warm: #ffb020;
+    --hot: #f0616d;
+    --grid: #1b2231;
+    --shadow: 0 1px 2px rgba(0, 0, 0, 0.4), 0 12px 40px rgba(0, 0, 0, 0.35);
+    color-scheme: dark;
+  }
+}
+
+.putlab-root * {
+  box-sizing: border-box;
+}
+
+.putlab-root .mono {
+  font-family: ui-monospace, 'JetBrains Mono', 'SF Mono', Menlo, 'Cascadia Code', monospace;
+  font-variant-numeric: tabular-nums;
+}
+.putlab-root .wrap {
+  max-width: 1160px;
+  margin: 0 auto;
+  padding: clamp(18px, 3vw, 40px);
+}
+
+.putlab-root .eyebrow {
+  text-transform: uppercase;
+  letter-spacing: 0.14em;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--faint);
+}
+
+/* ---------- header ---------- */
+.putlab-root header.top {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 20px;
+  flex-wrap: wrap;
+  margin-bottom: 26px;
+}
+.putlab-root .brand {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+}
+.putlab-root .glyph {
+  width: 42px;
+  height: 42px;
+  border-radius: 11px;
+  flex: none;
+  background:
+    radial-gradient(120% 120% at 30% 20%, var(--accent) 0%, transparent 55%),
+    linear-gradient(160deg, var(--surface-2), var(--surface));
+  border: 1px solid var(--line-strong);
+  display: grid;
+  place-items: center;
+  box-shadow: var(--shadow);
+}
+.putlab-root .glyph svg {
+  width: 24px;
+  height: 24px;
+}
+.putlab-root h2 {
+  font-size: clamp(22px, 3.2vw, 30px);
+  margin: 0;
+  letter-spacing: -0.02em;
+  line-height: 1.05;
+  text-wrap: balance;
+}
+.putlab-root .sub {
+  color: var(--muted);
+  font-size: 13.5px;
+  margin-top: 3px;
+  max-width: 52ch;
+}
+.putlab-root .top-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.putlab-root .pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 11.5px;
+  font-weight: 600;
+  padding: 6px 11px;
+  border-radius: 999px;
+  border: 1px solid var(--line-strong);
+  background: var(--surface);
+  color: var(--muted);
+  white-space: nowrap;
+}
+.putlab-root .pill .dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--accent);
+}
+.putlab-root .pill.caveat {
+  border-color: color-mix(in srgb, var(--accent) 45%, var(--line));
+  color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 8%, var(--surface));
+}
+
+/* ---------- the question ---------- */
+.putlab-root .question {
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  padding: clamp(18px, 2.4vw, 26px);
+  box-shadow: var(--shadow);
+  margin-bottom: 22px;
+}
+.putlab-root .q-line {
+  font-size: clamp(17px, 2.2vw, 21px);
+  line-height: 2.15;
+  color: var(--text);
+  font-weight: 400;
+}
+.putlab-root .q-line .lede {
+  color: var(--muted);
+}
+.putlab-root .ctl {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  vertical-align: baseline;
+  background: var(--surface-2);
+  border: 1px solid var(--line-strong);
+  border-radius: 9px;
+  padding: 3px 4px 3px 10px;
+  margin: 2px 1px;
+  box-shadow: inset 0 0 0 1px transparent;
+}
+.putlab-root .ctl:focus-within {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 22%, transparent);
+}
+.putlab-root .ctl label {
+  font-size: 10.5px;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  color: var(--faint);
+}
+.putlab-root .ctl select,
+.putlab-root .ctl input {
+  font: inherit;
+  font-size: 16px;
+  color: var(--accent);
+  font-weight: 700;
+  background: transparent;
+  border: none;
+  outline: none;
+  font-family: ui-monospace, 'JetBrains Mono', Menlo, monospace;
+  font-variant-numeric: tabular-nums;
+}
+.putlab-root .ctl select {
+  cursor: pointer;
+  padding-right: 2px;
+}
+.putlab-root .ctl.num {
+  padding-right: 10px;
+}
+.putlab-root .ctl input[type='number'] {
+  width: 4.4ch;
+  text-align: right;
+  -moz-appearance: textfield;
+}
+.putlab-root .ctl input[type='number']::-webkit-outer-spin-button,
+.putlab-root .ctl input[type='number']::-webkit-inner-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+.putlab-root .seg {
+  display: inline-flex;
+  background: var(--surface-2);
+  border: 1px solid var(--line-strong);
+  border-radius: 9px;
+  padding: 2px;
+  gap: 2px;
+  vertical-align: baseline;
+  margin: 2px 1px;
+}
+.putlab-root .seg button {
+  font: inherit;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--muted);
+  cursor: pointer;
+  background: transparent;
+  border: none;
+  border-radius: 7px;
+  padding: 4px 11px;
+  font-family: ui-monospace, Menlo, monospace;
+}
+.putlab-root .seg button[aria-pressed='true'] {
+  background: var(--accent);
+  color: #14100a;
+}
+.putlab-root .seg button:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+/* ---------- status ---------- */
+.putlab-root .putlab-status {
+  color: var(--muted);
+  font-size: 13.5px;
+  margin: 0 0 22px;
+}
+.putlab-root .putlab-status-error {
+  color: var(--loss);
+}
+
+/* ---------- stat band ---------- */
+.putlab-root .stats {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 12px;
+  margin-bottom: 22px;
+}
+.putlab-root .stat {
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  padding: 15px 16px;
+  box-shadow: var(--shadow);
+  position: relative;
+  overflow: hidden;
+}
+.putlab-root .stat .k {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  color: var(--faint);
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.putlab-root .stat .v {
+  font-size: clamp(24px, 3.4vw, 32px);
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  margin-top: 6px;
+  line-height: 1;
+  white-space: nowrap;
+}
+.putlab-root .stat .note {
+  font-size: 11.5px;
+  color: var(--muted);
+  margin-top: 6px;
+}
+.putlab-root .stat.hero-stat {
+  background: linear-gradient(150deg, color-mix(in srgb, var(--accent) 12%, var(--surface)), var(--surface));
+  border-color: color-mix(in srgb, var(--accent) 35%, var(--line));
+}
+.putlab-root .v.pos {
+  color: var(--gain);
+}
+.putlab-root .v.neg {
+  color: var(--loss);
+}
+
+/* ---------- panels ---------- */
+.putlab-root .panel {
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  box-shadow: var(--shadow);
+  padding: clamp(16px, 2vw, 22px);
+  margin-bottom: 22px;
+}
+.putlab-root .panel-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 14px;
+  margin-bottom: 4px;
+  flex-wrap: wrap;
+}
+.putlab-root .panel-head h2 {
+  font-size: 15px;
+  margin: 0;
+  letter-spacing: -0.01em;
+}
+.putlab-root .panel-head .hint {
+  font-size: 12px;
+  color: var(--muted);
+}
+.putlab-root .legend {
+  display: flex;
+  gap: 14px;
+  flex-wrap: wrap;
+  font-size: 11.5px;
+  color: var(--muted);
+  align-items: center;
+}
+.putlab-root .legend .sw {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.putlab-root .legend .box {
+  width: 11px;
+  height: 11px;
+  border-radius: 3px;
+  display: inline-block;
+}
+
+.putlab-root svg {
+  display: block;
+  width: 100%;
+  height: auto;
+}
+.putlab-root .grid2 {
+  display: grid;
+  grid-template-columns: 1.4fr 1fr;
+  gap: 22px;
+}
+@media (max-width: 820px) {
+  .putlab-root .grid2 {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* chart bits */
+.putlab-root .axis-label {
+  fill: var(--faint);
+  font-size: 11px;
+  font-family: ui-monospace, Menlo, monospace;
+}
+.putlab-root .regime-label {
+  fill: var(--faint);
+  font-size: 10px;
+  font-family: system-ui, sans-serif;
+}
+.putlab-root .tt {
+  position: fixed;
+  pointer-events: none;
+  z-index: 40;
+  background: var(--surface-2);
+  border: 1px solid var(--line-strong);
+  border-radius: 9px;
+  padding: 8px 11px;
+  font-size: 12px;
+  box-shadow: var(--shadow);
+  opacity: 0;
+  transform: translate(-50%, -114%);
+  transition: opacity 0.08s;
+  max-width: 240px;
+}
+.putlab-root .tt .t-k {
+  color: var(--faint);
+  font-size: 10.5px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+.putlab-root .tt .t-v {
+  font-family: ui-monospace, Menlo, monospace;
+  font-variant-numeric: tabular-nums;
+  font-weight: 700;
+}
+
+/* heatmap */
+.putlab-root .heat-cell {
+  cursor: crosshair;
+}
+.putlab-root .heat-cell:hover {
+  stroke: var(--text);
+  stroke-width: 1.5;
+}
+.putlab-root .heat-cur {
+  fill: none;
+  stroke: var(--accent);
+  stroke-width: 2.5;
+}
+
+/* expiry cadence */
+.putlab-root .cadence {
+  display: grid;
+  gap: 12px;
+}
+.putlab-root .cad-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+.putlab-root .cad-name {
+  width: 60px;
+  flex: none;
+  font-weight: 700;
+  font-size: 13px;
+}
+.putlab-root .cad-tag {
+  font-size: 10.5px;
+  padding: 2px 7px;
+  border-radius: 6px;
+  background: var(--surface-2);
+  border: 1px solid var(--line-strong);
+  color: var(--muted);
+  white-space: nowrap;
+}
+
+/* memory teaser */
+.putlab-root .mem {
+  border-style: dashed;
+  border-color: var(--line-strong);
+  background: var(--surface);
+}
+.putlab-root .mem .badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  font-weight: 700;
+  padding: 3px 9px;
+  border-radius: 6px;
+  letter-spacing: 0.04em;
+}
+.putlab-root .badge.regime_only {
+  background: color-mix(in srgb, var(--warm) 18%, var(--surface));
+  color: var(--warm);
+  border: 1px solid color-mix(in srgb, var(--warm) 40%, var(--line));
+}
+.putlab-root .badge.confirmed {
+  background: color-mix(in srgb, var(--gain) 16%, var(--surface));
+  color: var(--gain);
+  border: 1px solid color-mix(in srgb, var(--gain) 40%, var(--line));
+}
+.putlab-root .badge.failed {
+  background: color-mix(in srgb, var(--loss) 15%, var(--surface));
+  color: var(--loss);
+  border: 1px solid color-mix(in srgb, var(--loss) 40%, var(--line));
+}
+.putlab-root .mem-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 14px;
+  margin-top: 14px;
+}
+@media (max-width: 620px) {
+  .putlab-root .mem-grid {
+    grid-template-columns: 1fr;
+  }
+}
+.putlab-root .mem-card {
+  border: 1px solid var(--line);
+  border-radius: 11px;
+  padding: 13px 14px;
+  background: var(--surface-2);
+}
+.putlab-root .mem-card .rule {
+  font-family: ui-monospace, Menlo, monospace;
+  font-size: 12.5px;
+  color: var(--text);
+}
+.putlab-root .mem-card .meta {
+  font-size: 11.5px;
+  color: var(--muted);
+  margin-top: 7px;
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.putlab-root footer {
+  color: var(--faint);
+  font-size: 12px;
+  margin-top: 30px;
+  border-top: 1px solid var(--line);
+  padding-top: 16px;
+  line-height: 1.7;
+}
+.putlab-root footer strong {
+  color: var(--muted);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .putlab-root * {
+    transition: none !important;
+  }
+}
