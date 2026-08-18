@@ -41,10 +41,33 @@ a large one strictly in order.
       Hypothesis properties (linearity in the asset series, self-beta = 1).
       Not yet wired into a gold mart or the leaderboard — that's the next
       two items, and needs live OHLCV/benchmark return series to run on.
+- [x] **Put Lab** — the interactive model-priced OOM-put backtester (Dio's
+      redirect, 2026-08-19; `docs/END_STATE.md` §1.2/§1.5). **Done, live at
+      https://tail-lab.fly.dev**: `research/backtest/put_roll.py` (engine, PR
+      #4), `api/putlab_routes.py` backtest/sweep/cadence + `contracts/
+      options_calendar.py` (PR #5), and the React `components/putlab/`
+      dashboard (PR #6). ~5y OHLCV for spy/qqq/iwm/tsla/gld/eem ingested to
+      prod. Follow-ups split out below.
+- [ ] **Memory layer, phase 2** — persist every Put Lab backtest as a
+      verdict keyed by `(rule_hash, regime)`, so repeats are skipped and a
+      strategy that only paid in one crash is flagged `regime_only`, never
+      `confirmed` (Dio's hypothesis-memory spec, adapted to tail-lab's wall —
+      no live/broker stages). Storage: DuckDB + JSON/parquet on Tigris (no new
+      service). NEEDS AN ADR before enacting (new persistence subsystem).
+      Makes the currently-static memory teaser in the Put Lab real.
+- [ ] Live options-expiry **cadence adapter** — replace the static
+      `contracts/options_calendar.py` table with a keyless read of Yahoo's
+      `/v7/finance/options` expiration dates → derived avg gap + weekly/
+      monthly classification, following the ingestion adapter shape.
+- [ ] Extend the OHLCV adapter's default fetch range beyond `2y` (it fetched
+      `5y` here only via an explicit `range_`), so the Put Lab's "last 4
+      years" spans real history without a manual override.
 - [ ] Add the sensitivity-leaderboard gold mart (`transforms/marts/`) + API
-      endpoint (`api/routes/leaderboard.py`) + dashboard tile. Now has a
-      metric to rank by (`downside_beta`, above); still needs the OHLCV PR
-      merged first for real return series to compute it over.
+      endpoint (`api/routes/leaderboard.py`) + dashboard tile — becomes the
+      Put Lab's asset-picker entry point. Mart + orchestrator + route are
+      already drafted on the local `agent/sensitivity-leaderboard` branch
+      (needs tests + tile + the `research→ingestion` import fixed to use
+      `contracts.ohlcv.dataset_id`, as the Put Lab engine did).
 - [ ] Add the event-calendar ingestion adapter for FOMC dates
       (`federalreserve.gov`, keyless) with the `announced_at` point-in-time
       field required by `docs/DATA_CONTRACTS.md` #5.
