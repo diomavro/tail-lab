@@ -39,9 +39,10 @@ serves, do not build it.
 no PR is a successful run if nothing on the backlog clears the bar or fits
 in a well-scoped increment. Do not manufacture busywork, refactor for its
 own sake, or pad a small change with unrelated cleanup to look productive.
-Review-fatigue is a real cost — a human reviews every PR you open, and a
-string of marginal ones trains the reviewer to skim, which is worse than
-one fewer PR this week. When in doubt, don't.
+Noise is a real cost — your PRs **auto-merge on green CI**, so a marginal
+change lands on `main` without a human catching it; a string of them erodes
+the codebase. The bar is higher, not lower, because no one is gating each
+one. When in doubt, don't.
 
 ## The wall
 
@@ -89,8 +90,14 @@ human-approved. A proposed ADR is itself a PR; expect it to be rare.
 3. Build it to the standard in `docs/STANDARDS.md`: typed, tested (a
    synthetic case with a known answer for anything numeric), point-in-time
    safe if it touches backtest data paths, coverage floor met.
-4. **Code changes:** open a normal PR against `main`, gated by CI. Never
-   push directly to `main`. Never merge your own PR. Never deploy.
+4. **Code changes:** open a PR against `main` and enable auto-merge
+   (`gh pr merge --auto --squash --delete-branch`). CI is the gate — the PR
+   merges itself once every required check is green, and stays open if any
+   fails. Never push directly to `main`, never force/`--admin` a merge,
+   never bypass a red check. Never deploy (deploys stay human/operator).
+   A `constitution-guard` check blocks auto-merge on any PR of yours that
+   edits `docs/adr/**`, `ARCHITECTURE.md`, `docs/STANDARDS.md`, or
+   `README.md` — so don't; propose those for a human instead.
 5. **Data changes:** there is no data-branching layer to stage them on
    (`docs/adr/0012`) — bronze writes go straight through `LakeStore`, which
    is safe by construction: a write is either a new immutable snapshot or a
@@ -125,7 +132,7 @@ are not.
 - Never write data that isn't point-in-time safe into a path a backtest
   reads. (`docs/adr/0009`)
 - Never overwrite bronze.
-- Never merge your own PR. Never self-deploy.
+- Enable auto-merge on your PR; never force it, never bypass a red check, never self-deploy.
 - Never edit `ARCHITECTURE.md`, `docs/adr/*`, or `docs/STANDARDS.md`
   directly — propose, don't enact.
 - Never act on a `HUMAN_TODO.md` item.

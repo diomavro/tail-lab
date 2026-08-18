@@ -3,9 +3,10 @@ name: Daily platform agent
 # The autonomous platform agent (docs/AGENT_MISSION.md is its charter). Each
 # run it picks ONE account-free item from AGENT_TODO.md, implements it to the
 # strict standards, self-validates against the same gate CI enforces, and
-# opens a reviewed PR. It never merges, never trades, never touches money or
-# credentials, and never changes the constitution (ARCHITECTURE.md / ADRs /
-# STANDARDS) without a human-approved ADR. Proposing nothing is a valid day.
+# opens a PR with auto-merge enabled — it merges itself once CI is green (no
+# human needed for ordinary changes), and a constitution-guard check keeps
+# it from auto-merging edits to the big-picture docs. It never trades, never
+# touches money or credentials, never deploys. Proposing nothing is a valid day.
 #
 # Its inputs are the repo's own trusted backlog + code (not untrusted external
 # data), so it is allowed shell + file tools to do real dev work; the leash is
@@ -94,8 +95,14 @@ jobs:
                and, only if you touched the frontend:
                  cd frontend && npm run typecheck && npm run build
                If any of these fail, fix it or reduce the change until they pass. Never open a red PR.
-            5. Open ONE pull request from a branch named `agent/<short-slug>` using `gh pr create`.
+            5. Open ONE pull request from a branch named `agent/<short-slug>` using `gh pr create`,
+               then enable auto-merge on it: `gh pr merge --auto --squash --delete-branch`.
+               CI is the gate: the PR merges automatically once ALL required checks pass, and stays
+               open (unmerged) if any check fails. You never merge manually, never `--admin`/force a
+               merge, never bypass a red check.
                Title: a one-line summary of the increment. Body: what you changed and WHY (which
                research question or cockpit improvement it serves), how you validated it, and the
-               closing line "Auto-generated daily. Review before merging — do NOT auto-merge."
-               Do not merge it.
+               closing line "Auto-generated daily; auto-merges on green CI."
+               NOTE: a `constitution-guard` check blocks auto-merge for any agent PR that edits the
+               constitution (docs/adr/**, ARCHITECTURE.md, docs/STANDARDS.md, README.md). Do NOT edit
+               those — if a change needs one, describe it in the PR body / propose an ADR for a human.

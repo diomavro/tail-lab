@@ -63,3 +63,29 @@ jobs:
 
       - name: npm run build
         run: npm run build
+
+  # The "constitution" (big-picture docs) stays human-curated: an agent/* PR
+  # that edits it fails here, so auto-merge cannot land it — a human must.
+  # Human PRs are unaffected. Required check, so auto-merge can't skip it.
+  constitution-guard:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Block autonomous edits to the constitution
+        env:
+          HEAD_REF: ${{ github.head_ref }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: |
+          if [[ "$HEAD_REF" != agent/* ]]; then
+            echo "Not an agent PR (head='$HEAD_REF') — constitution guard N/A."
+            exit 0
+          fi
+          changed=$(git diff --name-only "$BASE_SHA...HEAD")
+          echo "Changed files:"; echo "$changed"
+          if echo "$changed" | grep -qE '^docs/adr/|^ARCHITECTURE\.md$|^docs/STANDARDS\.md$|^README\.md$|^docs/AGENT_MISSION\.md$|^docs/END_STATE\.md$'; then
+            echo "::error::This agent PR edits the constitution (docs/adr, ARCHITECTURE.md, STANDARDS.md, README.md, AGENT_MISSION.md, or END_STATE.md). A human must review + merge it — auto-merge is blocked."
+            exit 1
+          fi
+          echo "OK: agent PR leaves the constitution untouched."
