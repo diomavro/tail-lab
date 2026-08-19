@@ -20,7 +20,12 @@ from tail_lab.api.schemas import HealthResponse, VixStretchResponse
 from tail_lab.config import get_lake_store as _get_configured_lake_store
 from tail_lab.config import get_settings
 from tail_lab.lake.store import LakeStore
+from tail_lab.observability import configure_logging
 from tail_lab.research.vix_stretch import compute_vix_stretch
+
+# Composition root: configure structured logging once for the whole app
+# (docs/STANDARDS.md §f) before anything starts emitting.
+configure_logging()
 
 app = FastAPI(title="tail-lab API")
 

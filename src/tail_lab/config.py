@@ -67,6 +67,11 @@ class Settings(BaseSettings):
     #: tail_lab.api.feedback_routes.
     feedback_token: str | None = None
 
+    #: The deployed code revision, stamped into structured run logs so a
+    #: backtest line is traceable to an exact commit (docs/STANDARDS.md §f).
+    #: Set by the deploy pipeline (env: TAIL_LAB_CODE_SHA); "unknown" locally.
+    code_sha: str = "unknown"
+
 
 def get_settings() -> Settings:
     return Settings()
