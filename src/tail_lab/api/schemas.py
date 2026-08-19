@@ -7,6 +7,7 @@ import datetime as dt
 from pydantic import BaseModel, Field
 
 from tail_lab.feedback.store import FeedbackKind, FeedbackRecord
+from tail_lab.memory.store import RegimeOutcome
 
 
 class HealthResponse(BaseModel):
@@ -37,6 +38,28 @@ class SweepResponse(BaseModel):
     notional: float
     lookback_years: float
     cells: list[SweepCell]
+
+
+class RecordedRegime(BaseModel):
+    regime: str
+    run_count: int
+
+
+class MemoryRecordResponse(BaseModel):
+    """What POST /api/putlab/memory/record recorded for one rule."""
+
+    rule_hash: str
+    verdict: str
+    recorded: list[RecordedRegime]
+
+
+class MemoryPriorArt(BaseModel):
+    """What GET /api/putlab/memory knows about a rule — the aggregate verdict
+    and every stored per-regime outcome (empty ``outcomes`` => untested)."""
+
+    rule_hash: str
+    verdict: str
+    outcomes: list[RegimeOutcome]
 
 
 class FeedbackCreateRequest(BaseModel):

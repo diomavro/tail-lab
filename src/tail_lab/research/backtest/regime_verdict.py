@@ -33,6 +33,8 @@ class RegimeSlice(BaseModel):
     n_cycles: int
     roi_on_premium: float
     paid_off: bool
+    hit_rate: float
+    biggest_payoff_mult: float
 
 
 class RegimeVerdict(BaseModel):
@@ -77,8 +79,19 @@ def regime_breakdown(
         paid = roi > 0.0
         if paid:
             passing.add(regime)
+        # Per-cycle premium is (payoff - net) == the notional budget; a cycle
+        # "hits" when its payoff clears that budget.
+        wins = sum(1 for c in group if c.net > 0.0)
+        mults = [c.payoff / (c.payoff - c.net) for c in group if (c.payoff - c.net) > 0.0]
         slices.append(
-            RegimeSlice(regime=regime, n_cycles=len(group), roi_on_premium=roi, paid_off=paid)
+            RegimeSlice(
+                regime=regime,
+                n_cycles=len(group),
+                roi_on_premium=roi,
+                paid_off=paid,
+                hit_rate=wins / len(group),
+                biggest_payoff_mult=max(mults, default=0.0),
+            )
         )
 
     verdict: Verdict = "untested" if not slices else verdict_from_passing_regimes(passing)
