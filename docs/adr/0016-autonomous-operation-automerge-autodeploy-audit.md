@@ -74,15 +74,19 @@ alone disposing of anything constitutional.
 - `FLY_API_TOKEN` must be provisioned as a GitHub Actions repo secret
   before CD works (`HUMAN_TODO.md`); until then the deploy workflow
   no-ops with a visible notice rather than failing red.
-- **Auto-merged commits need a dispatch hop** (found in the first hour of
-  operation): GitHub suppresses workflow triggers from `GITHUB_TOKEN`
-  pushes, so the automerge workflow's squash-merge produces no push-CI
-  and hence no Deploy. `workflow_dispatch` is exempt from that
-  suppression, so automerge dispatches CI on `main` right after merging —
-  which both validates the *actual merge commit* (the squashed tree, not
-  just the PR head) and feeds the Deploy workflow through its one normal
-  `workflow_run` path. Direct human pushes to `main` trigger the same
-  chain via the ordinary `push` event.
+- **Every bot-path hop must be a `workflow_dispatch`** (learned in the
+  first hours of operation, in two steps): GitHub's `GITHUB_TOKEN`
+  recursion prevention suppresses (a) workflow triggers from
+  `GITHUB_TOKEN` pushes — so an auto-merged squash commit gets no
+  push-CI — and (b) the `workflow_run` events emitted by bot-initiated
+  runs — so a `workflow_run`-triggered Deploy never fires on that path
+  either (found empirically on PR #11). `workflow_dispatch` creations
+  are exempt in both cases. Final mechanism: automerge dispatches CI on
+  `main` (validating the actual squashed tree, not just the PR head),
+  and CI's `trigger-deploy` job — gated on every CI job green and
+  `ref == main` — dispatches Deploy, which is `workflow_dispatch`-only
+  and deploys the tip of `main`. Direct human pushes enter the same
+  chain at the ordinary `push`-CI event.
 - A deploy now follows every green merge, so a bad-but-CI-green change
   reaches prod unattended. Mitigations: the Fly health check gates
   release, `flyctl releases` gives one-command rollback, and the audit

@@ -95,3 +95,22 @@ jobs:
             exit 1
           fi
           echo "OK: agent PR leaves the constitution untouched."
+
+  # Chain to Deploy via workflow_dispatch — the one trigger type exempt from
+  # GitHub's GITHUB_TOKEN recursion prevention. A workflow_run trigger on
+  # Deploy would never fire for bot-initiated CI runs (the auto-merge path),
+  # because the suppression also swallows the workflow_run event a
+  # bot-initiated run emits on completion (docs/adr/0016, found on PR #11).
+  # Runs only on main (push or dispatched-by-automerge), only when every
+  # gate above is green.
+  trigger-deploy:
+    needs: [backend, frontend, constitution-guard]
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    permissions:
+      actions: write
+    steps:
+      - name: Dispatch the Deploy workflow
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh workflow run deploy.yml --repo "${{ github.repository }}" --ref main

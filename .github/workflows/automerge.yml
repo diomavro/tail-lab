@@ -51,7 +51,8 @@ jobs:
           # prevention) — so the merge commit would get no push-CI and hence
           # no Deploy (docs/adr/0016). workflow_dispatch is exempt from that
           # suppression: dispatch CI on main so the actual merge commit is
-          # fully validated, and the Deploy workflow then ships it via its
-          # normal workflow_run(CI, main, success) path.
+          # fully validated; CI's trigger-deploy job then dispatches Deploy
+          # the same way (workflow_run events from bot-initiated runs are
+          # suppressed too, so every bot-path hop must be a dispatch).
           echo "Dispatching CI on main so the merge commit is validated and deployed…"
           gh workflow run ci.yml --repo "$REPO" --ref main

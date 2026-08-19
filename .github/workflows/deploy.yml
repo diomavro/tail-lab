@@ -1,17 +1,20 @@
 name: Deploy
 
 # Continuous deployment (docs/adr/0016): every commit that lands on main and
-# passes the full CI gate deploys to Fly automatically. Fires when the CI
-# workflow completes; only acts on main, and only when CI *succeeded*. The
-# agent never runs this and never holds the token — this is platform CD
-# triggered by the merge, keeping the no-credentials wall (docs/adr/0007)
-# intact. Until FLY_API_TOKEN is provisioned (HUMAN_TODO.md) the job no-ops
-# with a visible notice instead of failing red.
+# passes the full CI gate deploys to Fly automatically. Triggered ONLY by
+# workflow_dispatch — CI's trigger-deploy job dispatches this after all its
+# jobs succeed on main. workflow_run cannot be used here: GitHub's
+# GITHUB_TOKEN recursion prevention also suppresses workflow_run events
+# emitted by bot-initiated runs (found empirically on PR #11 — the
+# auto-merge path produced CI but no Deploy), while workflow_dispatch
+# creations are exempt even under GITHUB_TOKEN. The agent never runs this
+# and never holds the token — this is platform CD triggered by the merge,
+# keeping the no-credentials wall (docs/adr/0007) intact. Until
+# FLY_API_TOKEN is provisioned (HUMAN_TODO.md) the job no-ops with a
+# visible notice instead of failing red.
 
 on:
-  workflow_run:
-    workflows: ["CI"]
-    types: [completed]
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -22,9 +25,9 @@ concurrency:
 
 jobs:
   deploy:
-    if: >
-      github.event.workflow_run.conclusion == 'success' &&
-      github.event.workflow_run.head_branch == 'main'
+    # Deploys the tip of main at dispatch time. Dispatches only ever come
+    # from CI's trigger-deploy job (gated on all CI jobs green on main) or
+    # a human running `gh workflow run deploy.yml`.
     runs-on: ubuntu-latest
     steps:
       - name: Check FLY_API_TOKEN is provisioned
@@ -42,7 +45,7 @@ jobs:
       - uses: actions/checkout@v4
         if: steps.guard.outputs.ready == 'true'
         with:
-          ref: ${{ github.event.workflow_run.head_sha }}
+          ref: main
 
       - uses: superfly/flyctl-actions/setup-flyctl@master
         if: steps.guard.outputs.ready == 'true'
@@ -60,5 +63,5 @@ jobs:
         env:
           FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
         run: |
-          echo "Deployed ${{ github.event.workflow_run.head_sha }} (CI run ${{ github.event.workflow_run.html_url }})"
+          echo "Deployed $(git rev-parse HEAD) (dispatched by ${{ github.actor }})"
           flyctl releases -a tail-lab | head -5
