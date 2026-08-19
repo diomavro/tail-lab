@@ -16,6 +16,7 @@ from fastapi.staticfiles import StaticFiles
 
 from tail_lab.api.feedback_routes import router as feedback_router
 from tail_lab.api.leaderboard_routes import router as leaderboard_router
+from tail_lab.api.putlab_memory_routes import router as putlab_memory_router
 from tail_lab.api.putlab_routes import router as putlab_router
 from tail_lab.api.schemas import HealthResponse, VixStretchResponse
 from tail_lab.config import get_lake_store as _get_configured_lake_store
@@ -41,6 +42,7 @@ app.add_middleware(
 
 app.include_router(feedback_router)
 app.include_router(leaderboard_router)
+app.include_router(putlab_memory_router)
 app.include_router(putlab_router)
 
 

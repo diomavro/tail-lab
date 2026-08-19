@@ -152,7 +152,14 @@ def test_regime_verdict_returns_breakdown(client: TestClient) -> None:
     assert body["rule_hash"].startswith("h-")
     assert body["slices"]
     slice0 = body["slices"][0]
-    assert set(slice0) == {"regime", "n_cycles", "roi_on_premium", "paid_off"}
+    assert {
+        "regime",
+        "n_cycles",
+        "roi_on_premium",
+        "paid_off",
+        "hit_rate",
+        "biggest_payoff_mult",
+    } == set(slice0)
 
 
 def test_regime_verdict_404_unknown_asset(client: TestClient) -> None:
