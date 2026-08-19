@@ -164,3 +164,35 @@ by construction — e.g.:
   once a frontend test suite exists). **Nothing
   merges red** — this applies to the agent's PRs exactly as it applies to
   Dio's.
+
+## (f) Observability — everything automated is logged in detail
+
+Dio steers this platform asynchronously (`docs/adr/0016`): he reviews the
+whole state once in a while instead of gating each step, which only works
+if every automated action left a detailed, reviewable record. His standing
+directive: **extremely detailed logging of everything the platform and its
+agents do.**
+
+- **Every ingestion run logs a structured record:** dataset, source id,
+  fetch window, row counts (fetched / valid / quarantined), the bronze
+  snapshot id written (or "no-op, snapshot exists"), duration, and any
+  validation errors — not just a bare success line. The `IngestResult`
+  already carries most of this; log all of it, every run.
+- **Every backtest / mart build logs its inputs and identity:** the as-of
+  date(s), the bronze snapshot ids read, the code SHA, parameters, and
+  the headline outputs — the same fields reproducibility (§a) already
+  requires results to carry; they must also be visible in the run log.
+- **Structured application logging** (Python `logging`, one configuration
+  in the composition root, JSON-friendly key=value fields) — never bare
+  `print`, never a silent success path for an automated action. API
+  request logging stays on (uvicorn access logs).
+- **CI/CD is part of the trail:** PR descriptions say what changed and
+  why; the deploy workflow logs what SHA shipped and the resulting Fly
+  release. The daily agent's run log is retained by GitHub Actions.
+- **End state: an in-cockpit activity log** — a dashboard surface listing
+  recent automated actions (agent PRs merged, deploys, ingestion runs
+  with row counts, backtests run), so reviewing "what happened while I
+  was away" needs no spelunking. Tracked in `AGENT_TODO.md`.
+- The bar, concretely: **an increment that adds automated behavior
+  without logging what it does at runtime is incomplete**, the same way
+  an untested numeric function is incomplete.

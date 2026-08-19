@@ -30,7 +30,8 @@ These are inviolable. Changing any requires a human-approved ADR.
 - **Never overwrite historical observations.** Raw ingested data is immutable (bronze — never overwritten, a correction is a new bronze snapshot).
 - **Free-data first; account/paid needs go to the human backlog.** The platform is built on free sources. Anything requiring an account, API key, or money is written to `HUMAN_TODO.md` (Dio's queue) — never attempted by the agent, and kept separate from `AGENT_TODO.md`.
 - **Reproducibility.** Every result carries the bronze snapshot id it read (`docs/adr/0012`) + code SHA that produced it and can be re-run bit-for-bit.
-- **The agent proposes; the human disposes.** Every change is a reviewed PR gated by CI. Nothing auto-merges; nothing self-deploys. The agent may propose *nothing* on a given day.
+- **Everything automated is logged in detail.** Autonomous operation is only reviewable if every automated action — agent runs, merges, deploys, ingestion runs, backtests — leaves a detailed record (`docs/adr/0016`, `docs/STANDARDS.md` §f). An increment that adds automated behavior without logging it does not meet the standard.
+- **The agent proposes; CI disposes; the human oversees.** Every change is a PR gated by CI. Ordinary agent increments (`agent/*` branches) auto-merge once every CI gate is green (`docs/adr/0016`); anything touching the constitution (this README, `ARCHITECTURE.md`, `docs/STANDARDS.md`, `docs/AGENT_MISSION.md`, `docs/END_STATE.md`, `docs/adr/`) is blocked from auto-merge by CI's constitution-guard and lands only through a human-reviewed PR. Green `main` auto-deploys to Fly (CD workflow, `docs/adr/0016`) — the agent itself never runs a deploy and never holds credentials. The human steers asynchronously: reviewing the deployed state and the audit trail, and leaving feedback (`docs/adr/0014`) that future runs must read. The agent may propose *nothing* on a given day.
 
 ## Strategy & data at a glance
 
@@ -46,7 +47,7 @@ These are inviolable. Changing any requires a human-approved ADR.
 - **Backend:** Python (pandas/numpy, pydantic, pandera, FastAPI), strictly typed.
 - **Frontend:** React + TypeScript (strict).
 - **Hosting:** Fly.io.
-- **The daily agent:** runs on GitHub Actions (cron + manual dispatch), file/least-privilege, opens reviewed PRs — mirroring the proven pattern from the sibling `quizkit` repo.
+- **The daily agent:** runs on GitHub Actions (cron + manual dispatch), file/least-privilege, opens CI-gated PRs that auto-merge on green (`docs/adr/0016`) — mirroring the proven pattern from the sibling `quizkit` repo.
 
 ## Strict standards (the agent's leash)
 
@@ -54,7 +55,7 @@ Full detail in `docs/STANDARDS.md`. Headline: point-in-time correctness enforced
 
 ## What exists now (the walking skeleton)
 
-The initial setup is **end-state documentation + a deployed walking skeleton** (`docs/adr/0011`): one data source (VIX, keyless) ingested bronze→silver→gold through the lakehouse, one computed metric, one dashboard tile reading it — paper-thin but **complete, typed, tested, CI-gated**, and deployable to Fly. It does almost nothing; it *proves every layer connects correctly* and gives the agent a concrete, correct pattern to extend. The agent's job is to grow this toward the end state one reviewed PR at a time.
+The initial setup is **end-state documentation + a deployed walking skeleton** (`docs/adr/0011`): one data source (VIX, keyless) ingested bronze→silver→gold through the lakehouse, one computed metric, one dashboard tile reading it — paper-thin but **complete, typed, tested, CI-gated**, and deployable to Fly. It does almost nothing; it *proves every layer connects correctly* and gives the agent a concrete, correct pattern to extend. The agent's job is to grow this toward the end state one CI-gated PR at a time.
 
 - **In-app feedback (`docs/adr/0014`).** A feedback panel on the dashboard lets Dio write the daily agent a note directly: a permanent **big-picture/goal** directive (never auto-resolved — read as always-on context every run until Dio retires it) or a transient **bug/issue** (the agent fixes and resolves it, then it drops off the list). The agent pulls `GET /api/feedback` (token-gated) at the start of every run per `docs/AGENT_MISSION.md`.
 

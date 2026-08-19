@@ -129,7 +129,10 @@ differently:
    nothing further — the `automerge` workflow squash-merges it once every CI
    check is green, and leaves it open if any fails. Never push directly to
    `main`, never merge it yourself, never force/`--admin` a merge, never
-   bypass a red check. Never deploy (deploys stay human/operator).
+   bypass a red check. Never run a deploy yourself — deployment is
+   automatic: the `deploy` workflow ships every green `main` commit
+   (`docs/adr/0016`), so your merged PR reaches prod without any deploy
+   action from you.
    A `constitution-guard` check blocks auto-merge on any PR of yours that
    edits `docs/adr/**`, `ARCHITECTURE.md`, `docs/STANDARDS.md`, or
    `README.md` — so don't; propose those for a human instead.
@@ -167,7 +170,8 @@ are not.
 - Never write data that isn't point-in-time safe into a path a backtest
   reads. (`docs/adr/0009`)
 - Never overwrite bronze.
-- Enable auto-merge on your PR; never force it, never bypass a red check, never self-deploy.
+- Enable auto-merge on your PR; never force it, never bypass a red check, never run a deploy yourself (CD ships green `main` automatically — `docs/adr/0016`).
+- Log everything you automate, in detail (`docs/STANDARDS.md` §f, `docs/adr/0016`): a PR that adds automated behavior without a reviewable record of what it does at runtime is below the bar.
 - Never edit `ARCHITECTURE.md`, `docs/adr/*`, or `docs/STANDARDS.md`
   directly — propose, don't enact.
 - Never act on a `HUMAN_TODO.md` item.

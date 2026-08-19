@@ -70,9 +70,66 @@ a large one strictly in order.
       `contracts.ohlcv.dataset_id`, as the Put Lab engine did).
 - [ ] Add the event-calendar ingestion adapter for FOMC dates
       (`federalreserve.gov`, keyless) with the `announced_at` point-in-time
-      field required by `docs/DATA_CONTRACTS.md` #5.
+      field required by `docs/DATA_CONTRACTS.md` #5. Sourcing note
+      (2026-08-19, `docs/DATA_SOURCING.md` §2): HTML only — the ICS feed
+      404s; current page covers 2021–2027, `fomc_historical.htm` year
+      pages reach 1936.
 - [ ] Add the CPI release-schedule adapter (BLS, keyless), same shape as
-      the FOMC adapter above.
+      the FOMC adapter above. Sourcing note (2026-08-19): `bls.gov` 403s
+      non-browser clients — send browser-like headers; archived
+      *scheduled-release-date* PDFs go back to ≥2006
+      (`bls.gov/bls/archived_sched.htm`), exactly what the point-in-time
+      `announced_at` rule needs.
+
+## Data-sourcing increments (2026-08-19 — free/keyless; see `docs/DATA_SOURCING.md`)
+
+- [ ] **Structured run logging (`docs/STANDARDS.md` §f, `docs/adr/0016`)**
+      — Dio's standing directive: extremely detailed logging of everything
+      automated. One `logging` configuration in the API/CLI composition
+      roots; every ingestion run logs dataset, source, fetch window,
+      fetched/valid/quarantined counts, bronze snapshot id (or no-op),
+      duration; every backtest logs as-of dates, snapshot ids, code SHA,
+      params, headline outputs. Do this *before* adding more adapters so
+      they're born compliant.
+- [ ] In-cockpit **activity log** surface (end state in `docs/STANDARDS.md`
+      §f): persist run records (ops blob or small Delta table — mind
+      `docs/adr/0014`'s BlobStore precedent) + an API route + a dashboard
+      tile listing recent automated actions (ingests with row counts,
+      backtests, deploys), so "what happened while I was away" is one
+      glance.
+- [ ] **VIX futures term-structure ingestion** (keyless, big free win):
+      per-contract daily settlement CSVs
+      `cdn.cboe.com/data/us/futures/market_statistics/historical_data/VX/VX_{expiry}.csv`
+      + pre-2013 archive `.../resources/futures/archive/volume-and-price/CFE_{M}{YY}_VX.csv`
+      → full VX history 2004→present; build the constant-maturity curve
+      in `transforms/`. New contract in `contracts/`, adapter follows the
+      VIX shape.
+- [ ] **Point-in-time S&P 500 constituents ingestion** from
+      `github.com/fja05680/sp500` (MIT, maintained, 1996→present; raw CSV
+      over HTTPS, keyless) — closes `docs/adr/0010` at membership
+      granularity. Cross-check row counts against Wikipedia's "Historical
+      components of the S&P 500". Wire the survivorship caveat into any
+      result that still uses current-constituents.
+- [ ] **Earnings-calendar adapter** via Nasdaq's keyless endpoint
+      (`api.nasdaq.com/api/calendar/earnings?date=YYYY-MM-DD`, browser UA
+      + JSON Accept header; verified back to 2010) → `EARNINGS` rows in
+      dataset #5. Unofficial endpoint: throttle, cache, and treat errors
+      as "retry tomorrow", not hard failures.
+- [ ] **Switch OHLCV primary to Tiingo** once the key exists
+      (`HUMAN_TODO.md` phase 1): new adapter (500 unique symbols/month
+      budget — plan symbol rotation), demote Yahoo to fallback, update
+      `docs/DATA_CONTRACTS.md` #1's source section in the same PR. Then
+      backfill delisted ex-constituents enumerated from the PIT membership
+      file (spot-check LEH/BSC/WM/SIVB actually return data first).
+- [ ] **optionsDX ingestion + real-quote pricer validation** once the
+      zips are staged (`HUMAN_TODO.md` phase 1): bronze-ingest the
+      2010–2023 SPY/SPX/QQQ EOD chains, add the second `OptionPricer`
+      implementation (`docs/adr/0004` — this is the moment to split
+      `research/option_pricer.py` into the `research/pricing/` shape), and
+      publish a model-vs-real comparison so the ORATS/one-off buy decision
+      (`HUMAN_TODO.md` phase 3) is made on evidence.
+- [ ] (Optional, bounded) ingest CBOE's frozen equity put/call-ratio
+      history 2006–2019 (`totalpc.csv`) as a regime-panel extra.
 - [ ] Add the FRED rates adapter (`docs/DATA_CONTRACTS.md` #3) — the FRED
       API key now exists as the `FRED_API_KEY` repo secret (`HUMAN_TODO.md`,
       done 2026-08-17), so this is unblocked. Must request the

@@ -49,7 +49,7 @@ flowchart LR
     HUMAN(("Dio"))
     BROKER[["Brokerage<br/>outside this repo"]]
 
-    AGENT -. "opens reviewed PRs against<br/>ingestion/lake/transforms/research/api/frontend" .-> ING
+    AGENT -. "opens CI-gated PRs against<br/>ingestion/lake/transforms/research/api/frontend" .-> ING
     AGENT -. " " .-> RES
     AGENT -. " " .-> API
     AGENT -. " " .-> DASH
@@ -81,7 +81,7 @@ flowchart TB
     REPO --> CRON
     CRON -- "opens a code PR<br/>(data changes: immutable bronze writes,<br/>no data branch — docs/adr/0012)" --> REPO
     CI -- "gates every PR, nothing merges red" --> REPO
-    REPO -- "human merges main, human deploys" --> APIAPP
+    REPO -- "agent PRs auto-merge on green CI;<br/>green main auto-deploys (docs/adr/0016)" --> APIAPP
     APIAPP -- "DuckDB reads/delta-rs writes Delta tables<br/>(delta ext./S3, via lake/)" --> OBJ
 ```
 
@@ -291,8 +291,14 @@ human-approved ADR — the agent may propose one, never enact it
    (`docs/adr/0002`)
 7. **Module dependency direction is machine-checked**, not just documented
    — see the diagram and `import-linter` rule above.
-8. **Every change is a reviewed PR gated by CI.** Nothing auto-merges;
-   nothing self-deploys. The agent may propose nothing on a given day.
+8. **Every change is a PR gated by CI.** Ordinary agent increments
+   (`agent/*` branches) auto-merge once every CI gate is green, and green
+   `main` auto-deploys to Fly via the CD workflow (`docs/adr/0016`);
+   constitution changes are blocked from auto-merge by CI's
+   constitution-guard and require a human-reviewed PR. The agent never
+   runs a deploy itself and never holds credentials; every automated
+   action leaves a detailed audit record (`docs/STANDARDS.md` §f). The
+   agent may propose nothing on a given day.
 
 ## See also
 

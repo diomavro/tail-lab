@@ -32,6 +32,9 @@ acts on, removes, or reorders anything in this file.**
       health-checked). The lake is seeded with VIX; the dashboard renders a
       real z-score. Redeploy with `flyctl deploy -a tail-lab --remote-only`.
       (The daily *agent* still never deploys — deploys stay human/operator.)
+      *Superseded 2026-08-19 by `docs/adr/0016`: green `main` now
+      auto-deploys via `.github/workflows/deploy.yml` once `FLY_API_TOKEN`
+      is provisioned (item below); the agent itself still never deploys.*
 - [x] Get a free FRED API key — unblocks the rates (`docs/DATA_CONTRACTS.md`
       #3) and credit (#4) ingestion adapters. **Done — already existed** in
       the `fred-data` MCP config (`~/.claude.json`); reused it and set it as
@@ -48,11 +51,44 @@ acts on, removes, or reorders anything in this file.**
       gets, deliberately not FRED/AWS/deploy creds). Until this is set, the
       feedback panel's writes (`POST /api/feedback`) still work — only the
       agent's read/resolve calls no-op (404, treated as "nothing pending").
+- [ ] Provision `FLY_API_TOKEN` as a GitHub Actions repo secret
+      (`flyctl tokens create deploy -a tail-lab`) so the new CD workflow
+      (`.github/workflows/deploy.yml`, `docs/adr/0016`) can auto-deploy
+      every green `main` commit. Until set, the workflow no-ops with a
+      visible notice. This token lives only in the deploy workflow — the
+      daily agent never receives it.
 
-## Later / optional
+## Data sourcing (research 2026-08-19 — see `docs/DATA_SOURCING.md`)
 
-- [ ] Budget for a historical option-data source (ORATS, CBOE, or
-      OptionMetrics) to upgrade the backtest from model-priced to
-      real-quote pricing (`docs/adr/0004` — the second `OptionPricer`
-      implementation is agent-buildable once this exists; the data
-      subscription itself is not).
+Phase 1 — free accounts (~30 min total, all $0):
+
+- [ ] Get a free **Tiingo** API key (tiingo.com) → repo secret
+      `TIINGO_API_KEY` + local `.env`. Unblocks replacing the throttled
+      Yahoo chart endpoint as OHLCV primary (500 unique symbols/month,
+      30+ yrs history) and the delisted-name backfill (`docs/adr/0010`).
+- [ ] Create a free **optionsDX** account (optionsdx.com) and download
+      the free SPY/SPX/QQQ EOD option-chain zips (2010–2023, bid/ask +
+      IV + greeks); drop them somewhere the agent can ingest from (e.g.
+      upload to Tigris under `raw-drops/optionsdx/`). Unblocks validating
+      a real-quote `OptionPricer` v2 against the BS proxy at $0.
+- [ ] Create a free **Alpaca** account (data-only, no funding) → API
+      keys as repo secrets. Free historical SIP equity bars (~2016+) and
+      OPRA option history (Feb 2024+); second forward-collection source.
+
+Phase 2/3 — paid decisions (small):
+
+- [ ] Subscribe to **Sharadar "Prices"** direct at sharadar.com —
+      **$9/mo**, personal license. Closes survivorship bias (15k delisted
+      names to Dec 1998), point-in-time S&P 500 constituents, and gives a
+      dependable bulk-CSV broad-universe feed in one. Verify at checkout
+      the plan includes the SP500 constituents table.
+- [ ] Decide the real-quote historical options buy (`docs/adr/0004`,
+      supersedes the old "budget for ORATS/CBOE/OptionMetrics" item):
+      recommended **ORATS Data API $99/mo for 2–3 months** (~$200–300,
+      EOD chains 2007→present, full US universe) — first check their
+      bulk-download/fair-use terms; fallback: historicaloptiondata.com
+      one-off ($945 5-yr / $1,495 full-history L2 CSVs, 2002+).
+- [ ] (When ready to actually trade) open an **IBKR** account via IBKR
+      Ireland — execution venue only, not a data source (no broker serves
+      expired-option history); US listed options are Hungary-eligible;
+      OPRA live data ~$10/mo, commission-waivable.

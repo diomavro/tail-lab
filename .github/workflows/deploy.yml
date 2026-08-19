@@ -1,0 +1,64 @@
+name: Deploy
+
+# Continuous deployment (docs/adr/0016): every commit that lands on main and
+# passes the full CI gate deploys to Fly automatically. Fires when the CI
+# workflow completes; only acts on main, and only when CI *succeeded*. The
+# agent never runs this and never holds the token — this is platform CD
+# triggered by the merge, keeping the no-credentials wall (docs/adr/0007)
+# intact. Until FLY_API_TOKEN is provisioned (HUMAN_TODO.md) the job no-ops
+# with a visible notice instead of failing red.
+
+on:
+  workflow_run:
+    workflows: ["CI"]
+    types: [completed]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: deploy
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    if: >
+      github.event.workflow_run.conclusion == 'success' &&
+      github.event.workflow_run.head_branch == 'main'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check FLY_API_TOKEN is provisioned
+        id: guard
+        env:
+          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
+        run: |
+          if [ -z "$FLY_API_TOKEN" ]; then
+            echo "::notice::FLY_API_TOKEN not set — skipping deploy (see HUMAN_TODO.md / docs/adr/0016)."
+            echo "ready=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "ready=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - uses: actions/checkout@v4
+        if: steps.guard.outputs.ready == 'true'
+        with:
+          ref: ${{ github.event.workflow_run.head_sha }}
+
+      - uses: superfly/flyctl-actions/setup-flyctl@master
+        if: steps.guard.outputs.ready == 'true'
+
+      # --verbose: the deploy log is part of the audit trail (docs/adr/0016
+      # decision 4) — what image, what release, what health checks.
+      - name: Deploy to Fly
+        if: steps.guard.outputs.ready == 'true'
+        env:
+          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
+        run: flyctl deploy --remote-only --verbose -a tail-lab
+
+      - name: Record what shipped
+        if: steps.guard.outputs.ready == 'true'
+        env:
+          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
+        run: |
+          echo "Deployed ${{ github.event.workflow_run.head_sha }} (CI run ${{ github.event.workflow_run.html_url }})"
+          flyctl releases -a tail-lab | head -5
