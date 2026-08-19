@@ -23,6 +23,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 from tail_lab.feedback.store import FeedbackStore
 from tail_lab.lake.blob_store import BlobStore
 from tail_lab.lake.store import DeltaLakeStore, LakeStore
+from tail_lab.memory.store import HypothesisMemory
 
 
 class Settings(BaseSettings):
@@ -90,6 +91,15 @@ def get_feedback_store(settings: Settings | None = None) -> FeedbackStore:
     settings = settings or get_settings()
     root, storage_options = _lake_root_and_storage_options(settings)
     return FeedbackStore(BlobStore(root, storage_options=storage_options))
+
+
+def get_memory_store(settings: Settings | None = None) -> HypothesisMemory:
+    """Construct the :class:`~tail_lab.memory.store.HypothesisMemory`, rooted
+    at the same storage ``get_lake_store`` uses (a ``BlobStore`` under
+    ``ops/memory/`` — see ``docs/adr/0015``)."""
+    settings = settings or get_settings()
+    root, storage_options = _lake_root_and_storage_options(settings)
+    return HypothesisMemory(BlobStore(root, storage_options=storage_options))
 
 
 def _lake_root_and_storage_options(

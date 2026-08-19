@@ -107,12 +107,12 @@ fail_under = 80
 root_package = "tail_lab"
 
 [[tool.importlinter.contracts]]
-name = "Layered architecture: api > research > (ingestion | transforms) > lake > contracts"
+name = "Layered architecture: api > research > (ingestion | transforms | feedback | memory) > lake > contracts"
 type = "layers"
 layers = [
     "tail_lab.api",
     "tail_lab.research",
-    "tail_lab.ingestion | tail_lab.transforms | tail_lab.feedback",
+    "tail_lab.ingestion | tail_lab.transforms | tail_lab.feedback | tail_lab.memory",
     "tail_lab.lake",
     "tail_lab.contracts",
 ]
