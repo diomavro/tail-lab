@@ -30,6 +30,7 @@ from tail_lab.research.backtest.put_roll import (
     load_asof_series,
     run_put_roll,
 )
+from tail_lab.research.backtest.regime_verdict import RegimeVerdict, compute_regime_verdict
 
 router = APIRouter()
 
@@ -120,6 +121,30 @@ def putlab_sweep(
     return SweepResponse(
         asset=asset, as_of=resolved, notional=notional, lookback_years=years, cells=cells
     )
+
+
+@router.get("/api/putlab/regime-verdict")
+def putlab_regime_verdict(
+    asset: str = Query(description="Underlying ticker, e.g. spy."),
+    notional: float = Query(default=1000.0, gt=0, le=1_000_000),
+    moneyness_pct: float = Query(default=5.0, gt=0, lt=100),
+    tenor_weeks: float = Query(default=4.0, gt=0, le=52),
+    years: float = Query(default=4.0, gt=0, le=20),
+    as_of: dt.date | None = Query(default=None),
+    store: LakeStore = Depends(get_lake_store),
+) -> RegimeVerdict:
+    try:
+        return compute_regime_verdict(
+            store,
+            asset=asset,
+            as_of=_resolve_as_of(as_of),
+            notional=notional,
+            moneyness_pct=moneyness_pct,
+            tenor_weeks=tenor_weeks,
+            years=years,
+        )
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
 
 
 @router.get("/api/putlab/cadence")
