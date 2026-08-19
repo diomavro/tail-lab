@@ -52,11 +52,14 @@ jobs:
 
       # --verbose: the deploy log is part of the audit trail (docs/adr/0016
       # decision 4) — what image, what release, what health checks.
+      # TAIL_LAB_CODE_SHA stamps the deployed commit into the app's runtime
+      # env so every STANDARDS §(f) run-log line is traceable to the exact
+      # code that produced it (code_sha=unknown otherwise).
       - name: Deploy to Fly
         if: steps.guard.outputs.ready == 'true'
         env:
           FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
-        run: flyctl deploy --remote-only --verbose -a tail-lab
+        run: flyctl deploy --remote-only --verbose -a tail-lab --env TAIL_LAB_CODE_SHA="$(git rev-parse HEAD)"
 
       - name: Record what shipped
         if: steps.guard.outputs.ready == 'true'
