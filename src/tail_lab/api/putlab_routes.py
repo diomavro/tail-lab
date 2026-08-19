@@ -27,7 +27,12 @@ from tail_lab.api.schemas import SweepCell, SweepResponse
 from tail_lab.config import get_lake_store as _get_configured_lake_store
 from tail_lab.config import get_settings
 from tail_lab.contracts.ohlcv import dataset_id
-from tail_lab.contracts.options_calendar import OptionsCadence, cadence_for
+from tail_lab.contracts.options_calendar import (
+    OptionsCadence,
+    cadence_for,
+    screening_universe,
+    universe_symbols,
+)
 from tail_lab.lake.store import LakeStore
 from tail_lab.observability import log_event
 from tail_lab.research.backtest.put_roll import (
@@ -36,6 +41,7 @@ from tail_lab.research.backtest.put_roll import (
     load_asof_series,
     run_put_roll,
 )
+from tail_lab.research.backtest.ranking import UniverseRanking, rank_universe
 from tail_lab.research.backtest.regime_verdict import RegimeVerdict, compute_regime_verdict
 
 router = APIRouter()
@@ -247,3 +253,46 @@ def putlab_cadence(
     asset: str = Query(description="Underlying ticker, e.g. spy."),
 ) -> OptionsCadence:
     return cadence_for(asset)
+
+
+@router.get("/api/putlab/universe")
+def putlab_universe() -> list[OptionsCadence]:
+    """The screening universe — every name the Put Lab covers, with its display
+    name and listing cadence (the dropdown's source of truth)."""
+    return screening_universe()
+
+
+@router.get("/api/putlab/leaderboard")
+def putlab_leaderboard(
+    moneyness_pct: float = Query(default=5.0, gt=0, lt=100),
+    tenor_weeks: float = Query(default=4.0, gt=0, le=52),
+    years: float = Query(default=4.0, gt=0, le=20),
+    as_of: dt.date | None = Query(default=None),
+    store: LakeStore = Depends(get_lake_store),
+) -> UniverseRanking:
+    """Rank the whole universe by return on premium at this strike/tenor —
+    "which names' OOM puts got the best results" — each tagged with its
+    cross-regime verdict."""
+    resolved = _resolve_as_of(as_of)
+    try:
+        ranking = rank_universe(
+            store,
+            symbols=universe_symbols(),
+            as_of=resolved,
+            moneyness_pct=moneyness_pct,
+            tenor_weeks=tenor_weeks,
+            years=years,
+        )
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    log_event(
+        logger,
+        "putlab.leaderboard",
+        as_of=resolved,
+        moneyness_pct=moneyness_pct,
+        tenor_weeks=tenor_weeks,
+        years=years,
+        code_sha=get_settings().code_sha,
+        n_ranked=len(ranking.ranked),
+    )
+    return ranking
