@@ -179,3 +179,40 @@ export async function submitFeedback(
   }
   return (await resp.json()) as FeedbackRecord
 }
+
+// --- Put Lab live regime verdict (docs/adr/0015) ---
+
+export type Verdict = 'confirmed' | 'regime_only' | 'failed' | 'untested'
+
+export interface RegimeSlice {
+  regime: 'calm' | 'elevated' | 'crisis'
+  n_cycles: number
+  roi_on_premium: number
+  paid_off: boolean
+}
+
+export interface RegimeVerdictResponse {
+  asset: string
+  as_of: string
+  rule_hash: string
+  verdict: Verdict
+  slices: RegimeSlice[]
+}
+
+export async function fetchRegimeVerdict(
+  params: PutBacktestParams,
+  signal?: AbortSignal,
+): Promise<RegimeVerdictResponse> {
+  const qs = new URLSearchParams({
+    asset: params.asset,
+    notional: String(params.notional),
+    moneyness_pct: String(params.moneyness_pct),
+    tenor_weeks: String(params.tenor_weeks),
+    years: String(params.years),
+  })
+  const resp = await fetch(`/api/putlab/regime-verdict?${qs.toString()}`, { signal })
+  if (!resp.ok) {
+    throw new ApiError(`GET /api/putlab/regime-verdict failed: ${resp.status}`, resp.status)
+  }
+  return (await resp.json()) as RegimeVerdictResponse
+}

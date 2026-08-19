@@ -36,10 +36,18 @@ def _seed_ohlcv(store: DeltaLakeStore, symbol: str, ingest_date: dt.date, n: int
     store.write_bronze(dataset_id(symbol), ingest_date, df)
 
 
+def _seed_vix(store: DeltaLakeStore, ingest_date: dt.date, n: int = 320) -> None:
+    vix = 14 + 12 * (np.sin(np.linspace(0, 12, n)) + 1)  # oscillates across regimes
+    dates = pd.date_range(end=ingest_date, periods=n, freq="B")
+    store.write_bronze("vix", ingest_date, pd.DataFrame({"date": dates, "close": vix}))
+
+
 @pytest.fixture
 def client(tmp_path: Path) -> Iterator[TestClient]:
     store = DeltaLakeStore(tmp_path)
-    _seed_ohlcv(store, "spy", dt.datetime.now(dt.UTC).date())
+    today = dt.datetime.now(dt.UTC).date()
+    _seed_ohlcv(store, "spy", today)
+    _seed_vix(store, today)
     app.dependency_overrides[putlab_get_lake_store] = lambda: store
     try:
         yield TestClient(app)
@@ -107,6 +115,25 @@ def test_sweep_returns_grid(client: TestClient) -> None:
 
 def test_sweep_404_unknown_asset(client: TestClient) -> None:
     assert client.get("/api/putlab/sweep", params={"asset": "nope"}).status_code == 404
+
+
+def test_regime_verdict_returns_breakdown(client: TestClient) -> None:
+    resp = client.get(
+        "/api/putlab/regime-verdict",
+        params={"asset": "spy", "moneyness_pct": 5, "tenor_weeks": 4, "years": 1},
+    )
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["asset"] == "spy"
+    assert body["verdict"] in {"confirmed", "regime_only", "failed", "untested"}
+    assert body["rule_hash"].startswith("h-")
+    assert body["slices"]
+    slice0 = body["slices"][0]
+    assert set(slice0) == {"regime", "n_cycles", "roi_on_premium", "paid_off"}
+
+
+def test_regime_verdict_404_unknown_asset(client: TestClient) -> None:
+    assert client.get("/api/putlab/regime-verdict", params={"asset": "nope"}).status_code == 404
 
 
 def test_cadence_known_and_unknown(client: TestClient) -> None:

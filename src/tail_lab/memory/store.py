@@ -26,7 +26,7 @@ import duckdb
 import pandas as pd
 from pydantic import BaseModel
 
-from tail_lab.contracts.hypothesis import RuleSpec, Verdict
+from tail_lab.contracts.hypothesis import RuleSpec, Verdict, verdict_from_passing_regimes
 from tail_lab.contracts.regime import RegimeLabel
 from tail_lab.lake.blob_store import BlobStore
 
@@ -123,12 +123,7 @@ class HypothesisMemory:
         outcomes = self.outcomes_for_rule(rule_hash)
         if not outcomes:
             return "untested"
-        passing_regimes = {o.regime for o in outcomes if o.paid_off}
-        if len(passing_regimes) >= 2:
-            return "confirmed"
-        if len(passing_regimes) == 1:
-            return "regime_only"
-        return "failed"
+        return verdict_from_passing_regimes({o.regime for o in outcomes if o.paid_off})
 
     def coverage_by_regime(self) -> pd.DataFrame:
         """DuckDB rollup over the persisted nodes: per regime, how many rules

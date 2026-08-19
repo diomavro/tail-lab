@@ -3,9 +3,11 @@ import {
   ApiError,
   fetchCadence,
   fetchPutBacktest,
+  fetchRegimeVerdict,
   fetchSweep,
   type CadenceResponse,
   type PutBacktestResponse,
+  type RegimeVerdictResponse,
   type SweepResponse,
 } from '../../api/client'
 import { CadencePanel } from './CadencePanel'
@@ -22,7 +24,13 @@ type LoadState =
   | { status: 'loading' }
   | { status: 'no-data' }
   | { status: 'error'; message: string }
-  | { status: 'ready'; backtest: PutBacktestResponse; sweep: SweepResponse; cadence: CadenceResponse }
+  | {
+      status: 'ready'
+      backtest: PutBacktestResponse
+      sweep: SweepResponse
+      cadence: CadenceResponse
+      regimeVerdict: RegimeVerdictResponse | null
+    }
 
 // A slider/number drag fires many onChange events per second -- wait for the
 // controls to settle before hitting the network.
@@ -43,11 +51,18 @@ export function PutLab() {
     const handle = window.setTimeout(() => {
       setState({ status: 'loading' })
       Promise.all([
-        fetchPutBacktest(controls, controller.signal),
-        fetchSweep({ asset: controls.asset, notional: controls.notional, years: controls.years }, controller.signal),
-        fetchCadence(controls.asset, controller.signal),
+        Promise.all([
+          fetchPutBacktest(controls, controller.signal),
+          fetchSweep({ asset: controls.asset, notional: controls.notional, years: controls.years }, controller.signal),
+          fetchCadence(controls.asset, controller.signal),
+        ]),
+        // The regime verdict needs VIX history too; if it's unavailable, degrade
+        // gracefully (teaser hides) rather than blanking the whole dashboard.
+        fetchRegimeVerdict(controls, controller.signal).catch(() => null),
       ])
-        .then(([backtest, sweep, cadence]) => setState({ status: 'ready', backtest, sweep, cadence }))
+        .then(([[backtest, sweep, cadence], regimeVerdict]) =>
+          setState({ status: 'ready', backtest, sweep, cadence, regimeVerdict }),
+        )
         .catch((err: unknown) => {
           if (err instanceof DOMException && err.name === 'AbortError') return
           if (err instanceof ApiError && err.status === 404) {
@@ -146,7 +161,7 @@ export function PutLab() {
           </>
         )}
 
-        <MemoryTeaser />
+        <MemoryTeaser verdict={state.status === 'ready' ? state.regimeVerdict : null} />
 
         <footer>
           <strong>Model-priced, not historical quotes.</strong> The underlying path is real daily OHLCV already in

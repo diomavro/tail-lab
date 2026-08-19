@@ -19,9 +19,12 @@ from __future__ import annotations
 
 import hashlib
 import json
+from collections.abc import Set as AbstractSet
 from typing import Literal
 
 from pydantic import BaseModel, field_validator
+
+from tail_lab.contracts.regime import RegimeLabel
 
 #: A rule's standing across the regimes it has been tested in. ``regime_only``
 #: is deliberately distinct from ``confirmed`` (``docs/adr/0015``): a strategy
@@ -63,3 +66,20 @@ class RuleSpec(BaseModel):
         canonical = json.dumps(self.model_dump(), sort_keys=True, separators=(",", ":"))
         digest = hashlib.sha256(canonical.encode("utf-8")).hexdigest()
         return f"h-{digest[:8]}"
+
+
+def verdict_from_passing_regimes(passing: AbstractSet[RegimeLabel]) -> Verdict:
+    """Classify a rule from the set of distinct regimes it paid off in
+    (``docs/adr/0015``): >=2 regimes is ``confirmed``, exactly one is
+    ``regime_only``, none is ``failed``.
+
+    Shared by the persistent memory (aggregating stored per-regime outcomes)
+    and the Put Lab's live regime breakdown (the same classification over a
+    single backtest's cycles), so the two can never disagree on where the
+    ``regime_only`` / ``confirmed`` line falls. ``untested`` is not returned
+    here — that is the distinct "no record at all" case the caller handles."""
+    if len(passing) >= 2:
+        return "confirmed"
+    if len(passing) == 1:
+        return "regime_only"
+    return "failed"
