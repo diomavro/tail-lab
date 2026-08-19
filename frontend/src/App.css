@@ -47,6 +47,35 @@ main {
   text-align: right;
 }
 
+.leaderboard-tile {
+  margin-bottom: 1.5rem;
+}
+
+.leaderboard-table {
+  width: 100%;
+  border-collapse: collapse;
+  margin-top: 0.5rem;
+}
+
+.leaderboard-table th,
+.leaderboard-table td {
+  text-align: left;
+  padding: 0.35rem 0.5rem;
+  border-bottom: 1px solid #eee;
+}
+
+.leaderboard-table th {
+  color: #666;
+  font-size: 0.75rem;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+
+.leaderboard-table td:first-child,
+.leaderboard-table th:first-child {
+  width: 3rem;
+}
+
 .feedback-panel {
   margin-top: 1.5rem;
 }

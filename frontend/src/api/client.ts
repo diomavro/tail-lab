@@ -160,6 +160,31 @@ export async function fetchCadence(asset: string, signal?: AbortSignal): Promise
   return (await resp.json()) as CadenceResponse
 }
 
+// --- Sensitivity leaderboard (src/tail_lab/api/leaderboard_routes.py,
+// .../research/leaderboard.py, docs/END_STATE.md §1.1) ---
+
+export interface LeaderboardRow {
+  rank: number
+  symbol: string
+  score: number
+  metric: string
+}
+
+export interface LeaderboardResponse {
+  as_of: string
+  metric: string
+  benchmark: string
+  rows: LeaderboardRow[]
+}
+
+export async function fetchLeaderboard(signal?: AbortSignal): Promise<LeaderboardResponse> {
+  const resp = await fetch('/api/leaderboard', { signal })
+  if (!resp.ok) {
+    throw new ApiError(`GET /api/leaderboard failed: ${resp.status}`, resp.status)
+  }
+  return (await resp.json()) as LeaderboardResponse
+}
+
 // Public, unauthenticated write (see api/feedback_routes.py) -- the
 // token-gated GET/resolve routes are for the daily agent only and are
 // deliberately not called from the browser.
