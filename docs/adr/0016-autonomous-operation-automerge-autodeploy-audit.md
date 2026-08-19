@@ -74,6 +74,15 @@ alone disposing of anything constitutional.
 - `FLY_API_TOKEN` must be provisioned as a GitHub Actions repo secret
   before CD works (`HUMAN_TODO.md`); until then the deploy workflow
   no-ops with a visible notice rather than failing red.
+- **Auto-merged commits need a dispatch hop** (found in the first hour of
+  operation): GitHub suppresses workflow triggers from `GITHUB_TOKEN`
+  pushes, so the automerge workflow's squash-merge produces no push-CI
+  and hence no Deploy. `workflow_dispatch` is exempt from that
+  suppression, so automerge dispatches CI on `main` right after merging —
+  which both validates the *actual merge commit* (the squashed tree, not
+  just the PR head) and feeds the Deploy workflow through its one normal
+  `workflow_run` path. Direct human pushes to `main` trigger the same
+  chain via the ordinary `push` event.
 - A deploy now follows every green merge, so a bad-but-CI-green change
   reaches prod unattended. Mitigations: the Fly health check gates
   release, `flyctl releases` gives one-command rollback, and the audit

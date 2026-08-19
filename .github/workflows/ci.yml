@@ -9,6 +9,12 @@ on:
   push:
     branches: [main]
   pull_request:
+  # Dispatched by the automerge workflow after it squash-merges an agent PR:
+  # pushes made with GITHUB_TOKEN do not trigger `push` workflows (GitHub's
+  # recursion prevention), but workflow_dispatch is exempt — so this is how
+  # an auto-merged commit on main gets CI (and, via the Deploy workflow's
+  # workflow_run trigger, gets deployed). See docs/adr/0016.
+  workflow_dispatch:
 
 jobs:
   backend:

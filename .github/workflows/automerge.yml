@@ -15,6 +15,7 @@ on:
 permissions:
   contents: write
   pull-requests: write
+  actions: write # to dispatch CI on main after the merge (see below)
 
 jobs:
   merge:
@@ -45,3 +46,12 @@ jobs:
           fi
           echo "Merging PR #$pr (CI green)…"
           gh pr merge "$pr" --repo "$REPO" --squash --delete-branch
+          # The squash-merge above is pushed with GITHUB_TOKEN, and GitHub
+          # suppresses workflow triggers from GITHUB_TOKEN pushes (recursion
+          # prevention) — so the merge commit would get no push-CI and hence
+          # no Deploy (docs/adr/0016). workflow_dispatch is exempt from that
+          # suppression: dispatch CI on main so the actual merge commit is
+          # fully validated, and the Deploy workflow then ships it via its
+          # normal workflow_run(CI, main, success) path.
+          echo "Dispatching CI on main so the merge commit is validated and deployed…"
+          gh workflow run ci.yml --repo "$REPO" --ref main
