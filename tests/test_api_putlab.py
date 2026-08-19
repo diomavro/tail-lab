@@ -166,6 +166,36 @@ def test_regime_verdict_404_unknown_asset(client: TestClient) -> None:
     assert client.get("/api/putlab/regime-verdict", params={"asset": "nope"}).status_code == 404
 
 
+def test_universe_lists_members(client: TestClient) -> None:
+    resp = client.get("/api/putlab/universe")
+    assert resp.status_code == 200
+    members = resp.json()
+    assert len(members) >= 30  # broadened universe
+    spy = next(m for m in members if m["symbol"] == "SPY")
+    assert spy["name"] == "S&P 500 (SPY)"
+    assert spy["cadence"] in {"weekly", "monthly"}
+
+
+def test_leaderboard_ranks_seeded_universe(client: TestClient) -> None:
+    resp = client.get(
+        "/api/putlab/leaderboard", params={"moneyness_pct": 5, "tenor_weeks": 4, "years": 1}
+    )
+    assert resp.status_code == 200
+    body = resp.json()
+    # Only spy has data in the fixture, so only it is ranked; the rest skip.
+    assert [r["asset"] for r in body["ranked"]] == ["spy"]
+    row = body["ranked"][0]
+    assert row["spot"] > 0
+    assert set(row) >= {"asset", "name", "spot", "roi_on_premium", "verdict", "hit_rate"}
+
+
+def test_backtest_carries_spot(client: TestClient) -> None:
+    body = client.get("/api/putlab/backtest", params={"asset": "spy", "years": 1}).json()
+    assert body["spot"] > 0
+    # strike at 5% OOM is spot below-by-5%; the UI shows this in real $.
+    assert body["cycles"][0]["strike"] == pytest.approx(body["cycles"][0]["spot"] * 0.95)
+
+
 def test_cadence_known_and_unknown(client: TestClient) -> None:
     known = client.get("/api/putlab/cadence", params={"asset": "spy"})
     assert known.status_code == 200

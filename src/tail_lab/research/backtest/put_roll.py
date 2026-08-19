@@ -68,6 +68,7 @@ class PutBacktestResult(BaseModel):
 
     asset: str
     as_of: dt.date
+    spot: float  # latest underlying price, for showing the strike in real $
     notional: float
     moneyness_pct: float
     tenor_weeks: float
@@ -207,6 +208,7 @@ def run_put_roll(
     return PutBacktestResult(
         asset=asset,
         as_of=as_of,
+        spot=float(px[-1]),
         notional=notional,
         moneyness_pct=moneyness_pct,
         tenor_weeks=tenor_weeks,
