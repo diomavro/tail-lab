@@ -83,14 +83,18 @@ a large one strictly in order.
 
 ## Data-sourcing increments (2026-08-19 — free/keyless; see `docs/DATA_SOURCING.md`)
 
-- [ ] **Structured run logging (`docs/STANDARDS.md` §f, `docs/adr/0016`)**
+- [~] **Structured run logging (`docs/STANDARDS.md` §f, `docs/adr/0016`)**
       — Dio's standing directive: extremely detailed logging of everything
-      automated. One `logging` configuration in the API/CLI composition
-      roots; every ingestion run logs dataset, source, fetch window,
-      fetched/valid/quarantined counts, bronze snapshot id (or no-op),
-      duration; every backtest logs as-of dates, snapshot ids, code SHA,
-      params, headline outputs. Do this *before* adding more adapters so
-      they're born compliant.
+      automated. **Foundation done**: one `logging` configuration in the API
+      composition root (`observability.configure_logging`, called from
+      `api/main.py`) + `log_event` key=value helper, and the three Put Lab
+      backtest endpoints (`/backtest`, `/sweep`, `/regime-verdict`) now emit a
+      structured run line (asset, as-of, bronze snapshot id(s), `code_sha`,
+      params, headline outputs). **Remaining**: wire the same
+      `configure_logging` into CLI/ingestion entry points and have every
+      ingestion run log its full `IngestResult` surface (dataset, source,
+      window, fetched/valid/quarantined, snapshot id or no-op, duration) —
+      new adapters should adopt `observability.log_event` from the start.
 - [ ] In-cockpit **activity log** surface (end state in `docs/STANDARDS.md`
       §f): persist run records (ops blob or small Delta table — mind
       `docs/adr/0014`'s BlobStore precedent) + an API route + a dashboard

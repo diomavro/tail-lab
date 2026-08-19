@@ -16,14 +16,20 @@ agrees with the ingest clock, as ``/api/vix/stretch`` does) and delegate to
 from __future__ import annotations
 
 import datetime as dt
+import logging
+from collections.abc import Mapping, Sequence
 from functools import lru_cache
+from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 
 from tail_lab.api.schemas import SweepCell, SweepResponse
 from tail_lab.config import get_lake_store as _get_configured_lake_store
+from tail_lab.config import get_settings
+from tail_lab.contracts.ohlcv import dataset_id
 from tail_lab.contracts.options_calendar import OptionsCadence, cadence_for
 from tail_lab.lake.store import LakeStore
+from tail_lab.observability import log_event
 from tail_lab.research.backtest.put_roll import (
     PutBacktestResult,
     compute_put_backtest,
@@ -33,6 +39,7 @@ from tail_lab.research.backtest.put_roll import (
 from tail_lab.research.backtest.regime_verdict import RegimeVerdict, compute_regime_verdict
 
 router = APIRouter()
+logger = logging.getLogger("tail_lab.api.putlab")
 
 #: The heatmap axes — kept in one place so the sweep endpoint and (later) the
 #: frontend agree on the grid. Moneyness in % OOM, tenor in weeks.
@@ -50,6 +57,43 @@ def _resolve_as_of(as_of: dt.date | None) -> dt.date:
     return as_of or dt.datetime.now(dt.UTC).date()
 
 
+def _snapshot(store: LakeStore, dataset: str, as_of: dt.date) -> str | None:
+    """The bronze snapshot id used, for the run log — ``None`` (dropped from
+    the line) if it can't be resolved, so logging never fails a request."""
+    try:
+        return store.bronze_snapshot_id(dataset, as_of)
+    except LookupError:
+        return None
+
+
+def _log_run(
+    store: LakeStore,
+    event: str,
+    *,
+    asset: str,
+    as_of: dt.date,
+    params: Mapping[str, Any],
+    outputs: Mapping[str, Any],
+    extra_snapshots: Sequence[tuple[str, str]] = (),
+) -> None:
+    """Emit the §f structured run line for a backtest/mart build: identity
+    (asset, as-of, bronze snapshot ids, code SHA), parameters, and headline
+    outputs (docs/STANDARDS.md §f)."""
+    snaps: dict[str, str | None] = {"ohlcv_snapshot": _snapshot(store, dataset_id(asset), as_of)}
+    for field, ds in extra_snapshots:
+        snaps[field] = _snapshot(store, ds, as_of)
+    log_event(
+        logger,
+        event,
+        asset=asset,
+        as_of=as_of,
+        **params,
+        **snaps,
+        code_sha=get_settings().code_sha,
+        **outputs,
+    )
+
+
 @router.get("/api/putlab/backtest")
 def putlab_backtest(
     asset: str = Query(description="Underlying ticker, e.g. spy."),
@@ -60,18 +104,38 @@ def putlab_backtest(
     as_of: dt.date | None = Query(default=None, description="Simulation date; defaults to today."),
     store: LakeStore = Depends(get_lake_store),
 ) -> PutBacktestResult:
+    resolved = _resolve_as_of(as_of)
     try:
-        return compute_put_backtest(
+        result = compute_put_backtest(
             store,
             asset=asset,
-            as_of=_resolve_as_of(as_of),
+            as_of=resolved,
             notional=notional,
             moneyness_pct=moneyness_pct,
             tenor_weeks=tenor_weeks,
             lookback_years=years,
         )
     except LookupError as exc:
+        log_event(logger, "putlab.backtest.miss", asset=asset, as_of=resolved, reason=str(exc))
         raise HTTPException(status_code=404, detail=str(exc)) from exc
+    _log_run(
+        store,
+        "putlab.backtest",
+        asset=asset,
+        as_of=resolved,
+        params={
+            "moneyness_pct": moneyness_pct,
+            "tenor_weeks": tenor_weeks,
+            "years": years,
+            "notional": notional,
+        },
+        outputs={
+            "n_cycles": result.n_cycles,
+            "roi_on_premium": result.roi_on_premium,
+            "net_pnl": result.net_pnl,
+        },
+    )
+    return result
 
 
 @router.get("/api/putlab/sweep")
@@ -118,6 +182,14 @@ def putlab_sweep(
             )
     if not cells:
         raise HTTPException(status_code=404, detail=f"no scorable window for {asset}")
+    _log_run(
+        store,
+        "putlab.sweep",
+        asset=asset,
+        as_of=resolved,
+        params={"notional": notional, "years": years},
+        outputs={"n_cells": len(cells)},
+    )
     return SweepResponse(
         asset=asset, as_of=resolved, notional=notional, lookback_years=years, cells=cells
     )
@@ -133,18 +205,41 @@ def putlab_regime_verdict(
     as_of: dt.date | None = Query(default=None),
     store: LakeStore = Depends(get_lake_store),
 ) -> RegimeVerdict:
+    resolved = _resolve_as_of(as_of)
     try:
-        return compute_regime_verdict(
+        result = compute_regime_verdict(
             store,
             asset=asset,
-            as_of=_resolve_as_of(as_of),
+            as_of=resolved,
             notional=notional,
             moneyness_pct=moneyness_pct,
             tenor_weeks=tenor_weeks,
             years=years,
         )
     except LookupError as exc:
+        log_event(
+            logger, "putlab.regime_verdict.miss", asset=asset, as_of=resolved, reason=str(exc)
+        )
         raise HTTPException(status_code=404, detail=str(exc)) from exc
+    _log_run(
+        store,
+        "putlab.regime_verdict",
+        asset=asset,
+        as_of=resolved,
+        params={
+            "moneyness_pct": moneyness_pct,
+            "tenor_weeks": tenor_weeks,
+            "years": years,
+            "notional": notional,
+        },
+        outputs={
+            "verdict": result.verdict,
+            "rule_hash": result.rule_hash,
+            "n_slices": len(result.slices),
+        },
+        extra_snapshots=[("vix_snapshot", "vix")],
+    )
+    return result
 
 
 @router.get("/api/putlab/cadence")

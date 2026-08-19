@@ -89,6 +89,29 @@ def test_backtest_404_unknown_asset(client: TestClient) -> None:
     assert resp.status_code == 404
 
 
+def test_backtest_emits_structured_run_log(client: TestClient, caplog) -> None:
+    """§f: a backtest logs its identity + params + headline outputs."""
+    import logging
+
+    with caplog.at_level(logging.INFO, logger="tail_lab.api.putlab"):
+        client.get("/api/putlab/backtest", params={"asset": "spy", "years": 1})
+    line = next(
+        r.getMessage() for r in caplog.records if "event=putlab.backtest " in r.getMessage()
+    )
+    assert "asset=spy" in line
+    assert "ohlcv_snapshot=" in line  # bronze snapshot id read
+    assert "code_sha=" in line
+    assert "n_cycles=" in line and "roi_on_premium=" in line  # headline outputs
+
+
+def test_backtest_miss_is_logged(client: TestClient, caplog) -> None:
+    import logging
+
+    with caplog.at_level(logging.INFO, logger="tail_lab.api.putlab"):
+        client.get("/api/putlab/backtest", params={"asset": "nope"})
+    assert any("event=putlab.backtest.miss" in r.getMessage() for r in caplog.records)
+
+
 def test_backtest_rejects_bad_params(client: TestClient) -> None:
     # moneyness must be 0 < m < 100
     assert (
