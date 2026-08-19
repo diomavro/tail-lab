@@ -62,12 +62,32 @@ a large one strictly in order.
 - [ ] Extend the OHLCV adapter's default fetch range beyond `2y` (it fetched
       `5y` here only via an explicit `range_`), so the Put Lab's "last 4
       years" spans real history without a manual override.
-- [ ] Add the sensitivity-leaderboard gold mart (`transforms/marts/`) + API
-      endpoint (`api/routes/leaderboard.py`) + dashboard tile — becomes the
-      Put Lab's asset-picker entry point. Mart + orchestrator + route are
-      already drafted on the local `agent/sensitivity-leaderboard` branch
-      (needs tests + tile + the `research→ingestion` import fixed to use
-      `contracts.ohlcv.dataset_id`, as the Put Lab engine did).
+- [x] Add the sensitivity-leaderboard gold mart (`transforms/marts/`) + API
+      endpoint + dashboard tile — becomes the Put Lab's asset-picker entry
+      point. **Done 2026-08-19** (Dio's standing directive, in-app feedback:
+      "prioritize the sensitivity leaderboard so I can see put candidates
+      ranked daily"). `transforms/marts/sensitivity_leaderboard.py` (pure
+      rank-a-scores-table function) + `research/leaderboard.py`
+      (orchestrator: reads point-in-time OHLCV for the benchmark + universe,
+      computes downside beta per symbol, calls the mart) + `api/
+      leaderboard_routes.py` (`GET /api/leaderboard`, flat like
+      `putlab_routes.py`) + `frontend/src/components/LeaderboardTile.tsx`,
+      placed above Put Lab in `App.tsx`. Note: the previously-referenced
+      local `agent/sensitivity-leaderboard` branch didn't exist in this
+      checkout (no drafted code found), so this was built fresh from the
+      existing VIX/Put Lab patterns. One deliberate deviation from the
+      literal plan above: the mart takes *already-computed* scores
+      (symbol, score -> ranked table) rather than calling
+      `research/metrics/downside_beta.py` itself, because `transforms/` sits
+      below `research/` in the machine-checked layering
+      (`pyproject.toml`'s import-linter contract) and may never import it —
+      metric computation had to live in the `research/` orchestrator.
+      Universe is the six names with OHLCV already ingested
+      (spy/qqq/iwm/tsla/gld/eem, matching the Put Lab asset picker); a
+      symbol that can't be scored yet is skipped, not fatal. Only one metric
+      (downside beta) is wired in — a second sensitivity metric (item below)
+      is what makes the leaderboard's per-metric tabs (`docs/END_STATE.md`
+      §1.1) real.
 - [ ] Add the event-calendar ingestion adapter for FOMC dates
       (`federalreserve.gov`, keyless) with the `announced_at` point-in-time
       field required by `docs/DATA_CONTRACTS.md` #5. Sourcing note
