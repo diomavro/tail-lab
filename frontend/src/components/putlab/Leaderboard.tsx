@@ -134,7 +134,7 @@ export function Leaderboard({
                 <th className="lb-sort" onClick={() => sortBy('name')}>
                   Asset{arrow('name')}
                 </th>
-                <th className="lb-sort lb-num" onClick={() => sortBy('fragility_score')} title="Composite fragility (0–100), most fragile first">
+                <th className="lb-sort lb-num" onClick={() => sortBy('fragility_score')} title="Composite fragility (0–100): equal-weight blend of downside beta, co-skewness, tail beta & downside capture, most fragile first. Co-kurtosis is shown but excluded — it rewards co-movement with the market's own tails, so it flags broad indices.">
                   Fragility{arrow('fragility_score')}
                 </th>
                 <th className="lb-sort lb-num" onClick={() => sortBy('downside_beta')} title="Downside beta vs SPY">
@@ -143,7 +143,7 @@ export function Leaderboard({
                 <th className="lb-sort lb-num" onClick={() => sortBy('co_skewness')} title="Co-skewness (more negative = more crash-prone)">
                   Skew{arrow('co_skewness')}
                 </th>
-                <th className="lb-sort lb-num" onClick={() => sortBy('co_kurtosis')} title="Co-kurtosis (tail amplification)">
+                <th className="lb-sort lb-num" onClick={() => sortBy('co_kurtosis')} title="Co-kurtosis (tail amplification) — shown for reference but EXCLUDED from the composite: it rewards co-movement with the market's own tails, so it flags broad indices, not fragile single names.">
                   Kurt{arrow('co_kurtosis')}
                 </th>
                 <th

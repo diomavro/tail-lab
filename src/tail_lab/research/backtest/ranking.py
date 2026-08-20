@@ -43,6 +43,22 @@ from tail_lab.research.regimes.timeline import compute_regime_timeline
 #: The market benchmark the fragility metrics are measured against.
 BENCHMARK = "spy"
 
+#: Metrics that feed the composite fragility score. Co-kurtosis is computed and
+#: shown on the screen but DELIBERATELY EXCLUDED here: co-kurtosis *with the
+#: benchmark* rewards names that co-move with SPY's own tails, so it scores
+#: broad indices (SPY/DIA/QQQ) as most "fragile" -- backwards for a single-name
+#: OOM-put screen, which wants names that fall *harder* than the market. The
+#: metric bake-off (``metric_screen.py``, END_STATE §4 Q1) confirmed it as the
+#: worst screen in-sample, but the exclusion is structural, not curve-fit. The
+#: remaining four are equal-weighted. One place, so the screen and the bake-off
+#: composite can never diverge.
+COMPOSITE_METRICS: tuple[str, ...] = (
+    "downside_beta",
+    "co_skewness",
+    "tail_beta",
+    "downside_capture",
+)
+
 
 class RankedAsset(BaseModel):
     """One universe member: its fragility vs the market + the put backtest."""
@@ -177,17 +193,18 @@ def rank_universe(
     with ThreadPoolExecutor(max_workers=8) as pool:
         rows = [r for r in pool.map(_rank_one, symbols) if r is not None]
 
-    # Composite fragility: higher downside beta / co-kurtosis / tail beta /
-    # downside capture, and *lower* (more negative) co-skewness, all mean more
-    # fragile. Average the per-metric cross-sectional ranks over whatever
-    # metrics are present.
-    db_rank = _frac_rank([r.downside_beta for r in rows], fragile_high=True)
-    cs_rank = _frac_rank([r.co_skewness for r in rows], fragile_high=False)
-    ck_rank = _frac_rank([r.co_kurtosis for r in rows], fragile_high=True)
-    tb_rank = _frac_rank([r.tail_beta for r in rows], fragile_high=True)
-    dc_rank = _frac_rank([r.downside_capture for r in rows], fragile_high=True)
+    # Composite fragility: higher downside beta / tail beta / downside capture,
+    # and *lower* (more negative) co-skewness, all mean more fragile. Average
+    # the cross-sectional ranks of the COMPOSITE_METRICS present (co-kurtosis is
+    # ranked for display but excluded from the blend -- see COMPOSITE_METRICS).
+    ranks = {
+        "downside_beta": _frac_rank([r.downside_beta for r in rows], fragile_high=True),
+        "co_skewness": _frac_rank([r.co_skewness for r in rows], fragile_high=False),
+        "tail_beta": _frac_rank([r.tail_beta for r in rows], fragile_high=True),
+        "downside_capture": _frac_rank([r.downside_capture for r in rows], fragile_high=True),
+    }
     for i, r in enumerate(rows):
-        parts = [d[i] for d in (db_rank, cs_rank, ck_rank, tb_rank, dc_rank) if i in d]
+        parts = [ranks[m][i] for m in COMPOSITE_METRICS if i in ranks[m]]
         r.fragility_score = sum(parts) / len(parts) if parts else None
 
     # Most fragile first (names with no fragility estimate sort last).
