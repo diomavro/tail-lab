@@ -16,9 +16,12 @@ primary_region = "fra"
 [http_service]
   internal_port = 8080
   force_https = true
-  auto_stop_machines = "stop"
+  # Keep one machine warm so the first request of a session doesn't eat a
+  # ~30s cold start (delta-rs + DuckDB init + first S3 read). Dashboard
+  # latency is the point; the standing cost is one shared-cpu-1x machine.
+  auto_stop_machines = "suspend"
   auto_start_machines = true
-  min_machines_running = 0
+  min_machines_running = 1
 
   [[http_service.checks]]
     interval = "30s"
@@ -29,4 +32,4 @@ primary_region = "fra"
 
 [[vm]]
   size = "shared-cpu-1x"
-  memory = "512mb"
+  memory = "1024mb"
