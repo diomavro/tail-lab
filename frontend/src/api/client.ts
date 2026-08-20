@@ -52,6 +52,7 @@ export interface PutBacktestCycle {
   sigma: number
   premium: number
   contracts: number
+  cost: number
   payoff: number
   net: number
 }
@@ -73,6 +74,7 @@ export interface PutBacktestResponse {
   n_cycles: number
   total_premium: number
   total_payoff: number
+  total_brokerage: number
   net_pnl: number
   roi_on_premium: number
   annualized_return: number

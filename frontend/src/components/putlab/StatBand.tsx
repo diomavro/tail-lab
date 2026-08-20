@@ -13,7 +13,7 @@ export function StatBand({ backtest }: StatBandProps) {
       k: 'Return on premium',
       v: fmtPct(backtest.roi_on_premium),
       cls: backtest.roi_on_premium >= 0 ? 'pos' : 'neg',
-      note: `${fmtPct(backtest.annualized_return)}/yr annualized · over ${backtest.n_cycles} rolls`,
+      note: `${fmtPct(backtest.annualized_return)}/yr annualized · over ${backtest.n_cycles} rolls · net of brokerage`,
       hero: true,
       concept: 'roi_on_premium',
     },
@@ -21,7 +21,7 @@ export function StatBand({ backtest }: StatBandProps) {
       k: 'Net P&L',
       v: fmtDollar(backtest.net_pnl),
       cls: backtest.net_pnl >= 0 ? 'pos' : 'neg',
-      note: `paid ${fmtDollar(backtest.total_premium)} in premium`,
+      note: `paid ${fmtDollar(backtest.total_premium)} premium + ${fmtDollar(backtest.total_brokerage)} brokerage`,
     },
     {
       k: 'Hit rate',

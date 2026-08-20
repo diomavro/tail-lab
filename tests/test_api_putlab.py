@@ -87,6 +87,7 @@ def test_backtest_returns_full_result(client: TestClient) -> None:
         "sigma",
         "premium",
         "contracts",
+        "cost",
         "payoff",
         "net",
     }

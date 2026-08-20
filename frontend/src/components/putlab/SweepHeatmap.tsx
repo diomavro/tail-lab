@@ -235,7 +235,7 @@ export function SweepHeatmap({
             ) : (
               <> &mdash; benchmark unavailable for this window, so red loses money and green makes money.</>
             )}{' '}
-            Cell figures are return on the small put premium; the S&amp;P figure is buy-and-hold on capital &mdash;
+            Cell figures are return on the small put premium, net of brokerage; the S&amp;P figure is buy-and-hold on capital &mdash;
             different bases, so a rough hurdle, not a like-for-like. Your current pick is outlined.
             {onSelect ? ' Click any cell to set that strike + tenor.' : ''}
           </div>

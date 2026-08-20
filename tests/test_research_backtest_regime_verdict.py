@@ -21,7 +21,8 @@ from tail_lab.research.backtest.regime_verdict import (
 
 
 def _cycle(entry: dt.date, net: float, notional: float = 1000.0) -> PutRollCycle:
-    # premium recovered by the breakdown as payoff - net, so payoff = notional + net.
+    # premium recovered by the breakdown as payoff - net - cost; with cost=0 here,
+    # payoff = notional + net.
     payoff = notional + net
     return PutRollCycle(
         entry_date=entry,
@@ -31,6 +32,7 @@ def _cycle(entry: dt.date, net: float, notional: float = 1000.0) -> PutRollCycle
         sigma=0.3,
         premium=10.0,
         contracts=100.0,
+        cost=0.0,
         payoff=payoff,
         net=net,
     )
