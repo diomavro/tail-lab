@@ -11,6 +11,7 @@ import pytest
 
 from tail_lab.contracts.ohlcv import dataset_id
 from tail_lab.lake.store import DeltaLakeStore
+from tail_lab.research.backtest.put_roll import annualized_return
 from tail_lab.research.backtest.ranking import rank_universe
 
 
@@ -74,6 +75,8 @@ def test_rank_universe_sorts_by_fragility_and_skips_missing(tmp_path: Path) -> N
     assert row.downside_beta is not None and row.co_kurtosis is not None
     assert row.verdict in {"confirmed", "regime_only", "failed", "untested"}
     assert row.n_cycles >= 1
+    for r in ranking.ranked:
+        assert r.annualized_return == pytest.approx(annualized_return(r.roi_on_premium, 1.0))
 
 
 def test_rank_universe_without_benchmark_leaves_fragility_none(tmp_path: Path) -> None:

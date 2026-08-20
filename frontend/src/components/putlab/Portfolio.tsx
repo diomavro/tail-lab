@@ -200,9 +200,13 @@ export function Portfolio({ universe }: { universe: UniverseMember[] }) {
         <>
           <div className="stats" style={{ marginTop: 18 }}>
             <div className="stat hero-stat">
-              <div className="k">Return on premium</div>
+              <div className="k">
+                Return on premium
+                <ConceptInfo id="annualized_return" />
+              </div>
               <div className={`v ${r.roi_on_premium >= 0 ? 'pos' : 'neg'}`}>{fmtPct(r.roi_on_premium)}</div>
               <div className="note">
+                {fmtPct(r.annualized_return)}/yr annualized &middot;{' '}
                 <span className={`badge ${r.verdict}`}>{VERDICT_LABEL[r.verdict]}</span>
               </div>
             </div>
@@ -254,8 +258,11 @@ export function Portfolio({ universe }: { universe: UniverseMember[] }) {
                     <td className="lb-name">{leg.name}</td>
                     <td className="lb-num">{Math.round(leg.weight * 100)}%</td>
                     <td className="lb-num">{fmtDollar(leg.total_premium)}</td>
-                    <td className="lb-num" style={{ color: leg.roi_on_premium >= 0 ? 'var(--gain)' : 'var(--loss)', fontWeight: 700 }}>
-                      {fmtPct(leg.roi_on_premium)}
+                    <td className="lb-num">
+                      <div style={{ color: leg.roi_on_premium >= 0 ? 'var(--gain)' : 'var(--loss)', fontWeight: 700 }}>
+                        {fmtPct(leg.roi_on_premium)}
+                      </div>
+                      <div style={{ opacity: 0.6, fontSize: '0.85em' }}>{fmtPct(leg.annualized_return)}/yr</div>
                     </td>
                     <td>
                       <span className={`badge ${leg.verdict}`}>{VERDICT_LABEL[leg.verdict]}</span>

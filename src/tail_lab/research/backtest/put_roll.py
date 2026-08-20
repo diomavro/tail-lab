@@ -84,6 +84,7 @@ class PutBacktestResult(BaseModel):
     total_payoff: float
     net_pnl: float
     roi_on_premium: float
+    annualized_return: float  # geometric annualization of roi_on_premium over lookback_years
     hit_rate: float
     biggest_payoff_mult: float
     worst_bleed_streak: int
@@ -106,6 +107,21 @@ def trailing_realized_vol(prices: pd.Series, *, window: int = IV_WINDOW) -> pd.S
     log_returns = pd.Series(np.log(ratio), index=prices.index)
     rolling_std = log_returns.rolling(window=window, min_periods=window).std()
     return pd.Series(rolling_std * float(np.sqrt(252.0)), index=prices.index)
+
+
+def annualized_return(total_roi: float, years: float) -> float:
+    """Geometric annualization of a total return-on-premium over ``years``.
+
+    ``(1 + total_roi) ** (1/years) - 1``, i.e. the constant yearly rate that
+    compounds to the total. ``total_roi`` can't be below -1 (you can't lose more
+    than the premium); at exactly -1 the annualized rate is -1 (-100%/yr).
+    """
+    if years <= 0:
+        return total_roi
+    base = 1.0 + total_roi
+    if base <= 0.0:
+        return -1.0
+    return float(base ** (1.0 / years) - 1.0)
 
 
 def run_put_roll(
@@ -241,6 +257,7 @@ def run_put_roll(
     )
 
     total_premium = len(cycles) * notional
+    roi_on_premium = (total_payoff - total_premium) / total_premium
     return PutBacktestResult(
         asset=asset,
         as_of=as_of,
@@ -254,7 +271,8 @@ def run_put_roll(
         total_premium=total_premium,
         total_payoff=total_payoff,
         net_pnl=total_payoff - total_premium,
-        roi_on_premium=(total_payoff - total_premium) / total_premium,
+        roi_on_premium=roi_on_premium,
+        annualized_return=annualized_return(roi_on_premium, lookback_years),
         hit_rate=wins / len(cycles),
         biggest_payoff_mult=biggest_mult,
         worst_bleed_streak=worst_streak,

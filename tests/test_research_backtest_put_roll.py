@@ -23,6 +23,7 @@ from tail_lab.research.backtest.put_roll import (
     DEFAULT_RATE,
     IV_WINDOW,
     PREMIUM_FLOOR_FRAC,
+    annualized_return,
     compute_put_backtest,
     run_put_roll,
     trailing_realized_vol,
@@ -87,6 +88,9 @@ def test_run_put_roll_pins_arithmetic_against_the_pricer() -> None:
     assert res.total_payoff == pytest.approx(total_payoff)
     assert res.net_pnl == pytest.approx(total_payoff - 2 * notional)
     assert res.roi_on_premium == pytest.approx((total_payoff - 2 * notional) / (2 * notional))
+    assert res.annualized_return == pytest.approx(
+        annualized_return(res.roi_on_premium, res.lookback_years)
+    )
     # cycle 1 pays off (dip to 70 << strike 95), cycle 2 expires worthless (98 > 66.5).
     assert res.hit_rate == pytest.approx(0.5)
     assert res.worst_bleed_streak == 1
@@ -95,6 +99,15 @@ def test_run_put_roll_pins_arithmetic_against_the_pricer() -> None:
     assert [p.cum_pnl for p in res.equity_curve] == pytest.approx(
         [0.0, expected[0]["net"], expected[0]["net"] + expected[1]["net"]]
     )
+
+
+def test_annualized_return_geometric_pinned_cases() -> None:
+    """Pinned against hand-computed geometric annualization: (1+roi)**(1/years)-1."""
+    assert annualized_return(-0.72, 4.0) == pytest.approx(-0.27257, abs=1e-4)
+    assert annualized_return(1.0, 4.0) == pytest.approx(0.18921, abs=1e-4)
+    assert annualized_return(-1.0, 4.0) == -1.0
+    assert annualized_return(-1.5, 4.0) == -1.0  # can't lose more than the premium; clamped
+    assert annualized_return(0.37, 0.0) == 0.37  # years=0 passes total_roi through unchanged
 
 
 def test_price_path_spans_the_traded_window() -> None:

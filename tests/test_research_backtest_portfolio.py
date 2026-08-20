@@ -12,6 +12,7 @@ import pytest
 from tail_lab.contracts.ohlcv import dataset_id
 from tail_lab.lake.store import DeltaLakeStore
 from tail_lab.research.backtest.portfolio import PortfolioLeg, run_portfolio
+from tail_lab.research.backtest.put_roll import annualized_return
 
 
 def _seed_ohlcv(
@@ -67,6 +68,15 @@ def test_portfolio_premium_matches_notional_and_nets_sum(tmp_path: Path) -> None
     # Combined net = sum of leg nets; roi consistent.
     assert res.net_pnl == pytest.approx(sum(r.net_pnl for r in res.legs))
     assert res.roi_on_premium == pytest.approx(res.net_pnl / res.total_premium)
+    # Combined annualized figure: geometric annualization of the combined ROI,
+    # not a blend of the legs' own annualized figures.
+    assert res.annualized_return == pytest.approx(
+        annualized_return(res.roi_on_premium, res.lookback_years)
+    )
+    for leg in res.legs:
+        assert leg.annualized_return == pytest.approx(
+            annualized_return(leg.roi_on_premium, res.lookback_years)
+        )
     assert res.verdict in {"confirmed", "regime_only", "failed", "untested"}
     assert res.equity_curve
     # Two OHLCV snapshots (spy, tsla) + the vix snapshot are recorded (§a/§f).

@@ -34,6 +34,7 @@ from tail_lab.lake.store import LakeStore
 from tail_lab.research.backtest.put_roll import (
     EquityPoint,
     PutRollCycle,
+    annualized_return,
     load_asof_series,
     run_put_roll,
 )
@@ -55,6 +56,7 @@ class LegResult(BaseModel):
     total_premium: float
     net_pnl: float
     roi_on_premium: float
+    annualized_return: float  # geometric annualization of roi_on_premium over `years`
     verdict: Verdict
     n_cycles: int
 
@@ -67,6 +69,7 @@ class PortfolioResult(BaseModel):
     total_payoff: float
     net_pnl: float
     roi_on_premium: float
+    annualized_return: float  # geometric annualization of roi_on_premium over lookback_years
     combined_max_drawdown: float
     sum_individual_max_drawdown: float
     verdict: Verdict
@@ -170,6 +173,10 @@ def run_portfolio(
                 total_premium=leg_budget,
                 net_pnl=leg_net,
                 roi_on_premium=leg_net / leg_budget,
+                # unit was rolled at the same `years` and roi_on_premium is
+                # notional-scale-invariant, so unit's annualized figure already
+                # matches this leg's (leg_net/leg_budget == unit.roi_on_premium).
+                annualized_return=unit.annualized_return,
                 verdict=leg_verdict,
                 n_cycles=unit.n_cycles,
             )
@@ -194,6 +201,7 @@ def run_portfolio(
     total_premium = sum(r.total_premium for r in leg_results)
     total_payoff = sum(c.payoff for c in pooled_cycles)
     net_pnl = total_payoff - total_premium
+    combined_roi = net_pnl / total_premium
     _, combined_verdict = regime_breakdown(pooled_cycles, timeline)
     sum_individual_dd = sum(_max_drawdown([c for _, c in curve]) for curve in per_leg_cum)
 
@@ -204,7 +212,8 @@ def run_portfolio(
         total_premium=total_premium,
         total_payoff=total_payoff,
         net_pnl=net_pnl,
-        roi_on_premium=net_pnl / total_premium,
+        roi_on_premium=combined_roi,
+        annualized_return=annualized_return(combined_roi, years),
         combined_max_drawdown=_max_drawdown(combined_cum_values),
         sum_individual_max_drawdown=sum_individual_dd,
         verdict=combined_verdict,
