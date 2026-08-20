@@ -79,6 +79,7 @@ export interface PutBacktestResponse {
   biggest_payoff_mult: number
   worst_bleed_streak: number
   equity_curve: EquityPoint[]
+  mtm_curve: EquityPoint[]
   price_path: PricePoint[]
   cycles: PutBacktestCycle[]
 }

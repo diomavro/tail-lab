@@ -1,5 +1,6 @@
 import { CadencePanel } from '../CadencePanel'
 import { ConceptInfo } from '../ConceptInfo'
+import { CostOverTime } from '../CostOverTime'
 import { CyclesBars } from '../CyclesBars'
 import { EquityCurve } from '../EquityCurve'
 import { fmtPrice } from '../format'
@@ -55,19 +56,32 @@ export function BacktestView({ controls, state }: { controls: PutLabControls; st
       <section className="panel">
         <StrategyTape
           pricePath={state.backtest.price_path}
-          equityCurve={state.backtest.equity_curve}
+          mtmCurve={state.backtest.mtm_curve}
           cycles={state.backtest.cycles}
         />
       </section>
 
       <div className="grid2">
         <section className="panel" style={{ marginBottom: 0 }}>
-          <EquityCurve equityCurve={state.backtest.equity_curve} cycles={state.backtest.cycles} />
+          <EquityCurve
+            equityCurve={state.backtest.equity_curve}
+            mtmCurve={state.backtest.mtm_curve}
+            cycles={state.backtest.cycles}
+          />
         </section>
         <section className="panel" style={{ marginBottom: 0 }}>
           <CyclesBars cycles={state.backtest.cycles} notional={controls.notional} />
         </section>
       </div>
+
+      {/* Full-width rather than jammed into grid2 as a third column: the
+          dual-axis premium/IV chart needs the horizontal room to stay
+          readable, and a 3-up grid2 row would either wrap awkwardly or
+          shrink every chart below the compressed-but-legible bar this view
+          holds elsewhere. */}
+      <section className="panel">
+        <CostOverTime cycles={state.backtest.cycles} />
+      </section>
 
       <div className="grid2" style={{ marginTop: 22 }}>
         <section className="panel" style={{ marginBottom: 0 }}>

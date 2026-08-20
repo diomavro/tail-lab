@@ -1,29 +1,39 @@
 import { useEffect, useRef } from 'react'
 import type { EquityPoint, PutBacktestCycle } from '../../api/client'
+import { ConceptInfo } from './ConceptInfo'
 import { fmtDollar, hideTooltip, showTooltip, svgEl } from './format'
 
 interface EquityCurveProps {
   equityCurve: EquityPoint[]
+  // Daily mark-to-model curve for the single-name backtest. Optional because
+  // the Portfolio combined view has no per-day MTM (only a realized curve
+  // over the union of leg expiries) and falls back to equityCurve below.
+  mtmCurve?: EquityPoint[]
   cycles: PutBacktestCycle[]
 }
 
 // Cumulative P&L of the hedge -- port of the mock's renderEquity(), minus
 // the regime bands (no regime classifier exists yet; see PutLab.tsx header).
-export function EquityCurve({ equityCurve, cycles }: EquityCurveProps) {
+// Plots the daily mark-to-model curve (mtmCurve) when given, rather than the
+// sparser realized equity_curve, so day-to-day fluctuation of the open put
+// shows up instead of straight lines between expiries.
+export function EquityCurve({ equityCurve, mtmCurve, cycles }: EquityCurveProps) {
   const svgRef = useRef<SVGSVGElement | null>(null)
   const ttRef = useRef<HTMLDivElement | null>(null)
+  const isDaily = mtmCurve !== undefined && mtmCurve.length > 0
+  const curve = mtmCurve !== undefined && mtmCurve.length > 0 ? mtmCurve : equityCurve
 
   useEffect(() => {
     const svg = svgRef.current
     const tt = ttRef.current
     if (!svg || !tt) return
     svg.innerHTML = ''
-    if (equityCurve.length === 0) return
+    if (curve.length === 0) return
 
     const W = 1000
     const H = 340
     const P = { l: 64, r: 16, t: 20, b: 26 }
-    const eq = equityCurve.map((p) => ({ t: Date.parse(p.date), v: p.cum_pnl }))
+    const eq = curve.map((p) => ({ t: Date.parse(p.date), v: p.cum_pnl }))
     const first = eq[0]
     const last = eq[eq.length - 1]
     if (!first || !last) return
@@ -74,14 +84,18 @@ export function EquityCurve({ equityCurve, cycles }: EquityCurveProps) {
       }),
     )
 
-    // payoff-cycle markers: equity point k+1 corresponds to cycles[k]
-    cycles.forEach((c, k) => {
-      const p = eq[k + 1]
-      if (!p || c.net <= 0) return
+    // settlement markers: find the daily mtm point landing on each cycle's
+    // expiry date (mtmCurve marks to model exactly onto the realized value
+    // there, so this is where a positive-net cycle "pays off" on the curve).
+    const byDate = new Map(curve.map((p) => [p.date, p]))
+    cycles.forEach((c) => {
+      if (c.net <= 0) return
+      const p = byDate.get(c.expiry_date)
+      if (!p) return
       svg.appendChild(
         svgEl('circle', {
-          cx: X(p.t),
-          cy: Y(p.v),
+          cx: X(Date.parse(p.date)),
+          cy: Y(p.cum_pnl),
           r: 4,
           fill: 'var(--surface)',
           stroke: 'var(--gain)',
@@ -126,15 +140,20 @@ export function EquityCurve({ equityCurve, cycles }: EquityCurveProps) {
       hit.removeEventListener('pointermove', onMove)
       hit.removeEventListener('pointerleave', onLeave)
     }
-  }, [equityCurve, cycles])
+  }, [curve, cycles])
 
   return (
     <>
       <div className="panel-head">
         <div>
-          <h2>Cumulative P&L of the hedge</h2>
+          <h2>
+            Cumulative P&L of the hedge
+            <ConceptInfo id="mark_to_market" />
+          </h2>
           <div className="hint">
-            Running net profit &amp; loss &mdash; premiums paid out, payoffs collected at each expiry.
+            {isDaily
+              ? "Marked to model every day — the open put's value fluctuates daily and settles at each expiry."
+              : 'Running net profit & loss — premiums paid out, payoffs collected at each expiry.'}
           </div>
         </div>
         <div className="legend">

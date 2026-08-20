@@ -4,7 +4,7 @@ import { fmtDollar, svgEl } from './format'
 
 interface StrategyTapeProps {
   pricePath: PricePoint[]
-  equityCurve: EquityPoint[]
+  mtmCurve: EquityPoint[]
   cycles: PutBacktestCycle[]
 }
 
@@ -13,14 +13,16 @@ interface StrategyTapeProps {
 // bought and where the strike sat vs the stock), over a PnL pane on the SAME
 // date axis -- so a PnL jump lines up visually with the stock diving under a
 // strike. Answers "does the PnL move like it should relative to the stock?".
-export function StrategyTape({ pricePath, equityCurve, cycles }: StrategyTapeProps) {
+// The PnL pane plots the daily mark-to-model curve (mtmCurve), which aligns
+// 1:1 with pricePath's dates, instead of the sparser realized equity_curve.
+export function StrategyTape({ pricePath, mtmCurve, cycles }: StrategyTapeProps) {
   const svgRef = useRef<SVGSVGElement | null>(null)
 
   useEffect(() => {
     const svg = svgRef.current
     if (!svg) return
     svg.innerHTML = ''
-    if (pricePath.length === 0 || equityCurve.length === 0) return
+    if (pricePath.length === 0 || mtmCurve.length === 0) return
 
     const W = 1000
     const P = { l: 56, r: 16 }
@@ -29,7 +31,7 @@ export function StrategyTape({ pricePath, equityCurve, cycles }: StrategyTapePro
     const pnl = { t: 262, h: 150 }
 
     const px = pricePath.map((p) => ({ t: Date.parse(p.date), v: p.price }))
-    const eq = equityCurve.map((p) => ({ t: Date.parse(p.date), v: p.cum_pnl }))
+    const eq = mtmCurve.map((p) => ({ t: Date.parse(p.date), v: p.cum_pnl }))
     const xs = px[0]!.t
     const xe = Math.max(px[px.length - 1]!.t, xs + 1)
     const X = (t: number) => P.l + ((t - xs) / (xe - xs)) * (W - P.l - P.r)
@@ -92,7 +94,7 @@ export function StrategyTape({ pricePath, equityCurve, cycles }: StrategyTapePro
     add('path', { d: dq, fill: 'none', stroke: 'var(--accent)', 'stroke-width': 2 })
     const lastEq = eq[eq.length - 1]!
     add('circle', { cx: X(lastEq.t), cy: QY(lastEq.v), r: 4, fill: 'var(--accent)' })
-  }, [pricePath, equityCurve, cycles])
+  }, [pricePath, mtmCurve, cycles])
 
   return (
     <>

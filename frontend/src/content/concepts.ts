@@ -182,6 +182,19 @@ export const CONCEPTS: Record<string, Concept> = {
   },
 
   // ---------------------------------------------------------------- result
+  mark_to_market: {
+    id: 'mark_to_market',
+    term: 'Mark-to-market P&L',
+    category: 'result',
+    short:
+      'The daily curve re-prices the open put with Black-Scholes every day, so P&L moves continuously instead of only stepping at each expiry.',
+    formula: 'unrealized_k = contracts × BS(spotₖ, K, (expiry−k)/252, σₖ) − premium_paid',
+    intuition:
+      'The realized equity curve only knows a put value at entry (premium paid) and at expiry (intrinsic payoff), so plotting it straight-lines between those two points -- a visual lie about what happens while the position is open. The mark-to-market curve fixes that by re-pricing the SAME open put with Black-Scholes every trading day, feeding it that day current spot, the shrinking time-to-expiry, and the day vol proxy, and netting off the premium already paid. Because the model and its inputs are identical at entry and at expiry, the daily curve lands exactly on the realized equity curve value at every expiry date -- it is a strict refinement, not a different number.',
+    howToRead:
+      'Use the daily curve to see how the hedge actually breathed day to day -- a put can swing deep into paper profit and back to zero between rolls, which the old realized-only curve hid completely. The settlement markers (green circles) show exactly where a cycle net positive lands on this curve.',
+    seeAlso: ['roi_on_premium', 'bleed', 'model_priced', 'oom_put'],
+  },
   roi_on_premium: {
     id: 'roi_on_premium',
     term: 'Return on premium',
