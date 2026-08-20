@@ -528,3 +528,100 @@
     transition: none !important;
   }
 }
+
+/* ---------- strike-in-dollars caption ---------- */
+.putlab-root .strike-caption {
+  margin: 10px 2px 0;
+  font-size: 14px;
+  color: var(--text);
+}
+.putlab-root .strike-caption .lede {
+  color: var(--muted);
+}
+.putlab-root .strike-caption .strike-dist {
+  color: var(--faint);
+  font-size: 12.5px;
+}
+
+/* ---------- leaderboard ---------- */
+.putlab-root .lb-run {
+  font: inherit;
+  font-size: 13px;
+  font-weight: 600;
+  white-space: nowrap;
+  cursor: pointer;
+  color: #14100a;
+  background: var(--accent);
+  border: 1px solid var(--accent);
+  border-radius: 9px;
+  padding: 8px 14px;
+}
+.putlab-root .lb-run:hover:not(:disabled) {
+  filter: brightness(1.06);
+}
+.putlab-root .lb-run:disabled {
+  opacity: 0.6;
+  cursor: progress;
+}
+.putlab-root .lb-run:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+.putlab-root .lb-scroll {
+  overflow-x: auto;
+  margin-top: 14px;
+}
+.putlab-root .lb-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
+}
+.putlab-root .lb-table th,
+.putlab-root .lb-table td {
+  padding: 8px 12px;
+  text-align: left;
+  border-bottom: 1px solid var(--line);
+  white-space: nowrap;
+}
+.putlab-root .lb-table th {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--faint);
+  font-weight: 600;
+  border-bottom: 1px solid var(--line-strong);
+}
+.putlab-root .lb-table .lb-num {
+  text-align: right;
+}
+.putlab-root .lb-table .lb-rank,
+.putlab-root .lb-table .lb-name {
+  color: var(--muted);
+}
+.putlab-root .lb-table .lb-name {
+  color: var(--text);
+  white-space: normal;
+  min-width: 12ch;
+}
+.putlab-root .lb-sort {
+  cursor: pointer;
+  user-select: none;
+}
+.putlab-root .lb-sort:hover {
+  color: var(--accent);
+}
+.putlab-root .lb-table tbody tr:hover {
+  background: var(--surface-2);
+}
+.putlab-root .lb-table .lb-current {
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+}
+.putlab-root .lb-table .lb-current td {
+  border-bottom-color: color-mix(in srgb, var(--accent) 30%, var(--line));
+}
+.putlab-root .badge.untested {
+  background: var(--surface-2);
+  color: var(--faint);
+  border: 1px solid var(--line-strong);
+}

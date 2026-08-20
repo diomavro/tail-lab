@@ -5,14 +5,18 @@ import {
   fetchPutBacktest,
   fetchRegimeVerdict,
   fetchSweep,
+  fetchUniverse,
   type CadenceResponse,
   type PutBacktestResponse,
   type RegimeVerdictResponse,
   type SweepResponse,
+  type UniverseMember,
 } from '../../api/client'
 import { CadencePanel } from './CadencePanel'
 import { CyclesBars } from './CyclesBars'
 import { EquityCurve } from './EquityCurve'
+import { fmtPrice } from './format'
+import { Leaderboard } from './Leaderboard'
 import { MemoryTeaser } from './MemoryTeaser'
 import './putlab.css'
 import { QuestionBar } from './QuestionBar'
@@ -43,8 +47,19 @@ const DEBOUNCE_MS = 250
 export function PutLab() {
   const [controls, setControls] = useState<PutLabControls>(PUTLAB_DEFAULT_CONTROLS)
   const [state, setState] = useState<LoadState>({ status: 'loading' })
+  const [universe, setUniverse] = useState<UniverseMember[]>([])
 
   const updateControls = (patch: Partial<PutLabControls>) => setControls((c) => ({ ...c, ...patch }))
+
+  // The screening universe drives the dropdown; fetched once. Failure just
+  // leaves the QuestionBar on its built-in fallback list.
+  useEffect(() => {
+    const controller = new AbortController()
+    fetchUniverse(controller.signal)
+      .then(setUniverse)
+      .catch(() => {})
+    return () => controller.abort()
+  }, [])
 
   useEffect(() => {
     const controller = new AbortController()
@@ -116,7 +131,19 @@ export function PutLab() {
           </div>
         </header>
 
-        <QuestionBar controls={controls} onChange={updateControls} />
+        <QuestionBar controls={controls} onChange={updateControls} universe={universe} />
+
+        {state.status === 'ready' && (
+          <p className="strike-caption mono" aria-live="polite">
+            {state.backtest.asset.toUpperCase()} {fmtPrice(state.backtest.spot)}
+            <span className="lede"> &middot; {controls.moneyness_pct}% OOM &rarr; </span>
+            <strong>{fmtPrice(state.backtest.spot * (1 - controls.moneyness_pct / 100))}</strong>
+            <span className="lede"> strike </span>
+            <span className="strike-dist">
+              ({fmtPrice(state.backtest.spot * (controls.moneyness_pct / 100))} below spot)
+            </span>
+          </p>
+        )}
 
         {state.status === 'loading' && (
           <p className="putlab-status" role="status" aria-live="polite">
@@ -158,6 +185,8 @@ export function PutLab() {
                 tenorWeeks={controls.tenor_weeks}
               />
             </section>
+
+            <Leaderboard controls={controls} currentAsset={controls.asset} />
           </>
         )}
 
