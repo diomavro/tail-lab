@@ -1,13 +1,15 @@
+import type { UniverseMember } from '../../api/client'
 import { PUTLAB_ASSETS, PUTLAB_TENORS, type PutLabControls } from './types'
 
 interface QuestionBarProps {
   controls: PutLabControls
   onChange: (patch: Partial<PutLabControls>) => void
+  universe: UniverseMember[]
 }
 
 // The plain-English control row ("the question") -- port of the mock's
 // `.question` section, wired to real state instead of `state`/`render()`.
-export function QuestionBar({ controls, onChange }: QuestionBarProps) {
+export function QuestionBar({ controls, onChange, universe }: QuestionBarProps) {
   return (
     <section className="question" aria-label="Strategy question builder">
       <div className="eyebrow" style={{ marginBottom: 10 }}>
@@ -39,11 +41,17 @@ export function QuestionBar({ controls, onChange }: QuestionBarProps) {
             value={controls.asset}
             onChange={(e) => onChange({ asset: e.target.value })}
           >
-            {PUTLAB_ASSETS.map((a) => (
-              <option key={a.value} value={a.value}>
-                {a.label}
-              </option>
-            ))}
+            {universe.length > 0
+              ? universe.map((m) => (
+                  <option key={m.symbol} value={m.symbol.toLowerCase()}>
+                    {m.name}
+                  </option>
+                ))
+              : PUTLAB_ASSETS.map((a) => (
+                  <option key={a.value} value={a.value}>
+                    {a.label}
+                  </option>
+                ))}
           </select>
         </span>
         <span className="lede">puts,</span>

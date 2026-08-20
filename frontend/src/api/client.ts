@@ -69,6 +69,7 @@ export interface PutBacktestResponse {
   tenor_weeks: number
   lookback_years: number
   rate: number
+  spot: number
   n_cycles: number
   total_premium: number
   total_payoff: number
@@ -160,6 +161,26 @@ export async function fetchCadence(asset: string, signal?: AbortSignal): Promise
   return (await resp.json()) as CadenceResponse
 }
 
+// The Put Lab screening universe (contracts/options_calendar.py) -- the
+// dropdown's source of truth, 35 names deep. Shares the CadenceResponse shape
+// plus the ticker.
+export interface UniverseMember {
+  symbol: string
+  name: string
+  cadence: OptionsCadenceKind
+  avg_gap_days: number
+  label: string
+  detail: string
+}
+
+export async function fetchUniverse(signal?: AbortSignal): Promise<UniverseMember[]> {
+  const resp = await fetch('/api/putlab/universe', { signal })
+  if (!resp.ok) {
+    throw new ApiError(`GET /api/putlab/universe failed: ${resp.status}`, resp.status)
+  }
+  return (await resp.json()) as UniverseMember[]
+}
+
 // --- Sensitivity leaderboard (src/tail_lab/api/leaderboard_routes.py,
 // .../research/leaderboard.py, docs/END_STATE.md §1.1) ---
 
@@ -240,4 +261,51 @@ export async function fetchRegimeVerdict(
     throw new ApiError(`GET /api/putlab/regime-verdict failed: ${resp.status}`, resp.status)
   }
   return (await resp.json()) as RegimeVerdictResponse
+}
+
+// --- Put Lab universe leaderboard (research/backtest/ranking.py) --
+// "which names' OOM puts got the best results at this strike/tenor," ranked
+// server-side. NOT `fetchLeaderboard` above -- that's the unrelated
+// sensitivity leaderboard at /api/leaderboard.
+
+export interface RankedAsset {
+  asset: string
+  name: string
+  spot: number
+  roi_on_premium: number
+  verdict: Verdict
+  hit_rate: number
+  biggest_payoff_mult: number
+  n_cycles: number
+}
+
+export interface PutLabLeaderboardResponse {
+  as_of: string
+  moneyness_pct: number
+  tenor_weeks: number
+  lookback_years: number
+  notional: number
+  ranked: RankedAsset[]
+}
+
+export interface PutLabLeaderboardParams {
+  moneyness_pct: number
+  tenor_weeks: number
+  years: number
+}
+
+export async function fetchPutLabLeaderboard(
+  params: PutLabLeaderboardParams,
+  signal?: AbortSignal,
+): Promise<PutLabLeaderboardResponse> {
+  const qs = new URLSearchParams({
+    moneyness_pct: String(params.moneyness_pct),
+    tenor_weeks: String(params.tenor_weeks),
+    years: String(params.years),
+  })
+  const resp = await fetch(`/api/putlab/leaderboard?${qs.toString()}`, { signal })
+  if (!resp.ok) {
+    throw new ApiError(`GET /api/putlab/leaderboard failed: ${resp.status}`, resp.status)
+  }
+  return (await resp.json()) as PutLabLeaderboardResponse
 }

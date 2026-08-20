@@ -17,6 +17,12 @@ export function fmtMult(n: number): string {
   return `${n.toFixed(1)}×`
 }
 
+// Cents-precision dollar formatting for spot/strike prices, where fmtDollar's
+// whole-number rounding would hide the difference between adjacent strikes.
+export function fmtPrice(n: number): string {
+  return `$${n.toFixed(2)}`
+}
+
 function parseHex(hex: string): [number, number, number] {
   const m = hex.match(/\w\w/g)
   if (!m || m.length < 3) return [0, 0, 0]
