@@ -19,6 +19,7 @@ import pytest
 
 from tail_lab.contracts.ohlcv import dataset_id
 from tail_lab.lake.store import DeltaLakeStore
+from tail_lab.research.backtest.brokerage import roll_cost
 from tail_lab.research.backtest.put_roll import (
     DEFAULT_RATE,
     IV_WINDOW,
@@ -71,23 +72,35 @@ def test_run_put_roll_pins_arithmetic_against_the_pricer() -> None:
             spot * PREMIUM_FLOOR_FRAC,
         )
         contracts = notional / prem
+        cost = roll_cost(contracts, notional, tenor_w, moneyness)
         payoff = contracts * max(strike - px[entry + tenor_days], 0.0)
         expected.append(
-            {"prem": prem, "contracts": contracts, "payoff": payoff, "net": payoff - notional}
+            {
+                "prem": prem,
+                "contracts": contracts,
+                "cost": cost,
+                "payoff": payoff,
+                "net": payoff - notional - cost,
+            }
         )
 
     assert res.n_cycles == 2
     for got, exp in zip(res.cycles, expected, strict=True):
         assert got.premium == pytest.approx(exp["prem"])
         assert got.contracts == pytest.approx(exp["contracts"])
+        assert got.cost == pytest.approx(exp["cost"])
         assert got.payoff == pytest.approx(exp["payoff"])
         assert got.net == pytest.approx(exp["net"])
 
     total_payoff = sum(e["payoff"] for e in expected)
+    total_cost = sum(e["cost"] for e in expected)
     assert res.total_premium == pytest.approx(2 * notional)
     assert res.total_payoff == pytest.approx(total_payoff)
-    assert res.net_pnl == pytest.approx(total_payoff - 2 * notional)
-    assert res.roi_on_premium == pytest.approx((total_payoff - 2 * notional) / (2 * notional))
+    assert res.total_brokerage == pytest.approx(total_cost)
+    assert res.net_pnl == pytest.approx(total_payoff - 2 * notional - total_cost)
+    assert res.roi_on_premium == pytest.approx(
+        (total_payoff - 2 * notional - total_cost) / (2 * notional)
+    )
     assert res.annualized_return == pytest.approx(
         annualized_return(res.roi_on_premium, res.lookback_years)
     )
@@ -99,6 +112,63 @@ def test_run_put_roll_pins_arithmetic_against_the_pricer() -> None:
     assert [p.cum_pnl for p in res.equity_curve] == pytest.approx(
         [0.0, expected[0]["net"], expected[0]["net"] + expected[1]["net"]]
     )
+
+
+def test_costs_strictly_reduce_net_pnl_and_roi() -> None:
+    """The same strategy run cost-free (commission 0, spread 0) has zero
+    brokerage and a strictly higher net P&L / ROI than the realistic-cost run —
+    a bought put's brokerage can only reduce what you keep."""
+    prices = _flat_with_dips(120, {60: 70.0, 100: 80.0})
+    iv = pd.Series(np.full(120, 0.30), index=prices.index)
+    common = dict(
+        asset="T",
+        as_of=dt.date(2021, 6, 1),
+        notional=1000.0,
+        moneyness_pct=8.0,
+        tenor_weeks=4.0,
+        lookback_years=10,
+    )
+    free = run_put_roll(prices, iv, commission_per_contract=0.0, spread_scale=0.0, **common)  # type: ignore[arg-type]
+    costed = run_put_roll(prices, iv, **common)  # type: ignore[arg-type]
+
+    assert free.total_brokerage == 0.0
+    assert costed.total_brokerage > 0.0
+    assert costed.net_pnl < free.net_pnl
+    assert costed.roi_on_premium < free.roi_on_premium
+    # net is the gross net (payoff - notional) less exactly the roll's brokerage.
+    for got, ref in zip(costed.cycles, free.cycles, strict=True):
+        assert got.net == pytest.approx(ref.net - got.cost)
+
+
+def test_less_frequent_tenor_bleeds_less_to_brokerage() -> None:
+    """The point of the cost model: on a flat path where every OOM put expires
+    worthless (so the *gross* return is identical -- a total loss -- at any
+    tenor), a frequent (weekly) roll pays far more brokerage per year and per
+    premium dollar than an infrequent (quarterly) one, so its net return is
+    strictly worse. Short tenors roll ~12x as often and, being cheaper, buy far
+    more (share-equivalent) contracts per premium dollar -> more commission, and
+    quote a wider bid-ask spread."""
+    n = 252 * 4 + 60
+    prices = pd.Series(
+        np.full(n, 500.0), index=pd.date_range("2016-01-01", periods=n, freq="B"), name="T"
+    )
+    iv = pd.Series(np.full(n, 0.18), index=prices.index)
+    common = dict(asset="T", as_of=dt.date(2020, 1, 1), notional=1000.0, moneyness_pct=5.0)
+    years = 4.0
+    weekly = run_put_roll(prices, iv, tenor_weeks=1.0, lookback_years=years, **common)  # type: ignore[arg-type]
+    quarterly = run_put_roll(prices, iv, tenor_weeks=12.0, lookback_years=years, **common)  # type: ignore[arg-type]
+
+    # Gross returns tie exactly: on a flat path no put ever pays, so both lose
+    # 100% of premium before costs.
+    for r in (weekly, quarterly):
+        assert (r.total_payoff) == pytest.approx(0.0)
+    # The frequency penalty: weekly brokerage per year and per premium dollar is
+    # materially larger, and its net ROI is strictly worse.
+    assert weekly.total_brokerage / years > 10.0 * (quarterly.total_brokerage / years)
+    assert (weekly.total_brokerage / weekly.total_premium) > (
+        quarterly.total_brokerage / quarterly.total_premium
+    )
+    assert weekly.roi_on_premium < quarterly.roi_on_premium
 
 
 def test_annualized_return_geometric_pinned_cases() -> None:
@@ -153,9 +223,14 @@ def test_mtm_curve_spans_price_path_and_shares_dates() -> None:
 
 
 def test_mtm_curve_converges_to_realized_equity_at_every_expiry() -> None:
-    """Load-bearing correctness: because contracts * premium == notional, the
-    raw BS mark at t_years=0 is the intrinsic payoff, so the daily curve must
-    equal the realized equity curve on every cycle's expiry date."""
+    """Load-bearing correctness (net of brokerage): because contracts * premium
+    == notional, the raw BS mark at t_years=0 is the intrinsic payoff, so at a
+    roll's expiry ``unrealized = contracts*intrinsic - notional - cost == net``.
+    The daily curve therefore meets the realized equity curve on every expiry
+    date -- except that a roll re-enters on the *same* date it expires, and the
+    daily mark steps down by that new roll's entry brokerage, so at a shared
+    expiry/entry date the curve sits below realized equity by exactly the new
+    roll's cost (and equals it at the final expiry, where nothing re-enters)."""
     prices = _flat_with_dips(101, {60: 70.0, 100: 98.0})
     iv = pd.Series(np.full(101, 0.30), index=prices.index)
     res = run_put_roll(
@@ -170,8 +245,16 @@ def test_mtm_curve_converges_to_realized_equity_at_every_expiry() -> None:
     )
     mtm_by_date = {p.date: p.cum_pnl for p in res.mtm_curve}
     equity_by_date = {p.date: p.cum_pnl for p in res.equity_curve}
+    entry_cost_on = {c.entry_date: c.cost for c in res.cycles}
     for cyc in res.cycles:
-        assert mtm_by_date[cyc.expiry_date] == pytest.approx(equity_by_date[cyc.expiry_date])
+        opened_cost = entry_cost_on.get(cyc.expiry_date, 0.0)  # a roll re-entering that day
+        assert mtm_by_date[cyc.expiry_date] == pytest.approx(
+            equity_by_date[cyc.expiry_date] - opened_cost
+        )
+    # The final expiry has no re-entry, so the curve fully converges there.
+    last = res.cycles[-1].expiry_date
+    assert mtm_by_date[last] == pytest.approx(equity_by_date[last])
+    assert mtm_by_date[last] == pytest.approx(res.net_pnl)
 
 
 def test_mtm_curve_moves_intra_cycle_on_a_sharp_drop() -> None:

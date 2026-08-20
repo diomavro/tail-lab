@@ -90,11 +90,13 @@ def _max_drawdown(cum: list[float]) -> float:
 
 def _scaled(cycle: PutRollCycle, s: float) -> PutRollCycle:
     """Scale one unit-notional cycle to a per-roll budget of ``s``: contracts,
-    payoff, and net scale linearly; premium (per-put model price) is unchanged
-    but unused downstream (regime_breakdown recovers premium as payoff-net)."""
+    cost, payoff, and net scale linearly; premium (per-put model price) is
+    unchanged but unused downstream (regime_breakdown recovers premium as
+    payoff - net - cost)."""
     return cycle.model_copy(
         update={
             "contracts": cycle.contracts * s,
+            "cost": cycle.cost * s,
             "payoff": cycle.payoff * s,
             "net": cycle.net * s,
         }
@@ -150,8 +152,7 @@ def run_portfolio(
         scaled = [_scaled(c, s) for c in unit.cycles]
         pooled_cycles.extend(scaled)
 
-        leg_payoff = sum(c.payoff for c in scaled)
-        leg_net = leg_payoff - leg_budget
+        leg_net = sum(c.net for c in scaled)  # net of brokerage
         _, leg_verdict = regime_breakdown(scaled, timeline)
 
         cum = 0.0
@@ -200,7 +201,7 @@ def run_portfolio(
 
     total_premium = sum(r.total_premium for r in leg_results)
     total_payoff = sum(c.payoff for c in pooled_cycles)
-    net_pnl = total_payoff - total_premium
+    net_pnl = sum(c.net for c in pooled_cycles)  # net of brokerage
     combined_roi = net_pnl / total_premium
     _, combined_verdict = regime_breakdown(pooled_cycles, timeline)
     sum_individual_dd = sum(_max_drawdown([c for _, c in curve]) for curve in per_leg_cum)

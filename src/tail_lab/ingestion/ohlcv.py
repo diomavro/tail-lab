@@ -59,9 +59,15 @@ class IngestResult:
 
 
 def fetch_ohlcv_raw(
-    symbol: str, *, range_: str = "2y", interval: str = "1d", timeout: float = 15.0
+    symbol: str, *, range_: str = "5y", interval: str = "1d", timeout: float = 15.0
 ) -> Any:
-    """Fetch raw Yahoo chart JSON for ``symbol``. Network call — not used by tests."""
+    """Fetch raw Yahoo chart JSON for ``symbol``. Network call — not used by tests.
+
+    Defaults to a 5-year range: the backtester routinely runs 4-year windows, so
+    a shorter default would let a plain ``make ingest-ohlcv SYMBOL=X`` write a
+    truncated bronze partition that then shadows a longer one (immutable bronze
+    resolves to the latest ingest_date), silently cutting backtest history.
+    """
     resp = requests.get(
         YAHOO_CHART_URL_TEMPLATE.format(symbol=symbol.upper()),
         params={"range": range_, "interval": interval},

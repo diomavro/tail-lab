@@ -196,9 +196,11 @@ def _run_screen(
 
     slices, verdict = regime_breakdown(pooled, timeline)
 
-    total_payoff = sum(c.payoff for c in pooled)
-    total_premium = sum(c.payoff - c.net for c in pooled)  # payoff - net == budget
-    roi = (total_payoff - total_premium) / total_premium if total_premium > 0 else 0.0
+    # payoff - net - cost == budget (net is net of brokerage); ROI is on that
+    # premium budget and net of brokerage (== sum(net)/budget).
+    total_premium = sum(c.payoff - c.net - c.cost for c in pooled)
+    total_net = sum(c.net for c in pooled)
+    roi = total_net / total_premium if total_premium > 0 else 0.0
     hit_rate = sum(1 for c in pooled if c.net > 0.0) / len(pooled) if pooled else 0.0
 
     # Combined bleed: accumulate realized net at each expiry DATE (summing any

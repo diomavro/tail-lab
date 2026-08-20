@@ -24,6 +24,7 @@ from pydantic import BaseModel
 
 from tail_lab.contracts.ohlcv import dataset_id
 from tail_lab.lake.store import LakeStore
+from tail_lab.research.backtest.brokerage import COMMISSION_PER_CONTRACT, roll_cost
 from tail_lab.research.option_pricer import BlackScholesPricer, OptionPricer
 
 #: Trailing window (trading days) for the realized-vol IV proxy.
@@ -54,8 +55,9 @@ class PutRollCycle(BaseModel):
     sigma: float  # IV proxy (clamped realized-vol) used to price the entry premium
     premium: float  # model price of one put at entry
     contracts: float  # notional / premium
+    cost: float  # entry brokerage (commission + bid-ask half-spread) for this roll
     payoff: float  # contracts * max(strike - spot_at_expiry, 0)
-    net: float  # payoff - notional (premium budget spent)
+    net: float  # payoff - notional - cost (premium budget + brokerage spent)
 
 
 class EquityPoint(BaseModel):
@@ -82,6 +84,7 @@ class PutBacktestResult(BaseModel):
     n_cycles: int
     total_premium: float
     total_payoff: float
+    total_brokerage: float  # sum of every roll's entry brokerage cost
     net_pnl: float
     roi_on_premium: float
     annualized_return: float  # geometric annualization of roi_on_premium over lookback_years
@@ -136,6 +139,8 @@ def run_put_roll(
     lookback_years: float,
     rate: float = DEFAULT_RATE,
     pricer: OptionPricer | None = None,
+    commission_per_contract: float = COMMISSION_PER_CONTRACT,
+    spread_scale: float = 1.0,
 ) -> PutBacktestResult:
     """Roll a fixed-``notional`` OOM-put strategy through ``prices``.
 
@@ -149,6 +154,13 @@ def run_put_roll(
     still needed so the first tradable entry already has a valid IV proxy).
     Raises ``ValueError`` on misaligned series or non-positive inputs, and
     ``LookupError`` if the window is too short to complete even one roll.
+
+    Every roll's ``net`` is **net of realistic retail brokerage** (see
+    :mod:`tail_lab.research.backtest.brokerage`): a ``$0.65``/contract
+    commission plus a tenor/moneyness-dependent bid-ask half-spread, paid at
+    entry. ``commission_per_contract`` and ``spread_scale`` are exposed only so
+    a test can run the identical strategy cost-free (both ``0``) to isolate the
+    cost drag; production callers use the defaults.
     """
     if not prices.index.equals(iv_proxy.index):
         raise ValueError("prices and iv_proxy must share the same date index")
@@ -171,6 +183,7 @@ def run_put_roll(
     cum = 0.0
     equity: list[EquityPoint] = []
     total_payoff = 0.0
+    total_brokerage = 0.0
     wins = 0
     biggest_mult = 0.0
     worst_streak = 0
@@ -191,16 +204,25 @@ def run_put_roll(
         premium = pricer.price_put(spot=spot, strike=strike, t_years=t_years, r=rate, sigma=sigma)
         premium = max(premium, spot * PREMIUM_FLOOR_FRAC)
         contracts = notional / premium
+        cost = roll_cost(
+            contracts,
+            notional,
+            tenor_weeks,
+            moneyness_pct,
+            commission_per_contract=commission_per_contract,
+            spread_scale=spread_scale,
+        )
 
         spot_at_expiry = px[i + tenor_days]
         payoff = contracts * max(strike - spot_at_expiry, 0.0)
-        net = payoff - notional
+        net = payoff - notional - cost
 
         if not equity:
             equity.append(EquityPoint(date=dates[i], cum_pnl=0.0))
         cum += net
         total_payoff += payoff
-        if payoff > notional:
+        total_brokerage += cost
+        if net > 0:
             wins += 1
         biggest_mult = max(biggest_mult, payoff / notional)
         if net < 0:
@@ -218,6 +240,7 @@ def run_put_roll(
                 sigma=sigma,
                 premium=float(premium),
                 contracts=float(contracts),
+                cost=float(cost),
                 payoff=float(payoff),
                 net=float(net),
             )
@@ -257,7 +280,10 @@ def run_put_roll(
     )
 
     total_premium = len(cycles) * notional
-    roi_on_premium = (total_payoff - total_premium) / total_premium
+    # Net of brokerage everywhere: roi_on_premium == sum(net)/total_premium ==
+    # (total_payoff - total_premium - total_brokerage)/total_premium.
+    net_pnl = total_payoff - total_premium - total_brokerage
+    roi_on_premium = net_pnl / total_premium
     return PutBacktestResult(
         asset=asset,
         as_of=as_of,
@@ -270,7 +296,8 @@ def run_put_roll(
         n_cycles=len(cycles),
         total_premium=total_premium,
         total_payoff=total_payoff,
-        net_pnl=total_payoff - total_premium,
+        total_brokerage=total_brokerage,
+        net_pnl=net_pnl,
         roi_on_premium=roi_on_premium,
         annualized_return=annualized_return(roi_on_premium, lookback_years),
         hit_rate=wins / len(cycles),
@@ -303,10 +330,12 @@ def _mark_to_market_curve(
 
         mtm_k = realized_completed + unrealized_open
 
-    where ``realized_completed`` sums the ``net`` of every cycle that has
-    expired by ``k`` and is *not* the currently-open roll, and
-    ``unrealized_open = contracts * BS_raw(spot[k], strike, (expiry-k)/252, iv[k]) - notional``
-    marks the open put with **raw** Black-Scholes — no ``PREMIUM_FLOOR_FRAC``
+    where ``realized_completed`` sums the (net-of-brokerage) ``net`` of every
+    cycle that has expired by ``k`` and is *not* the currently-open roll, and
+    ``unrealized_open = contracts * BS_raw(spot[k], strike, (expiry-k)/252, iv[k]) - notional - cost``
+    marks the open put with **raw** Black-Scholes (less its entry brokerage
+    ``cost``, so the curve steps down by the cost at entry) — no
+    ``PREMIUM_FLOOR_FRAC``
     (flooring the mark would overstate a decayed OOM put and break the expiry
     identity below). ``sigma`` is clamped with ``IV_FLOOR``/``IV_CAP`` exactly
     as entry pricing does, so a dead-calm window (realized vol 0, which would
@@ -317,7 +346,7 @@ def _mark_to_market_curve(
     just-expired roll counts as realized. At ``k == expiry_idx`` the raw BS value
     with ``t_years=0`` is the intrinsic ``max(strike-spot,0)``; since
     ``contracts * premium == notional``, ``unrealized = contracts*intrinsic -
-    notional = payoff - notional = net``, so ``mtm_curve`` meets the realized
+    notional - cost = payoff - notional - cost = net``, so ``mtm_curve`` meets the realized
     ``equity_curve`` at every expiry date. Point-in-time safe: every input at
     ``k`` is known at ``k`` (``iv`` is backward-looking).
     """
@@ -345,7 +374,10 @@ def _mark_to_market_curve(
                 mark = pricer.price_put(
                     spot=float(px[k]), strike=cyc.strike, t_years=t_years, r=rate, sigma=sigma
                 )
-            unrealized = cyc.contracts * mark - notional
+            # Net of the open roll's entry brokerage, so the curve steps down by
+            # the cost at entry and still converges to the net realized value at
+            # expiry (contracts*intrinsic - notional - cost == net).
+            unrealized = cyc.contracts * mark - notional - cyc.cost
         curve.append(EquityPoint(date=dates[k], cum_pnl=float(realized + unrealized)))
     return curve
 
@@ -390,12 +422,15 @@ def compute_put_backtest(
     lookback_years: float,
     rate: float = DEFAULT_RATE,
     pricer: OptionPricer | None = None,
+    commission_per_contract: float = COMMISSION_PER_CONTRACT,
+    spread_scale: float = 1.0,
 ) -> PutBacktestResult:
     """Point-in-time Put Lab backtest for ``asset`` as of ``as_of``.
 
     Reads the as-of price path and its IV proxy and rolls the strategy. Raises
     ``LookupError`` if no snapshot exists as of that date or the window is too
-    short for a single roll.
+    short for a single roll. ``commission_per_contract``/``spread_scale`` pass
+    through to :func:`run_put_roll` (production uses the realistic defaults).
     """
     prices, iv_proxy = load_asof_series(store, asset, as_of)
     return run_put_roll(
@@ -409,4 +444,6 @@ def compute_put_backtest(
         lookback_years=lookback_years,
         rate=rate,
         pricer=pricer,
+        commission_per_contract=commission_per_contract,
+        spread_scale=spread_scale,
     )
