@@ -45,12 +45,11 @@ def _seed_vix(store: DeltaLakeStore, ingest: dt.date, n: int = 320) -> None:
     store.write_bronze("vix", ingest, pd.DataFrame({"date": dates, "close": vix}))
 
 
-def test_rank_universe_sorts_by_roi_and_skips_missing(tmp_path: Path) -> None:
+def test_rank_universe_sorts_by_fragility_and_skips_missing(tmp_path: Path) -> None:
     store = DeltaLakeStore(tmp_path)
     ingest = dt.date(2026, 3, 2)
     _seed_vix(store, ingest)
-    # "calm" (low vol, drifting up) vs "wild" (high vol) — puts on the wild name
-    # should score better, so it ranks above the calm one.
+    _seed_symbol(store, "spy", ingest, drift=0.1, vol=1.0)  # the benchmark
     _seed_symbol(store, "calm", ingest, drift=0.4, vol=0.8)
     _seed_symbol(store, "wild", ingest, drift=-0.1, vol=4.0)
 
@@ -65,14 +64,31 @@ def test_rank_universe_sorts_by_roi_and_skips_missing(tmp_path: Path) -> None:
 
     ranked_symbols = [r.asset for r in ranking.ranked]
     assert set(ranked_symbols) == {"calm", "wild"}  # 'missing' has no data -> skipped
-    # Sorted by roi descending.
-    rois = [r.roi_on_premium for r in ranking.ranked]
-    assert rois == sorted(rois, reverse=True)
-    # Each row carries the fields the cockpit ranks/labels on.
+    # Fragility is estimated (benchmark present) and drives the sort, most first.
+    scores = [r.fragility_score for r in ranking.ranked]
+    assert all(s is not None for s in scores)
+    assert scores == sorted(scores, key=lambda s: s or -1.0, reverse=True)
+    # Each row carries the fragility metrics + the put backtest fields.
     row = ranking.ranked[0]
     assert row.spot > 0
+    assert row.downside_beta is not None and row.co_kurtosis is not None
     assert row.verdict in {"confirmed", "regime_only", "failed", "untested"}
     assert row.n_cycles >= 1
+
+
+def test_rank_universe_without_benchmark_leaves_fragility_none(tmp_path: Path) -> None:
+    """No SPY benchmark -> fragility can't be estimated; the put backtest still
+    ranks (fragility fields just come back None)."""
+    store = DeltaLakeStore(tmp_path)
+    ingest = dt.date(2026, 3, 2)
+    _seed_vix(store, ingest)
+    _seed_symbol(store, "calm", ingest, drift=0.4, vol=0.8)
+    ranking = rank_universe(
+        store, symbols=("calm",), as_of=ingest, moneyness_pct=5.0, tenor_weeks=4.0, years=1.0
+    )
+    assert ranking.ranked[0].downside_beta is None
+    assert ranking.ranked[0].fragility_score is None
+    assert ranking.ranked[0].n_cycles >= 1  # backtest still ran
 
 
 def test_rank_universe_missing_vix_raises(tmp_path: Path) -> None:

@@ -284,6 +284,10 @@ export interface RankedAsset {
   asset: string
   name: string
   spot: number
+  downside_beta: number | null
+  co_skewness: number | null
+  co_kurtosis: number | null
+  fragility_score: number | null
   roi_on_premium: number
   verdict: Verdict
   hit_rate: number

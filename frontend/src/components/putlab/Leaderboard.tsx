@@ -1,16 +1,23 @@
 import { useState } from 'react'
 import { ApiError, fetchPutLabLeaderboard, type RankedAsset } from '../../api/client'
-import { fmtMult, fmtPct, fmtPrice } from './format'
+import { fmtPct } from './format'
 import type { PutLabControls } from './types'
 
-// The universe ranking: "which names' OOM puts got the best results at this
-// strike/tenor." It runs ~35 model backtests server-side (~15-25s), so it's an
-// explicit action (a button), not part of the debounced auto-fetch. Results
-// come back sorted by ROI; the table re-sorts client-side on header click.
+// The fragility screen: rank the universe by how FRAGILE each name is (vs the
+// market — downside beta, co-skewness, co-kurtosis, combined), and show the
+// model-priced put payoff alongside. The thesis is timing-free: hold puts on
+// the most fragile names; the payoff comes from the fragility, not a forecast.
+// Runs ~35 backtests server-side, so it's an explicit action, not auto-fetch.
 
 type SortKey = keyof Pick<
   RankedAsset,
-  'roi_on_premium' | 'hit_rate' | 'biggest_payoff_mult' | 'n_cycles' | 'name' | 'spot'
+  | 'fragility_score'
+  | 'downside_beta'
+  | 'co_skewness'
+  | 'co_kurtosis'
+  | 'roi_on_premium'
+  | 'hit_rate'
+  | 'name'
 >
 
 type State =
@@ -18,6 +25,8 @@ type State =
   | { status: 'loading' }
   | { status: 'error'; message: string }
   | { status: 'ready'; rows: RankedAsset[] }
+
+const num = (v: number | null, d: number): string => (v === null ? '—' : v.toFixed(d))
 
 const VERDICT_LABEL: Record<RankedAsset['verdict'], string> = {
   confirmed: 'confirmed',
@@ -34,7 +43,7 @@ export function Leaderboard({
   currentAsset: string
 }) {
   const [state, setState] = useState<State>({ status: 'idle' })
-  const [sortKey, setSortKey] = useState<SortKey>('roi_on_premium')
+  const [sortKey, setSortKey] = useState<SortKey>('fragility_score')
   const [asc, setAsc] = useState(false)
 
   const run = () => {
@@ -69,7 +78,11 @@ export function Leaderboard({
       ? [...state.rows].sort((a, b) => {
           const av = a[sortKey]
           const bv = b[sortKey]
-          const cmp = typeof av === 'string' ? av.localeCompare(bv as string) : (av as number) - (bv as number)
+          if (typeof av === 'string') return asc ? av.localeCompare(bv as string) : (bv as string).localeCompare(av)
+          // nulls (unestimable fragility) always sort last, regardless of direction
+          const an = (av as number | null) ?? Number.NEGATIVE_INFINITY
+          const bn = (bv as number | null) ?? Number.NEGATIVE_INFINITY
+          const cmp = an - bn
           return asc ? cmp : -cmp
         })
       : []
@@ -80,20 +93,20 @@ export function Leaderboard({
     <section className="panel" style={{ marginTop: 22 }}>
       <div className="panel-head">
         <div>
-          <span className="eyebrow">The leaderboard</span>
-          <h2 style={{ marginTop: 6 }}>Which names paid best?</h2>
+          <span className="eyebrow">The fragility screen</span>
+          <h2 style={{ marginTop: 6 }}>Which names are most fragile?</h2>
           <div className="hint">
-            Rank every name in the universe by return on premium, rolling{' '}
+            Rank the universe by <strong>fragility</strong> vs the market &mdash; downside beta, co-skewness and
+            co-kurtosis combined &mdash; then hold puts on the most fragile names. The edge is timing-free: the payoff
+            comes from the fragility, not a forecast of <em>when</em>. The put columns show the model-priced result of{' '}
             <span className="mono">
               {controls.moneyness_pct}% OOM &middot; {controls.tenor_weeks}-week
             </span>{' '}
-            puts over the whole window, each tagged with its cross-regime verdict. A <em>regime-only</em> winner only paid in one regime &mdash;
-            treat a big number with a <span className="badge regime_only">regime only</span> tag as a bet on that
-            regime repeating, not a standalone edge.
+            puts, so you can spot <em>cheap fragility</em>: fragile names whose puts still paid.
           </div>
         </div>
         <button className="lb-run" onClick={run} disabled={state.status === 'loading'}>
-          {state.status === 'loading' ? 'Backtesting 35 names…' : 'Rank the universe'}
+          {state.status === 'loading' ? 'Screening 35 names…' : 'Screen the universe'}
         </button>
       </div>
 
@@ -117,21 +130,24 @@ export function Leaderboard({
                 <th className="lb-sort" onClick={() => sortBy('name')}>
                   Asset{arrow('name')}
                 </th>
-                <th className="lb-sort lb-num" onClick={() => sortBy('spot')}>
-                  Spot{arrow('spot')}
+                <th className="lb-sort lb-num" onClick={() => sortBy('fragility_score')} title="Composite fragility (0–100), most fragile first">
+                  Fragility{arrow('fragility_score')}
                 </th>
-                <th className="lb-sort lb-num" onClick={() => sortBy('roi_on_premium')}>
-                  Return{arrow('roi_on_premium')}
+                <th className="lb-sort lb-num" onClick={() => sortBy('downside_beta')} title="Downside beta vs SPY">
+                  β&minus;{arrow('downside_beta')}
+                </th>
+                <th className="lb-sort lb-num" onClick={() => sortBy('co_skewness')} title="Co-skewness (more negative = more crash-prone)">
+                  Skew{arrow('co_skewness')}
+                </th>
+                <th className="lb-sort lb-num" onClick={() => sortBy('co_kurtosis')} title="Co-kurtosis (tail amplification)">
+                  Kurt{arrow('co_kurtosis')}
+                </th>
+                <th className="lb-sort lb-num" onClick={() => sortBy('roi_on_premium')} title="Model-priced put return on premium">
+                  Put ret{arrow('roi_on_premium')}
                 </th>
                 <th>Verdict</th>
                 <th className="lb-sort lb-num" onClick={() => sortBy('hit_rate')}>
                   Hit{arrow('hit_rate')}
-                </th>
-                <th className="lb-sort lb-num" onClick={() => sortBy('biggest_payoff_mult')}>
-                  Best{arrow('biggest_payoff_mult')}
-                </th>
-                <th className="lb-sort lb-num" onClick={() => sortBy('n_cycles')}>
-                  Rolls{arrow('n_cycles')}
                 </th>
               </tr>
             </thead>
@@ -140,7 +156,12 @@ export function Leaderboard({
                 <tr key={r.asset} className={r.asset === currentAsset ? 'lb-current' : undefined}>
                   <td className="lb-num lb-rank">{i + 1}</td>
                   <td className="lb-name">{r.name}</td>
-                  <td className="lb-num">{fmtPrice(r.spot)}</td>
+                  <td className="lb-num" style={{ fontWeight: 700 }}>
+                    {r.fragility_score === null ? '—' : Math.round(r.fragility_score * 100)}
+                  </td>
+                  <td className="lb-num">{num(r.downside_beta, 2)}</td>
+                  <td className="lb-num">{num(r.co_skewness, 2)}</td>
+                  <td className="lb-num">{num(r.co_kurtosis, 1)}</td>
                   <td
                     className="lb-num"
                     style={{ color: r.roi_on_premium >= 0 ? 'var(--gain)' : 'var(--loss)', fontWeight: 700 }}
@@ -151,8 +172,6 @@ export function Leaderboard({
                     <span className={`badge ${r.verdict}`}>{VERDICT_LABEL[r.verdict]}</span>
                   </td>
                   <td className="lb-num">{Math.round(r.hit_rate * 100)}%</td>
-                  <td className="lb-num">{fmtMult(r.biggest_payoff_mult)}</td>
-                  <td className="lb-num">{r.n_cycles}</td>
                 </tr>
               ))}
             </tbody>
