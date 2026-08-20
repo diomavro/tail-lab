@@ -191,9 +191,32 @@ a large one strictly in order.
       carve-out. **Done** — see the `[tool.importlinter]` contracts in
       `pyproject.toml` and the `import-linter` step in
       `.github/workflows/ci.yml`.
-- [ ] Add a second sensitivity metric (co-skewness) and the first
-      cross-metric backtest comparison (`research/backtest/compare.py`),
-      answering research question 1 for two metrics.
+- [x] Add a second sensitivity metric (co-skewness). **Done 2026-08-20**
+      (Dio's standing directive, in-app feedback: "prioritize the
+      sensitivity leaderboard so I can see put candidates ranked daily") --
+      `research/metrics/co_skewness.py` (Harvey & Siddique co-skewness with
+      the market, pinned against a hand-computable self-skewness identity +
+      Hypothesis properties), wired into `research/leaderboard.py` behind a
+      new `metric` parameter (`Literal["downside_beta", "co_skewness"]`) and
+      `GET /api/leaderboard?metric=...`, with a metric-picker tab added to
+      `LeaderboardTile.tsx` -- makes the leaderboard's per-metric tabs
+      (`docs/END_STATE.md` §1.1) real for the first time. One deliberate
+      convention: co-skewness's leaderboard *score* is the *negated* raw
+      statistic (more negative raw co-skewness = more crash-prone = more
+      tail-sensitive), so "higher score = more sensitive" stays consistent
+      with downside beta's convention -- documented in `_score()`.
+      **Not done** (split out, still open below): the first cross-metric
+      backtest comparison (`research/backtest/compare.py`) answering
+      research question 1 for two metrics -- that's a separate, larger
+      increment than wiring the second metric into the screening
+      leaderboard was.
+- [ ] The first cross-metric backtest comparison
+      (`research/backtest/compare.py`), running the Put Lab backtest engine
+      (`research/backtest/put_roll.py`) once per sensitivity metric's
+      top-ranked candidates and comparing hit rate / payoff / bleed by
+      regime (`docs/END_STATE.md` §1.5, §4 research question 1) -- now that
+      downside beta and co-skewness (above) are both wired into the
+      leaderboard, this is the natural next increment.
 - [ ] Add the regime-panel gold mart + API endpoint + dashboard tile, using
       the vol complex + credit spreads once dataset #4 exists.
 - [ ] Storage-growth optimization (not urgent): `DeltaLakeStore.write_bronze`

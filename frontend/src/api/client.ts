@@ -204,8 +204,14 @@ export interface LeaderboardResponse {
   rows: LeaderboardRow[]
 }
 
-export async function fetchLeaderboard(signal?: AbortSignal): Promise<LeaderboardResponse> {
-  const resp = await fetch('/api/leaderboard', { signal })
+export type LeaderboardMetric = 'downside_beta' | 'co_skewness'
+
+export async function fetchLeaderboard(
+  signal?: AbortSignal,
+  metric?: LeaderboardMetric,
+): Promise<LeaderboardResponse> {
+  const qs = metric ? `?metric=${encodeURIComponent(metric)}` : ''
+  const resp = await fetch(`/api/leaderboard${qs}`, { signal })
   if (!resp.ok) {
     throw new ApiError(`GET /api/leaderboard failed: ${resp.status}`, resp.status)
   }
