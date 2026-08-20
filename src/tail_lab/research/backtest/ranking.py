@@ -5,10 +5,12 @@ convexity continuously on the **most fragile** names, and the fragility itself
 produces the payoff when the (untimed) dislocation hits. So this ranks the
 universe by fragility, not by market-timing.
 
-Fragility is measured against the market (SPY) by three complementary
+Fragility is measured against the market (SPY) by five complementary
 sensitivity metrics — downside beta (how far it falls with the market),
-co-skewness (crash-direction co-movement), and co-kurtosis (tail
-amplification) — combined into a cross-sectional composite. Alongside each
+co-skewness (crash-direction co-movement), co-kurtosis (tail amplification),
+tail beta (beta restricted to the market's worst days), and downside
+capture (the ratio of mean returns on the market's down days) — combined
+into a cross-sectional composite. Alongside each
 name's fragility, it runs the model-priced put backtest, so you can see whether
 fragility actually translates into put payoff (the §4 Q1 question) and spot
 "cheap fragility": fragile names whose puts the market still underprices.
@@ -34,6 +36,8 @@ from tail_lab.research.backtest.regime_verdict import regime_breakdown
 from tail_lab.research.metrics.co_kurtosis import co_kurtosis
 from tail_lab.research.metrics.co_skewness import co_skewness
 from tail_lab.research.metrics.downside_beta import downside_beta
+from tail_lab.research.metrics.downside_capture import downside_capture
+from tail_lab.research.metrics.tail_beta import tail_beta
 from tail_lab.research.regimes.timeline import compute_regime_timeline
 
 #: The market benchmark the fragility metrics are measured against.
@@ -50,6 +54,8 @@ class RankedAsset(BaseModel):
     downside_beta: float | None
     co_skewness: float | None
     co_kurtosis: float | None
+    tail_beta: float | None
+    downside_capture: float | None
     fragility_score: float | None  # cross-sectional composite, 0..1 (1 = most fragile)
     # put backtest at the screened strike/tenor
     roi_on_premium: float
@@ -109,9 +115,11 @@ def rank_universe(
     except LookupError:
         bench_ret = None
 
-    def _fragility(asset_prices: pd.Series) -> tuple[float | None, float | None, float | None]:
+    def _fragility(
+        asset_prices: pd.Series,
+    ) -> tuple[float | None, float | None, float | None, float | None, float | None]:
         if bench_ret is None:
-            return None, None, None
+            return None, None, None, None, None
         aligned = pd.concat({"a": _returns(asset_prices), "b": bench_ret}, axis=1).dropna()
         window = aligned.iloc[-lookback_days:]
         a, b = window["a"], window["b"]
@@ -122,7 +130,13 @@ def rank_universe(
             except ValueError:
                 return None
 
-        return _safe(downside_beta), _safe(co_skewness), _safe(co_kurtosis)
+        return (
+            _safe(downside_beta),
+            _safe(co_skewness),
+            _safe(co_kurtosis),
+            _safe(tail_beta),
+            _safe(downside_capture),
+        )
 
     def _rank_one(symbol: str) -> RankedAsset | None:
         try:
@@ -139,7 +153,7 @@ def rank_universe(
             )
         except LookupError:
             return None  # no data / too short a window for this name -> skip
-        db, cs, ck = _fragility(prices)
+        db, cs, ck, tb, dc = _fragility(prices)
         _, verdict = regime_breakdown(result.cycles, timeline)
         return RankedAsset(
             asset=symbol,
@@ -148,6 +162,8 @@ def rank_universe(
             downside_beta=db,
             co_skewness=cs,
             co_kurtosis=ck,
+            tail_beta=tb,
+            downside_capture=dc,
             fragility_score=None,  # filled in cross-sectionally below
             roi_on_premium=result.roi_on_premium,
             verdict=verdict,
@@ -161,14 +177,17 @@ def rank_universe(
     with ThreadPoolExecutor(max_workers=8) as pool:
         rows = [r for r in pool.map(_rank_one, symbols) if r is not None]
 
-    # Composite fragility: higher downside beta / co-kurtosis and *lower* (more
-    # negative) co-skewness all mean more fragile. Average the per-metric
-    # cross-sectional ranks over whatever metrics are present.
+    # Composite fragility: higher downside beta / co-kurtosis / tail beta /
+    # downside capture, and *lower* (more negative) co-skewness, all mean more
+    # fragile. Average the per-metric cross-sectional ranks over whatever
+    # metrics are present.
     db_rank = _frac_rank([r.downside_beta for r in rows], fragile_high=True)
     cs_rank = _frac_rank([r.co_skewness for r in rows], fragile_high=False)
     ck_rank = _frac_rank([r.co_kurtosis for r in rows], fragile_high=True)
+    tb_rank = _frac_rank([r.tail_beta for r in rows], fragile_high=True)
+    dc_rank = _frac_rank([r.downside_capture for r in rows], fragile_high=True)
     for i, r in enumerate(rows):
-        parts = [d[i] for d in (db_rank, cs_rank, ck_rank) if i in d]
+        parts = [d[i] for d in (db_rank, cs_rank, ck_rank, tb_rank, dc_rank) if i in d]
         r.fragility_score = sum(parts) / len(parts) if parts else None
 
     # Most fragile first (names with no fragility estimate sort last).

@@ -287,6 +287,8 @@ export interface RankedAsset {
   downside_beta: number | null
   co_skewness: number | null
   co_kurtosis: number | null
+  tail_beta: number | null
+  downside_capture: number | null
   fragility_score: number | null
   roi_on_premium: number
   verdict: Verdict
