@@ -15,6 +15,7 @@ import {
 import { CadencePanel } from './CadencePanel'
 import { CyclesBars } from './CyclesBars'
 import { EquityCurve } from './EquityCurve'
+import { StrategyTape } from './StrategyTape'
 import { fmtPrice } from './format'
 import { Leaderboard } from './Leaderboard'
 import { MemoryTeaser } from './MemoryTeaser'
@@ -164,6 +165,14 @@ export function PutLab() {
         {state.status === 'ready' && (
           <>
             <StatBand backtest={state.backtest} />
+
+            <section className="panel">
+              <StrategyTape
+                pricePath={state.backtest.price_path}
+                equityCurve={state.backtest.equity_curve}
+                cycles={state.backtest.cycles}
+              />
+            </section>
 
             <section className="panel">
               <EquityCurve equityCurve={state.backtest.equity_curve} cycles={state.backtest.cycles} />
