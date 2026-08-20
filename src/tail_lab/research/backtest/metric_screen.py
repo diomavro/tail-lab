@@ -48,7 +48,12 @@ from tail_lab.research.backtest.put_roll import (
     load_asof_series,
     run_put_roll,
 )
-from tail_lab.research.backtest.ranking import BENCHMARK, _frac_rank, _returns
+from tail_lab.research.backtest.ranking import (
+    BENCHMARK,
+    COMPOSITE_METRICS,
+    _frac_rank,
+    _returns,
+)
 from tail_lab.research.backtest.regime_verdict import RegimeSlice, regime_breakdown
 from tail_lab.research.metrics.co_kurtosis import co_kurtosis
 from tail_lab.research.metrics.co_skewness import co_skewness
@@ -298,14 +303,19 @@ def compare_metric_screens(
     if not scored:
         raise LookupError(f"no universe name could be scored as of {as_of.isoformat()}")
 
-    # Composite fragility: average the five per-metric cross-sectional ranks,
-    # identical to how rank_universe builds fragility_score.
+    # Cross-sectional fragility rank of every metric (all five are ranked so
+    # each gets a bake-off row), but the composite averages only the
+    # COMPOSITE_METRICS -- identical to how rank_universe builds fragility_score,
+    # so the "Composite fragility" row here matches the shipped screen exactly
+    # (co-kurtosis excluded; see ranking.COMPOSITE_METRICS).
     per_metric_rank = {
         name: _frac_rank([s.metrics[name] for s in scored], fragile_high=_FRAGILE_HIGH[name])
         for name in _METRIC_FUNCS
     }
     for i, s in enumerate(scored):
-        parts = [per_metric_rank[name][i] for name in _METRIC_FUNCS if i in per_metric_rank[name]]
+        parts = [
+            per_metric_rank[name][i] for name in COMPOSITE_METRICS if i in per_metric_rank[name]
+        ]
         s.fragility_score = sum(parts) / len(parts) if parts else None
 
     baseline_roi = sum(s.result.roi_on_premium for s in scored) / len(scored)
