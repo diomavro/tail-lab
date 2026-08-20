@@ -36,6 +36,10 @@ from tail_lab.contracts.options_calendar import (
 )
 from tail_lab.lake.store import LakeStore
 from tail_lab.observability import log_event
+from tail_lab.research.backtest.metric_screen import (
+    MetricScreenComparison,
+    compare_metric_screens,
+)
 from tail_lab.research.backtest.portfolio import PortfolioResult, run_portfolio
 from tail_lab.research.backtest.put_roll import (
     PutBacktestResult,
@@ -60,6 +64,13 @@ SWEEP_TENORS_WEEKS: tuple[float, ...] = (1, 2, 4, 8, 12)
 #: (moneyness, tenor, years, as_of); the read cache keeps it fresh underneath.
 _LEADERBOARD_CACHE: dict[tuple[float, float, float, str], tuple[float, UniverseRanking]] = {}
 _LEADERBOARD_TTL_S = 120.0
+
+#: Short-TTL memo of the (~35-backtest) metric bake-off, keyed by
+#: (moneyness, tenor, years, top_k, as_of).
+_METRIC_SCREEN_CACHE: dict[
+    tuple[float, float, float, int, str], tuple[float, MetricScreenComparison]
+] = {}
+_METRIC_SCREEN_TTL_S = 120.0
 
 
 @lru_cache(maxsize=1)
@@ -373,3 +384,51 @@ def putlab_leaderboard(
         n_ranked=len(ranking.ranked),
     )
     return ranking
+
+
+@router.get("/api/putlab/metric-screen")
+def putlab_metric_screen(
+    moneyness_pct: float = Query(default=10.0, gt=0, lt=100),
+    tenor_weeks: float = Query(default=4.0, gt=0, le=52),
+    years: float = Query(default=4.0, gt=0, le=20),
+    top_k: int = Query(default=5, ge=2, le=15),
+    as_of: dt.date | None = Query(default=None),
+    store: LakeStore = Depends(get_lake_store),
+) -> MetricScreenComparison:
+    """The metric bake-off (``docs/END_STATE.md`` §4 Q1) — which fragility
+    metric best sorted realized OOM-put payoffs over the lookback. An in-sample
+    cross-sectional association (a screen chooser), not a forward backtest."""
+    resolved = _resolve_as_of(as_of)
+    # ~35 backtests; deterministic given the immutable bronze, so a short TTL
+    # cache makes repeat clicks instant (mirrors the leaderboard).
+    cache_key = (moneyness_pct, tenor_weeks, years, top_k, resolved.isoformat())
+    hit = _METRIC_SCREEN_CACHE.get(cache_key)
+    if hit is not None and hit[0] > time.monotonic():
+        return hit[1]
+    try:
+        comparison = compare_metric_screens(
+            store,
+            symbols=universe_symbols(),
+            as_of=resolved,
+            moneyness_pct=moneyness_pct,
+            tenor_weeks=tenor_weeks,
+            years=years,
+            top_k=top_k,
+        )
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    _METRIC_SCREEN_CACHE[cache_key] = (time.monotonic() + _METRIC_SCREEN_TTL_S, comparison)
+    winner = comparison.entries[0].metric if comparison.entries else None
+    log_event(
+        logger,
+        "putlab.metric_screen",
+        as_of=resolved,
+        moneyness_pct=moneyness_pct,
+        tenor_weeks=tenor_weeks,
+        years=years,
+        top_k=top_k,
+        code_sha=get_settings().code_sha,
+        n_entries=len(comparison.entries),
+        winning_metric=winner,
+    )
+    return comparison
