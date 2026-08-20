@@ -4,7 +4,8 @@ import { fmtPct } from './format'
 import type { PutLabControls } from './types'
 
 // The fragility screen: rank the universe by how FRAGILE each name is (vs the
-// market — downside beta, co-skewness, co-kurtosis, combined), and show the
+// market — downside beta, co-skewness, co-kurtosis, tail beta, downside
+// capture, combined), and show the
 // model-priced put payoff alongside. The thesis is timing-free: hold puts on
 // the most fragile names; the payoff comes from the fragility, not a forecast.
 // Runs ~35 backtests server-side, so it's an explicit action, not auto-fetch.
@@ -15,6 +16,8 @@ type SortKey = keyof Pick<
   | 'downside_beta'
   | 'co_skewness'
   | 'co_kurtosis'
+  | 'tail_beta'
+  | 'downside_capture'
   | 'roi_on_premium'
   | 'hit_rate'
   | 'name'
@@ -96,8 +99,9 @@ export function Leaderboard({
           <span className="eyebrow">The fragility screen</span>
           <h2 style={{ marginTop: 6 }}>Which names are most fragile?</h2>
           <div className="hint">
-            Rank the universe by <strong>fragility</strong> vs the market &mdash; downside beta, co-skewness and
-            co-kurtosis combined &mdash; then hold puts on the most fragile names. The edge is timing-free: the payoff
+            Rank the universe by <strong>fragility</strong> vs the market &mdash; downside beta, co-skewness,
+            co-kurtosis, tail beta and downside capture combined &mdash; then hold puts on the most fragile names.
+            The edge is timing-free: the payoff
             comes from the fragility, not a forecast of <em>when</em>. The put columns show the model-priced result of{' '}
             <span className="mono">
               {controls.moneyness_pct}% OOM &middot; {controls.tenor_weeks}-week
@@ -142,6 +146,20 @@ export function Leaderboard({
                 <th className="lb-sort lb-num" onClick={() => sortBy('co_kurtosis')} title="Co-kurtosis (tail amplification)">
                   Kurt{arrow('co_kurtosis')}
                 </th>
+                <th
+                  className="lb-sort lb-num"
+                  onClick={() => sortBy('tail_beta')}
+                  title="Extreme-tail beta vs SPY, worst 10% of market days"
+                >
+                  Tail &beta;{arrow('tail_beta')}
+                </th>
+                <th
+                  className="lb-sort lb-num"
+                  onClick={() => sortBy('downside_capture')}
+                  title="Downside capture ratio vs SPY (>1 = amplifies losses)"
+                >
+                  Capt{arrow('downside_capture')}
+                </th>
                 <th className="lb-sort lb-num" onClick={() => sortBy('roi_on_premium')} title="Model-priced put return on premium">
                   Put ret{arrow('roi_on_premium')}
                 </th>
@@ -162,6 +180,8 @@ export function Leaderboard({
                   <td className="lb-num">{num(r.downside_beta, 2)}</td>
                   <td className="lb-num">{num(r.co_skewness, 2)}</td>
                   <td className="lb-num">{num(r.co_kurtosis, 1)}</td>
+                  <td className="lb-num">{num(r.tail_beta, 2)}</td>
+                  <td className="lb-num">{num(r.downside_capture, 2)}</td>
                   <td
                     className="lb-num"
                     style={{ color: r.roi_on_premium >= 0 ? 'var(--gain)' : 'var(--loss)', fontWeight: 700 }}
