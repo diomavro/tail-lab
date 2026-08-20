@@ -328,6 +328,59 @@ export async function fetchPutLabLeaderboard(
   return (await resp.json()) as PutLabLeaderboardResponse
 }
 
+// --- Metric bake-off (research/backtest/metric_screen.py) ---
+// "which fragility metric best sorted realized put payoffs over the lookback."
+// An in-sample cross-sectional association (a screen chooser), NOT a forward
+// predictive backtest. ~35 backtests server-side, so an explicit action.
+
+export interface MetricScreenEntry {
+  metric: string
+  label: string
+  top_k_assets: string[]
+  roi_on_premium: number
+  hit_rate: number
+  combined_max_drawdown: number
+  verdict: Verdict
+  regime_slices: RegimeSlice[]
+  spearman_vs_payoff: number | null
+  lift_vs_baseline: number
+}
+
+export interface MetricScreenComparison {
+  as_of: string
+  moneyness_pct: number
+  tenor_weeks: number
+  lookback_years: number
+  top_k: number
+  universe_size: number
+  baseline_roi: number
+  entries: MetricScreenEntry[]
+}
+
+export interface MetricScreenParams {
+  moneyness_pct: number
+  tenor_weeks: number
+  years: number
+  top_k: number
+}
+
+export async function fetchMetricScreen(
+  params: MetricScreenParams,
+  signal?: AbortSignal,
+): Promise<MetricScreenComparison> {
+  const qs = new URLSearchParams({
+    moneyness_pct: String(params.moneyness_pct),
+    tenor_weeks: String(params.tenor_weeks),
+    years: String(params.years),
+    top_k: String(params.top_k),
+  })
+  const resp = await fetch(`/api/putlab/metric-screen?${qs.toString()}`, { signal })
+  if (!resp.ok) {
+    throw new ApiError(`GET /api/putlab/metric-screen failed: ${resp.status}`, resp.status)
+  }
+  return (await resp.json()) as MetricScreenComparison
+}
+
 // --- Portfolio of mixed puts (research/backtest/portfolio.py) ---
 
 export interface PortfolioLeg {

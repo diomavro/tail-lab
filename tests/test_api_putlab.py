@@ -52,6 +52,7 @@ def client(tmp_path: Path) -> Iterator[TestClient]:
     # The leaderboard result cache is keyed by params only; clear it so one
     # test's ranking can't be served to another test's (different) store.
     putlab_routes._LEADERBOARD_CACHE.clear()
+    putlab_routes._METRIC_SCREEN_CACHE.clear()
     app.dependency_overrides[putlab_get_lake_store] = lambda: store
     try:
         yield TestClient(app)
@@ -214,6 +215,57 @@ def test_leaderboard_ranks_seeded_universe(client: TestClient) -> None:
     row = body["ranked"][0]
     assert row["spot"] > 0
     assert set(row) >= {"asset", "name", "spot", "roi_on_premium", "verdict", "hit_rate"}
+
+
+def test_metric_screen_returns_bakeoff(client: TestClient) -> None:
+    resp = client.get(
+        "/api/putlab/metric-screen",
+        params={"moneyness_pct": 10, "tenor_weeks": 4, "years": 1, "top_k": 2},
+    )
+    assert resp.status_code == 200
+    body = resp.json()
+    assert set(body) >= {
+        "as_of",
+        "moneyness_pct",
+        "tenor_weeks",
+        "lookback_years",
+        "top_k",
+        "universe_size",
+        "baseline_roi",
+        "entries",
+    }
+    # Only spy has data in the fixture, so one name is scored across six screens.
+    assert body["universe_size"] == 1
+    assert len(body["entries"]) == 6
+    entry = body["entries"][0]
+    assert set(entry) >= {
+        "metric",
+        "label",
+        "top_k_assets",
+        "roi_on_premium",
+        "hit_rate",
+        "combined_max_drawdown",
+        "verdict",
+        "regime_slices",
+        "spearman_vs_payoff",
+        "lift_vs_baseline",
+    }
+    assert entry["top_k_assets"] == ["spy"]
+    assert entry["verdict"] in {"confirmed", "regime_only", "failed", "untested"}
+
+
+def test_metric_screen_404_without_vix(tmp_path: Path) -> None:
+    """No VIX in the store -> the regime timeline is missing -> 404."""
+    store = DeltaLakeStore(tmp_path)
+    today = dt.datetime.now(dt.UTC).date()
+    _seed_ohlcv(store, "spy", today)  # OHLCV but deliberately no VIX
+    putlab_routes._METRIC_SCREEN_CACHE.clear()
+    app.dependency_overrides[putlab_get_lake_store] = lambda: store
+    try:
+        resp = TestClient(app).get("/api/putlab/metric-screen", params={"years": 1})
+        assert resp.status_code == 404
+    finally:
+        app.dependency_overrides.pop(putlab_get_lake_store, None)
 
 
 def test_backtest_carries_spot(client: TestClient) -> None:

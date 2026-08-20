@@ -20,6 +20,7 @@ import { EquityCurve } from './EquityCurve'
 import { StrategyTape } from './StrategyTape'
 import { fmtPrice } from './format'
 import { Leaderboard } from './Leaderboard'
+import { MetricScreen } from './MetricScreen'
 import { MemoryTeaser } from './MemoryTeaser'
 import { Portfolio } from './Portfolio'
 import { RegimePanel } from './RegimePanel'
@@ -221,6 +222,8 @@ export function PutLab() {
             </section>
 
             <Leaderboard controls={controls} currentAsset={controls.asset} />
+
+            <MetricScreen controls={controls} />
           </>
         )}
 
