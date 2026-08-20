@@ -207,7 +207,20 @@ export const CONCEPTS: Record<string, Concept> = {
       'This is the headline number: across all the rolls, how did the money spent on premium do? The denominator is the total premium budget -- the fixed per-roll notional times the number of rolls -- and the numerator is the summed intrinsic payoffs net of that budget. A hedge that never pays returns −100% (all premium burned); one whose crash payoffs exceed everything spent shows a positive ROI. It is a return on the insurance bill, not on any underlying position.',
     howToRead:
       'Negative is the normal resting state of a tail hedge -- you pay to be insured. A positive ROI means the payoffs over this window more than covered the continuous premium bleed. Remember it is model-priced, so treat it as relative.',
-    seeAlso: ['bleed', 'hit_rate', 'biggest_payoff', 'model_priced'],
+    seeAlso: ['bleed', 'hit_rate', 'biggest_payoff', 'model_priced', 'annualized_return'],
+  },
+  annualized_return: {
+    id: 'annualized_return',
+    term: 'Annualized return',
+    category: 'result',
+    short:
+      'The constant yearly rate that compounds to the total return on premium over the lookback -- geometric annualization, not a simple divide-by-years.',
+    formula: 'annualized_return = (1 + roi_on_premium)^(1/years) − 1',
+    intuition:
+      'Return on premium is a TOTAL figure over the whole lookback window (e.g. −72% over 4 years) -- it does not by itself say how that loss (or gain) was paced year to year, and a longer window will mechanically show a larger-looking total even at the same yearly rate. The annualized return answers that: the single constant yearly rate which, compounded over the lookback, reproduces the total. It is geometric, not total-divided-by-years, because losses and gains compound multiplicatively -- premium already spent does not come back to be spent again. total_roi cannot go below −1 (you cannot lose more than the premium paid), so the annualized figure is capped at −100%/yr in that limit.',
+    howToRead:
+      'A tail hedge is expected to bleed, so the annualized figure is usually negative -- read it as the yearly carry cost of holding the insurance. An occasional window shows a positive annualized return when a crash payoff more than covered the period spent bleeding.',
+    seeAlso: ['roi_on_premium', 'bleed'],
   },
   hit_rate: {
     id: 'hit_rate',

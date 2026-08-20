@@ -111,9 +111,13 @@ export function MetricScreen({ controls }: { controls: PutLabControls }) {
                   <th className="lb-num">#</th>
                   <th>Metric</th>
                   <th>Top names</th>
-                  <th className="lb-num" title="Blended return on premium of this metric's put basket">
+                  <th
+                    className="lb-num"
+                    title="Blended return on premium of this metric's put basket (total, with annualized beneath)"
+                  >
                     Basket put ret
                     <ConceptInfo id="roi_on_premium" />
+                    <ConceptInfo id="annualized_return" />
                   </th>
                   <th className="lb-num">Hit</th>
                   <th className="lb-num" title="Combined max drawdown of the basket (worst peak-to-trough)">
@@ -145,11 +149,11 @@ export function MetricScreen({ controls }: { controls: PutLabControls }) {
                       {e.label}
                     </td>
                     <td className="lb-name">{e.top_k_assets.map((a) => a.toUpperCase()).join(', ') || '—'}</td>
-                    <td
-                      className="lb-num"
-                      style={{ color: e.roi_on_premium >= 0 ? 'var(--gain)' : 'var(--loss)', fontWeight: 700 }}
-                    >
-                      {fmtPct(e.roi_on_premium)}
+                    <td className="lb-num">
+                      <div style={{ color: e.roi_on_premium >= 0 ? 'var(--gain)' : 'var(--loss)', fontWeight: 700 }}>
+                        {fmtPct(e.roi_on_premium)}
+                      </div>
+                      <div style={{ opacity: 0.6, fontSize: '0.85em' }}>{fmtPct(e.annualized_return)}/yr</div>
                     </td>
                     <td className="lb-num">{Math.round(e.hit_rate * 100)}%</td>
                     <td className="lb-num" style={{ color: 'var(--loss)' }}>

@@ -109,9 +109,11 @@ export function PutLab() {
     // eslint-disable-next-line react-hooks/exhaustive-deps -- controls fields listed individually so the effect re-runs on value change, not identity
   }, [activeTab, controls.asset, controls.notional, controls.moneyness_pct, controls.tenor_weeks, controls.years])
 
-  // The question builder is the single shared control surface; it's irrelevant
-  // on Regime/Learn, so it only shows on the three parameterized tabs.
-  const showQuestionBar = activeTab === 'screen' || activeTab === 'backtest' || activeTab === 'portfolio'
+  // The question builder is the single shared control surface on Screen and
+  // Portfolio. The Backtest tab replaces it with the ChartCockpit (the four
+  // params live on the edges of its hero chart), so the bar is hidden there to
+  // avoid a redundant duplicate control surface.
+  const showQuestionBar = activeTab === 'screen' || activeTab === 'portfolio'
 
   return (
     <div className="putlab-root">
@@ -170,7 +172,9 @@ export function PutLab() {
 
         <div role="tabpanel" id={`panel-${activeTab}`} aria-labelledby={`tab-${activeTab}`} tabIndex={0}>
           {activeTab === 'screen' && <ScreenView controls={controls} currentAsset={controls.asset} />}
-          {activeTab === 'backtest' && <BacktestView controls={controls} state={state} />}
+          {activeTab === 'backtest' && (
+            <BacktestView controls={controls} state={state} onChange={updateControls} universe={universe} />
+          )}
           {activeTab === 'portfolio' && <PortfolioView universe={universe} />}
           {activeTab === 'regime' && <RegimeView />}
           {activeTab === 'learn' && <LearnView />}

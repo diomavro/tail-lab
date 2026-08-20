@@ -15,6 +15,7 @@ from tail_lab.research.backtest.metric_screen import (
     _METRIC_FUNCS,
     compare_metric_screens,
 )
+from tail_lab.research.backtest.put_roll import annualized_return
 
 _ALL_SCREENS = {*_METRIC_FUNCS, "fragility_score"}
 
@@ -114,6 +115,9 @@ def test_bakeoff_covers_all_screens_and_is_sorted(tmp_path: Path) -> None:
         assert e.spearman_vs_payoff is None or -1.0 <= e.spearman_vs_payoff <= 1.0
         # lift is ROI measured against the shared baseline.
         assert e.lift_vs_baseline == pytest.approx(e.roi_on_premium - cmp.baseline_roi)
+        assert e.annualized_return == pytest.approx(
+            annualized_return(e.roi_on_premium, cmp.lookback_years)
+        )
 
 
 def test_downside_beta_basket_holds_the_wild_name(tmp_path: Path) -> None:

@@ -184,9 +184,14 @@ export function Leaderboard({
                   Capt{arrow('downside_capture')}
                   <ConceptInfo id="downside_capture" />
                 </th>
-                <th className="lb-sort lb-num" onClick={() => sortBy('roi_on_premium')} title="Model-priced put return on premium">
+                <th
+                  className="lb-sort lb-num"
+                  onClick={() => sortBy('roi_on_premium')}
+                  title="Model-priced put return on premium (total, with annualized beneath)"
+                >
                   Put ret{arrow('roi_on_premium')}
                   <ConceptInfo id="roi_on_premium" />
+                  <ConceptInfo id="annualized_return" />
                 </th>
                 <th>
                   Verdict
@@ -211,11 +216,11 @@ export function Leaderboard({
                   <td className="lb-num">{num(r.co_kurtosis, 1)}</td>
                   <td className="lb-num">{num(r.tail_beta, 2)}</td>
                   <td className="lb-num">{num(r.downside_capture, 2)}</td>
-                  <td
-                    className="lb-num"
-                    style={{ color: r.roi_on_premium >= 0 ? 'var(--gain)' : 'var(--loss)', fontWeight: 700 }}
-                  >
-                    {fmtPct(r.roi_on_premium)}
+                  <td className="lb-num">
+                    <div style={{ color: r.roi_on_premium >= 0 ? 'var(--gain)' : 'var(--loss)', fontWeight: 700 }}>
+                      {fmtPct(r.roi_on_premium)}
+                    </div>
+                    <div style={{ opacity: 0.6, fontSize: '0.85em' }}>{fmtPct(r.annualized_return)}/yr</div>
                   </td>
                   <td>
                     <span className={`badge ${r.verdict}`}>{VERDICT_LABEL[r.verdict]}</span>

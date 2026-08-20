@@ -75,6 +75,7 @@ export interface PutBacktestResponse {
   total_payoff: number
   net_pnl: number
   roi_on_premium: number
+  annualized_return: number
   hit_rate: number
   biggest_payoff_mult: number
   worst_bleed_streak: number
@@ -292,6 +293,7 @@ export interface RankedAsset {
   downside_capture: number | null
   fragility_score: number | null
   roi_on_premium: number
+  annualized_return: number
   verdict: Verdict
   hit_rate: number
   biggest_payoff_mult: number
@@ -339,6 +341,7 @@ export interface MetricScreenEntry {
   label: string
   top_k_assets: string[]
   roi_on_premium: number
+  annualized_return: number
   hit_rate: number
   combined_max_drawdown: number
   verdict: Verdict
@@ -398,6 +401,7 @@ export interface PortfolioLegResult {
   total_premium: number
   net_pnl: number
   roi_on_premium: number
+  annualized_return: number
   verdict: Verdict
   n_cycles: number
 }
@@ -410,6 +414,7 @@ export interface PortfolioResponse {
   total_payoff: number
   net_pnl: number
   roi_on_premium: number
+  annualized_return: number
   combined_max_drawdown: number
   sum_individual_max_drawdown: number
   verdict: Verdict

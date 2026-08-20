@@ -31,7 +31,10 @@ from pydantic import BaseModel
 from tail_lab.contracts.hypothesis import Verdict
 from tail_lab.contracts.options_calendar import cadence_for
 from tail_lab.lake.store import LakeStore
-from tail_lab.research.backtest.put_roll import load_asof_series, run_put_roll
+from tail_lab.research.backtest.put_roll import (
+    load_asof_series,
+    run_put_roll,
+)
 from tail_lab.research.backtest.regime_verdict import regime_breakdown
 from tail_lab.research.metrics.co_kurtosis import co_kurtosis
 from tail_lab.research.metrics.co_skewness import co_skewness
@@ -75,6 +78,7 @@ class RankedAsset(BaseModel):
     fragility_score: float | None  # cross-sectional composite, 0..1 (1 = most fragile)
     # put backtest at the screened strike/tenor
     roi_on_premium: float
+    annualized_return: float  # geometric annualization of roi_on_premium over `years`
     verdict: Verdict
     hit_rate: float
     biggest_payoff_mult: float
@@ -182,6 +186,7 @@ def rank_universe(
             downside_capture=dc,
             fragility_score=None,  # filled in cross-sectionally below
             roi_on_premium=result.roi_on_premium,
+            annualized_return=result.annualized_return,
             verdict=verdict,
             hit_rate=result.hit_rate,
             biggest_payoff_mult=result.biggest_payoff_mult,

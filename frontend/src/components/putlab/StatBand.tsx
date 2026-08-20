@@ -13,7 +13,7 @@ export function StatBand({ backtest }: StatBandProps) {
       k: 'Return on premium',
       v: fmtPct(backtest.roi_on_premium),
       cls: backtest.roi_on_premium >= 0 ? 'pos' : 'neg',
-      note: `over ${backtest.n_cycles} rolls`,
+      note: `${fmtPct(backtest.annualized_return)}/yr annualized · over ${backtest.n_cycles} rolls`,
       hero: true,
       concept: 'roi_on_premium',
     },

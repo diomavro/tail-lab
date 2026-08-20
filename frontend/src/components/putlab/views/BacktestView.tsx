@@ -1,4 +1,6 @@
+import type { UniverseMember } from '../../../api/client'
 import { CadencePanel } from '../CadencePanel'
+import { ChartCockpit } from '../ChartCockpit'
 import { ConceptInfo } from '../ConceptInfo'
 import { CostOverTime } from '../CostOverTime'
 import { CyclesBars } from '../CyclesBars'
@@ -15,7 +17,17 @@ import type { PutLabControls } from '../types'
 // out compressed: headline stats, the strategy tape, then a two-column grid
 // (equity | cycles, then sweep | cadence+verdict) so it fits with little
 // scroll. Loading/no-data/error states are handled here.
-export function BacktestView({ controls, state }: { controls: PutLabControls; state: BacktestState }) {
+export function BacktestView({
+  controls,
+  state,
+  onChange,
+  universe,
+}: {
+  controls: PutLabControls
+  state: BacktestState
+  onChange: (patch: Partial<PutLabControls>) => void
+  universe: UniverseMember[]
+}) {
   if (state.status === 'loading') {
     return (
       <p className="putlab-status" role="status" aria-live="polite">
@@ -54,11 +66,13 @@ export function BacktestView({ controls, state }: { controls: PutLabControls; st
       <StatBand backtest={state.backtest} />
 
       <section className="panel">
-        <StrategyTape
-          pricePath={state.backtest.price_path}
-          mtmCurve={state.backtest.mtm_curve}
-          cycles={state.backtest.cycles}
-        />
+        <ChartCockpit controls={controls} onChange={onChange} universe={universe}>
+          <StrategyTape
+            pricePath={state.backtest.price_path}
+            mtmCurve={state.backtest.mtm_curve}
+            cycles={state.backtest.cycles}
+          />
+        </ChartCockpit>
       </section>
 
       {/* Balanced two-up rows: each pairs charts of similar height, so no
@@ -85,6 +99,7 @@ export function BacktestView({ controls, state }: { controls: PutLabControls; st
             cells={state.sweep.cells}
             moneynessPct={controls.moneyness_pct}
             tenorWeeks={controls.tenor_weeks}
+            onSelect={(m, t) => onChange({ moneyness_pct: m, tenor_weeks: t })}
           />
         </section>
       </div>

@@ -45,6 +45,7 @@ from tail_lab.research.backtest.portfolio import _max_drawdown, _scaled
 from tail_lab.research.backtest.put_roll import (
     PutBacktestResult,
     PutRollCycle,
+    annualized_return,
     load_asof_series,
     run_put_roll,
 )
@@ -99,6 +100,7 @@ class MetricScreenEntry(BaseModel):
     label: str
     top_k_assets: list[str]
     roi_on_premium: float
+    annualized_return: float  # geometric annualization of roi_on_premium over `years`
     hit_rate: float
     combined_max_drawdown: float
     verdict: Verdict
@@ -170,6 +172,7 @@ def _run_screen(
     notional: float,
     top_k: int,
     baseline_roi: float,
+    years: float,
 ) -> MetricScreenEntry:
     """Rank the scored names by ``metric`` in its fragile direction, hold an
     equal-weight OOM-put basket on the top ``top_k``, and summarize it."""
@@ -220,6 +223,7 @@ def _run_screen(
         label=_LABELS[metric],
         top_k_assets=[p.symbol for p in picks],
         roi_on_premium=roi,
+        annualized_return=annualized_return(roi, years),
         hit_rate=hit_rate,
         combined_max_drawdown=combined_dd,
         verdict=verdict,
@@ -332,6 +336,7 @@ def compare_metric_screens(
                 notional=notional,
                 top_k=top_k,
                 baseline_roi=baseline_roi,
+                years=years,
             )
         )
     entries.append(
@@ -344,6 +349,7 @@ def compare_metric_screens(
             notional=notional,
             top_k=top_k,
             baseline_roi=baseline_roi,
+            years=years,
         )
     )
     entries.sort(key=lambda e: e.roi_on_premium, reverse=True)

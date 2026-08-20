@@ -536,6 +536,142 @@
   }
 }
 
+/* ---------- chart cockpit (four param rails around the hero chart) ----------
+   The four backtest params live on the four edges of the Strategy Tape:
+   top = ticker + notional, left = period, right = OOM, bottom = roll frequency.
+   Rails are thin and muted so the chart stays the visual focus. */
+.putlab-root .cockpit {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  grid-template-rows: auto minmax(0, 1fr) auto;
+  grid-template-areas:
+    'top top top'
+    'left chart right'
+    'bottom bottom bottom';
+  gap: 8px 10px;
+  align-items: center;
+}
+.putlab-root .cockpit-chart {
+  grid-area: chart;
+  min-width: 0;
+}
+.putlab-root .cockpit-top {
+  grid-area: top;
+}
+.putlab-root .cockpit-left {
+  grid-area: left;
+}
+.putlab-root .cockpit-right {
+  grid-area: right;
+}
+.putlab-root .cockpit-bottom {
+  grid-area: bottom;
+}
+.putlab-root .cockpit-rail {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  background: var(--surface-2);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 5px 9px;
+}
+.putlab-root .cockpit-top {
+  flex-wrap: wrap;
+}
+.putlab-root .cockpit-bottom {
+  justify-content: center;
+}
+.putlab-root .cockpit-left,
+.putlab-root .cockpit-right {
+  flex-direction: column;
+  gap: 6px;
+  padding: 9px 6px;
+  align-self: stretch;
+  justify-content: center;
+}
+.putlab-root .cockpit-label {
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+  font-size: 9.5px;
+  font-weight: 700;
+  color: var(--faint);
+  white-space: nowrap;
+}
+.putlab-root .seg-v {
+  flex-direction: column;
+}
+.putlab-root .cockpit-stepper {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  background: var(--surface);
+  border: 1px solid var(--line-strong);
+  border-radius: 9px;
+  padding: 2px 4px;
+}
+.putlab-root .cockpit-arrow {
+  font: inherit;
+  font-size: 12px;
+  line-height: 1;
+  color: var(--muted);
+  cursor: pointer;
+  background: transparent;
+  border: none;
+  border-radius: 6px;
+  padding: 4px 7px;
+}
+.putlab-root .cockpit-arrow:hover:not(:disabled) {
+  color: var(--accent);
+  background: var(--surface-2);
+}
+.putlab-root .cockpit-arrow:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+.putlab-root .cockpit-arrow:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+.putlab-root .cockpit-ticker-name {
+  font-weight: 700;
+  font-size: 13px;
+  color: var(--text);
+  text-align: center;
+  min-width: 6ch;
+  max-width: 18ch;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.putlab-root .cockpit-oom-custom {
+  align-self: center;
+}
+/* Below the narrow breakpoint the side rails collapse to horizontal groups so
+   the chart never gets squeezed thin; the page still never scrolls sideways. */
+@media (max-width: 760px) {
+  .putlab-root .cockpit {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: none;
+    grid-template-areas:
+      'top'
+      'left'
+      'right'
+      'chart'
+      'bottom';
+  }
+  .putlab-root .cockpit-left,
+  .putlab-root .cockpit-right {
+    flex-direction: row;
+    align-self: auto;
+    justify-content: flex-start;
+    flex-wrap: wrap;
+  }
+  .putlab-root .seg-v {
+    flex-direction: row;
+  }
+}
+
 /* ---------- strike-in-dollars caption ---------- */
 .putlab-root .strike-caption {
   margin: 10px 2px 0;

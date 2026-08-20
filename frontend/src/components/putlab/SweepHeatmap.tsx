@@ -6,6 +6,7 @@ interface SweepHeatmapProps {
   cells: SweepCell[]
   moneynessPct: number
   tenorWeeks: number
+  onSelect?: (moneynessPct: number, tenorWeeks: number) => void
 }
 
 const MONEYNESS_AXIS = [2, 4, 6, 8, 10, 12, 15, 18, 22]
@@ -20,10 +21,14 @@ function tenorLabel(weeks: number): string {
 // The strike x tenor sweep -- port of the mock's renderHeat(). Cells the
 // backend didn't return (a tenor too long for the lookback window) render as
 // a muted, dashed "no data" cell instead of fabricating a value.
-export function SweepHeatmap({ cells, moneynessPct, tenorWeeks }: SweepHeatmapProps) {
+export function SweepHeatmap({ cells, moneynessPct, tenorWeeks, onSelect }: SweepHeatmapProps) {
   const svgRef = useRef<SVGSVGElement | null>(null)
   const legendRef = useRef<HTMLDivElement | null>(null)
   const ttRef = useRef<HTMLDivElement | null>(null)
+  // Held in a ref so a fresh inline onSelect each render doesn't re-run the
+  // (SVG-rebuilding) effect -- the handlers read the latest via .current.
+  const onSelectRef = useRef(onSelect)
+  onSelectRef.current = onSelect
 
   useEffect(() => {
     const svg = svgRef.current
@@ -90,6 +95,20 @@ export function SweepHeatmap({ cells, moneynessPct, tenorWeeks }: SweepHeatmapPr
         const onLeave = () => hideTooltip(tt)
         rect.addEventListener('pointerenter', onEnter)
         rect.addEventListener('pointerleave', onLeave)
+        if (onSelectRef.current) {
+          rect.style.cursor = 'pointer'
+          rect.setAttribute('role', 'button')
+          rect.setAttribute('tabindex', '0')
+          rect.setAttribute('aria-label', `Set ${mp}% out-of-the-money at ${tenorLabel(tw)} tenor`)
+          const pick = () => onSelectRef.current?.(mp, tw)
+          rect.addEventListener('click', pick)
+          rect.addEventListener('keydown', (ev) => {
+            if (ev.key === 'Enter' || ev.key === ' ') {
+              ev.preventDefault()
+              pick()
+            }
+          })
+        }
         svg.appendChild(rect)
         const label = svgEl('text', {
           x: x + cw / 2,
@@ -143,7 +162,10 @@ export function SweepHeatmap({ cells, moneynessPct, tenorWeeks }: SweepHeatmapPr
       <div className="panel-head">
         <div>
           <h2>The sweep &mdash; strike &times; tenor</h2>
-          <div className="hint">Total return on premium for every combination. Your current pick is outlined.</div>
+          <div className="hint">
+            Total return on premium for every combination. Your current pick is outlined.
+            {onSelect ? ' Click any cell to set that strike + tenor.' : ''}
+          </div>
         </div>
         <div className="legend" ref={legendRef} />
       </div>
