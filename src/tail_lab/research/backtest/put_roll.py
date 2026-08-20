@@ -63,6 +63,11 @@ class EquityPoint(BaseModel):
     cum_pnl: float
 
 
+class PricePoint(BaseModel):
+    date: dt.date
+    price: float
+
+
 class PutBacktestResult(BaseModel):
     """Full Put Lab backtest output for one parameter set."""
 
@@ -83,6 +88,7 @@ class PutBacktestResult(BaseModel):
     biggest_payoff_mult: float
     worst_bleed_streak: int
     equity_curve: list[EquityPoint]
+    price_path: list[PricePoint]  # underlying over the traded window (for the tape)
     cycles: list[PutRollCycle]
 
 
@@ -152,6 +158,9 @@ def run_put_roll(
     worst_streak = 0
     streak = 0
 
+    first_traded_idx: int | None = None
+    last_expiry_idx = first_entry
+
     i = first_entry
     while i + tenor_days < n:
         sigma = iv[i]
@@ -196,13 +205,24 @@ def run_put_roll(
             )
         )
         equity.append(EquityPoint(date=dates[i + tenor_days], cum_pnl=float(cum)))
+        if first_traded_idx is None:
+            first_traded_idx = i
+        last_expiry_idx = i + tenor_days
         i += tenor_days
 
-    if not cycles:
+    if not cycles or first_traded_idx is None:
         raise LookupError(
             f"not enough price history as of {as_of.isoformat()} to complete "
             f"one {tenor_weeks:g}-week roll for {asset}"
         )
+
+    # The underlying over exactly the traded window (first entry -> last expiry),
+    # aligned with equity_curve, for the strategy tape. The head before
+    # first_traded_idx only exists for IV warm-up and isn't shown.
+    price_path = [
+        PricePoint(date=dates[k], price=float(px[k]))
+        for k in range(first_traded_idx, last_expiry_idx + 1)
+    ]
 
     total_premium = len(cycles) * notional
     return PutBacktestResult(
@@ -223,6 +243,7 @@ def run_put_roll(
         biggest_payoff_mult=biggest_mult,
         worst_bleed_streak=worst_streak,
         equity_curve=equity,
+        price_path=price_path,
         cycles=cycles,
     )
 

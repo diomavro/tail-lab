@@ -97,6 +97,29 @@ def test_run_put_roll_pins_arithmetic_against_the_pricer() -> None:
     )
 
 
+def test_price_path_spans_the_traded_window() -> None:
+    """price_path covers exactly first-entry → last-expiry, aligned with the
+    equity curve, so the tape's stock line and PnL share one x-axis."""
+    prices = _flat_with_dips(101, {60: 70.0, 100: 98.0})
+    iv = pd.Series(np.full(101, 0.30), index=prices.index)
+    res = run_put_roll(
+        prices,
+        iv,
+        asset="T",
+        as_of=dt.date(2021, 6, 1),
+        notional=1000.0,
+        moneyness_pct=5.0,
+        tenor_weeks=8.0,
+        lookback_years=10,
+    )
+    assert res.price_path
+    assert res.price_path[0].date == res.cycles[0].entry_date == res.equity_curve[0].date
+    assert res.price_path[-1].date == res.cycles[-1].expiry_date == res.equity_curve[-1].date
+    # Prices are the real underlying (the crafted dips show through).
+    prices_by_date = {p.date: p.price for p in res.price_path}
+    assert prices_by_date[res.cycles[0].expiry_date] == pytest.approx(70.0)
+
+
 def test_deeper_oom_is_cheaper_per_cycle() -> None:
     """Property: a further out-of-the-money put costs less, so the same
     budget buys strictly more contracts (a monotonicity the pricer guarantees
