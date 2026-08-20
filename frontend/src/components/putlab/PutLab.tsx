@@ -22,6 +22,7 @@ import { fmtPrice } from './format'
 import { Leaderboard } from './Leaderboard'
 import { MemoryTeaser } from './MemoryTeaser'
 import { Portfolio } from './Portfolio'
+import { RegimePanel } from './RegimePanel'
 import './putlab.css'
 import { QuestionBar } from './QuestionBar'
 import { StatBand } from './StatBand'
@@ -167,6 +168,8 @@ export function PutLab() {
             </span>
           </p>
         )}
+
+        <RegimePanel />
 
         {state.status === 'loading' && (
           <p className="putlab-status" role="status" aria-live="polite">

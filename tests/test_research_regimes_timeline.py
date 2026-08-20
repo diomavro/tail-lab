@@ -18,8 +18,10 @@ from tail_lab.contracts.regime import (
 from tail_lab.lake.store import DeltaLakeStore
 from tail_lab.research.regimes.timeline import (
     compute_regime_timeline,
+    compute_regime_view,
     label_vix_series,
     regime_on_or_before,
+    regime_segments,
 )
 
 
@@ -86,3 +88,22 @@ def test_regime_on_or_before_uses_last_trading_day() -> None:
     assert regime_on_or_before(timeline, dt.date(2022, 3, 8)) == "crisis"
     with pytest.raises(LookupError, match="predates"):
         regime_on_or_before(timeline, dt.date(2022, 1, 1))
+
+
+def test_regime_segments_run_length_encodes() -> None:
+    idx = pd.date_range("2026-01-01", periods=5, freq="B")
+    timeline = pd.Series(["calm", "calm", "crisis", "calm", "calm"], index=idx)
+    segs = regime_segments(timeline)
+    assert [(s.regime, s.n_days) for s in segs] == [("calm", 2), ("crisis", 1), ("calm", 2)]
+    assert segs[0].start == idx[0].date()
+    assert segs[-1].end == idx[-1].date()
+
+
+def test_compute_regime_view_end_to_end(tmp_path: Path) -> None:
+    store = DeltaLakeStore(tmp_path)
+    ingest = dt.date(2026, 3, 2)
+    _seed_vix(store, ingest, [12.0, 12.0, 30.0, 20.0])  # calm calm crisis elevated
+    view = compute_regime_view(store, as_of=ingest)
+    assert view.current == "elevated"  # last bar
+    assert view.day_counts == {"calm": 2, "crisis": 1, "elevated": 1}
+    assert [s.regime for s in view.segments] == ["calm", "crisis", "elevated"]

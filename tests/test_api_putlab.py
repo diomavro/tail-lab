@@ -223,6 +223,17 @@ def test_backtest_carries_spot(client: TestClient) -> None:
     assert body["cycles"][0]["strike"] == pytest.approx(body["cycles"][0]["spot"] * 0.95)
 
 
+def test_regimes_endpoint(client: TestClient) -> None:
+    resp = client.get("/api/putlab/regimes")
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["current"] in {"calm", "elevated", "crisis"}
+    assert body["segments"]
+    seg = body["segments"][0]
+    assert set(seg) == {"regime", "start", "end", "n_days"}
+    assert sum(body["day_counts"].values()) == sum(s["n_days"] for s in body["segments"])
+
+
 def test_data_quality_endpoint(client: TestClient) -> None:
     resp = client.get("/api/putlab/data-quality", params={"asset": "spy"})
     assert resp.status_code == 200

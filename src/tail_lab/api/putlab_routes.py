@@ -46,6 +46,7 @@ from tail_lab.research.backtest.put_roll import (
 from tail_lab.research.backtest.ranking import UniverseRanking, rank_universe
 from tail_lab.research.backtest.regime_verdict import RegimeVerdict, compute_regime_verdict
 from tail_lab.research.data_quality import DataQualityReport, assess_asset_quality
+from tail_lab.research.regimes.timeline import RegimeTimelineView, compute_regime_view
 
 router = APIRouter()
 logger = logging.getLogger("tail_lab.api.putlab")
@@ -261,6 +262,19 @@ def putlab_cadence(
     asset: str = Query(description="Underlying ticker, e.g. spy."),
 ) -> OptionsCadence:
     return cadence_for(asset)
+
+
+@router.get("/api/putlab/regimes")
+def putlab_regimes(
+    as_of: dt.date | None = Query(default=None),
+    store: LakeStore = Depends(get_lake_store),
+) -> RegimeTimelineView:
+    """The market-regime history (VIX-based) for the cockpit panel — the
+    current regime plus run-length-encoded calm/elevated/crisis bands."""
+    try:
+        return compute_regime_view(store, as_of=_resolve_as_of(as_of))
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
 
 
 @router.get("/api/putlab/data-quality")

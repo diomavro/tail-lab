@@ -727,3 +727,31 @@
 .putlab-root .pill.pill-warn .dot {
   background: var(--loss);
 }
+
+/* ---------- regime panel ---------- */
+.putlab-root .regime-now {
+  font-weight: 700;
+  text-transform: capitalize;
+}
+.putlab-root .regime-strip {
+  display: flex;
+  height: 26px;
+  border-radius: 7px;
+  overflow: hidden;
+  margin-top: 14px;
+  border: 1px solid var(--line);
+}
+.putlab-root .regime-band {
+  min-width: 1px;
+  opacity: 0.85;
+}
+.putlab-root .regime-band:hover {
+  opacity: 1;
+}
+.putlab-root .regime-axis {
+  display: flex;
+  justify-content: space-between;
+  margin-top: 5px;
+  font-size: 11px;
+  color: var(--faint);
+}
