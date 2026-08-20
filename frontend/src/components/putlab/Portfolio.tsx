@@ -2,6 +2,7 @@ import { useState } from 'react'
 import {
   ApiError,
   fetchPortfolio,
+  fetchPutLabLeaderboard,
   type PortfolioLeg,
   type PortfolioResponse,
   type UniverseMember,
@@ -28,6 +29,8 @@ const DEFAULT_LEGS: PortfolioLeg[] = [
   { asset: 'tsla', moneyness_pct: 10, tenor_weeks: 4, weight: 1 },
 ]
 
+const BASKET_SIZES = [3, 5, 8]
+
 // Mix a basket of OOM-put legs into one hedge and see the blended result --
 // combined P&L, the diversification effect (combined drawdown vs the legs'
 // summed), and each leg's contribution + verdict. Weights are shares of total
@@ -37,6 +40,8 @@ export function Portfolio({ universe }: { universe: UniverseMember[] }) {
   const [notional, setNotional] = useState(10000)
   const [years, setYears] = useState(4)
   const [state, setState] = useState<State>({ status: 'idle' })
+  const [basketK, setBasketK] = useState(5)
+  const [screening, setScreening] = useState(false)
 
   const options = universe.length > 0 ? universe.map((m) => ({ value: m.symbol.toLowerCase(), label: m.name })) : PUTLAB_ASSETS
 
@@ -47,13 +52,41 @@ export function Portfolio({ universe }: { universe: UniverseMember[] }) {
 
   const totalWeight = legs.reduce((s, l) => s + l.weight, 0) || 1
 
-  const run = () => {
+  const run = (useLegs: PortfolioLeg[] = legs) => {
     setState({ status: 'loading' })
-    fetchPortfolio({ legs, notional, years })
+    fetchPortfolio({ legs: useLegs, notional, years })
       .then((result) => setState({ status: 'ready', result }))
       .catch((err: unknown) => {
         const message =
           err instanceof ApiError ? `Portfolio backtest failed (${err.status})` : err instanceof Error ? err.message : String(err)
+        setState({ status: 'error', message })
+      })
+  }
+
+  const loadFragileBasket = () => {
+    setScreening(true)
+    fetchPutLabLeaderboard({ moneyness_pct: 10, tenor_weeks: 4, years })
+      .then((resp) => {
+        const picks = resp.ranked.filter((r) => r.fragility_score !== null).slice(0, basketK)
+        if (picks.length === 0) {
+          setScreening(false)
+          setState({ status: 'error', message: 'No names with an estimable fragility score were found to build a basket.' })
+          return
+        }
+        const newLegs: PortfolioLeg[] = picks.map((r) => ({
+          asset: r.asset,
+          moneyness_pct: 10,
+          tenor_weeks: 4,
+          weight: 1,
+        }))
+        setLegs(newLegs)
+        setScreening(false)
+        run(newLegs)
+      })
+      .catch((err: unknown) => {
+        const message =
+          err instanceof ApiError ? `Fragility screen failed (${err.status})` : err instanceof Error ? err.message : String(err)
+        setScreening(false)
         setState({ status: 'error', message })
       })
   }
@@ -73,9 +106,28 @@ export function Portfolio({ universe }: { universe: UniverseMember[] }) {
             compares to the legs&rsquo; summed &mdash; that gap is diversification.
           </div>
         </div>
-        <button className="lb-run" onClick={run} disabled={state.status === 'loading' || legs.length === 0}>
+        <button className="lb-run" onClick={() => run()} disabled={state.status === 'loading' || legs.length === 0}>
           {state.status === 'loading' ? 'Backtesting…' : 'Backtest portfolio'}
         </button>
+      </div>
+
+      <div className="pf-controls">
+        <button className="lb-run" onClick={loadFragileBasket} disabled={screening || state.status === 'loading'}>
+          {screening ? 'Screening…' : '⚡ Load the fragile basket'}
+        </button>
+        <label className="pf-field">
+          Top
+          <select value={basketK} onChange={(e) => setBasketK(+e.target.value)} aria-label="Basket size">
+            {BASKET_SIZES.map((k) => (
+              <option key={k} value={k}>
+                {k}
+              </option>
+            ))}
+          </select>
+        </label>
+        <span className="hint">
+          Equal-weight puts on the K most fragile names &mdash; the timing-free strategy as one basket, screened live.
+        </span>
       </div>
 
       <div className="pf-builder">
