@@ -166,6 +166,29 @@ def test_regime_verdict_404_unknown_asset(client: TestClient) -> None:
     assert client.get("/api/putlab/regime-verdict", params={"asset": "nope"}).status_code == 404
 
 
+def test_portfolio_endpoint(client: TestClient) -> None:
+    resp = client.post(
+        "/api/putlab/portfolio",
+        json={
+            "legs": [{"asset": "spy", "moneyness_pct": 5, "tenor_weeks": 4, "weight": 1}],
+            "notional": 10000,
+            "years": 1,
+        },
+    )
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["total_premium"] == pytest.approx(10000.0)
+    assert body["legs"][0]["asset"] == "spy"
+    assert body["equity_curve"]
+    assert body["verdict"] in {"confirmed", "regime_only", "failed", "untested"}
+    assert len(body["snapshot_ids"]) == 2  # spy + vix
+
+
+def test_portfolio_empty_legs_422(client: TestClient) -> None:
+    resp = client.post("/api/putlab/portfolio", json={"legs": [], "notional": 10000, "years": 1})
+    assert resp.status_code == 422
+
+
 def test_universe_lists_members(client: TestClient) -> None:
     resp = client.get("/api/putlab/universe")
     assert resp.status_code == 200

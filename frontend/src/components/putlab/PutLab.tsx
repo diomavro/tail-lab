@@ -19,6 +19,7 @@ import { StrategyTape } from './StrategyTape'
 import { fmtPrice } from './format'
 import { Leaderboard } from './Leaderboard'
 import { MemoryTeaser } from './MemoryTeaser'
+import { Portfolio } from './Portfolio'
 import './putlab.css'
 import { QuestionBar } from './QuestionBar'
 import { StatBand } from './StatBand'
@@ -198,6 +199,8 @@ export function PutLab() {
             <Leaderboard controls={controls} currentAsset={controls.asset} />
           </>
         )}
+
+        <Portfolio universe={universe} />
 
         <MemoryTeaser verdict={state.status === 'ready' ? state.regimeVerdict : null} />
 

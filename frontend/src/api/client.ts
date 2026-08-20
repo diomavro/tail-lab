@@ -315,3 +315,55 @@ export async function fetchPutLabLeaderboard(
   }
   return (await resp.json()) as PutLabLeaderboardResponse
 }
+
+// --- Portfolio of mixed puts (research/backtest/portfolio.py) ---
+
+export interface PortfolioLeg {
+  asset: string
+  moneyness_pct: number
+  tenor_weeks: number
+  weight: number
+}
+
+export interface PortfolioLegResult {
+  asset: string
+  name: string
+  weight: number
+  total_premium: number
+  net_pnl: number
+  roi_on_premium: number
+  verdict: Verdict
+  n_cycles: number
+}
+
+export interface PortfolioResponse {
+  as_of: string
+  notional: number
+  lookback_years: number
+  total_premium: number
+  total_payoff: number
+  net_pnl: number
+  roi_on_premium: number
+  combined_max_drawdown: number
+  sum_individual_max_drawdown: number
+  verdict: Verdict
+  legs: PortfolioLegResult[]
+  equity_curve: EquityPoint[]
+  snapshot_ids: string[]
+}
+
+export async function fetchPortfolio(
+  body: { legs: PortfolioLeg[]; notional: number; years: number },
+  signal?: AbortSignal,
+): Promise<PortfolioResponse> {
+  const resp = await fetch('/api/putlab/portfolio', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+    signal,
+  })
+  if (!resp.ok) {
+    throw new ApiError(`POST /api/putlab/portfolio failed: ${resp.status}`, resp.status)
+  }
+  return (await resp.json()) as PortfolioResponse
+}
