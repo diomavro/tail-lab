@@ -83,11 +83,11 @@ export function Leaderboard({
           <span className="eyebrow">The leaderboard</span>
           <h2 style={{ marginTop: 6 }}>Which names paid best?</h2>
           <div className="hint">
-            Rank every name in the universe by return on premium at{' '}
+            Rank every name in the universe by return on premium, rolling{' '}
             <span className="mono">
-              {controls.moneyness_pct}% OOM &middot; {controls.tenor_weeks}w
-            </span>
-            , each tagged with its cross-regime verdict. A <em>regime-only</em> winner only paid in one regime &mdash;
+              {controls.moneyness_pct}% OOM &middot; {controls.tenor_weeks}-week
+            </span>{' '}
+            puts over the whole window, each tagged with its cross-regime verdict. A <em>regime-only</em> winner only paid in one regime &mdash;
             treat a big number with a <span className="badge regime_only">regime only</span> tag as a bet on that
             regime repeating, not a standalone edge.
           </div>
