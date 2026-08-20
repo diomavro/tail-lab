@@ -48,13 +48,15 @@ a large one strictly in order.
       options_calendar.py` (PR #5), and the React `components/putlab/`
       dashboard (PR #6). ~5y OHLCV for spy/qqq/iwm/tsla/gld/eem ingested to
       prod. Follow-ups split out below.
-- [ ] **Memory layer, phase 2** — persist every Put Lab backtest as a
-      verdict keyed by `(rule_hash, regime)`, so repeats are skipped and a
-      strategy that only paid in one crash is flagged `regime_only`, never
-      `confirmed` (Dio's hypothesis-memory spec, adapted to tail-lab's wall —
-      no live/broker stages). Storage: DuckDB + JSON/parquet on Tigris (no new
-      service). NEEDS AN ADR before enacting (new persistence subsystem).
-      Makes the currently-static memory teaser in the Put Lab real.
+- [x] **Memory layer, phase 2** — persist every Put Lab backtest as a
+      verdict keyed by `(rule_hash, regime)`, `regime_only` != `confirmed`
+      (`docs/adr/0015`). **Done**: `memory/store.py` (JSON-on-Tigris +
+      DuckDB), the record + prior-art endpoints (`api/putlab_memory_routes.py`),
+      the live regime verdict in the cockpit, and — the last piece —
+      `.github/workflows/daily-verdict-sweep.yml`, a least-privilege 06:30 sweep
+      that records verdicts across the universe so `run_count`/coverage
+      accumulate daily. Follow-ups: DuckDB `coverage()` / `open_questions()`
+      endpoints; AST/embedding "similar rule" retrieval; prereg + lineage.
 - [ ] Live options-expiry **cadence adapter** — replace the static
       `contracts/options_calendar.py` table with a keyless read of Yahoo's
       `/v7/finance/options` expiration dates → derived avg gap + weekly/
