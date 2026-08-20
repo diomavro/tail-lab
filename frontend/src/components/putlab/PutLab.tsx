@@ -14,23 +14,24 @@ import {
   type SweepResponse,
   type UniverseMember,
 } from '../../api/client'
-import { CadencePanel } from './CadencePanel'
-import { CyclesBars } from './CyclesBars'
-import { EquityCurve } from './EquityCurve'
-import { StrategyTape } from './StrategyTape'
-import { fmtPrice } from './format'
-import { Leaderboard } from './Leaderboard'
-import { MetricScreen } from './MetricScreen'
-import { MemoryTeaser } from './MemoryTeaser'
-import { Portfolio } from './Portfolio'
-import { RegimePanel } from './RegimePanel'
+import { FeedbackPanel } from '../FeedbackPanel'
+import { ConceptInfo } from './ConceptInfo'
 import './putlab.css'
 import { QuestionBar } from './QuestionBar'
-import { StatBand } from './StatBand'
-import { SweepHeatmap } from './SweepHeatmap'
+import { TabNav } from './TabNav'
 import { PUTLAB_DEFAULT_CONTROLS, type PutLabControls } from './types'
+import { BacktestView } from './views/BacktestView'
+import { LearnView } from './views/LearnView'
+import { PortfolioView } from './views/PortfolioView'
+import { RegimeView } from './views/RegimeView'
+import { ScreenView } from './views/ScreenView'
 
-type LoadState =
+// The five workspace tabs. Screen is the default landing view -- "what should
+// I hedge?" -- so a user sees a result without picking anything and scrolling.
+export type TabId = 'screen' | 'backtest' | 'portfolio' | 'regime' | 'learn'
+
+// The single-name backtest bundle, fetched lazily only for the Backtest tab.
+export type BacktestState =
   | { status: 'loading' }
   | { status: 'no-data' }
   | { status: 'error'; message: string }
@@ -47,18 +48,21 @@ type LoadState =
 // controls to settle before hitting the network.
 const DEBOUNCE_MS = 250
 
-// The Put Lab container: owns the question-builder state, fetches the three
-// live endpoints (debounced, abortable), and lays out the mock's sections
-// top-to-bottom. See tail-lab's docs/adr/0004 for the model-pricing caveat
-// and docs/END_STATE.md §1.2/§1.5 for the endpoint contracts.
+// The Put Lab workspace shell: owns the shared controls, the screening
+// universe, the active tab, and the (lazily fetched) single-name backtest
+// bundle. It renders a persistent header, a tab bar, the shared question
+// builder (on the parameterized tabs only), the active view, and a footer.
+// See docs/adr/0004 for the model-pricing caveat and docs/END_STATE.md
+// §1.2/§1.5 for the endpoint contracts.
 export function PutLab() {
   const [controls, setControls] = useState<PutLabControls>(PUTLAB_DEFAULT_CONTROLS)
-  const [state, setState] = useState<LoadState>({ status: 'loading' })
   const [universe, setUniverse] = useState<UniverseMember[]>([])
+  const [activeTab, setActiveTab] = useState<TabId>('screen')
+  const [state, setState] = useState<BacktestState>({ status: 'loading' })
 
   const updateControls = (patch: Partial<PutLabControls>) => setControls((c) => ({ ...c, ...patch }))
 
-  // The screening universe drives the dropdown; fetched once. Failure just
+  // The screening universe drives the dropdowns; fetched once. Failure just
   // leaves the QuestionBar on its built-in fallback list.
   useEffect(() => {
     const controller = new AbortController()
@@ -68,7 +72,10 @@ export function PutLab() {
     return () => controller.abort()
   }, [])
 
+  // The single-name backtest bundle is only shown on the Backtest tab, so only
+  // fetch it there -- never while the user is on Screen/Portfolio/Regime/Learn.
   useEffect(() => {
+    if (activeTab !== 'backtest') return
     const controller = new AbortController()
     const handle = window.setTimeout(() => {
       setState({ status: 'loading' })
@@ -79,7 +86,7 @@ export function PutLab() {
           fetchCadence(controls.asset, controller.signal),
         ]),
         // The regime verdict needs VIX history too; if it's unavailable, degrade
-        // gracefully (teaser hides) rather than blanking the whole dashboard.
+        // gracefully (teaser hides) rather than blanking the whole view.
         fetchRegimeVerdict(controls, controller.signal).catch(() => null),
         fetchDataQuality(controls.asset, controller.signal).catch(() => null),
       ])
@@ -100,7 +107,11 @@ export function PutLab() {
       controller.abort()
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps -- controls fields listed individually so the effect re-runs on value change, not identity
-  }, [controls.asset, controls.notional, controls.moneyness_pct, controls.tenor_weeks, controls.years])
+  }, [activeTab, controls.asset, controls.notional, controls.moneyness_pct, controls.tenor_weeks, controls.years])
+
+  // The question builder is the single shared control surface; it's irrelevant
+  // on Regime/Learn, so it only shows on the three parameterized tabs.
+  const showQuestionBar = activeTab === 'screen' || activeTab === 'backtest' || activeTab === 'portfolio'
 
   return (
     <div className="putlab-root">
@@ -152,90 +163,31 @@ export function PutLab() {
               title="Option premiums are Black-Scholes model prices using trailing realized volatility as an IV proxy, not real historical quotes."
             >
               <span className="dot" /> Model-priced
+              <ConceptInfo id="model_priced" />
             </span>
           </div>
         </header>
 
-        <QuestionBar controls={controls} onChange={updateControls} universe={universe} />
+        <TabNav activeTab={activeTab} onChange={setActiveTab} />
 
-        {state.status === 'ready' && (
-          <p className="strike-caption mono" aria-live="polite">
-            {state.backtest.asset.toUpperCase()} {fmtPrice(state.backtest.spot)}
-            <span className="lede"> &middot; {controls.moneyness_pct}% OOM &rarr; </span>
-            <strong>{fmtPrice(state.backtest.spot * (1 - controls.moneyness_pct / 100))}</strong>
-            <span className="lede"> strike </span>
-            <span className="strike-dist">
-              ({fmtPrice(state.backtest.spot * (controls.moneyness_pct / 100))} below spot)
-            </span>
-          </p>
-        )}
+        {showQuestionBar && <QuestionBar controls={controls} onChange={updateControls} universe={universe} />}
 
-        <RegimePanel />
-
-        {state.status === 'loading' && (
-          <p className="putlab-status" role="status" aria-live="polite">
-            Running the backtest...
-          </p>
-        )}
-        {state.status === 'error' && (
-          <p className="putlab-status putlab-status-error" role="alert">
-            {state.message}
-          </p>
-        )}
-        {state.status === 'no-data' && (
-          <p className="putlab-status" role="status" aria-live="polite">
-            No data yet for this asset and window &mdash; try a shorter lookback or a different asset.
-          </p>
-        )}
-
-        {state.status === 'ready' && (
-          <>
-            <StatBand backtest={state.backtest} />
-
-            <section className="panel">
-              <StrategyTape
-                pricePath={state.backtest.price_path}
-                equityCurve={state.backtest.equity_curve}
-                cycles={state.backtest.cycles}
-              />
-            </section>
-
-            <section className="panel">
-              <EquityCurve equityCurve={state.backtest.equity_curve} cycles={state.backtest.cycles} />
-            </section>
-
-            <div className="grid2">
-              <section className="panel" style={{ marginBottom: 0 }}>
-                <CyclesBars cycles={state.backtest.cycles} notional={controls.notional} />
-              </section>
-              <section className="panel" style={{ marginBottom: 0 }}>
-                <CadencePanel cadence={state.cadence} />
-              </section>
-            </div>
-
-            <section className="panel" style={{ marginTop: 22 }}>
-              <SweepHeatmap
-                cells={state.sweep.cells}
-                moneynessPct={controls.moneyness_pct}
-                tenorWeeks={controls.tenor_weeks}
-              />
-            </section>
-
-            <Leaderboard controls={controls} currentAsset={controls.asset} />
-
-            <MetricScreen controls={controls} />
-          </>
-        )}
-
-        <Portfolio universe={universe} />
-
-        <MemoryTeaser verdict={state.status === 'ready' ? state.regimeVerdict : null} />
+        <div role="tabpanel" id={`panel-${activeTab}`} aria-labelledby={`tab-${activeTab}`} tabIndex={0}>
+          {activeTab === 'screen' && <ScreenView controls={controls} currentAsset={controls.asset} />}
+          {activeTab === 'backtest' && <BacktestView controls={controls} state={state} />}
+          {activeTab === 'portfolio' && <PortfolioView universe={universe} />}
+          {activeTab === 'regime' && <RegimeView />}
+          {activeTab === 'learn' && <LearnView />}
+        </div>
 
         <footer>
-          <strong>Model-priced, not historical quotes.</strong> The underlying path is real daily OHLCV already in
-          the lake; every option premium is a Black-Scholes model price with trailing realized volatility as the IV
-          proxy (<span className="mono">docs/adr/0004</span>). tail-lab never trades &mdash; it hands you the read,
-          you place the trade by hand.
+          <p>
+            <strong>Model-priced, not historical quotes.</strong> The underlying path is real daily OHLCV already in
+            the lake; every option premium is a Black-Scholes model price with trailing realized volatility as the IV
+            proxy (<span className="mono">docs/adr/0004</span>). tail-lab never trades &mdash; it hands you the read,
+            you place the trade by hand.
+          </p>
+          <FeedbackPanel />
         </footer>
       </div>
     </div>
