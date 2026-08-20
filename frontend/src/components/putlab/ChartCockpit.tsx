@@ -1,6 +1,6 @@
 import type { ReactNode } from 'react'
 import type { UniverseMember } from '../../api/client'
-import { PUTLAB_TENORS, type PutLabControls } from './types'
+import { PUTLAB_OOM_PRESETS, PUTLAB_TENORS, type PutLabControls } from './types'
 
 interface ChartCockpitProps {
   controls: PutLabControls
@@ -9,9 +9,10 @@ interface ChartCockpitProps {
   children: ReactNode
 }
 
-// Vertical OOM-strategy presets shown on the right rail; a custom % input sits
-// below them so fine values (7%, 11%) stay reachable.
-const OOM_PRESETS = [5, 10, 15, 20]
+// Vertical OOM-strategy presets shown on the right rail (shared with the
+// cache-warming prefetch); a custom % input sits below them so fine values
+// (7%, 11%) stay reachable.
+const OOM_PRESETS = PUTLAB_OOM_PRESETS
 // Vertical evaluation-window presets on the left rail.
 const YEAR_PRESETS = [4, 3, 2]
 

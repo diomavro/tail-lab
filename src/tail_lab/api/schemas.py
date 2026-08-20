@@ -24,21 +24,34 @@ class VixStretchResponse(BaseModel):
 
 
 class SweepCell(BaseModel):
-    """One (moneyness, tenor) combination's total return on premium — a cell
-    of the Put Lab strike x tenor heatmap."""
+    """One (moneyness, tenor) combination's return on premium — a cell of the
+    Put Lab strike x tenor heatmap. ``roi_on_premium`` is the total over the
+    window; ``annualized_return`` geometrically annualizes it (the value the
+    heatmap colours and labels by)."""
 
     moneyness_pct: float
     tenor_weeks: float
     roi_on_premium: float
+    annualized_return: float
     n_cycles: int
 
 
 class SweepResponse(BaseModel):
+    """The strike x tenor sweep plus the S&P 500 hurdle it's judged against.
+
+    ``benchmark_*`` describe a buy-and-hold of ``benchmark_symbol`` over the
+    same lookback window (return on capital, not on premium — a rough hurdle,
+    not a like-for-like base). ``None`` when the benchmark's price history is
+    missing as of ``as_of``."""
+
     asset: str
     as_of: dt.date
     notional: float
     lookback_years: float
     cells: list[SweepCell]
+    benchmark_symbol: str
+    benchmark_annualized: float | None
+    benchmark_total: float | None
 
 
 class PortfolioRequest(BaseModel):

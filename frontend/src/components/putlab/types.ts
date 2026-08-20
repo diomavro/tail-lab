@@ -17,6 +17,10 @@ export const PUTLAB_ASSETS: { value: string; label: string }[] = [
   { value: 'eem', label: 'Emerging Mkts (EEM)' },
 ]
 
+// The OOM% presets on the cockpit's right rail. Shared so the cache-warming
+// prefetch (PutLab) and the rail buttons (ChartCockpit) can never drift apart.
+export const PUTLAB_OOM_PRESETS: number[] = [5, 10, 15, 20]
+
 export const PUTLAB_TENORS: { weeks: number; label: string }[] = [
   { weeks: 1, label: '1 week' },
   { weeks: 2, label: '2 wk' },

@@ -1,115 +1,160 @@
-import type { UniverseMember } from '../../../api/client'
+import { useState } from 'react'
+import type {
+  CadenceResponse,
+  PutBacktestResponse,
+  RegimeVerdictResponse,
+  SweepResponse,
+  UniverseMember,
+} from '../../../api/client'
 import { CadencePanel } from '../CadencePanel'
 import { ChartCockpit } from '../ChartCockpit'
 import { ConceptInfo } from '../ConceptInfo'
 import { CostOverTime } from '../CostOverTime'
 import { CyclesBars } from '../CyclesBars'
-import { EquityCurve } from '../EquityCurve'
 import { fmtPrice } from '../format'
 import { MemoryTeaser } from '../MemoryTeaser'
-import type { BacktestState } from '../PutLab'
+import type { ResourceState } from '../PutLab'
 import { StatBand } from '../StatBand'
 import { StrategyTape } from '../StrategyTape'
 import { SweepHeatmap } from '../SweepHeatmap'
 import type { PutLabControls } from '../types'
 
-// "What would this hedge have done?" -- the single-name backtest bundle laid
-// out compressed: headline stats, the strategy tape, then a two-column grid
-// (equity | cycles, then sweep | cadence+verdict) so it fits with little
-// scroll. Loading/no-data/error states are handled here.
+// "What would this hedge have done?" -- two always-visible main plots: the
+// cockpit-framed strategy tape (with its P&L pane) and the strike x tenor sweep
+// heatmap. Everything else (cost, cycles, cadence, the memory-layer verdict)
+// collapses behind a "More detail" toggle, hidden by default. Cumulative P&L
+// lives ONLY in the tape's P&L pane -- the standalone EquityCurve is gone from
+// this view (Portfolio still owns it). Each resource renders on its own
+// loading/ready/no-data/error state, so the tape shows the moment the backtest
+// resolves even while the sweep is still loading.
 export function BacktestView({
   controls,
-  state,
+  backtest,
+  sweep,
+  cadence,
+  regimeVerdict,
   onChange,
   universe,
 }: {
   controls: PutLabControls
-  state: BacktestState
+  backtest: ResourceState<PutBacktestResponse>
+  sweep: ResourceState<SweepResponse>
+  cadence: ResourceState<CadenceResponse>
+  regimeVerdict: RegimeVerdictResponse | null
   onChange: (patch: Partial<PutLabControls>) => void
   universe: UniverseMember[]
 }) {
-  if (state.status === 'loading') {
+  const [showDetail, setShowDetail] = useState(false)
+
+  // The caption, stats, and tape all need the backtest, so it gates the view.
+  if (backtest.status === 'loading') {
     return (
       <p className="putlab-status" role="status" aria-live="polite">
         Running the backtest...
       </p>
     )
   }
-  if (state.status === 'error') {
+  if (backtest.status === 'error') {
     return (
       <p className="putlab-status putlab-status-error" role="alert">
-        {state.message}
+        {backtest.message}
       </p>
     )
   }
-  if (state.status === 'no-data') {
+  if (backtest.status === 'no-data') {
     return (
       <p className="putlab-status" role="status" aria-live="polite">
         No data yet for this asset and window &mdash; try a shorter lookback or a different asset.
       </p>
     )
   }
+  const bt = backtest.data
 
   return (
     <>
       <p className="strike-caption mono" aria-live="polite">
-        {state.backtest.asset.toUpperCase()} {fmtPrice(state.backtest.spot)}
+        {bt.asset.toUpperCase()} {fmtPrice(bt.spot)}
         <span className="lede"> &middot; {controls.moneyness_pct}% OOM &rarr; </span>
-        <strong>{fmtPrice(state.backtest.spot * (1 - controls.moneyness_pct / 100))}</strong>
+        <strong>{fmtPrice(bt.spot * (1 - controls.moneyness_pct / 100))}</strong>
         <span className="lede"> strike </span>
         <span className="strike-dist">
-          ({fmtPrice(state.backtest.spot * (controls.moneyness_pct / 100))} below spot)
+          ({fmtPrice(bt.spot * (controls.moneyness_pct / 100))} below spot)
         </span>
         <ConceptInfo id="oom_put" />
       </p>
 
-      <StatBand backtest={state.backtest} />
+      <StatBand backtest={bt} />
 
+      {/* Main plot 1: the strategy tape (keeps its cumulative-P&L pane). */}
       <section className="panel">
         <ChartCockpit controls={controls} onChange={onChange} universe={universe}>
-          <StrategyTape
-            pricePath={state.backtest.price_path}
-            mtmCurve={state.backtest.mtm_curve}
-            cycles={state.backtest.cycles}
-          />
+          <StrategyTape pricePath={bt.price_path} mtmCurve={bt.mtm_curve} cycles={bt.cycles} />
         </ChartCockpit>
       </section>
 
-      {/* Balanced two-up rows: each pairs charts of similar height, so no
-          column leaves a tall gap beside a short one — keeps the view dense. */}
-      <div className="grid2">
-        <section className="panel" style={{ marginBottom: 0 }}>
-          <EquityCurve
-            equityCurve={state.backtest.equity_curve}
-            mtmCurve={state.backtest.mtm_curve}
-            cycles={state.backtest.cycles}
-          />
-        </section>
-        <section className="panel" style={{ marginBottom: 0 }}>
-          <CostOverTime cycles={state.backtest.cycles} />
-        </section>
-      </div>
-
-      <div className="grid2">
-        <section className="panel" style={{ marginBottom: 0 }}>
-          <CyclesBars cycles={state.backtest.cycles} notional={controls.notional} />
-        </section>
-        <section className="panel" style={{ marginBottom: 0 }}>
+      {/* Main plot 2: the strike x tenor sweep, full-width so the cells are
+          large and the annualized numbers legible. Renders on its own state so
+          a still-loading sweep never blocks the tape above. */}
+      <section className="panel">
+        {sweep.status === 'ready' ? (
           <SweepHeatmap
-            cells={state.sweep.cells}
+            cells={sweep.data.cells}
             moneynessPct={controls.moneyness_pct}
             tenorWeeks={controls.tenor_weeks}
+            benchmarkSymbol={sweep.data.benchmark_symbol}
+            benchmarkAnnualized={sweep.data.benchmark_annualized}
             onSelect={(m, t) => onChange({ moneyness_pct: m, tenor_weeks: t })}
           />
-        </section>
-      </div>
+        ) : sweep.status === 'error' ? (
+          <p className="putlab-status putlab-status-error" role="alert">
+            {sweep.message}
+          </p>
+        ) : (
+          <p className="putlab-status" role="status" aria-live="polite">
+            {sweep.status === 'no-data'
+              ? 'No sweep for this asset and window yet.'
+              : 'Loading the strike × tenor sweep…'}
+          </p>
+        )}
+      </section>
 
-      <div className="grid2">
-        <section className="panel" style={{ marginBottom: 0 }}>
-          <CadencePanel cadence={state.cadence} />
-        </section>
-        <MemoryTeaser verdict={state.regimeVerdict} />
-      </div>
+      <button
+        type="button"
+        className="detail-toggle"
+        aria-expanded={showDetail}
+        onClick={() => setShowDetail((v) => !v)}
+      >
+        <span className="detail-toggle-caret" aria-hidden="true">
+          {showDetail ? '▾' : '▸'}
+        </span>
+        {showDetail ? 'Hide detail' : 'More detail'}
+      </button>
+
+      {showDetail && (
+        <>
+          {/* Balanced two-up rows: cost | cycles, then cadence | memory. */}
+          <div className="grid2">
+            <section className="panel" style={{ marginBottom: 0 }}>
+              <CostOverTime cycles={bt.cycles} />
+            </section>
+            <section className="panel" style={{ marginBottom: 0 }}>
+              <CyclesBars cycles={bt.cycles} notional={controls.notional} />
+            </section>
+          </div>
+          <div className="grid2">
+            <section className="panel" style={{ marginBottom: 0 }}>
+              {cadence.status === 'ready' ? (
+                <CadencePanel cadence={cadence.data} />
+              ) : (
+                <p className="putlab-status" role="status" aria-live="polite">
+                  {cadence.status === 'error' ? 'Cadence unavailable.' : 'Loading cadence…'}
+                </p>
+              )}
+            </section>
+            <MemoryTeaser verdict={regimeVerdict} />
+          </div>
+        </>
+      )}
     </>
   )
 }

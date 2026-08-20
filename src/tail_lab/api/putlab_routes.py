@@ -43,11 +43,12 @@ from tail_lab.research.backtest.metric_screen import (
 from tail_lab.research.backtest.portfolio import PortfolioResult, run_portfolio
 from tail_lab.research.backtest.put_roll import (
     PutBacktestResult,
+    annualized_return,
     compute_put_backtest,
     load_asof_series,
     run_put_roll,
 )
-from tail_lab.research.backtest.ranking import UniverseRanking, rank_universe
+from tail_lab.research.backtest.ranking import BENCHMARK, UniverseRanking, rank_universe
 from tail_lab.research.backtest.regime_verdict import RegimeVerdict, compute_regime_verdict
 from tail_lab.research.data_quality import DataQualityReport, assess_asset_quality
 from tail_lab.research.regimes.timeline import RegimeTimelineView, compute_regime_view
@@ -64,6 +65,21 @@ SWEEP_TENORS_WEEKS: tuple[float, ...] = (1, 2, 4, 8, 12)
 #: (moneyness, tenor, years, as_of); the read cache keeps it fresh underneath.
 _LEADERBOARD_CACHE: dict[tuple[float, float, float, str], tuple[float, UniverseRanking]] = {}
 _LEADERBOARD_TTL_S = 120.0
+
+#: Short-TTL memos of the single-name reads the Backtest cockpit refetches on
+#: every OOM/tenor click. Bronze is immutable for a given as_of, so caching a
+#: computed combo makes repeat/preset clicks instant server-side too. Keyed by
+#: the endpoint's params + resolved as_of (mirrors the leaderboard pattern).
+_BACKTEST_CACHE: dict[
+    tuple[str, float, float, float, float, str], tuple[float, PutBacktestResult]
+] = {}
+_BACKTEST_TTL_S = 120.0
+_SWEEP_CACHE: dict[tuple[str, float, float, str], tuple[float, SweepResponse]] = {}
+_SWEEP_TTL_S = 120.0
+_REGIME_VERDICT_CACHE: dict[
+    tuple[str, float, float, float, float, str], tuple[float, RegimeVerdict]
+] = {}
+_REGIME_VERDICT_TTL_S = 120.0
 
 #: Short-TTL memo of the (~35-backtest) metric bake-off, keyed by
 #: (moneyness, tenor, years, top_k, as_of).
@@ -131,6 +147,10 @@ def putlab_backtest(
     store: LakeStore = Depends(get_lake_store),
 ) -> PutBacktestResult:
     resolved = _resolve_as_of(as_of)
+    cache_key = (asset, notional, moneyness_pct, tenor_weeks, years, resolved.isoformat())
+    hit = _BACKTEST_CACHE.get(cache_key)
+    if hit is not None and hit[0] > time.monotonic():
+        return hit[1]
     try:
         result = compute_put_backtest(
             store,
@@ -144,6 +164,7 @@ def putlab_backtest(
     except LookupError as exc:
         log_event(logger, "putlab.backtest.miss", asset=asset, as_of=resolved, reason=str(exc))
         raise HTTPException(status_code=404, detail=str(exc)) from exc
+    _BACKTEST_CACHE[cache_key] = (time.monotonic() + _BACKTEST_TTL_S, result)
     _log_run(
         store,
         "putlab.backtest",
@@ -164,6 +185,32 @@ def putlab_backtest(
     return result
 
 
+def _benchmark_buy_and_hold(
+    store: LakeStore, as_of: dt.date, years: float
+) -> tuple[float | None, float | None]:
+    """S&P 500 buy-and-hold ``(total, annualized)`` over the sweep's window.
+
+    Reads ``BENCHMARK``'s as-of price path, takes the trailing ``round(years*252)``
+    daily closes (the same lookback the roll trades over), and returns
+    ``last/first - 1`` and its geometric annualization. ``(None, None)`` if the
+    benchmark's history is missing or too short — the sweep still succeeds, the
+    heatmap just falls back to a two-way split at 0.
+    """
+    try:
+        prices, _ = load_asof_series(store, BENCHMARK, as_of)
+    except LookupError:
+        return None, None
+    window = prices.iloc[-round(years * 252) :]
+    if len(window) < 2:
+        return None, None
+    first = float(window.iloc[0])
+    last = float(window.iloc[-1])
+    if first <= 0.0:
+        return None, None
+    total = last / first - 1.0
+    return total, annualized_return(total, years)
+
+
 @router.get("/api/putlab/sweep")
 def putlab_sweep(
     asset: str = Query(description="Underlying ticker, e.g. spy."),
@@ -173,6 +220,10 @@ def putlab_sweep(
     store: LakeStore = Depends(get_lake_store),
 ) -> SweepResponse:
     resolved = _resolve_as_of(as_of)
+    cache_key = (asset, notional, years, resolved.isoformat())
+    hit = _SWEEP_CACHE.get(cache_key)
+    if hit is not None and hit[0] > time.monotonic():
+        return hit[1]
     # Read the as-of price path ONCE, then roll every cell over it (45 model
     # backtests, a single lake read) instead of re-reading per cell.
     try:
@@ -203,22 +254,35 @@ def putlab_sweep(
                     moneyness_pct=moneyness,
                     tenor_weeks=tenor,
                     roi_on_premium=res.roi_on_premium,
+                    annualized_return=annualized_return(res.roi_on_premium, years),
                     n_cycles=res.n_cycles,
                 )
             )
     if not cells:
         raise HTTPException(status_code=404, detail=f"no scorable window for {asset}")
+    # The S&P 500 hurdle the heatmap colours against: buy-and-hold over the same
+    # window, read once (not per cell). None if SPY history is missing as-of.
+    bench_total, bench_annualized = _benchmark_buy_and_hold(store, resolved, years)
     _log_run(
         store,
         "putlab.sweep",
         asset=asset,
         as_of=resolved,
         params={"notional": notional, "years": years},
-        outputs={"n_cells": len(cells)},
+        outputs={"n_cells": len(cells), "benchmark_annualized": bench_annualized},
     )
-    return SweepResponse(
-        asset=asset, as_of=resolved, notional=notional, lookback_years=years, cells=cells
+    response = SweepResponse(
+        asset=asset,
+        as_of=resolved,
+        notional=notional,
+        lookback_years=years,
+        cells=cells,
+        benchmark_symbol=BENCHMARK,
+        benchmark_annualized=bench_annualized,
+        benchmark_total=bench_total,
     )
+    _SWEEP_CACHE[cache_key] = (time.monotonic() + _SWEEP_TTL_S, response)
+    return response
 
 
 @router.get("/api/putlab/regime-verdict")
@@ -232,6 +296,10 @@ def putlab_regime_verdict(
     store: LakeStore = Depends(get_lake_store),
 ) -> RegimeVerdict:
     resolved = _resolve_as_of(as_of)
+    cache_key = (asset, notional, moneyness_pct, tenor_weeks, years, resolved.isoformat())
+    hit = _REGIME_VERDICT_CACHE.get(cache_key)
+    if hit is not None and hit[0] > time.monotonic():
+        return hit[1]
     try:
         result = compute_regime_verdict(
             store,
@@ -247,6 +315,7 @@ def putlab_regime_verdict(
             logger, "putlab.regime_verdict.miss", asset=asset, as_of=resolved, reason=str(exc)
         )
         raise HTTPException(status_code=404, detail=str(exc)) from exc
+    _REGIME_VERDICT_CACHE[cache_key] = (time.monotonic() + _REGIME_VERDICT_TTL_S, result)
     _log_run(
         store,
         "putlab.regime_verdict",
