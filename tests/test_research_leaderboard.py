@@ -26,6 +26,7 @@ from tail_lab.research.leaderboard import (
     MIN_DOWNSIDE_OBSERVATIONS,
     compute_sensitivity_leaderboard,
 )
+from tail_lab.research.metrics.co_skewness import co_skewness
 from tail_lab.research.metrics.downside_beta import downside_beta
 
 #: 24 daily returns with 8 negative ("down") days -- comfortably above
@@ -153,6 +154,40 @@ def test_leaderboard_skips_symbol_with_too_few_downside_observations(tmp_path: P
         store, as_of=as_of, universe=("spy", "ddd"), benchmark="spy"
     )
     assert {row.symbol for row in result.rows} == {"SPY"}
+
+
+def test_leaderboard_ranks_by_co_skewness_when_selected(tmp_path: Path) -> None:
+    """Selecting ``metric="co_skewness"`` changes both the reported metric
+    name and the score, cross-checked against the independently-tested
+    metric function directly (mirroring the downside-beta pinned test
+    above) -- including the sign flip documented in
+    ``research/leaderboard.py``'s ``_score``: a higher *score* still means
+    "more sensitive," even though it's the *negated* raw co-skewness."""
+    store = DeltaLakeStore(tmp_path)
+    as_of = dt.date(2026, 6, 1)
+    _write_ohlcv(store, "spy", as_of, BENCH_RETURNS)
+    _write_ohlcv(store, "bbb", as_of, _asset_returns(2.0, 0.3))
+    _write_ohlcv(store, "ccc", as_of, _asset_returns(0.5, 1.5))
+
+    result = compute_sensitivity_leaderboard(
+        store, as_of=as_of, universe=("spy", "bbb", "ccc"), benchmark="spy", metric="co_skewness"
+    )
+
+    assert result.metric == "co_skewness"
+    scores = [row.score for row in result.rows]
+    assert scores == sorted(scores, reverse=True)
+
+    bench_prices = 100.0 * np.cumprod(1.0 + np.array(BENCH_RETURNS))
+    bbb_prices = 100.0 * np.cumprod(1.0 + np.array(_asset_returns(2.0, 0.3)))
+    idx = pd.bdate_range(end=as_of, periods=len(BENCH_RETURNS))
+    bench_ret = pd.Series(bench_prices, index=idx).pct_change().dropna()
+    bbb_ret = pd.Series(bbb_prices, index=idx).pct_change().dropna()
+    expected_bbb_score = -co_skewness(
+        bbb_ret, bench_ret, min_observations=MIN_DOWNSIDE_OBSERVATIONS
+    )
+
+    bbb_score = next(row.score for row in result.rows if row.symbol == "BBB")
+    assert bbb_score == pytest.approx(expected_bbb_score)
 
 
 def test_leaderboard_raises_when_benchmark_missing(tmp_path: Path) -> None:

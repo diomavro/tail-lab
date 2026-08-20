@@ -51,6 +51,27 @@ main {
   margin-bottom: 1.5rem;
 }
 
+.leaderboard-metric-tabs {
+  display: flex;
+  gap: 0.5rem;
+  margin-top: 0.5rem;
+}
+
+.metric-tab {
+  border: 1px solid #ccc;
+  background: #fff;
+  border-radius: 999px;
+  padding: 0.2rem 0.75rem;
+  font-size: 0.8rem;
+  cursor: pointer;
+}
+
+.metric-tab-active {
+  background: #333;
+  border-color: #333;
+  color: #fff;
+}
+
 .leaderboard-table {
   width: 100%;
   border-collapse: collapse;

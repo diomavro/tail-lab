@@ -2,8 +2,8 @@
 Public GET, like the other cockpit reads — no auth to gate, model-free
 ranking data.
 
-``GET /api/leaderboard`` — the screening universe ranked by downside beta
-against SPY, most-sensitive first (``research/leaderboard.py``).
+``GET /api/leaderboard`` — the screening universe ranked by a sensitivity
+metric against SPY, most-sensitive first (``research/leaderboard.py``).
 """
 
 from __future__ import annotations
@@ -21,6 +21,8 @@ from tail_lab.lake.store import LakeStore
 from tail_lab.observability import log_event
 from tail_lab.research.leaderboard import (
     DEFAULT_BENCHMARK,
+    DEFAULT_METRIC,
+    Metric,
     SensitivityLeaderboardResult,
     compute_sensitivity_leaderboard,
 )
@@ -42,13 +44,14 @@ def _resolve_as_of(as_of: dt.date | None) -> dt.date:
 @router.get("/api/leaderboard")
 def leaderboard(
     as_of: dt.date | None = Query(default=None, description="Simulation date; defaults to today."),
+    metric: Metric = Query(default=DEFAULT_METRIC, description="Sensitivity metric to rank by."),
     store: LakeStore = Depends(get_lake_store),
 ) -> SensitivityLeaderboardResult:
     resolved = _resolve_as_of(as_of)
     try:
-        result = compute_sensitivity_leaderboard(store, as_of=resolved)
+        result = compute_sensitivity_leaderboard(store, as_of=resolved, metric=metric)
     except LookupError as exc:
-        log_event(logger, "leaderboard.miss", as_of=resolved, reason=str(exc))
+        log_event(logger, "leaderboard.miss", as_of=resolved, metric=metric, reason=str(exc))
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     try:
         benchmark_snapshot = store.bronze_snapshot_id(dataset_id(DEFAULT_BENCHMARK), resolved)

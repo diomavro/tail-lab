@@ -67,6 +67,19 @@ def test_leaderboard_returns_ranked_rows(client: TestClient) -> None:
     assert scores == sorted(scores, reverse=True)
 
 
+def test_leaderboard_metric_query_param_selects_co_skewness(client: TestClient) -> None:
+    resp = client.get("/api/leaderboard", params={"metric": "co_skewness"})
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["metric"] == "co_skewness"
+    assert all(row["metric"] == "co_skewness" for row in body["rows"])
+
+
+def test_leaderboard_rejects_unsupported_metric(client: TestClient) -> None:
+    resp = client.get("/api/leaderboard", params={"metric": "not_a_real_metric"})
+    assert resp.status_code == 422
+
+
 def test_leaderboard_404_when_benchmark_missing(tmp_path: Path) -> None:
     store = DeltaLakeStore(tmp_path)
     app.dependency_overrides[leaderboard_get_lake_store] = lambda: store
