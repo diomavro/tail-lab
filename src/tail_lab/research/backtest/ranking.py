@@ -11,6 +11,7 @@ re-read per symbol.
 from __future__ import annotations
 
 import datetime as dt
+from concurrent.futures import ThreadPoolExecutor
 
 from pydantic import BaseModel
 
@@ -64,8 +65,7 @@ def rank_universe(
     """
     timeline = compute_regime_timeline(store, as_of=as_of)
 
-    rows: list[RankedAsset] = []
-    for symbol in symbols:
+    def _rank_one(symbol: str) -> RankedAsset | None:
         try:
             prices, iv_proxy = load_asof_series(store, symbol, as_of)
             result = run_put_roll(
@@ -79,20 +79,24 @@ def rank_universe(
                 lookback_years=years,
             )
         except LookupError:
-            continue
+            return None  # no data / too short a window for this name -> skip
         _, verdict = regime_breakdown(result.cycles, timeline)
-        rows.append(
-            RankedAsset(
-                asset=symbol,
-                name=cadence_for(symbol).name,
-                spot=result.spot,
-                roi_on_premium=result.roi_on_premium,
-                verdict=verdict,
-                hit_rate=result.hit_rate,
-                biggest_payoff_mult=result.biggest_payoff_mult,
-                n_cycles=result.n_cycles,
-            )
+        return RankedAsset(
+            asset=symbol,
+            name=cadence_for(symbol).name,
+            spot=result.spot,
+            roi_on_premium=result.roi_on_premium,
+            verdict=verdict,
+            hit_rate=result.hit_rate,
+            biggest_payoff_mult=result.biggest_payoff_mult,
+            n_cycles=result.n_cycles,
         )
+
+    # Each name is an independent lake read + roll; the S3 read releases the
+    # GIL, so a bounded thread pool cuts the cold warm-up. Cap workers to bound
+    # S3 connections/memory; the final sort re-establishes deterministic order.
+    with ThreadPoolExecutor(max_workers=8) as pool:
+        rows = [r for r in pool.map(_rank_one, symbols) if r is not None]
 
     rows.sort(key=lambda r: r.roi_on_premium, reverse=True)
     return UniverseRanking(

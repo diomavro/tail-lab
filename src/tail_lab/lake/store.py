@@ -29,7 +29,9 @@ from __future__ import annotations
 import datetime as dt
 import hashlib
 import io
+import time
 from abc import ABC, abstractmethod
+from collections import OrderedDict
 from collections.abc import Mapping
 from pathlib import Path
 
@@ -158,6 +160,14 @@ class DeltaLakeStore(LakeStore):
         self._storage_options: dict[str, str] | None = (
             dict(storage_options) if storage_options is not None else None
         )
+        # Bronze partitions are immutable, so a partition read is cached by its
+        # resolved (dataset, snapshot_date) — self-invalidating: a new ingest
+        # produces a new snapshot_date -> cache miss -> fresh read, while a
+        # historical as-of read stays cached forever. as-of is resolved on
+        # every call (a cheap Delta-log metadata read), memoized briefly so the
+        # leaderboard's 35 resolutions don't each hit S3.
+        self._frame_cache: OrderedDict[tuple[str, str], pd.DataFrame] = OrderedDict()
+        self._resolve_cache: dict[tuple[str, str], tuple[float, dt.date]] = {}
 
     @property
     def root(self) -> Path | str:
@@ -261,15 +271,45 @@ class DeltaLakeStore(LakeStore):
         )
         return self._partition_location(table_uri, ingest_date)
 
-    def read_bronze_as_of(self, dataset: str, as_of: dt.date) -> pd.DataFrame:
-        table_uri = self._table_uri(self._bronze_table_key(dataset))
+    #: Seconds a resolved snapshot_date is trusted before re-checking the Delta
+    #: log — bounds how long a just-landed ingest stays invisible.
+    _RESOLVE_TTL_S = 45.0
+    #: Max distinct (dataset, snapshot) frames kept in memory.
+    _FRAME_CACHE_MAX = 256
+
+    def _resolve_cached(self, table_uri: str, dataset: str, as_of: dt.date) -> dt.date:
+        key = (dataset, as_of.isoformat())
+        hit = self._resolve_cache.get(key)
+        if hit is not None and hit[0] > time.monotonic():
+            return hit[1]
         snapshot_date = self._resolve_bronze_snapshot(table_uri, dataset, as_of)
-        return self._read_bronze_partition(table_uri, snapshot_date)
+        self._resolve_cache[key] = (time.monotonic() + self._RESOLVE_TTL_S, snapshot_date)
+        return snapshot_date
+
+    def _cached_partition(self, dataset: str, as_of: dt.date) -> tuple[dt.date, pd.DataFrame]:
+        """Resolve the as-of snapshot and return its (immutable) partition,
+        served from an in-process cache keyed by the resolved snapshot_date."""
+        table_uri = self._table_uri(self._bronze_table_key(dataset))
+        snapshot_date = self._resolve_cached(table_uri, dataset, as_of)
+        key = (dataset, snapshot_date.isoformat())
+        cached = self._frame_cache.get(key)
+        if cached is not None:
+            self._frame_cache.move_to_end(key)
+            return snapshot_date, cached
+        df = self._read_bronze_partition(table_uri, snapshot_date)
+        self._frame_cache[key] = df
+        self._frame_cache.move_to_end(key)
+        while len(self._frame_cache) > self._FRAME_CACHE_MAX:
+            self._frame_cache.popitem(last=False)
+        return snapshot_date, df
+
+    def read_bronze_as_of(self, dataset: str, as_of: dt.date) -> pd.DataFrame:
+        # .copy() so a caller mutating the frame can't corrupt the cache; cheap
+        # (a ~1k-row frame) next to the S3 read it replaces.
+        return self._cached_partition(dataset, as_of)[1].copy()
 
     def bronze_snapshot_id(self, dataset: str, as_of: dt.date) -> str:
-        table_uri = self._table_uri(self._bronze_table_key(dataset))
-        snapshot_date = self._resolve_bronze_snapshot(table_uri, dataset, as_of)
-        df = self._read_bronze_partition(table_uri, snapshot_date)
+        snapshot_date, df = self._cached_partition(dataset, as_of)
         digest = hashlib.sha256(self._serialize(df)).hexdigest()[:16]
         return f"{dataset}@{snapshot_date.isoformat()}#{digest}"
 
