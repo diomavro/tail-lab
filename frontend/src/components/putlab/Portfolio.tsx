@@ -7,6 +7,7 @@ import {
   type PortfolioResponse,
   type UniverseMember,
 } from '../../api/client'
+import { ConceptInfo } from './ConceptInfo'
 import { EquityCurve } from './EquityCurve'
 import { fmtDollar, fmtPct } from './format'
 import { PUTLAB_ASSETS, PUTLAB_TENORS } from './types'
@@ -150,6 +151,7 @@ export function Portfolio({ universe }: { universe: UniverseMember[] }) {
               />
               % OOM
             </label>
+            <ConceptInfo id="oom_put" />
             <select value={leg.tenor_weeks} onChange={(e) => setLeg(i, { tenor_weeks: +e.target.value })} aria-label="Leg tenor">
               {PUTLAB_TENORS.map((t) => (
                 <option key={t.weeks} value={t.weeks}>
@@ -215,7 +217,10 @@ export function Portfolio({ universe }: { universe: UniverseMember[] }) {
               <div className="note">worst drawdown of the mix</div>
             </div>
             <div className="stat">
-              <div className="k">Diversification</div>
+              <div className="k">
+                Diversification
+                <ConceptInfo id="diversification" />
+              </div>
               <div className="v pos">{fmtDollar(saved)}</div>
               <div className="note">shallower than the legs&rsquo; summed drawdown</div>
             </div>

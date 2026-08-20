@@ -728,6 +728,234 @@
   background: var(--loss);
 }
 
+/* ---------- tab nav ---------- */
+.putlab-root .tabnav {
+  display: flex;
+  gap: 4px;
+  flex-wrap: wrap;
+  border-bottom: 1px solid var(--line);
+  margin-bottom: 22px;
+}
+.putlab-root .tab {
+  font: inherit;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--muted);
+  background: transparent;
+  border: none;
+  border-bottom: 2px solid transparent;
+  border-radius: 8px 8px 0 0;
+  padding: 10px 16px;
+  margin-bottom: -1px;
+  cursor: pointer;
+}
+.putlab-root .tab:hover {
+  color: var(--text);
+  background: var(--surface-2);
+}
+.putlab-root .tab-active {
+  color: var(--accent);
+  border-bottom-color: var(--accent);
+}
+.putlab-root .tab:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+
+/* ---------- per-view intro line ---------- */
+.putlab-root .view-intro {
+  font-size: 14px;
+  color: var(--muted);
+  line-height: 1.6;
+  max-width: 74ch;
+  margin: 0 0 18px;
+}
+.putlab-root .view-intro strong {
+  color: var(--text);
+}
+
+/* ---------- regime view: VIX-stretch tile wrapped in a panel ---------- */
+.putlab-root .vix-panel .tile {
+  border: none;
+  padding: 0;
+  border-radius: 0;
+}
+
+/* ---------- footer feedback (compact, tokenized) ---------- */
+.putlab-root footer p {
+  margin: 0;
+}
+.putlab-root footer .feedback-panel {
+  margin-top: 18px;
+  padding: 16px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--surface);
+  color: var(--text);
+}
+.putlab-root footer .feedback-panel h2 {
+  font-size: 15px;
+  margin: 0 0 12px;
+  color: var(--text);
+}
+.putlab-root footer .feedback-panel textarea {
+  border: 1px solid var(--line-strong);
+  border-radius: 8px;
+  background: var(--surface-2);
+  color: var(--text);
+}
+.putlab-root footer .feedback-panel button {
+  align-self: flex-start;
+  border: 1px solid var(--accent);
+  border-radius: 8px;
+  background: var(--accent);
+  color: #14100a;
+  font-weight: 600;
+}
+.putlab-root footer .feedback-panel .feedback-success {
+  color: var(--gain);
+}
+.putlab-root footer .feedback-panel .tile-error {
+  color: var(--loss);
+}
+
+/* ---------- learn view ---------- */
+.putlab-root .learn {
+  display: grid;
+  grid-template-columns: 200px 1fr;
+  gap: 32px;
+  align-items: start;
+}
+@media (max-width: 860px) {
+  .putlab-root .learn {
+    grid-template-columns: 1fr;
+  }
+  .putlab-root .learn-nav {
+    display: none;
+  }
+}
+.putlab-root .learn-nav {
+  position: sticky;
+  top: 20px;
+}
+.putlab-root .learn-nav ul {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 2px;
+}
+.putlab-root .learn-nav a {
+  display: block;
+  padding: 6px 10px;
+  border-radius: 7px;
+  color: var(--muted);
+  text-decoration: none;
+  font-size: 13px;
+}
+.putlab-root .learn-nav a:hover {
+  color: var(--accent);
+  background: var(--surface-2);
+}
+.putlab-root .learn-body {
+  min-width: 0;
+}
+.putlab-root .learn-section {
+  margin-bottom: 34px;
+  scroll-margin-top: 20px;
+}
+.putlab-root .learn-cat {
+  font-size: 18px;
+  margin: 0 0 14px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid var(--line);
+  letter-spacing: -0.01em;
+}
+.putlab-root .learn-cards {
+  display: grid;
+  gap: 16px;
+}
+.putlab-root .learn-card {
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  padding: 18px 20px;
+  box-shadow: var(--shadow);
+  scroll-margin-top: 20px;
+}
+.putlab-root .learn-term {
+  font-size: 16px;
+  margin: 0 0 6px;
+  letter-spacing: -0.01em;
+}
+.putlab-root .learn-short {
+  font-size: 13.5px;
+  color: var(--muted);
+  font-weight: 500;
+  margin: 0 0 12px;
+}
+.putlab-root .learn-formula {
+  font-size: 12.5px;
+  color: var(--text);
+  background: var(--surface-2);
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  padding: 10px 12px;
+  margin: 0 0 12px;
+  white-space: pre-wrap;
+  word-break: break-word;
+  overflow-x: auto;
+}
+.putlab-root .learn-intuition {
+  font-size: 13.5px;
+  color: var(--text);
+  line-height: 1.65;
+  margin: 0 0 12px;
+}
+.putlab-root .learn-howto {
+  font-size: 13px;
+  color: var(--muted);
+  line-height: 1.6;
+  margin: 0 0 12px;
+  padding: 10px 12px;
+  background: color-mix(in srgb, var(--accent) 6%, var(--surface-2));
+  border-radius: 9px;
+}
+.putlab-root .learn-howto-k {
+  display: block;
+  font-size: 10.5px;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  font-weight: 700;
+  color: var(--accent);
+  margin-bottom: 4px;
+}
+.putlab-root .learn-see {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+}
+.putlab-root .learn-see-k {
+  font-size: 10.5px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  font-weight: 600;
+  color: var(--faint);
+}
+.putlab-root .learn-see-link {
+  color: var(--accent);
+  text-decoration: none;
+  border: 1px solid var(--line-strong);
+  border-radius: 999px;
+  padding: 2px 9px;
+}
+.putlab-root .learn-see-link:hover {
+  background: var(--surface-2);
+  border-color: var(--accent);
+}
+
 /* ---------- regime panel ---------- */
 .putlab-root .regime-now {
   font-weight: 700;
@@ -754,4 +982,98 @@
   margin-top: 5px;
   font-size: 11px;
   color: var(--faint);
+}
+
+/* ---------- concept info (ⓘ popover) ---------- */
+.putlab-root .concept-info {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  vertical-align: middle;
+  margin-left: 4px;
+  width: 14px;
+  height: 14px;
+  padding: 0;
+  border: none;
+  background: none;
+  color: var(--faint);
+  font-size: 13px;
+  line-height: 1;
+  cursor: pointer;
+  border-radius: 50%;
+}
+.putlab-root .concept-info:hover,
+.putlab-root .concept-info:focus-visible,
+.putlab-root .concept-info[aria-expanded='true'] {
+  color: var(--accent);
+}
+.putlab-root .concept-info:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+/* Fixed-position popover, portaled to document.body so it escapes any
+   ancestor's overflow/clip (e.g. the .lb-scroll horizontally-scrolling
+   table wrappers) and any local stacking context. */
+.putlab-root.concept-pop {
+  box-sizing: border-box;
+  position: fixed;
+  z-index: 60;
+  max-width: calc(100vw - 24px);
+  max-height: 60vh;
+  overflow-y: auto;
+  background: var(--surface);
+  border: 1px solid var(--line-strong);
+  border-radius: 12px;
+  box-shadow: var(--shadow);
+  padding: 14px 16px;
+  font-size: 13px;
+  line-height: 1.5;
+}
+@media (prefers-reduced-motion: no-preference) {
+  .putlab-root.concept-pop {
+    animation: concept-pop-in 0.12s ease-out;
+  }
+}
+@keyframes concept-pop-in {
+  from {
+    opacity: 0;
+    transform: translateY(-4px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+.putlab-root .concept-pop-term {
+  font-weight: 700;
+  font-size: 14px;
+  color: var(--text);
+  margin-bottom: 4px;
+}
+.putlab-root .concept-pop-short {
+  color: var(--text);
+  margin: 0 0 8px;
+}
+.putlab-root .concept-pop-formula {
+  white-space: pre-wrap;
+  word-break: break-word;
+  overflow-wrap: anywhere;
+  background: var(--surface-2);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 8px 10px;
+  font-size: 12px;
+  color: var(--muted);
+  margin: 0 0 8px;
+}
+.putlab-root .concept-pop-intuition {
+  color: var(--muted);
+  margin: 0 0 8px;
+}
+.putlab-root .concept-pop-how {
+  color: var(--muted);
+  margin: 0;
+}
+.putlab-root .concept-pop-how strong {
+  color: var(--text);
 }

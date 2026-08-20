@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import { fetchRegimes, type RegimeLabel, type RegimeTimelineView } from '../../api/client'
+import { ConceptInfo } from './ConceptInfo'
 
 // The market-regime history that underpins every verdict: a VIX-based
 // calm/elevated/crisis band strip over the whole window, with the current
@@ -39,6 +40,7 @@ export function RegimePanel() {
             <span className="regime-now" style={{ color: REGIME_VAR[view.current] }}>
               {REGIME_LABEL[view.current]}
             </span>
+            <ConceptInfo id="regime" />
           </h2>
           <div className="hint">
             VIX-based regime over the window &mdash; the same calm / elevated / crisis labels that decide whether a

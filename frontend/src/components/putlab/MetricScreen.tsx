@@ -6,6 +6,7 @@ import {
   type RegimeSlice,
   type Verdict,
 } from '../../api/client'
+import { ConceptInfo } from './ConceptInfo'
 import { fmtDollar, fmtPct } from './format'
 import type { PutLabControls } from './types'
 
@@ -69,7 +70,10 @@ export function MetricScreen({ controls }: { controls: PutLabControls }) {
     <section className="panel" style={{ marginTop: 22 }}>
       <div className="panel-head">
         <div>
-          <span className="eyebrow">The metric bake-off</span>
+          <span className="eyebrow">
+            The metric bake-off
+            <ConceptInfo id="metric_bakeoff" />
+          </span>
           <h2 style={{ marginTop: 6 }}>Which fragility metric picks the best puts?</h2>
           <div className="hint">
             For each fragility metric, hold an equal-weight basket of{' '}
@@ -109,20 +113,27 @@ export function MetricScreen({ controls }: { controls: PutLabControls }) {
                   <th>Top names</th>
                   <th className="lb-num" title="Blended return on premium of this metric's put basket">
                     Basket put ret
+                    <ConceptInfo id="roi_on_premium" />
                   </th>
                   <th className="lb-num">Hit</th>
                   <th className="lb-num" title="Combined max drawdown of the basket (worst peak-to-trough)">
                     Bleed
+                    <ConceptInfo id="bleed" />
                   </th>
-                  <th>Verdict</th>
+                  <th>
+                    Verdict
+                    <ConceptInfo id="verdict" />
+                  </th>
                   <th
                     className="lb-num"
                     title="Spearman rank corr between the metric's fragility ranking and realized put ROI (in-sample)"
                   >
                     Spearman
+                    <ConceptInfo id="spearman" />
                   </th>
                   <th className="lb-num" title="Basket ROI minus the buy-puts-on-everyone baseline">
                     Lift
+                    <ConceptInfo id="lift" />
                   </th>
                 </tr>
               </thead>
@@ -165,7 +176,8 @@ export function MetricScreen({ controls }: { controls: PutLabControls }) {
           </div>
           <p className="hint" style={{ marginTop: 10 }}>
             {state.universeSize} names scored; baseline (buy puts on everyone) {fmtPct(state.baselineRoi)}.
-            This is an <strong>in-sample cross-sectional association</strong> measured over the lookback &mdash;
+            This is an <strong>in-sample cross-sectional association</strong>
+            <ConceptInfo id="in_sample" /> measured over the lookback &mdash;
             it shows which metric <em>sorted realized put payoffs</em> over this window, a screen chooser, not a
             forward guarantee. The metric and the payoff are measured over the same historical window.
           </p>

@@ -1,5 +1,6 @@
 import { useEffect, useRef } from 'react'
 import type { CadenceResponse } from '../../api/client'
+import { ConceptInfo } from './ConceptInfo'
 import { svgEl } from './format'
 
 interface CadencePanelProps {
@@ -56,7 +57,10 @@ export function CadencePanel({ cadence }: CadencePanelProps) {
     <>
       <div className="panel-head">
         <div>
-          <h2>Expiry cadence</h2>
+          <h2>
+            Expiry cadence
+            <ConceptInfo id="rolling" />
+          </h2>
           <div className="hint">
             {cadence.symbol} lists {cadence.cadence} expiries &mdash; avg {cadence.avg_gap_days.toFixed(1)} days apart.
           </div>

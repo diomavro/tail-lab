@@ -1,5 +1,6 @@
-import { useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { ApiError, fetchPutLabLeaderboard, type RankedAsset } from '../../api/client'
+import { ConceptInfo } from './ConceptInfo'
 import { fmtPct } from './format'
 import type { PutLabControls } from './types'
 
@@ -41,13 +42,16 @@ const VERDICT_LABEL: Record<RankedAsset['verdict'], string> = {
 export function Leaderboard({
   controls,
   currentAsset,
+  autoRun = false,
 }: {
   controls: PutLabControls
   currentAsset: string
+  autoRun?: boolean
 }) {
   const [state, setState] = useState<State>({ status: 'idle' })
   const [sortKey, setSortKey] = useState<SortKey>('fragility_score')
   const [asc, setAsc] = useState(false)
+  const didAutoRun = useRef(false)
 
   const run = () => {
     setState({ status: 'loading' })
@@ -67,6 +71,17 @@ export function Leaderboard({
         setState({ status: 'error', message })
       })
   }
+
+  // Fire the (expensive) screen once on mount when the view asks for it, so the
+  // Screen tab lands on results instead of an empty "click to run" panel. Guard
+  // so it only fires once and only from the idle state.
+  useEffect(() => {
+    if (autoRun && !didAutoRun.current && state.status === 'idle') {
+      didAutoRun.current = true
+      run()
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- run-once-on-mount guard
+  }, [autoRun])
 
   const sortBy = (key: SortKey) => {
     if (key === sortKey) setAsc((a) => !a)
@@ -96,7 +111,10 @@ export function Leaderboard({
     <section className="panel" style={{ marginTop: 22 }}>
       <div className="panel-head">
         <div>
-          <span className="eyebrow">The fragility screen</span>
+          <span className="eyebrow">
+            The fragility screen
+            <ConceptInfo id="fragility_thesis" />
+          </span>
           <h2 style={{ marginTop: 6 }}>Which names are most fragile?</h2>
           <div className="hint">
             Rank the universe by <strong>fragility</strong> vs the market &mdash; downside beta, co-skewness,
@@ -136,15 +154,19 @@ export function Leaderboard({
                 </th>
                 <th className="lb-sort lb-num" onClick={() => sortBy('fragility_score')} title="Composite fragility (0–100): equal-weight blend of downside beta, co-skewness, tail beta & downside capture, most fragile first. Co-kurtosis is shown but excluded — it rewards co-movement with the market's own tails, so it flags broad indices.">
                   Fragility{arrow('fragility_score')}
+                  <ConceptInfo id="fragility_score" />
                 </th>
                 <th className="lb-sort lb-num" onClick={() => sortBy('downside_beta')} title="Downside beta vs SPY">
                   β&minus;{arrow('downside_beta')}
+                  <ConceptInfo id="downside_beta" />
                 </th>
                 <th className="lb-sort lb-num" onClick={() => sortBy('co_skewness')} title="Co-skewness (more negative = more crash-prone)">
                   Skew{arrow('co_skewness')}
+                  <ConceptInfo id="co_skewness" />
                 </th>
                 <th className="lb-sort lb-num" onClick={() => sortBy('co_kurtosis')} title="Co-kurtosis (tail amplification) — shown for reference but EXCLUDED from the composite: it rewards co-movement with the market's own tails, so it flags broad indices, not fragile single names.">
                   Kurt{arrow('co_kurtosis')}
+                  <ConceptInfo id="co_kurtosis" />
                 </th>
                 <th
                   className="lb-sort lb-num"
@@ -152,6 +174,7 @@ export function Leaderboard({
                   title="Extreme-tail beta vs SPY, worst 10% of market days"
                 >
                   Tail &beta;{arrow('tail_beta')}
+                  <ConceptInfo id="tail_beta" />
                 </th>
                 <th
                   className="lb-sort lb-num"
@@ -159,13 +182,19 @@ export function Leaderboard({
                   title="Downside capture ratio vs SPY (>1 = amplifies losses)"
                 >
                   Capt{arrow('downside_capture')}
+                  <ConceptInfo id="downside_capture" />
                 </th>
                 <th className="lb-sort lb-num" onClick={() => sortBy('roi_on_premium')} title="Model-priced put return on premium">
                   Put ret{arrow('roi_on_premium')}
+                  <ConceptInfo id="roi_on_premium" />
                 </th>
-                <th>Verdict</th>
+                <th>
+                  Verdict
+                  <ConceptInfo id="verdict" />
+                </th>
                 <th className="lb-sort lb-num" onClick={() => sortBy('hit_rate')}>
                   Hit{arrow('hit_rate')}
+                  <ConceptInfo id="hit_rate" />
                 </th>
               </tr>
             </thead>

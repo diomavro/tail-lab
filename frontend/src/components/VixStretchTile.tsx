@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import { fetchVixStretch, type VixStretchResponse } from '../api/client'
+import { ConceptInfo } from './putlab/ConceptInfo'
 
 type LoadState =
   | { status: 'loading' }
@@ -22,7 +23,10 @@ export function VixStretchTile() {
 
   return (
     <div className="tile" role="status" aria-live="polite">
-      <h2>VIX stretch</h2>
+      <h2>
+        VIX stretch
+        <ConceptInfo id="vix_stretch" />
+      </h2>
       {state.status === 'loading' && <p>Loading…</p>}
       {state.status === 'error' && <p className="tile-error">{state.message}</p>}
       {state.status === 'ready' && (
