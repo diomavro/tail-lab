@@ -223,6 +223,19 @@ def test_backtest_carries_spot(client: TestClient) -> None:
     assert body["cycles"][0]["strike"] == pytest.approx(body["cycles"][0]["spot"] * 0.95)
 
 
+def test_data_quality_endpoint(client: TestClient) -> None:
+    resp = client.get("/api/putlab/data-quality", params={"asset": "spy"})
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["asset"] == "spy"
+    assert body["n_bars"] > 0
+    assert body["n_suspicious"] == len(body["flags"])
+
+
+def test_data_quality_404_unknown(client: TestClient) -> None:
+    assert client.get("/api/putlab/data-quality", params={"asset": "nope"}).status_code == 404
+
+
 def test_cadence_known_and_unknown(client: TestClient) -> None:
     known = client.get("/api/putlab/cadence", params={"asset": "spy"})
     assert known.status_code == 200

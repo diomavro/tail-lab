@@ -373,3 +373,27 @@ export async function fetchPortfolio(
   }
   return (await resp.json()) as PortfolioResponse
 }
+
+// --- Data quality (research/data_quality.py) ---
+
+export interface DataQualityFlag {
+  date: string
+  kind: string
+  detail: string
+}
+
+export interface DataQualityResponse {
+  asset: string
+  as_of: string
+  n_bars: number
+  n_suspicious: number
+  flags: DataQualityFlag[]
+}
+
+export async function fetchDataQuality(asset: string, signal?: AbortSignal): Promise<DataQualityResponse> {
+  const resp = await fetch(`/api/putlab/data-quality?asset=${encodeURIComponent(asset)}`, { signal })
+  if (!resp.ok) {
+    throw new ApiError(`GET /api/putlab/data-quality failed: ${resp.status}`, resp.status)
+  }
+  return (await resp.json()) as DataQualityResponse
+}

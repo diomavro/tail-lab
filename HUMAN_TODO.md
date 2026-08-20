@@ -66,6 +66,13 @@ Phase 1 — free accounts (~30 min total, all $0):
       `TIINGO_API_KEY` + local `.env`. Unblocks replacing the throttled
       Yahoo chart endpoint as OHLCV primary (500 unique symbols/month,
       30+ yrs history) and the delisted-name backfill (`docs/adr/0010`).
+      **Also unblocks the cross-source price validation Dio asked for**
+      (2026-08-20): a true independent second source to reconcile against
+      Yahoo. Keyless second sources are now walled (Stooq gates behind a JS
+      proof-of-work); until Tiingo, the single-source guard is the bad-tick /
+      stale-feed detector in `research/data_quality.py` +
+      `GET /api/putlab/data-quality`, which catches print errors without
+      flagging real crashes.
 - [ ] Create a free **optionsDX** account (optionsdx.com) and download
       the free SPY/SPX/QQQ EOD option-chain zips (2010–2023, bid/ask +
       IV + greeks); drop them somewhere the agent can ingest from (e.g.

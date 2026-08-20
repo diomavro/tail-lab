@@ -3,8 +3,10 @@ import {
   ApiError,
   fetchCadence,
   fetchPutBacktest,
+  fetchDataQuality,
   fetchRegimeVerdict,
   fetchSweep,
+  type DataQualityResponse,
   fetchUniverse,
   type CadenceResponse,
   type PutBacktestResponse,
@@ -36,6 +38,7 @@ type LoadState =
       sweep: SweepResponse
       cadence: CadenceResponse
       regimeVerdict: RegimeVerdictResponse | null
+      dataQuality: DataQualityResponse | null
     }
 
 // A slider/number drag fires many onChange events per second -- wait for the
@@ -76,9 +79,10 @@ export function PutLab() {
         // The regime verdict needs VIX history too; if it's unavailable, degrade
         // gracefully (teaser hides) rather than blanking the whole dashboard.
         fetchRegimeVerdict(controls, controller.signal).catch(() => null),
+        fetchDataQuality(controls.asset, controller.signal).catch(() => null),
       ])
-        .then(([[backtest, sweep, cadence], regimeVerdict]) =>
-          setState({ status: 'ready', backtest, sweep, cadence, regimeVerdict }),
+        .then(([[backtest, sweep, cadence], regimeVerdict, dataQuality]) =>
+          setState({ status: 'ready', backtest, sweep, cadence, regimeVerdict, dataQuality }),
         )
         .catch((err: unknown) => {
           if (err instanceof DOMException && err.name === 'AbortError') return
@@ -124,6 +128,23 @@ export function PutLab() {
             </div>
           </div>
           <div className="top-actions">
+            {state.status === 'ready' && state.dataQuality && (
+              <span
+                className={`pill ${state.dataQuality.n_suspicious === 0 ? 'pill-ok' : 'pill-warn'}`}
+                title={
+                  state.dataQuality.n_suspicious === 0
+                    ? `No bad ticks or stale runs in ${state.dataQuality.n_bars} bars of ${state.dataQuality.asset.toUpperCase()} data.`
+                    : state.dataQuality.flags
+                        .map((f) => `${f.date}: ${f.kind} — ${f.detail}`)
+                        .join('\n')
+                }
+              >
+                <span className="dot" />
+                {state.dataQuality.n_suspicious === 0
+                  ? 'Data clean'
+                  : `${state.dataQuality.n_suspicious} flagged`}
+              </span>
+            )}
             <span
               className="pill caveat"
               title="Option premiums are Black-Scholes model prices using trailing realized volatility as an IV proxy, not real historical quotes."
