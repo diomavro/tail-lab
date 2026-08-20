@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import datetime as dt
 import logging
+import time
 from collections.abc import Mapping, Sequence
 from functools import lru_cache
 from typing import Any
@@ -52,6 +53,11 @@ logger = logging.getLogger("tail_lab.api.putlab")
 #: frontend agree on the grid. Moneyness in % OOM, tenor in weeks.
 SWEEP_MONEYNESS: tuple[float, ...] = (2, 4, 6, 8, 10, 12, 15, 18, 22)
 SWEEP_TENORS_WEEKS: tuple[float, ...] = (1, 2, 4, 8, 12)
+
+#: Short-TTL memo of the (35-backtest) leaderboard, keyed by
+#: (moneyness, tenor, years, as_of); the read cache keeps it fresh underneath.
+_LEADERBOARD_CACHE: dict[tuple[float, float, float, str], tuple[float, UniverseRanking]] = {}
+_LEADERBOARD_TTL_S = 120.0
 
 
 @lru_cache(maxsize=1)
@@ -309,6 +315,12 @@ def putlab_leaderboard(
     "which names' OOM puts got the best results" — each tagged with its
     cross-regime verdict."""
     resolved = _resolve_as_of(as_of)
+    # Ranking the universe is 35 backtests; the result is deterministic given
+    # the (immutable) bronze, so a short TTL cache makes repeat clicks instant.
+    cache_key = (moneyness_pct, tenor_weeks, years, resolved.isoformat())
+    hit = _LEADERBOARD_CACHE.get(cache_key)
+    if hit is not None and hit[0] > time.monotonic():
+        return hit[1]
     try:
         ranking = rank_universe(
             store,
@@ -320,6 +332,7 @@ def putlab_leaderboard(
         )
     except LookupError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
+    _LEADERBOARD_CACHE[cache_key] = (time.monotonic() + _LEADERBOARD_TTL_S, ranking)
     log_event(
         logger,
         "putlab.leaderboard",

@@ -12,6 +12,7 @@ import pandas as pd
 import pytest
 from fastapi.testclient import TestClient
 
+from tail_lab.api import putlab_routes
 from tail_lab.api.main import app
 from tail_lab.api.putlab_routes import get_lake_store as putlab_get_lake_store
 from tail_lab.contracts.ohlcv import dataset_id
@@ -48,6 +49,9 @@ def client(tmp_path: Path) -> Iterator[TestClient]:
     today = dt.datetime.now(dt.UTC).date()
     _seed_ohlcv(store, "spy", today)
     _seed_vix(store, today)
+    # The leaderboard result cache is keyed by params only; clear it so one
+    # test's ranking can't be served to another test's (different) store.
+    putlab_routes._LEADERBOARD_CACHE.clear()
     app.dependency_overrides[putlab_get_lake_store] = lambda: store
     try:
         yield TestClient(app)
