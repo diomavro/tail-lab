@@ -45,6 +45,7 @@ from tail_lab.research.backtest.put_roll import (
 )
 from tail_lab.research.backtest.ranking import UniverseRanking, rank_universe
 from tail_lab.research.backtest.regime_verdict import RegimeVerdict, compute_regime_verdict
+from tail_lab.research.data_quality import DataQualityReport, assess_asset_quality
 
 router = APIRouter()
 logger = logging.getLogger("tail_lab.api.putlab")
@@ -260,6 +261,20 @@ def putlab_cadence(
     asset: str = Query(description="Underlying ticker, e.g. spy."),
 ) -> OptionsCadence:
     return cadence_for(asset)
+
+
+@router.get("/api/putlab/data-quality")
+def putlab_data_quality(
+    asset: str = Query(description="Underlying ticker, e.g. spy."),
+    as_of: dt.date | None = Query(default=None),
+    store: LakeStore = Depends(get_lake_store),
+) -> DataQualityReport:
+    """Flag bad ticks (spike-and-revert) and stale runs in the asset's price
+    history, so a print error can't silently skew a verdict."""
+    try:
+        return assess_asset_quality(store, asset=asset, as_of=_resolve_as_of(as_of))
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
 
 
 @router.post("/api/putlab/portfolio")

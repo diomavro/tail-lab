@@ -708,3 +708,22 @@
 .putlab-root .pf-add:hover {
   border-color: var(--accent);
 }
+
+/* ---------- data-quality pill ---------- */
+.putlab-root .pill.pill-ok {
+  border-color: color-mix(in srgb, var(--gain) 45%, var(--line));
+  color: var(--gain);
+  background: color-mix(in srgb, var(--gain) 8%, var(--surface));
+}
+.putlab-root .pill.pill-ok .dot {
+  background: var(--gain);
+}
+.putlab-root .pill.pill-warn {
+  border-color: color-mix(in srgb, var(--loss) 45%, var(--line));
+  color: var(--loss);
+  background: color-mix(in srgb, var(--loss) 8%, var(--surface));
+  cursor: help;
+}
+.putlab-root .pill.pill-warn .dot {
+  background: var(--loss);
+}
