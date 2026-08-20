@@ -65,7 +65,7 @@ export function FeedbackPanel() {
           onChange={(e) => handleTextChange(e.target.value)}
           placeholder="What should the daily agent know?"
           maxLength={4000}
-          rows={4}
+          rows={2}
           disabled={state.status === 'submitting'}
         />
         <button type="submit" disabled={state.status === 'submitting' || !text.trim()}>

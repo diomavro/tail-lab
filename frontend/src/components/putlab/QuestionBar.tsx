@@ -12,9 +12,6 @@ interface QuestionBarProps {
 export function QuestionBar({ controls, onChange, universe }: QuestionBarProps) {
   return (
     <section className="question" aria-label="Strategy question builder">
-      <div className="eyebrow" style={{ marginBottom: 10 }}>
-        The question
-      </div>
       <div className="q-line">
         <span className="lede">Invest</span>
         <span className="ctl num">
@@ -84,18 +81,18 @@ export function QuestionBar({ controls, onChange, universe }: QuestionBarProps) 
             </button>
           ))}
         </span>
-        <span className="lede">to expiry, rolled continuously over the</span>
-        <span className="ctl">
-          <select
-            className="mono"
-            aria-label="Backtest window"
-            value={controls.years}
-            onChange={(e) => onChange({ years: Number(e.target.value) })}
-          >
-            <option value={4}>last 4 years</option>
-            <option value={3}>last 3 years</option>
-            <option value={2}>last 2 years</option>
-          </select>
+        <span className="lede">to expiry, rolled over</span>
+        <span className="seg" role="group" aria-label="Backtest window">
+          {[4, 3, 2].map((y) => (
+            <button
+              key={y}
+              type="button"
+              aria-pressed={controls.years === y}
+              onClick={() => onChange({ years: y })}
+            >
+              {y}y
+            </button>
+          ))}
         </span>
         <span className="lede">.</span>
       </div>

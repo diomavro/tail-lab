@@ -134,10 +134,6 @@ export function PutLab() {
             </div>
             <div>
               <h2>Put Lab</h2>
-              <div className="sub">
-                Ask what a tail-hedge would have done &mdash; invest in out-of-the-money puts, roll them, and watch
-                the bleed and the payoffs across market regimes.
-              </div>
             </div>
           </div>
           <div className="top-actions">
