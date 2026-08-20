@@ -625,3 +625,86 @@
   color: var(--faint);
   border: 1px solid var(--line-strong);
 }
+
+/* ---------- portfolio builder ---------- */
+.putlab-root .pf-builder {
+  margin-top: 14px;
+  display: grid;
+  gap: 8px;
+}
+.putlab-root .pf-leg,
+.putlab-root .pf-controls {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+.putlab-root .pf-controls {
+  margin-top: 4px;
+  padding-top: 10px;
+  border-top: 1px solid var(--line);
+}
+.putlab-root .pf-leg select,
+.putlab-root .pf-field input {
+  font: inherit;
+  font-family: ui-monospace, 'JetBrains Mono', Menlo, monospace;
+  font-size: 14px;
+  color: var(--text);
+  background: var(--surface-2);
+  border: 1px solid var(--line-strong);
+  border-radius: 8px;
+  padding: 6px 8px;
+}
+.putlab-root .pf-leg select {
+  min-width: 12rem;
+}
+.putlab-root .pf-field {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--muted);
+}
+.putlab-root .pf-field input {
+  width: 5.5ch;
+  text-align: right;
+}
+.putlab-root .pf-leg select:focus,
+.putlab-root .pf-field input:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+.putlab-root .pf-remove {
+  margin-left: auto;
+  width: 30px;
+  height: 30px;
+  border-radius: 8px;
+  border: 1px solid var(--line-strong);
+  background: var(--surface);
+  color: var(--muted);
+  cursor: pointer;
+  font-size: 18px;
+  line-height: 1;
+}
+.putlab-root .pf-remove:hover:not(:disabled) {
+  border-color: var(--loss);
+  color: var(--loss);
+}
+.putlab-root .pf-remove:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+.putlab-root .pf-add {
+  font: inherit;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  color: var(--accent);
+  background: transparent;
+  border: 1px dashed var(--line-strong);
+  border-radius: 8px;
+  padding: 6px 12px;
+}
+.putlab-root .pf-add:hover {
+  border-color: var(--accent);
+}

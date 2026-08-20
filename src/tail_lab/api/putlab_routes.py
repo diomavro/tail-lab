@@ -23,7 +23,7 @@ from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 
-from tail_lab.api.schemas import SweepCell, SweepResponse
+from tail_lab.api.schemas import PortfolioRequest, SweepCell, SweepResponse
 from tail_lab.config import get_lake_store as _get_configured_lake_store
 from tail_lab.config import get_settings
 from tail_lab.contracts.ohlcv import dataset_id
@@ -35,6 +35,7 @@ from tail_lab.contracts.options_calendar import (
 )
 from tail_lab.lake.store import LakeStore
 from tail_lab.observability import log_event
+from tail_lab.research.backtest.portfolio import PortfolioResult, run_portfolio
 from tail_lab.research.backtest.put_roll import (
     PutBacktestResult,
     compute_put_backtest,
@@ -253,6 +254,40 @@ def putlab_cadence(
     asset: str = Query(description="Underlying ticker, e.g. spy."),
 ) -> OptionsCadence:
     return cadence_for(asset)
+
+
+@router.post("/api/putlab/portfolio")
+def putlab_portfolio(
+    body: PortfolioRequest,
+    store: LakeStore = Depends(get_lake_store),
+) -> PortfolioResult:
+    """Backtest a weighted mix of OOM-put legs as one blended hedge."""
+    resolved = _resolve_as_of(body.as_of)
+    try:
+        result = run_portfolio(
+            store,
+            legs=body.legs,
+            as_of=resolved,
+            notional=body.notional,
+            years=body.years,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    log_event(
+        logger,
+        "putlab.portfolio",
+        as_of=resolved,
+        n_legs=len(body.legs),
+        notional=body.notional,
+        years=body.years,
+        code_sha=get_settings().code_sha,
+        verdict=result.verdict,
+        roi_on_premium=result.roi_on_premium,
+        snapshots=";".join(result.snapshot_ids),
+    )
+    return result
 
 
 @router.get("/api/putlab/universe")

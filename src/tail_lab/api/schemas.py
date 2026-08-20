@@ -8,6 +8,7 @@ from pydantic import BaseModel, Field
 
 from tail_lab.feedback.store import FeedbackKind, FeedbackRecord
 from tail_lab.memory.store import RegimeOutcome
+from tail_lab.research.backtest.portfolio import PortfolioLeg
 
 
 class HealthResponse(BaseModel):
@@ -38,6 +39,15 @@ class SweepResponse(BaseModel):
     notional: float
     lookback_years: float
     cells: list[SweepCell]
+
+
+class PortfolioRequest(BaseModel):
+    """POST body for /api/putlab/portfolio: a weighted mix of OOM-put legs."""
+
+    legs: list[PortfolioLeg] = Field(min_length=1)
+    notional: float = Field(default=10000.0, gt=0, le=10_000_000)
+    years: float = Field(default=4.0, gt=0, le=20)
+    as_of: dt.date | None = None
 
 
 class RecordedRegime(BaseModel):
