@@ -41,6 +41,12 @@ export function StatBand({ backtest }: StatBandProps) {
       note: 'rolls losing in a row',
       concept: 'bleed',
     },
+    {
+      k: 'Sharpe',
+      v: backtest.sharpe_ratio != null ? backtest.sharpe_ratio.toFixed(2) : '—',
+      note: 'annualized · rough for a convex hedge',
+      concept: 'sharpe',
+    },
   ]
 
   return (
