@@ -19,7 +19,7 @@ import { ConceptInfo } from './ConceptInfo'
 import './putlab.css'
 import { QuestionBar } from './QuestionBar'
 import { TabNav } from './TabNav'
-import { PUTLAB_DEFAULT_CONTROLS, type PutLabControls } from './types'
+import { PUTLAB_DEFAULT_CONTROLS, PUTLAB_OOM_PRESETS, PUTLAB_TENORS, type PutLabControls } from './types'
 import { BacktestView } from './views/BacktestView'
 import { LearnView } from './views/LearnView'
 import { PortfolioView } from './views/PortfolioView'
@@ -30,35 +30,130 @@ import { ScreenView } from './views/ScreenView'
 // I hedge?" -- so a user sees a result without picking anything and scrolling.
 export type TabId = 'screen' | 'backtest' | 'portfolio' | 'regime' | 'learn'
 
-// The single-name backtest bundle, fetched lazily only for the Backtest tab.
-export type BacktestState =
+// One Backtest-tab read (backtest / sweep / cadence / verdict / data-quality).
+// Split per-resource so the tape+stats render the moment the backtest resolves
+// even while the (slower) sweep is still loading.
+export type ResourceState<T> =
   | { status: 'loading' }
   | { status: 'no-data' }
   | { status: 'error'; message: string }
-  | {
-      status: 'ready'
-      backtest: PutBacktestResponse
-      sweep: SweepResponse
-      cadence: CadenceResponse
-      regimeVerdict: RegimeVerdictResponse | null
-      dataQuality: DataQualityResponse | null
-    }
+  | { status: 'ready'; data: T }
 
 // A slider/number drag fires many onChange events per second -- wait for the
 // controls to settle before hitting the network.
 const DEBOUNCE_MS = 250
+// After the primary read, warm the preset rails in the background so a rail
+// click is instant. Deferred so it never competes with the primary fetch.
+const PREFETCH_DELAY_MS = 350
+
+// Per-resource, in-session client caches (key = JSON of the resource's real
+// deps). Bronze is immutable for a given as_of=today, so a seen combo never
+// needs re-fetching within a session -- revisiting it is instant, no network,
+// no loading flicker. Module-level so they survive tab switches / remounts.
+const CACHE_CAP = 50
+const BACKTEST_CACHE = new Map<string, PutBacktestResponse>()
+const SWEEP_CACHE = new Map<string, SweepResponse>()
+const CADENCE_CACHE = new Map<string, CadenceResponse>()
+const DATA_QUALITY_CACHE = new Map<string, DataQualityResponse>()
+const REGIME_VERDICT_CACHE = new Map<string, RegimeVerdictResponse>()
+
+function cachePut<T>(cache: Map<string, T>, key: string, value: T): void {
+  // Bounded LRU-ish: evict the oldest inserted key past the cap.
+  if (!cache.has(key) && cache.size >= CACHE_CAP) {
+    const oldest = cache.keys().next().value
+    if (oldest !== undefined) cache.delete(oldest)
+  }
+  cache.set(key, value)
+}
+
+// A cached fetch: keyed on ONLY its real deps (encoded in `key`), served
+// synchronously from `cache` on a hit (no loading flash, no network), else
+// fetched (debounced), cached, and stored. `key === null` disables the fetch
+// entirely (used to gate to the Backtest tab). Re-runs only when `key` changes.
+function useCachedResource<T>(
+  cache: Map<string, T>,
+  key: string | null,
+  fetcher: (signal: AbortSignal) => Promise<T>,
+  debounceMs: number,
+): ResourceState<T> {
+  const [state, setState] = useState<ResourceState<T>>(() => {
+    if (key !== null) {
+      const cached = cache.get(key)
+      if (cached !== undefined) return { status: 'ready', data: cached }
+    }
+    return { status: 'loading' }
+  })
+
+  useEffect(() => {
+    if (key === null) return
+    const cached = cache.get(key)
+    if (cached !== undefined) {
+      setState({ status: 'ready', data: cached }) // instant: no loading state, no network
+      return
+    }
+    const controller = new AbortController()
+    const handle = window.setTimeout(() => {
+      setState({ status: 'loading' })
+      fetcher(controller.signal)
+        .then((data) => {
+          cachePut(cache, key, data)
+          setState({ status: 'ready', data })
+        })
+        .catch((err: unknown) => {
+          if (err instanceof DOMException && err.name === 'AbortError') return
+          if (err instanceof ApiError && err.status === 404) {
+            setState({ status: 'no-data' })
+            return
+          }
+          setState({ status: 'error', message: err instanceof Error ? err.message : String(err) })
+        })
+    }, debounceMs)
+    return () => {
+      window.clearTimeout(handle)
+      controller.abort()
+    }
+    // fetcher is re-created every render but closes over exactly the params
+    // encoded in `key`, so keying on `key` alone is correct.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [key])
+
+  return state
+}
+
+// Warm the backtest+verdict caches for one OOM%/tenor combo (nothing else varies
+// with those axes). Swallows errors -- prefetch is best-effort.
+function prefetchCombo(
+  asset: string,
+  notional: number,
+  years: number,
+  moneyness_pct: number,
+  tenor_weeks: number,
+  signal: AbortSignal,
+): void {
+  const key = JSON.stringify([asset, notional, moneyness_pct, tenor_weeks, years])
+  const params = { asset, notional, moneyness_pct, tenor_weeks, years }
+  if (!BACKTEST_CACHE.has(key)) {
+    fetchPutBacktest(params, signal)
+      .then((d) => cachePut(BACKTEST_CACHE, key, d))
+      .catch(() => {})
+  }
+  if (!REGIME_VERDICT_CACHE.has(key)) {
+    fetchRegimeVerdict(params, signal)
+      .then((d) => cachePut(REGIME_VERDICT_CACHE, key, d))
+      .catch(() => {})
+  }
+}
 
 // The Put Lab workspace shell: owns the shared controls, the screening
-// universe, the active tab, and the (lazily fetched) single-name backtest
-// bundle. It renders a persistent header, a tab bar, the shared question
-// builder (on the parameterized tabs only), the active view, and a footer.
-// See docs/adr/0004 for the model-pricing caveat and docs/END_STATE.md
-// §1.2/§1.5 for the endpoint contracts.
+// universe, the active tab, and the (lazily fetched, per-resource cached)
+// single-name Backtest reads. It renders a persistent header, a tab bar, the
+// shared question builder (on the parameterized tabs only), the active view,
+// and a footer. See docs/adr/0004 for the model-pricing caveat and
+// docs/END_STATE.md §1.2/§1.5 for the endpoint contracts.
 export function PutLab() {
   const [controls, setControls] = useState<PutLabControls>(PUTLAB_DEFAULT_CONTROLS)
   const [universe, setUniverse] = useState<UniverseMember[]>([])
   const [activeTab, setActiveTab] = useState<TabId>('screen')
-  const [state, setState] = useState<BacktestState>({ status: 'loading' })
 
   const updateControls = (patch: Partial<PutLabControls>) => setControls((c) => ({ ...c, ...patch }))
 
@@ -72,48 +167,118 @@ export function PutLab() {
     return () => controller.abort()
   }, [])
 
-  // The single-name backtest bundle is only shown on the Backtest tab, so only
-  // fetch it there -- never while the user is on Screen/Portfolio/Regime/Learn.
+  // The Backtest reads are only shown on the Backtest tab, so gate every key to
+  // null off-tab (no fetch). Each key lists ONLY the params that resource truly
+  // depends on -- so changing OOM%/tenor refetches backtest+verdict but leaves
+  // the sweep (grid is identical, only the highlighted cell moves client-side),
+  // cadence, and data-quality untouched.
+  const onBacktest = activeTab === 'backtest'
+  const btKey = onBacktest
+    ? JSON.stringify([
+        controls.asset,
+        controls.notional,
+        controls.moneyness_pct,
+        controls.tenor_weeks,
+        controls.years,
+      ])
+    : null
+  const sweepKey = onBacktest
+    ? JSON.stringify([controls.asset, controls.notional, controls.years])
+    : null
+  const assetKey = onBacktest ? JSON.stringify([controls.asset]) : null
+
+  const backtest = useCachedResource(
+    BACKTEST_CACHE,
+    btKey,
+    (signal) =>
+      fetchPutBacktest(
+        {
+          asset: controls.asset,
+          notional: controls.notional,
+          moneyness_pct: controls.moneyness_pct,
+          tenor_weeks: controls.tenor_weeks,
+          years: controls.years,
+        },
+        signal,
+      ),
+    DEBOUNCE_MS,
+  )
+  const regimeVerdict = useCachedResource(
+    REGIME_VERDICT_CACHE,
+    btKey,
+    (signal) =>
+      fetchRegimeVerdict(
+        {
+          asset: controls.asset,
+          notional: controls.notional,
+          moneyness_pct: controls.moneyness_pct,
+          tenor_weeks: controls.tenor_weeks,
+          years: controls.years,
+        },
+        signal,
+      ),
+    DEBOUNCE_MS,
+  )
+  const sweep = useCachedResource(
+    SWEEP_CACHE,
+    sweepKey,
+    (signal) =>
+      fetchSweep(
+        { asset: controls.asset, notional: controls.notional, years: controls.years },
+        signal,
+      ),
+    DEBOUNCE_MS,
+  )
+  const cadence = useCachedResource(
+    CADENCE_CACHE,
+    assetKey,
+    (signal) => fetchCadence(controls.asset, signal),
+    DEBOUNCE_MS,
+  )
+  const dataQuality = useCachedResource(
+    DATA_QUALITY_CACHE,
+    assetKey,
+    (signal) => fetchDataQuality(controls.asset, signal),
+    DEBOUNCE_MS,
+  )
+
+  // Prefetch the preset rails after the primary read so a rail click is instant.
+  // Bounded: the OOM presets at the current tenor + the tenor presets at the
+  // current OOM (~8 combos, cache-skipping repeats), not a full grid. Sweep is
+  // deliberately not prefetched -- it doesn't vary with OOM%/tenor. Re-runs on
+  // any axis/asset/years/notional change (cancels in-flight prefetches).
   useEffect(() => {
-    if (activeTab !== 'backtest') return
+    if (!onBacktest) return
     const controller = new AbortController()
     const handle = window.setTimeout(() => {
-      setState({ status: 'loading' })
-      Promise.all([
-        Promise.all([
-          fetchPutBacktest(controls, controller.signal),
-          fetchSweep({ asset: controls.asset, notional: controls.notional, years: controls.years }, controller.signal),
-          fetchCadence(controls.asset, controller.signal),
-        ]),
-        // The regime verdict needs VIX history too; if it's unavailable, degrade
-        // gracefully (teaser hides) rather than blanking the whole view.
-        fetchRegimeVerdict(controls, controller.signal).catch(() => null),
-        fetchDataQuality(controls.asset, controller.signal).catch(() => null),
-      ])
-        .then(([[backtest, sweep, cadence], regimeVerdict, dataQuality]) =>
-          setState({ status: 'ready', backtest, sweep, cadence, regimeVerdict, dataQuality }),
-        )
-        .catch((err: unknown) => {
-          if (err instanceof DOMException && err.name === 'AbortError') return
-          if (err instanceof ApiError && err.status === 404) {
-            setState({ status: 'no-data' })
-            return
-          }
-          setState({ status: 'error', message: err instanceof Error ? err.message : String(err) })
-        })
-    }, DEBOUNCE_MS)
+      const combos: [number, number][] = [
+        ...PUTLAB_OOM_PRESETS.map((m): [number, number] => [m, controls.tenor_weeks]),
+        ...PUTLAB_TENORS.map((t): [number, number] => [controls.moneyness_pct, t.weeks]),
+      ]
+      for (const [m, t] of combos) {
+        if (m === controls.moneyness_pct && t === controls.tenor_weeks) continue // the primary
+        prefetchCombo(controls.asset, controls.notional, controls.years, m, t, controller.signal)
+      }
+    }, PREFETCH_DELAY_MS)
     return () => {
       window.clearTimeout(handle)
       controller.abort()
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- controls fields listed individually so the effect re-runs on value change, not identity
-  }, [activeTab, controls.asset, controls.notional, controls.moneyness_pct, controls.tenor_weeks, controls.years])
+  }, [
+    onBacktest,
+    controls.asset,
+    controls.notional,
+    controls.years,
+    controls.moneyness_pct,
+    controls.tenor_weeks,
+  ])
 
   // The question builder is the single shared control surface on Screen and
   // Portfolio. The Backtest tab replaces it with the ChartCockpit (the four
   // params live on the edges of its hero chart), so the bar is hidden there to
   // avoid a redundant duplicate control surface.
   const showQuestionBar = activeTab === 'screen' || activeTab === 'portfolio'
+  const dq = dataQuality.status === 'ready' ? dataQuality.data : null
 
   return (
     <div className="putlab-root">
@@ -139,21 +304,17 @@ export function PutLab() {
             </div>
           </div>
           <div className="top-actions">
-            {state.status === 'ready' && state.dataQuality && (
+            {dq && (
               <span
-                className={`pill ${state.dataQuality.n_suspicious === 0 ? 'pill-ok' : 'pill-warn'}`}
+                className={`pill ${dq.n_suspicious === 0 ? 'pill-ok' : 'pill-warn'}`}
                 title={
-                  state.dataQuality.n_suspicious === 0
-                    ? `No bad ticks or stale runs in ${state.dataQuality.n_bars} bars of ${state.dataQuality.asset.toUpperCase()} data.`
-                    : state.dataQuality.flags
-                        .map((f) => `${f.date}: ${f.kind} — ${f.detail}`)
-                        .join('\n')
+                  dq.n_suspicious === 0
+                    ? `No bad ticks or stale runs in ${dq.n_bars} bars of ${dq.asset.toUpperCase()} data.`
+                    : dq.flags.map((f) => `${f.date}: ${f.kind} — ${f.detail}`).join('\n')
                 }
               >
                 <span className="dot" />
-                {state.dataQuality.n_suspicious === 0
-                  ? 'Data clean'
-                  : `${state.dataQuality.n_suspicious} flagged`}
+                {dq.n_suspicious === 0 ? 'Data clean' : `${dq.n_suspicious} flagged`}
               </span>
             )}
             <span
@@ -173,7 +334,15 @@ export function PutLab() {
         <div role="tabpanel" id={`panel-${activeTab}`} aria-labelledby={`tab-${activeTab}`} tabIndex={0}>
           {activeTab === 'screen' && <ScreenView controls={controls} currentAsset={controls.asset} />}
           {activeTab === 'backtest' && (
-            <BacktestView controls={controls} state={state} onChange={updateControls} universe={universe} />
+            <BacktestView
+              controls={controls}
+              backtest={backtest}
+              sweep={sweep}
+              cadence={cadence}
+              regimeVerdict={regimeVerdict.status === 'ready' ? regimeVerdict.data : null}
+              onChange={updateControls}
+              universe={universe}
+            />
           )}
           {activeTab === 'portfolio' && <PortfolioView universe={universe} />}
           {activeTab === 'regime' && <RegimeView />}

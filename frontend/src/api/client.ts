@@ -120,6 +120,7 @@ export interface SweepCell {
   moneyness_pct: number
   tenor_weeks: number
   roi_on_premium: number
+  annualized_return: number
   n_cycles: number
 }
 
@@ -129,6 +130,9 @@ export interface SweepResponse {
   notional: number
   lookback_years: number
   cells: SweepCell[]
+  benchmark_symbol: string
+  benchmark_annualized: number | null
+  benchmark_total: number | null
 }
 
 export interface SweepParams {

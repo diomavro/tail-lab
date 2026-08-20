@@ -49,10 +49,14 @@ def client(tmp_path: Path) -> Iterator[TestClient]:
     today = dt.datetime.now(dt.UTC).date()
     _seed_ohlcv(store, "spy", today)
     _seed_vix(store, today)
-    # The leaderboard result cache is keyed by params only; clear it so one
-    # test's ranking can't be served to another test's (different) store.
+    # The result caches are keyed by params + as_of only (not the store), so
+    # clear them: one test's compute must not be served to another test's
+    # (different) store, and the compute-path log assertions need a cache miss.
     putlab_routes._LEADERBOARD_CACHE.clear()
     putlab_routes._METRIC_SCREEN_CACHE.clear()
+    putlab_routes._BACKTEST_CACHE.clear()
+    putlab_routes._SWEEP_CACHE.clear()
+    putlab_routes._REGIME_VERDICT_CACHE.clear()
     app.dependency_overrides[putlab_get_lake_store] = lambda: store
     try:
         yield TestClient(app)
@@ -92,6 +96,40 @@ def test_backtest_returns_full_result(client: TestClient) -> None:
 def test_backtest_404_unknown_asset(client: TestClient) -> None:
     resp = client.get("/api/putlab/backtest", params={"asset": "nope"})
     assert resp.status_code == 404
+
+
+def test_backtest_second_call_served_from_cache(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A repeat combo is memoized: the second identical call returns the cached
+    result without recomputing (so preset re-clicks don't re-run the backtest)."""
+    params = {"asset": "spy", "notional": 1000, "moneyness_pct": 5, "tenor_weeks": 4, "years": 1}
+    first = client.get("/api/putlab/backtest", params=params)
+    assert first.status_code == 200
+
+    def _boom(*_args: object, **_kwargs: object) -> None:
+        raise AssertionError("compute_put_backtest called on a cache hit")
+
+    monkeypatch.setattr(putlab_routes, "compute_put_backtest", _boom)
+    second = client.get("/api/putlab/backtest", params=params)
+    assert second.status_code == 200
+    assert second.json() == first.json()
+
+
+def test_sweep_second_call_served_from_cache(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    params = {"asset": "spy", "notional": 1000, "years": 1}
+    first = client.get("/api/putlab/sweep", params=params)
+    assert first.status_code == 200
+
+    def _boom(*_args: object, **_kwargs: object) -> None:
+        raise AssertionError("run_put_roll called on a cache hit")
+
+    monkeypatch.setattr(putlab_routes, "run_put_roll", _boom)
+    second = client.get("/api/putlab/sweep", params=params)
+    assert second.status_code == 200
+    assert second.json() == first.json()
 
 
 def test_backtest_emits_structured_run_log(client: TestClient, caplog) -> None:
@@ -136,9 +174,61 @@ def test_sweep_returns_grid(client: TestClient) -> None:
     assert body["asset"] == "spy"
     assert len(body["cells"]) >= 1
     cell = body["cells"][0]
-    assert set(cell) == {"moneyness_pct", "tenor_weeks", "roi_on_premium", "n_cycles"}
+    assert set(cell) == {
+        "moneyness_pct",
+        "tenor_weeks",
+        "roi_on_premium",
+        "annualized_return",
+        "n_cycles",
+    }
     # Every cell that computed carries a real ROI and at least one roll.
     assert all(isinstance(c["roi_on_premium"], float) and c["n_cycles"] >= 1 for c in body["cells"])
+
+
+def test_sweep_cell_annualizes_roi(client: TestClient) -> None:
+    """Each cell's annualized_return is the geometric annualization of its total
+    ROI over the lookback window (the helper the roll engine already uses)."""
+    from tail_lab.research.backtest.put_roll import annualized_return
+
+    resp = client.get("/api/putlab/sweep", params={"asset": "spy", "notional": 1000, "years": 2})
+    body = resp.json()
+    for c in body["cells"]:
+        assert c["annualized_return"] == pytest.approx(annualized_return(c["roi_on_premium"], 2.0))
+
+
+def test_sweep_benchmark_is_spy_buy_and_hold(client: TestClient) -> None:
+    """The response carries the SPY buy-and-hold hurdle over the same window:
+    last/first - 1 on the trailing round(years*252) closes, then annualized."""
+    from tail_lab.research.backtest.put_roll import annualized_return, load_asof_series
+
+    years = 1.0
+    resp = client.get(
+        "/api/putlab/sweep", params={"asset": "spy", "notional": 1000, "years": years}
+    )
+    body = resp.json()
+    assert body["benchmark_symbol"] == "spy"
+    store = app.dependency_overrides[putlab_get_lake_store]()
+    prices, _ = load_asof_series(store, "spy", dt.datetime.now(dt.UTC).date())
+    window = prices.iloc[-round(years * 252) :]
+    total = float(window.iloc[-1]) / float(window.iloc[0]) - 1.0
+    assert body["benchmark_total"] == pytest.approx(total)
+    assert body["benchmark_annualized"] == pytest.approx(annualized_return(total, years))
+
+
+def test_sweep_benchmark_none_when_spy_absent(tmp_path: Path) -> None:
+    """When SPY history is missing, the benchmark fields degrade to None rather
+    than failing the sweep (the asset itself still has data)."""
+    store = DeltaLakeStore(tmp_path)
+    today = dt.datetime.now(dt.UTC).date()
+    _seed_ohlcv(store, "aapl", today)  # no SPY seeded
+    app.dependency_overrides[putlab_get_lake_store] = lambda: store
+    try:
+        body = TestClient(app).get("/api/putlab/sweep", params={"asset": "aapl", "years": 1}).json()
+    finally:
+        app.dependency_overrides.pop(putlab_get_lake_store, None)
+    assert body["benchmark_symbol"] == "spy"
+    assert body["benchmark_annualized"] is None
+    assert body["benchmark_total"] is None
 
 
 def test_sweep_404_unknown_asset(client: TestClient) -> None:
