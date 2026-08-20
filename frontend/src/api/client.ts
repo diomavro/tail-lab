@@ -397,3 +397,29 @@ export async function fetchDataQuality(asset: string, signal?: AbortSignal): Pro
   }
   return (await resp.json()) as DataQualityResponse
 }
+
+// --- Regime panel (research/regimes/timeline.py) ---
+
+export type RegimeLabel = 'calm' | 'elevated' | 'crisis'
+
+export interface RegimeSegment {
+  regime: RegimeLabel
+  start: string
+  end: string
+  n_days: number
+}
+
+export interface RegimeTimelineView {
+  as_of: string
+  current: RegimeLabel
+  segments: RegimeSegment[]
+  day_counts: Record<string, number>
+}
+
+export async function fetchRegimes(signal?: AbortSignal): Promise<RegimeTimelineView> {
+  const resp = await fetch('/api/putlab/regimes', { signal })
+  if (!resp.ok) {
+    throw new ApiError(`GET /api/putlab/regimes failed: ${resp.status}`, resp.status)
+  }
+  return (await resp.json()) as RegimeTimelineView
+}
