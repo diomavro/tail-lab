@@ -11,6 +11,7 @@ adversarial no-look-ahead guard required for anything a backtest reads
 from __future__ import annotations
 
 import datetime as dt
+import itertools
 from pathlib import Path
 
 import numpy as np
@@ -23,8 +24,11 @@ from tail_lab.research.backtest.brokerage import roll_cost
 from tail_lab.research.backtest.put_roll import (
     DEFAULT_RATE,
     IV_WINDOW,
+    MIN_YEARS_FOR_ANNUALIZED,
     PREMIUM_FLOOR_FRAC,
     annualized_return,
+    annualized_sharpe,
+    annualized_so_far_curve,
     compute_put_backtest,
     run_put_roll,
     trailing_realized_vol,
@@ -178,6 +182,99 @@ def test_annualized_return_geometric_pinned_cases() -> None:
     assert annualized_return(-1.0, 4.0) == -1.0
     assert annualized_return(-1.5, 4.0) == -1.0  # can't lose more than the premium; clamped
     assert annualized_return(0.37, 0.0) == 0.37  # years=0 passes total_roi through unchanged
+
+
+def test_annualized_so_far_curve_pinned_and_skips_short_horizons() -> None:
+    """Hand-built settled rolls -> hand-computed running annualized ROI. The
+    first roll (< a quarter-year elapsed) is skipped; the rest annualize the
+    cumulative net-on-premium over the actual elapsed years."""
+    first_entry = dt.date(2021, 1, 1)
+    settled = [
+        (dt.date(2021, 2, 1), -500.0),  # 31 days -> 0.085 yr, skipped
+        (dt.date(2021, 5, 1), 2000.0),  # 120 days -> 0.329 yr
+        (dt.date(2021, 12, 1), -600.0),  # 334 days -> 0.914 yr
+    ]
+    points = annualized_so_far_curve(settled, first_entry_date=first_entry, notional=1000.0)
+
+    assert len(points) == 2  # the 31-day point is below MIN_YEARS_FOR_ANNUALIZED
+    assert [p.date for p in points] == [dt.date(2021, 5, 1), dt.date(2021, 12, 1)]
+    # roll 2: cum net 1500 over 2 rolls -> roi 0.75 over 120/365.25 years.
+    assert points[0].annualized == pytest.approx(annualized_return(0.75, 120 / 365.25))
+    # roll 3: cum net 900 over 3 rolls -> roi 0.30 over 334/365.25 years.
+    assert points[1].annualized == pytest.approx(annualized_return(0.30, 334 / 365.25))
+    assert points[1].annualized == pytest.approx(0.3323, abs=1e-3)  # hardcoded sanity
+    # Dates are strictly increasing (monotone horizon).
+    assert all(a.date < b.date for a, b in itertools.pairwise(points))
+
+
+def test_annualized_so_far_curve_empty_when_all_horizons_too_short() -> None:
+    first_entry = dt.date(2021, 1, 1)
+    settled = [(dt.date(2021, 1, 20), 100.0), (dt.date(2021, 2, 10), -50.0)]  # both < 0.25 yr
+    assert annualized_so_far_curve(settled, first_entry_date=first_entry, notional=1000.0) == []
+
+
+def test_annualized_sharpe_pinned_against_hand_computation() -> None:
+    """Known per-roll returns -> known annualized Sharpe. mean 0.05, sample std
+    (ddof=1) 0.122474, rf/roll 0.04/12, times sqrt(12)."""
+    returns = [0.10, -0.05, 0.20, -0.05]
+    sharpe = annualized_sharpe(returns, rolls_per_year=12.0, rate=0.04)
+    assert sharpe is not None
+    assert sharpe == pytest.approx(1.3200, abs=1e-3)
+
+
+def test_annualized_sharpe_guards() -> None:
+    assert annualized_sharpe([0.1], rolls_per_year=12.0) is None  # < 2 rolls
+    # Zero dispersion (identical returns, as on a flat path where every put
+    # expires worthless for the same net) -> undefined ratio.
+    assert annualized_sharpe([0.5, 0.5], rolls_per_year=12.0) is None
+    assert annualized_sharpe([0.1, 0.2], rolls_per_year=0.0) is None  # no cadence
+
+
+def test_run_put_roll_threads_annualized_so_far_and_sharpe() -> None:
+    """The engine attaches the running-annualized curve (monotone expiry dates,
+    each annualizing the cumulative net-on-premium over the elapsed years) and
+    the per-roll annualized Sharpe."""
+    n = 261  # 8-week rolls: entries 20,60,...,220 -> ~6 cycles spanning ~1 year
+    prices = _flat_with_dips(n, {60: 70.0, 140: 75.0})
+    iv = pd.Series(np.full(n, 0.30), index=prices.index)
+    notional, tenor_w, years = 1000.0, 8.0, 10.0
+    res = run_put_roll(
+        prices,
+        iv,
+        asset="T",
+        as_of=dt.date(2021, 6, 1),
+        notional=notional,
+        moneyness_pct=5.0,
+        tenor_weeks=tenor_w,
+        lookback_years=years,
+    )
+
+    # A couple of mid-horizon points exist, all on expiry dates, in order.
+    assert len(res.annualized_so_far) >= 2
+    expiry_dates = [c.expiry_date for c in res.cycles]
+    assert all(p.date in expiry_dates for p in res.annualized_so_far)
+    assert [p.date for p in res.annualized_so_far] == sorted(p.date for p in res.annualized_so_far)
+    # Every emitted point is past the quarter-year floor.
+    first_entry = res.cycles[0].entry_date
+    for p in res.annualized_so_far:
+        assert (p.date - first_entry).days / 365.25 >= MIN_YEARS_FOR_ANNUALIZED
+
+    # The final point's roi basis is exactly roi_on_premium (same numerator and
+    # denominator), annualized over the actual elapsed span -> reconstructs exactly.
+    last = res.annualized_so_far[-1]
+    assert last.date == res.cycles[-1].expiry_date
+    elapsed_years = (last.date - first_entry).days / 365.25
+    assert last.annualized == pytest.approx(annualized_return(res.roi_on_premium, elapsed_years))
+
+    # Sharpe matches the pure helper over the per-roll returns.
+    expected_sharpe = annualized_sharpe(
+        [c.net / notional for c in res.cycles],
+        rolls_per_year=res.n_cycles / years,
+        rate=res.rate,
+    )
+    assert res.sharpe_ratio == pytest.approx(expected_sharpe)
+    # Benchmark hurdle is engine-agnostic; the pure roll leaves it unset.
+    assert res.benchmark_annualized is None
 
 
 def test_price_path_spans_the_traded_window() -> None:

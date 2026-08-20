@@ -88,7 +88,13 @@ export function BacktestView({
       {/* Main plot 1: the strategy tape (keeps its cumulative-P&L pane). */}
       <section className="panel">
         <ChartCockpit controls={controls} onChange={onChange} universe={universe}>
-          <StrategyTape pricePath={bt.price_path} mtmCurve={bt.mtm_curve} cycles={bt.cycles} />
+          <StrategyTape
+            pricePath={bt.price_path}
+            mtmCurve={bt.mtm_curve}
+            cycles={bt.cycles}
+            annualizedSoFar={bt.annualized_so_far}
+            benchmarkAnnualized={bt.benchmark_annualized}
+          />
         </ChartCockpit>
       </section>
 

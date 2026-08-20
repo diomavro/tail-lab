@@ -164,6 +164,10 @@ def putlab_backtest(
     except LookupError as exc:
         log_event(logger, "putlab.backtest.miss", asset=asset, as_of=resolved, reason=str(exc))
         raise HTTPException(status_code=404, detail=str(exc)) from exc
+    # The S&P 500 buy-and-hold hurdle over the same window, so the tape can draw
+    # the horizon at which the annualized-so-far line crossed the market. The
+    # pure engine has no benchmark; the route fills it before caching.
+    _, result.benchmark_annualized = _benchmark_buy_and_hold(store, resolved, years)
     _BACKTEST_CACHE[cache_key] = (time.monotonic() + _BACKTEST_TTL_S, result)
     _log_run(
         store,
@@ -180,6 +184,8 @@ def putlab_backtest(
             "n_cycles": result.n_cycles,
             "roi_on_premium": result.roi_on_premium,
             "net_pnl": result.net_pnl,
+            "sharpe_ratio": result.sharpe_ratio,
+            "benchmark_annualized": result.benchmark_annualized,
         },
     )
     return result

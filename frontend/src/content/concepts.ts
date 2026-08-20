@@ -222,6 +222,34 @@ export const CONCEPTS: Record<string, Concept> = {
       'A tail hedge is expected to bleed, so the annualized figure is usually negative -- read it as the yearly carry cost of holding the insurance. An occasional window shows a positive annualized return when a crash payoff more than covered the period spent bleeding.',
     seeAlso: ['roi_on_premium', 'bleed'],
   },
+  annualized_so_far: {
+    id: 'annualized_so_far',
+    term: 'Annualized return so far',
+    category: 'result',
+    short:
+      'At each roll’s expiry, the yearly rate the strategy had earned on premium from the very first entry up to that date — so you can see under what horizon it would have been good.',
+    formula:
+      'at roll k: roi_so_far = Σ(net of first k rolls) / (k × notional);  years_elapsed = (expiryₖ − first_entry)/365.25;  annualized_so_far = (1 + roi_so_far)^(1/years_elapsed) − 1   (skipped until years_elapsed ≥ 0.25)',
+    intuition:
+      'The headline annualized return is a single number over the whole lookback; this curve unrolls it through time. At every roll’s expiry it takes the cumulative net-of-brokerage P&L per premium dollar spent SO FAR and annualizes it geometrically over the actual time elapsed since the first entry. Plotted on the tape’s P&L pane against a right-hand percent axis, with the S&P buy-and-hold hurdle drawn as a dashed line, it answers "over which holding horizons did this hedge actually pay, and when did it clear the market?" The earliest points are dropped: annualizing a sub-quarter ROI raises (1+roi) to a huge power and manufactures a nonsense rate, so the curve starts once a quarter-year of horizon exists.',
+    howToRead:
+      'Read it as horizon-dependence, not a forecast. Where the cool line sits above the dashed S&P hurdle, holding the hedge to that date beat buying the index; where it dives, that horizon was pure carry cost. It swings a lot early (short horizons annualize violently) and settles toward the headline annualized return at the full window — and it is model-priced, so treat levels as relative.',
+    seeAlso: ['annualized_return', 'roi_on_premium', 'sharpe', 'model_priced'],
+  },
+  sharpe: {
+    id: 'sharpe',
+    term: 'Sharpe ratio (annualized)',
+    category: 'result',
+    short:
+      'Excess per-roll return over the risk-free rate, divided by the volatility of those returns, annualized — a rough risk-adjusted lens, reported for completeness.',
+    formula:
+      'Sharpe = (mean(r) − rf_per_roll) / std(r, ddof=1) × √(rolls_per_year);  r = net/notional per roll;  rf_per_roll = 0.04 / rolls_per_year;  rolls_per_year = n_cycles / years  (None if < 2 rolls or zero dispersion)',
+    intuition:
+      'Sharpe measures return per unit of risk: the average per-roll return on premium in excess of the risk-free carry (the 4% rate spread across the year’s rolls), divided by the standard deviation of those per-roll returns, then scaled by √(rolls per year) to annualize. It is a completeness stat, NOT a headline — and it fits a convex tail hedge poorly. Sharpe assumes roughly normal, symmetric returns, but this strategy’s returns are the opposite: many small premium bleeds punctuated by rare, enormous payoffs (fat right tail). That lumpiness makes the standard deviation a misleading "risk" denominator, so a low Sharpe here is not the indictment it would be for a diversified long book.',
+    howToRead:
+      'Use it only as a rough cross-check, not a verdict. A tail hedge can post a poor or negative Sharpe while still being valuable insurance, because Sharpe penalizes the very convexity (rare huge wins) that is the point. It is blank with fewer than two rolls or when every roll returned the same.',
+    seeAlso: ['annualized_return', 'annualized_so_far', 'roi_on_premium', 'bleed'],
+  },
   hit_rate: {
     id: 'hit_rate',
     term: 'Hit rate',

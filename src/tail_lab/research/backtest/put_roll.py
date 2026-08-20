@@ -17,6 +17,7 @@ known on or before ``as_of`` (``LakeStore.read_bronze_as_of``).
 from __future__ import annotations
 
 import datetime as dt
+from collections.abc import Sequence
 
 import numpy as np
 import pandas as pd
@@ -43,6 +44,12 @@ TRADING_DAYS_PER_WEEK = 5
 #: Premium is floored at this fraction of spot before sizing, so a
 #: vanishingly cheap far-OOM/short-dated put can't imply infinite contracts.
 PREMIUM_FLOOR_FRAC = 1e-4
+#: Don't annualize the running return-on-premium until at least this much of the
+#: window has elapsed. Annualizing a two-week ROI raises ``(1+roi)`` to the 26th
+#: power, which explodes a small early loss/gain into a nonsense yearly rate;
+#: starting the "annualized so far" curve at a quarter-year keeps every point a
+#: meaningful horizon rather than a numeric artifact (README convex-hedge lens).
+MIN_YEARS_FOR_ANNUALIZED = 0.25
 
 
 class PutRollCycle(BaseModel):
@@ -63,6 +70,15 @@ class PutRollCycle(BaseModel):
 class EquityPoint(BaseModel):
     date: dt.date
     cum_pnl: float
+
+
+class AnnualizedPoint(BaseModel):
+    """One point of the "annualized return so far" curve — at ``date`` (a roll's
+    expiry), ``annualized`` is the geometric yearly rate the strategy had earned
+    on premium from the first entry up to that date (net of brokerage)."""
+
+    date: dt.date
+    annualized: float
 
 
 class PricePoint(BaseModel):
@@ -91,6 +107,14 @@ class PutBacktestResult(BaseModel):
     hit_rate: float
     biggest_payoff_mult: float
     worst_bleed_streak: int
+    sharpe_ratio: float | None  # annualized Sharpe of the per-roll returns (None if < 2 rolls)
+    #: Return the strategy had annualized from the first entry up to each roll's
+    #: expiry — lets the tape show at which horizons the hedge beat the market.
+    annualized_so_far: list[AnnualizedPoint]
+    #: S&P 500 buy-and-hold annualized over the same window — the hurdle the tape
+    #: draws the annualized-so-far line against. Populated by the API route (the
+    #: pure engine has no benchmark), so it defaults to ``None``.
+    benchmark_annualized: float | None = None
     equity_curve: list[EquityPoint]  # realized, one point per expiry (+ a seed)
     mtm_curve: list[EquityPoint]  # daily mark-to-model cum P&L, aligned with price_path
     price_path: list[PricePoint]  # underlying over the traded window (for the tape)
@@ -125,6 +149,80 @@ def annualized_return(total_roi: float, years: float) -> float:
     if base <= 0.0:
         return -1.0
     return float(base ** (1.0 / years) - 1.0)
+
+
+def annualized_so_far_curve(
+    settled: Sequence[tuple[dt.date, float]],
+    *,
+    first_entry_date: dt.date,
+    notional: float,
+) -> list[AnnualizedPoint]:
+    """Running "annualized return on premium so far", one point per settled roll.
+
+    ``settled`` is ``(expiry_date, net)`` per roll in expiry order (``net`` is
+    already net of brokerage). At each roll *k* (1-based), using only the rolls
+    settled by its expiry::
+
+        roi_so_far     = sum(net of first k rolls) / (k * notional)
+        years_elapsed  = (expiry_date - first_entry_date).days / 365.25
+        annualized     = annualized_return(roi_so_far, years_elapsed)
+
+    Points with ``years_elapsed < MIN_YEARS_FOR_ANNUALIZED`` are skipped, not
+    clamped: annualizing a sub-quarter ROI compounds a tiny early swing into a
+    nonsense yearly rate, so the curve simply starts once a quarter-year of
+    horizon exists. The final point's ``roi_so_far`` equals the result's
+    ``roi_on_premium`` exactly (same numerator and denominator), so the last
+    ``annualized`` matches ``annualized_return`` up to the difference between the
+    actual elapsed years here and the nominal ``lookback_years`` used there.
+    """
+    points: list[AnnualizedPoint] = []
+    cum_net = 0.0
+    for k, (expiry_date, net) in enumerate(settled, start=1):
+        cum_net += net
+        years_elapsed = (expiry_date - first_entry_date).days / 365.25
+        if years_elapsed < MIN_YEARS_FOR_ANNUALIZED:
+            continue
+        roi_so_far = cum_net / (k * notional)
+        points.append(
+            AnnualizedPoint(
+                date=expiry_date,
+                annualized=annualized_return(roi_so_far, years_elapsed),
+            )
+        )
+    return points
+
+
+def annualized_sharpe(
+    returns: Sequence[float],
+    *,
+    rolls_per_year: float,
+    rate: float = DEFAULT_RATE,
+) -> float | None:
+    """Annualized Sharpe ratio of a strategy's per-roll returns.
+
+    Each ``r_i`` is one roll's return on the premium risked, ``net_i / notional``
+    (net of brokerage). With ``rf_per_roll = rate / rolls_per_year`` the
+    per-roll risk-free carry (so the annualized excess is over the ``rate`` = 4%
+    risk-free), the Sharpe is::
+
+        (mean(r) - rf_per_roll) / std(r, ddof=1) * sqrt(rolls_per_year)
+
+    Returns ``None`` when there are fewer than two rolls or the returns have zero
+    dispersion (an undefined ratio). Sharpe is only a *rough* lens for a convex
+    tail hedge: its returns are lumpy and fat-tailed (many small premium bleeds,
+    rare large payoffs), which violates the mean/variance normality Sharpe
+    assumes — it is reported for completeness, not as a headline.
+    """
+    n = len(returns)
+    if n < 2 or rolls_per_year <= 0.0:
+        return None
+    arr = np.asarray(returns, dtype=float)
+    sd = float(arr.std(ddof=1))
+    if sd == 0.0:
+        return None
+    rf_per_roll = rate / rolls_per_year
+    excess = float(arr.mean()) - rf_per_roll
+    return float(excess / sd * np.sqrt(rolls_per_year))
 
 
 def run_put_roll(
@@ -284,6 +382,17 @@ def run_put_roll(
     # (total_payoff - total_premium - total_brokerage)/total_premium.
     net_pnl = total_payoff - total_premium - total_brokerage
     roi_on_premium = net_pnl / total_premium
+    # Annualized Sharpe over the per-roll returns (net/notional). rolls_per_year
+    # paces the annualization by how often the strategy actually rolled.
+    rolls_per_year = len(cycles) / lookback_years if lookback_years > 0 else 0.0
+    sharpe = annualized_sharpe(
+        [c.net / notional for c in cycles], rolls_per_year=rolls_per_year, rate=rate
+    )
+    annualized_so_far = annualized_so_far_curve(
+        [(c.expiry_date, c.net) for c in cycles],
+        first_entry_date=cycles[0].entry_date,
+        notional=notional,
+    )
     return PutBacktestResult(
         asset=asset,
         as_of=as_of,
@@ -303,6 +412,8 @@ def run_put_roll(
         hit_rate=wins / len(cycles),
         biggest_payoff_mult=biggest_mult,
         worst_bleed_streak=worst_streak,
+        sharpe_ratio=sharpe,
+        annualized_so_far=annualized_so_far,
         equity_curve=equity,
         mtm_curve=mtm_curve,
         price_path=price_path,

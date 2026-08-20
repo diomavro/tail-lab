@@ -62,6 +62,14 @@ export interface EquityPoint {
   cum_pnl: number
 }
 
+// One point of the "annualized return so far" curve -- at `date` (a roll's
+// expiry), the geometric yearly rate earned on premium from the first entry up
+// to that date (net of brokerage). See put_roll.AnnualizedPoint.
+export interface AnnualizedPoint {
+  date: string
+  annualized: number
+}
+
 export interface PutBacktestResponse {
   asset: string
   as_of: string
@@ -81,6 +89,9 @@ export interface PutBacktestResponse {
   hit_rate: number
   biggest_payoff_mult: number
   worst_bleed_streak: number
+  sharpe_ratio: number | null
+  annualized_so_far: AnnualizedPoint[]
+  benchmark_annualized: number | null
   equity_curve: EquityPoint[]
   mtm_curve: EquityPoint[]
   price_path: PricePoint[]
