@@ -31,7 +31,7 @@ export function EquityCurve({ equityCurve, mtmCurve, cycles }: EquityCurveProps)
     if (curve.length === 0) return
 
     const W = 1000
-    const H = 340
+    const H = 238
     const P = { l: 64, r: 16, t: 20, b: 26 }
     const eq = curve.map((p) => ({ t: Date.parse(p.date), v: p.cum_pnl }))
     const first = eq[0]
@@ -169,7 +169,7 @@ export function EquityCurve({ equityCurve, mtmCurve, cycles }: EquityCurveProps)
       <svg
         ref={svgRef}
         id="putlab-equity"
-        viewBox="0 0 1000 340"
+        viewBox="0 0 1000 238"
         role="img"
         aria-label="Cumulative profit and loss of the put-buying strategy over time"
       />

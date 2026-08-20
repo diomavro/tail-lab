@@ -37,15 +37,14 @@ export function MemoryTeaser({ verdict }: { verdict: RegimeVerdictResponse | nul
   const copy = verdict ? VERDICT_COPY[verdict.verdict] : null
 
   return (
-    <section className="panel mem" style={{ marginTop: 22 }}>
+    <section className="panel mem" style={{ marginBottom: 0 }}>
       <div className="panel-head">
         <div>
           <span className="eyebrow">The memory layer &middot; live verdict</span>
-          <h2 style={{ marginTop: 6 }}>Did this only work in one regime?</h2>
+          <h2 style={{ marginTop: 4 }}>Did this only work in one regime?</h2>
           <div className="hint">
-            This backtest split by the market regime each roll was <em>entered</em> in. A strategy that only paid off
-            in one regime is flagged <em>regime-only</em>, never &ldquo;confirmed&rdquo; &mdash; keyed by{' '}
-            <span className="mono">(rule, regime)</span> in the hypothesis memory (<span className="mono">adr/0015</span>).
+            Split by the regime each roll was <em>entered</em> in &mdash; paid off in one regime only is{' '}
+            <em>regime-only</em>, never &ldquo;confirmed&rdquo;.
           </div>
         </div>
         {verdict && copy && (
@@ -57,9 +56,7 @@ export function MemoryTeaser({ verdict }: { verdict: RegimeVerdictResponse | nul
 
       {verdict && copy ? (
         <>
-          <div className="hint" style={{ marginBottom: 14 }}>
-            <span className="mono">{verdict.rule_hash}</span> &middot; {copy.note}
-          </div>
+          <div className="hint" style={{ marginBottom: 8 }}>{copy.note}</div>
           <div className="mem-grid">
             {verdict.slices.length === 0 && (
               <div className="mem-card">

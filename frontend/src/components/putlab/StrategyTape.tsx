@@ -27,8 +27,8 @@ export function StrategyTape({ pricePath, mtmCurve, cycles }: StrategyTapeProps)
     const W = 1000
     const P = { l: 56, r: 16 }
     // Two stacked panes sharing the x-axis: price (top), PnL (bottom).
-    const price = { t: 16, h: 210 }
-    const pnl = { t: 262, h: 150 }
+    const price = { t: 12, h: 140 }
+    const pnl = { t: 182, h: 104 }
 
     const px = pricePath.map((p) => ({ t: Date.parse(p.date), v: p.price }))
     const eq = mtmCurve.map((p) => ({ t: Date.parse(p.date), v: p.cum_pnl }))
@@ -120,7 +120,7 @@ export function StrategyTape({ pricePath, mtmCurve, cycles }: StrategyTapeProps)
       </div>
       <svg
         ref={svgRef}
-        viewBox="0 0 1000 438"
+        viewBox="0 0 1000 300"
         role="img"
         aria-label="Underlying price with strikes bought, over cumulative P&L"
       />

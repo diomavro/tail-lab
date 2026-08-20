@@ -44,7 +44,7 @@ export function SweepHeatmap({ cells, moneynessPct, tenorWeeks }: SweepHeatmapPr
     )
 
     const W = 1000
-    const H = 360
+    const H = 262
     const P = { l: 70, r: 16, t: 14, b: 40 }
     const cw = (W - P.l - P.r) / MONEYNESS_AXIS.length
     const ch = (H - P.t - P.b) / TENOR_AXIS.length
@@ -150,7 +150,7 @@ export function SweepHeatmap({ cells, moneynessPct, tenorWeeks }: SweepHeatmapPr
       <svg
         ref={svgRef}
         id="putlab-heat"
-        viewBox="0 0 1000 360"
+        viewBox="0 0 1000 262"
         role="img"
         aria-label="Heatmap of total return by moneyness and tenor"
       />

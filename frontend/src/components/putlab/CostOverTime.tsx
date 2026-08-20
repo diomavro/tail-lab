@@ -22,7 +22,7 @@ export function CostOverTime({ cycles }: CostOverTimeProps) {
     if (cycles.length === 0) return
 
     const W = 1000
-    const H = 340
+    const H = 238
     const P = { l: 64, r: 56, t: 20, b: 26 }
     const pts = cycles.map((c) => ({ t: Date.parse(c.entry_date), premium: c.premium, sigma: c.sigma }))
     const first = pts[0]
@@ -151,7 +151,7 @@ export function CostOverTime({ cycles }: CostOverTimeProps) {
       ) : (
         <svg
           ref={svgRef}
-          viewBox="0 0 1000 340"
+          viewBox="0 0 1000 238"
           role="img"
           aria-label="Model premium per put and implied volatility proxy at each roll's entry date"
         />

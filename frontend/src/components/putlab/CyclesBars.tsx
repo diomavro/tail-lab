@@ -21,7 +21,7 @@ export function CyclesBars({ cycles, notional }: CyclesBarsProps) {
     if (cycles.length === 0) return
 
     const W = 560
-    const H = 260
+    const H = 214
     const P = { l: 46, r: 10, t: 12, b: 22 }
     const vmax = Math.max(notional || 1, ...cycles.map((c) => Math.abs(c.net)))
     const bw = (W - P.l - P.r) / cycles.length
@@ -75,7 +75,7 @@ export function CyclesBars({ cycles, notional }: CyclesBarsProps) {
           <div className="hint">Each expiry cycle: what you paid vs. what it paid back.</div>
         </div>
       </div>
-      <svg ref={svgRef} id="putlab-cycles" viewBox="0 0 560 260" role="img" aria-label="Per-cycle profit and loss bars" />
+      <svg ref={svgRef} id="putlab-cycles" viewBox="0 0 560 214" role="img" aria-label="Per-cycle profit and loss bars" />
       <div className="legend" style={{ marginTop: 6 }}>
         <span className="sw">
           <span className="box" style={{ background: 'var(--loss)' }} /> premium bled

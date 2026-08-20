@@ -61,6 +61,8 @@ export function BacktestView({ controls, state }: { controls: PutLabControls; st
         />
       </section>
 
+      {/* Balanced two-up rows: each pairs charts of similar height, so no
+          column leaves a tall gap beside a short one — keeps the view dense. */}
       <div className="grid2">
         <section className="panel" style={{ marginBottom: 0 }}>
           <EquityCurve
@@ -70,20 +72,14 @@ export function BacktestView({ controls, state }: { controls: PutLabControls; st
           />
         </section>
         <section className="panel" style={{ marginBottom: 0 }}>
-          <CyclesBars cycles={state.backtest.cycles} notional={controls.notional} />
+          <CostOverTime cycles={state.backtest.cycles} />
         </section>
       </div>
 
-      {/* Full-width rather than jammed into grid2 as a third column: the
-          dual-axis premium/IV chart needs the horizontal room to stay
-          readable, and a 3-up grid2 row would either wrap awkwardly or
-          shrink every chart below the compressed-but-legible bar this view
-          holds elsewhere. */}
-      <section className="panel">
-        <CostOverTime cycles={state.backtest.cycles} />
-      </section>
-
-      <div className="grid2" style={{ marginTop: 22 }}>
+      <div className="grid2">
+        <section className="panel" style={{ marginBottom: 0 }}>
+          <CyclesBars cycles={state.backtest.cycles} notional={controls.notional} />
+        </section>
         <section className="panel" style={{ marginBottom: 0 }}>
           <SweepHeatmap
             cells={state.sweep.cells}
@@ -91,12 +87,13 @@ export function BacktestView({ controls, state }: { controls: PutLabControls; st
             tenorWeeks={controls.tenor_weeks}
           />
         </section>
-        <div style={{ display: 'grid', gap: 22, alignContent: 'start' }}>
-          <section className="panel" style={{ marginBottom: 0 }}>
-            <CadencePanel cadence={state.cadence} />
-          </section>
-          <MemoryTeaser verdict={state.regimeVerdict} />
-        </div>
+      </div>
+
+      <div className="grid2">
+        <section className="panel" style={{ marginBottom: 0 }}>
+          <CadencePanel cadence={state.cadence} />
+        </section>
+        <MemoryTeaser verdict={state.regimeVerdict} />
       </div>
     </>
   )
