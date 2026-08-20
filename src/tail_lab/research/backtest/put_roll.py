@@ -51,7 +51,7 @@ class PutRollCycle(BaseModel):
     expiry_date: dt.date
     spot: float
     strike: float
-    sigma: float
+    sigma: float  # IV proxy (clamped realized-vol) used to price the entry premium
     premium: float  # model price of one put at entry
     contracts: float  # notional / premium
     payoff: float  # contracts * max(strike - spot_at_expiry, 0)
@@ -87,7 +87,8 @@ class PutBacktestResult(BaseModel):
     hit_rate: float
     biggest_payoff_mult: float
     worst_bleed_streak: int
-    equity_curve: list[EquityPoint]
+    equity_curve: list[EquityPoint]  # realized, one point per expiry (+ a seed)
+    mtm_curve: list[EquityPoint]  # daily mark-to-model cum P&L, aligned with price_path
     price_path: list[PricePoint]  # underlying over the traded window (for the tape)
     cycles: list[PutRollCycle]
 
@@ -150,6 +151,7 @@ def run_put_roll(
     dates = [d.date() if isinstance(d, pd.Timestamp) else d for d in prices.index]
 
     cycles: list[PutRollCycle] = []
+    spans: list[tuple[int, int]] = []  # (entry_idx, expiry_idx) per cycle, for the MTM marks
     cum = 0.0
     equity: list[EquityPoint] = []
     total_payoff = 0.0
@@ -205,6 +207,7 @@ def run_put_roll(
             )
         )
         equity.append(EquityPoint(date=dates[i + tenor_days], cum_pnl=float(cum)))
+        spans.append((i, i + tenor_days))
         if first_traded_idx is None:
             first_traded_idx = i
         last_expiry_idx = i + tenor_days
@@ -223,6 +226,19 @@ def run_put_roll(
         PricePoint(date=dates[k], price=float(px[k]))
         for k in range(first_traded_idx, last_expiry_idx + 1)
     ]
+
+    mtm_curve = _mark_to_market_curve(
+        cycles,
+        spans,
+        px=px,
+        iv=iv,
+        dates=dates,
+        pricer=pricer,
+        rate=rate,
+        notional=notional,
+        first_traded_idx=first_traded_idx,
+        last_expiry_idx=last_expiry_idx,
+    )
 
     total_premium = len(cycles) * notional
     return PutBacktestResult(
@@ -243,9 +259,77 @@ def run_put_roll(
         biggest_payoff_mult=biggest_mult,
         worst_bleed_streak=worst_streak,
         equity_curve=equity,
+        mtm_curve=mtm_curve,
         price_path=price_path,
         cycles=cycles,
     )
+
+
+def _mark_to_market_curve(
+    cycles: list[PutRollCycle],
+    spans: list[tuple[int, int]],
+    *,
+    px: np.ndarray,
+    iv: np.ndarray,
+    dates: list[dt.date],
+    pricer: OptionPricer,
+    rate: float,
+    notional: float,
+    first_traded_idx: int,
+    last_expiry_idx: int,
+) -> list[EquityPoint]:
+    """Daily mark-to-market cumulative P&L over ``first_traded_idx..last_expiry_idx``.
+
+    One point per trading day, on the same dates as ``price_path``, so the
+    frontend can plot it on the price axis. At day ``k`` the value is::
+
+        mtm_k = realized_completed + unrealized_open
+
+    where ``realized_completed`` sums the ``net`` of every cycle that has
+    expired by ``k`` and is *not* the currently-open roll, and
+    ``unrealized_open = contracts * BS_raw(spot[k], strike, (expiry-k)/252, iv[k]) - notional``
+    marks the open put with **raw** Black-Scholes — no ``PREMIUM_FLOOR_FRAC``
+    (flooring the mark would overstate a decayed OOM put and break the expiry
+    identity below). ``sigma`` is clamped with ``IV_FLOOR``/``IV_CAP`` exactly
+    as entry pricing does, so a dead-calm window (realized vol 0, which would
+    make the pricer reject ``sigma<=0``) still marks cleanly.
+
+    Rolls re-enter on the expiry date, so at a shared expiry index the
+    newly-entered roll is treated as the open one (unrealized ~= 0) and the
+    just-expired roll counts as realized. At ``k == expiry_idx`` the raw BS value
+    with ``t_years=0`` is the intrinsic ``max(strike-spot,0)``; since
+    ``contracts * premium == notional``, ``unrealized = contracts*intrinsic -
+    notional = payoff - notional = net``, so ``mtm_curve`` meets the realized
+    ``equity_curve`` at every expiry date. Point-in-time safe: every input at
+    ``k`` is known at ``k`` (``iv`` is backward-looking).
+    """
+    curve: list[EquityPoint] = []
+    for k in range(first_traded_idx, last_expiry_idx + 1):
+        # The open roll is the (newest, at a shared boundary) cycle bracketing k.
+        open_pos: int | None = None
+        for c, (entry_idx, expiry_idx) in enumerate(spans):
+            if entry_idx <= k <= expiry_idx:
+                open_pos = c
+        realized = sum(
+            cycles[c].net
+            for c, (_, expiry_idx) in enumerate(spans)
+            if expiry_idx <= k and c != open_pos
+        )
+        unrealized = 0.0
+        if open_pos is not None:
+            cyc = cycles[open_pos]
+            _, expiry_idx = spans[open_pos]
+            t_years = (expiry_idx - k) / 252.0
+            if t_years <= 0.0:
+                mark = max(cyc.strike - float(px[k]), 0.0)  # intrinsic at expiry (guards T=0)
+            else:
+                sigma = float(min(max(iv[k], IV_FLOOR), IV_CAP))
+                mark = pricer.price_put(
+                    spot=float(px[k]), strike=cyc.strike, t_years=t_years, r=rate, sigma=sigma
+                )
+            unrealized = cyc.contracts * mark - notional
+        curve.append(EquityPoint(date=dates[k], cum_pnl=float(realized + unrealized)))
+    return curve
 
 
 def _adj_close_series(bronze: pd.DataFrame) -> pd.Series:

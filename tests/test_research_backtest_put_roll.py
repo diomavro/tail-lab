@@ -120,6 +120,89 @@ def test_price_path_spans_the_traded_window() -> None:
     assert prices_by_date[res.cycles[0].expiry_date] == pytest.approx(70.0)
 
 
+def test_mtm_curve_spans_price_path_and_shares_dates() -> None:
+    """The daily mark-to-market curve has one point per trading day over the
+    same window as price_path, on the same dates (so it plots on one x-axis)."""
+    prices = _flat_with_dips(101, {60: 70.0, 100: 98.0})
+    iv = pd.Series(np.full(101, 0.30), index=prices.index)
+    res = run_put_roll(
+        prices,
+        iv,
+        asset="T",
+        as_of=dt.date(2021, 6, 1),
+        notional=1000.0,
+        moneyness_pct=5.0,
+        tenor_weeks=8.0,
+        lookback_years=10,
+    )
+    assert len(res.mtm_curve) == len(res.price_path)
+    assert [p.date for p in res.mtm_curve] == [p.date for p in res.price_path]
+
+
+def test_mtm_curve_converges_to_realized_equity_at_every_expiry() -> None:
+    """Load-bearing correctness: because contracts * premium == notional, the
+    raw BS mark at t_years=0 is the intrinsic payoff, so the daily curve must
+    equal the realized equity curve on every cycle's expiry date."""
+    prices = _flat_with_dips(101, {60: 70.0, 100: 98.0})
+    iv = pd.Series(np.full(101, 0.30), index=prices.index)
+    res = run_put_roll(
+        prices,
+        iv,
+        asset="T",
+        as_of=dt.date(2021, 6, 1),
+        notional=1000.0,
+        moneyness_pct=5.0,
+        tenor_weeks=8.0,
+        lookback_years=10,
+    )
+    mtm_by_date = {p.date: p.cum_pnl for p in res.mtm_curve}
+    equity_by_date = {p.date: p.cum_pnl for p in res.equity_curve}
+    for cyc in res.cycles:
+        assert mtm_by_date[cyc.expiry_date] == pytest.approx(equity_by_date[cyc.expiry_date])
+
+
+def test_mtm_curve_moves_intra_cycle_on_a_sharp_drop() -> None:
+    """The whole point of the daily mark: a sharp drop inside an open cycle
+    lifts the mark that day, so the curve is not flat between expiries."""
+    # first entry idx 20, tenor 20d -> cycles 20->40, 40->60, 60->80; the dip at
+    # day 50 sits strictly inside the 40->60 roll (not on any entry/expiry).
+    prices = _flat_with_dips(85, {50: 70.0})
+    iv = trailing_realized_vol(prices)  # real backward-looking proxy (spikes after the dip)
+    res = run_put_roll(
+        prices,
+        iv,
+        asset="T",
+        as_of=dt.date(2021, 6, 1),
+        notional=1000.0,
+        moneyness_pct=5.0,
+        tenor_weeks=4.0,
+        lookback_years=10,
+    )
+    mtm_by_date = {p.date: p.cum_pnl for p in res.mtm_curve}
+    drop_day = prices.index[50].date()
+    prior_day = prices.index[49].date()
+    assert mtm_by_date[drop_day] > mtm_by_date[prior_day]
+
+
+def test_sigma_is_the_positive_iv_proxy_used_at_entry() -> None:
+    """Each cycle's sigma records the (clamped) IV proxy its premium was priced with."""
+    prices = _flat_with_dips(101, {60: 70.0, 100: 98.0})
+    iv = pd.Series(np.full(101, 0.30), index=prices.index)
+    res = run_put_roll(
+        prices,
+        iv,
+        asset="T",
+        as_of=dt.date(2021, 6, 1),
+        notional=1000.0,
+        moneyness_pct=5.0,
+        tenor_weeks=8.0,
+        lookback_years=10,
+    )
+    for cyc in res.cycles:
+        assert cyc.sigma > 0.0
+        assert cyc.sigma == pytest.approx(0.30)
+
+
 def test_deeper_oom_is_cheaper_per_cycle() -> None:
     """Property: a further out-of-the-money put costs less, so the same
     budget buys strictly more contracts (a monotonicity the pricer guarantees
