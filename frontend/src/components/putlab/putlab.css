@@ -62,9 +62,12 @@
   font-variant-numeric: tabular-nums;
 }
 .putlab-root .wrap {
-  max-width: 1160px;
+  /* Fluid: fills most of the viewport on large/full-screen monitors (was a
+     fixed 1160px that left half a 4K screen empty), capped so text lines don't
+     get unreadably long. */
+  max-width: min(1840px, 95vw);
   margin: 0 auto;
-  padding: clamp(12px, 1.6vw, 20px) clamp(16px, 3vw, 40px);
+  padding: clamp(12px, 1.6vw, 20px) clamp(16px, 2.4vw, 36px);
 }
 
 .putlab-root .eyebrow {
@@ -357,6 +360,26 @@
   height: 11px;
   border-radius: 3px;
   display: inline-block;
+}
+/* Legend swatches that mirror how the series is drawn, so a solid line, a bar,
+   and the dashed hurdle can't be confused with each other. */
+.putlab-root .legend .bar {
+  width: 13px;
+  height: 5px;
+  border-radius: 2px;
+  display: inline-block;
+}
+.putlab-root .legend .ln {
+  width: 15px;
+  height: 3px;
+  border-radius: 2px;
+  display: inline-block;
+}
+.putlab-root .legend .ln-dash {
+  width: 16px;
+  height: 0;
+  display: inline-block;
+  border-top: 2px dashed var(--faint);
 }
 
 .putlab-root svg {

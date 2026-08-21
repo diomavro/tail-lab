@@ -1,9 +1,9 @@
 main {
-  /* Wide enough for Put Lab's 1160px dashboard (.putlab-root .wrap); the
-     narrower VIX/feedback tiles below it just get extra side margin. */
-  max-width: 1160px;
-  margin: 3rem auto;
-  padding: 0 1rem;
+  /* Passthrough: the Put Lab workspace (.putlab-root .wrap) owns its own fluid
+     max-width, centering, and padding, so main must not re-cap it. */
+  max-width: none;
+  margin: 0;
+  padding: 0;
   font-family: system-ui, sans-serif;
 }
 
