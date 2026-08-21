@@ -57,13 +57,32 @@ a large one strictly in order.
       that records verdicts across the universe so `run_count`/coverage
       accumulate daily. Follow-ups: DuckDB `coverage()` / `open_questions()`
       endpoints; AST/embedding "similar rule" retrieval; prereg + lineage.
-- [ ] Live options-expiry **cadence adapter** — replace the static
+- [~] Live options-expiry **cadence adapter** — replace the static
       `contracts/options_calendar.py` table with a keyless read of Yahoo's
       `/v7/finance/options` expiration dates → derived avg gap + weekly/
       monthly classification, following the ingestion adapter shape.
-- [ ] Extend the OHLCV adapter's default fetch range beyond `2y` (it fetched
+      **Ingestion + derivation done 2026-08-21**: `ingestion/options_expiry.py`
+      (fetch/parse/validate/commit, `contracts/options_expiry.py`'s new
+      per-symbol bronze dataset) + `transforms/options_expiry.py`
+      (`classify_cadence` — pure, pinned + Hypothesis-tested). Sourcing note:
+      the plain keyless GET this item assumed no longer works — Yahoo's
+      `/v7/finance/options` now 401s ("Invalid Crumb") without a session
+      cookie + crumb token, discovered live 2026-08-21 (same anti-bot
+      evolution already hit and documented for Stooq). Worked around with the
+      documented (and `yfinance`-proven) three-request cookie+crumb flow,
+      still keyless — no account/API key — just no longer a single bare GET;
+      see the module docstring. **Not done, left as a follow-up**: no
+      `research/` orchestrator reads this bronze dataset yet, and
+      `api/putlab_routes.py`'s `cadence_for` still reads the static table —
+      swapping it for the live-derived value needs at least one accumulated
+      daily snapshot first (same reasoning `downside_beta.py` followed:
+      ship the pure function, wire it in once it has real data to read).
+- [x] Extend the OHLCV adapter's default fetch range beyond `2y` (it fetched
       `5y` here only via an explicit `range_`), so the Put Lab's "last 4
-      years" spans real history without a manual override.
+      years" spans real history without a manual override. **Already done**
+      (PR #34, "make ingest default to 5y history") — `fetch_ohlcv_raw`'s
+      `range_` default is `5y`; found unchecked while picking today's item,
+      fixed for bookkeeping accuracy.
 - [x] Add the sensitivity-leaderboard gold mart (`transforms/marts/`) + API
       endpoint + dashboard tile — becomes the Put Lab's asset-picker entry
       point. **Done 2026-08-19** (Dio's standing directive, in-app feedback:
@@ -165,6 +184,10 @@ a large one strictly in order.
       look-ahead bug, not a simplification.
 - [ ] Add the FRED credit adapter (`docs/DATA_CONTRACTS.md` #4), same key
       and same vintage requirement as rates above.
+- [ ] Widen the regime classifier (`research/regimes/timeline.py`) from
+      VIX-complex-only to also weigh credit spreads, once the FRED credit
+      adapter above exists — closes the scope gap noted on the "regime-panel
+      gold mart" item below.
 - [x] Write the first adversarial point-in-time test for the as-of read
       path — construct a scenario where leaking a later bronze snapshot
       (a restated value, or a later-ingested date) would change what an
@@ -207,20 +230,34 @@ a large one strictly in order.
       statistic (more negative raw co-skewness = more crash-prone = more
       tail-sensitive), so "higher score = more sensitive" stays consistent
       with downside beta's convention -- documented in `_score()`.
-      **Not done** (split out, still open below): the first cross-metric
-      backtest comparison (`research/backtest/compare.py`) answering
-      research question 1 for two metrics -- that's a separate, larger
-      increment than wiring the second metric into the screening
-      leaderboard was.
-- [ ] The first cross-metric backtest comparison
-      (`research/backtest/compare.py`), running the Put Lab backtest engine
-      (`research/backtest/put_roll.py`) once per sensitivity metric's
-      top-ranked candidates and comparing hit rate / payoff / bleed by
-      regime (`docs/END_STATE.md` §1.5, §4 research question 1) -- now that
-      downside beta and co-skewness (above) are both wired into the
-      leaderboard, this is the natural next increment.
-- [ ] Add the regime-panel gold mart + API endpoint + dashboard tile, using
-      the vol complex + credit spreads once dataset #4 exists.
+      **Done differently, see below**: the screening leaderboard itself was
+      later reframed as a five-metric composite fragility screen
+      (`research/backtest/ranking.py`, PRs #24/#25/#28) superseding this
+      two-metric `research/leaderboard.py` version's role as the *live*
+      leaderboard surface — `research/leaderboard.py` / `api/leaderboard_routes.py`
+      / `frontend/src/components/LeaderboardTile.tsx` still exist and are
+      still tested, but `LeaderboardTile.tsx` is no longer rendered by
+      `App.tsx` (superseded by the Put Lab's `Leaderboard.tsx` fragility
+      screen tab). Found while picking today's item (2026-08-21) — flagging
+      here rather than deleting the orphaned files unprompted; a future
+      increment should either wire `LeaderboardTile.tsx` back in or remove
+      the now-dead `research/leaderboard.py` stack deliberately.
+- [x] The first cross-metric backtest comparison answering research question 1
+      (`docs/END_STATE.md` §1.5, §4 Q1) -- **done 2026-08-20** as
+      `research/backtest/metric_screen.py` (PR #27, "the metric bake-off"),
+      not the originally-sketched `research/backtest/compare.py` path: for
+      each of the five raw fragility metrics + the composite, backtests every
+      name once and compares blended put return / hit rate / bleed / regime
+      breakdown / Spearman rank correlation to realized payoff. Surfaced as
+      `GET /api/putlab/metric-screen` + the `MetricScreen.tsx` panel. Found
+      unchecked while picking today's item; fixed for bookkeeping accuracy.
+- [x] Add the regime-panel gold mart + API endpoint + dashboard tile.
+      **Done 2026-08-20** as a VIX-complex-only classifier (PR #23,
+      `research/regimes/timeline.py` + `RegimePanel.tsx`) — narrower than
+      this item's original "vol complex + credit spreads" scope, since
+      dataset #4 (credit) still doesn't exist; re-open a follow-up item to
+      widen the classifier once FRED credit is ingested. Found unchecked
+      while picking today's item; fixed for bookkeeping accuracy.
 - [ ] Storage-growth optimization (not urgent): `DeltaLakeStore.write_bronze`
       still stores each ingest's **full** history for that date, not a diff,
       matching the pre-Delta Parquet layout's semantics (`docs/adr/0013`).

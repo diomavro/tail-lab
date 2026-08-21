@@ -19,3 +19,11 @@ def vix_yahoo_sample() -> dict[str, Any]:
 def ohlcv_yahoo_sample() -> dict[str, Any]:
     raw: dict[str, Any] = json.loads((FIXTURES_DIR / "ohlcv_yahoo_sample.json").read_text())
     return raw
+
+
+@pytest.fixture
+def options_expiry_yahoo_sample() -> dict[str, Any]:
+    raw: dict[str, Any] = json.loads(
+        (FIXTURES_DIR / "options_expiry_yahoo_sample.json").read_text()
+    )
+    return raw
