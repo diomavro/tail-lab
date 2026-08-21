@@ -14,7 +14,9 @@ read all of it to learn that Stooq is walled or that Yahoo started failing.
 The negative half is the more valuable half: **a verified dead end is a
 result, and re-chasing it is pure waste.**
 
-**Sibling files.** `docs/DISCOVERIES.md` records what we *learned* — beliefs
+**Sibling files.** `docs/DATA_FLOW.md` maps each source onto the page it
+feeds and the blast radius if it dies — read it to answer "what breaks if
+Cboe goes down"; read this one to answer "does Cboe work today". `docs/DISCOVERIES.md` records what we *learned* — beliefs
 that turned out wrong and what changed as a result (e.g. why the backtester
 prices off raw `close`, not `adj_close`). `docs/DATA_VERDICTS.md` holds the
 referee reports for datasets that had to be measured against a benchmark

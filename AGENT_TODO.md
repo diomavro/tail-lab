@@ -407,6 +407,24 @@ item 2 is time-sensitive in a way nothing else in this file is.
       for a given asset or window, the surface says *that* rather than
       staying silent.
 
+- [ ] **`options_expiry` is a dangling branch — wire it or retire it.**
+      Surfaced by writing `docs/DATA_FLOW.md` §3.1. The adapter
+      (`ingestion/options_expiry.py`, with a Cboe-primary fallback chain) and
+      the transform (`transforms/options_expiry.py`) both exist and are
+      tested, but there is **no `make ingest-options-expiry` target**, **no
+      `options_expiry_*` partition in production bronze** (verified
+      2026-08-22), and `/api/putlab/cadence` answers from the static catalogue
+      in `contracts/options_calendar.py` instead. The code path is real and
+      the data path is inert — the shape that looks wired on a dependency
+      graph and does nothing in production.
+      **Decide, do not drift:** either add the ingest target and point the
+      cadence endpoint at the lake (real, per-symbol expiration cadence
+      instead of a hand-maintained list), or delete the adapter and transform
+      and say in `docs/DATA_CONTRACTS.md` that cadence is deliberately static.
+      Both are defensible; leaving tested code that nothing runs is not.
+      **Acceptance:** either way, `docs/DATA_FLOW.md` §3.1 stops describing a
+      dangling branch.
+
 - [ ] **Free-source health canary.** Yahoo degraded from "works" to "429s
       everywhere" between 2026-08-19 and 2026-08-21 and nothing in the
       platform noticed — the failure surfaced only because a human went

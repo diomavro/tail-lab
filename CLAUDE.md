@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Read first
 
-`README.md` is the **canonical specification** — the north-star decision, the two strategies, and the "constitution" of hard principles. `ARCHITECTURE.md` covers layout and the machine-checked layer rule; `docs/STANDARDS.md` the engineering bar; `docs/DATA_CONTRACTS.md` the dataset schemas; `docs/adr/` the decisions behind all of it. Changing anything the constitution covers requires a human-approved ADR. Do not restate content from those files here — this file is only commands, gotchas, and doc-vs-code deltas.
+`README.md` is the **canonical specification** — the north-star decision, the two strategies, and the "constitution" of hard principles. `ARCHITECTURE.md` covers layout and the machine-checked layer rule; `docs/DATA_FLOW.md` traces where every number on the screen comes from and what breaks if a source dies; `docs/STANDARDS.md` the engineering bar; `docs/DATA_CONTRACTS.md` the dataset schemas; `docs/adr/` the decisions behind all of it. Changing anything the constitution covers requires a human-approved ADR. Do not restate content from those files here — this file is only commands, gotchas, and doc-vs-code deltas.
 
 ## Commands
 

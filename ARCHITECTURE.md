@@ -305,5 +305,8 @@ human-approved ADR — the agent may propose one, never enact it
 - `README.md` — the canonical specification.
 - `docs/END_STATE.md` — the detailed end-state this architecture builds toward.
 - `docs/STANDARDS.md` — how these rules are enforced (tests, typing, CI, coverage).
-- `docs/DATA_CONTRACTS.md` — the six core dataset schemas.
+- `docs/DATA_CONTRACTS.md` — the dataset schemas.
+- `docs/DATA_FLOW.md` — the lineage map: which sources feed which page,
+  and what breaks when one dies. This file says where code lives; that one
+  says where a *number* came from.
 - `docs/adr/` — the decisions behind each rule above.
