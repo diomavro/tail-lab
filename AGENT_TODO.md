@@ -461,8 +461,23 @@ item 2 is time-sensitive in a way nothing else in this file is.
       the daily proxy carries. Note the file is served from Google Drive, so
       mirror it into the lake rather than fetching it on every run.
 
-- [ ] **Decide what `adj_close` should mean now that Nasdaq is the OHLCV
-      primary.** Measured on SPY over 1,253 overlapping days (2026-08-21):
+- [x] **Decide what `adj_close` should mean now that Nasdaq is the OHLCV
+      primary.** **Decided 2026-08-21 (Dio): option (c).** The backtester now
+      prices off raw `close` — an option is written on the price that
+      actually printed, and pricing off `adj_close` was setting strikes off
+      prices that never traded (6.5% strike error at the 5-year mark, so a
+      nominal 5% OTM put was really ~11% OTM). Cost of the switch, measured:
+      0.3% of mean on the realized-vol proxy, ~0.4% relative on downside
+      beta. Written up as `docs/DISCOVERIES.md` §1–2.
+      This also defuses the vendor question: Nasdaq and Yahoo agree on
+      `close` to 0.000029, so the backtest is now vendor-agnostic and prod
+      OHLCV can safely be re-ingested from either.
+      **Follow-up:** `leaderboard.py` and `data_quality.py` still read
+      `adj_close` directly. For a total-return metric that is arguably
+      correct — but it should be a decision with a comment on it, not an
+      inheritance. Check each and annotate.
+- [ ] ~~**Decide what `adj_close` should mean now that Nasdaq is the OHLCV
+      primary.**~~ Measured on SPY over 1,253 overlapping days (2026-08-21):
       the two sources agree on `close` to **0.000029** — effectively
       identical, a strong cross-validation — but their `adj_close` differs
       by up to **$29.62** (mean $14.00), because Yahoo back-adjusts for

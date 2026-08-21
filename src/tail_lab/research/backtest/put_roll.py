@@ -493,11 +493,30 @@ def _mark_to_market_curve(
     return curve
 
 
-def _adj_close_series(bronze: pd.DataFrame) -> pd.Series:
-    """Adjusted-close series indexed by trade date, sorted and de-duplicated."""
+def _close_series(bronze: pd.DataFrame) -> pd.Series:
+    """Raw closing-price series indexed by trade date, sorted and de-duplicated.
+
+    **Raw ``close``, deliberately — not ``adj_close``.** An option is written
+    on the price that actually printed. A 5% OTM put struck on 2021-08-23 was
+    struck off SPY's real close of 447.26, giving a 424.90 strike; the
+    dividend-adjusted series says 418.02 that day, which would set the strike
+    at 397.12 — a **6.5% error**, so the "5% OTM" backtest would in truth be
+    running an ~11% OTM put. The error grows the further back the window
+    reaches, because back-adjustment subtracts every dividend paid since.
+
+    The cost of this choice is negligible and was measured (2026-08-21, real
+    SPY bronze): using raw closes moves the trailing realized-vol proxy by
+    0.3% of its mean and downside beta by ~0.4% relative — the small
+    ex-dividend gaps that dividend adjustment exists to smooth. Trading a
+    0.3% volatility artefact for a 6.5% strike error is not a close call.
+
+    Total-return questions ("what would holding this have earned") still want
+    ``adj_close`` and should read it explicitly rather than through here.
+    See `docs/DISCOVERIES.md`.
+    """
     ordered = bronze.sort_values("trade_date").drop_duplicates(subset="trade_date", keep="last")
     return pd.Series(
-        ordered["adj_close"].to_numpy(dtype=float),
+        ordered["close"].to_numpy(dtype=float),
         index=pd.DatetimeIndex(ordered["trade_date"]),
         name=str(ordered["symbol"].iloc[0]) if len(ordered) else "",
     )
@@ -507,10 +526,15 @@ def load_asof_series(store: LakeStore, asset: str, as_of: dt.date) -> tuple[pd.S
     """Point-in-time ``(prices, iv_proxy)`` for ``asset`` as of ``as_of``.
 
     Reads only the bronze OHLCV snapshot known on or before ``as_of`` (one
-    lake read), returning the adjusted-close path and its trailing-realized-
-    vol IV proxy. Factored out so a parameter sweep can read the path once and
-    roll many strategies over it, rather than re-reading per cell. Raises
-    ``LookupError`` if no snapshot exists as of that date.
+    lake read), returning the **raw closing-price** path (see
+    :func:`_close_series` for why raw rather than adjusted) and its
+    trailing-realized-vol IV proxy. Factored out so a parameter sweep can read
+    the path once and roll many strategies over it, rather than re-reading per
+    cell. Raises ``LookupError`` if no snapshot exists as of that date.
+
+    This is the single chokepoint every backtest path reads through —
+    ``put_roll``, ``portfolio``, ``ranking``, ``metric_screen`` and the API
+    routes — so the price basis is decided here, once, for all of them.
     """
     try:
         bronze = store.read_bronze_as_of(dataset_id(asset), as_of)
@@ -518,7 +542,7 @@ def load_asof_series(store: LakeStore, asset: str, as_of: dt.date) -> tuple[pd.S
         raise LookupError(f"no OHLCV for {asset} known as of {as_of.isoformat()}") from exc
     if bronze.empty:
         raise LookupError(f"no OHLCV for {asset} known as of {as_of.isoformat()}")
-    prices = _adj_close_series(bronze)
+    prices = _close_series(bronze)
     return prices, trailing_realized_vol(prices)
 
 

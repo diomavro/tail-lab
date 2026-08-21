@@ -14,6 +14,11 @@ read all of it to learn that Stooq is walled or that Yahoo started failing.
 The negative half is the more valuable half: **a verified dead end is a
 result, and re-chasing it is pure waste.**
 
+**Sibling file.** `docs/DISCOVERIES.md` records what we *learned* — beliefs
+that turned out wrong and what changed as a result (e.g. why the backtester
+prices off raw `close`, not `adj_close`). This file is *which sources work*;
+that one is *what we now know*.
+
 **Maintenance rule.** When you probe a source, add or update a row here in
 the same PR, with the date you probed it. A row without a `Verified` date is
 a rumour. Sources marked ✅ were measured with a real request, not read off

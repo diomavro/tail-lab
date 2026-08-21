@@ -30,6 +30,7 @@ from tail_lab.research.backtest.put_roll import (
     annualized_sharpe,
     annualized_so_far_curve,
     compute_put_backtest,
+    load_asof_series,
     run_put_roll,
     trailing_realized_vol,
 )
@@ -527,3 +528,42 @@ def test_compute_put_backtest_missing_symbol_raises(tmp_path: Path) -> None:
             tenor_weeks=4.0,
             lookback_years=10,
         )
+
+
+def test_backtest_prices_off_raw_close_not_adjusted_close(tmp_path: Path) -> None:
+    """An option is written on the price that actually printed, so the engine
+    must read ``close`` and never ``adj_close``.
+
+    Every other bronze fixture in this file sets close == adj_close, which
+    means none of them can tell the two apart -- this one deliberately makes
+    them differ. Dividend back-adjustment lowers historical adj_close, so
+    pricing off it would set strikes off a price that never traded: on real
+    SPY data (2021-08-23) that was a 6.5% strike error, turning a nominal
+    "5% OTM" put into an ~11% OTM one.
+    """
+    store = DeltaLakeStore(tmp_path)
+    ingest_date = dt.date(2026, 1, 30)
+    n = 120
+    closes = np.full(n, 100.0)
+    df = pd.DataFrame(
+        {
+            "symbol": "SPY",
+            "trade_date": pd.date_range(end=ingest_date, periods=n, freq="B"),
+            "open": closes,
+            "high": closes * 1.001,
+            "low": closes * 0.999,
+            "close": closes,
+            "volume": np.full(n, 1_000_000, dtype=int),
+            # Half the level: if the engine ever reads this column the assert
+            # below fails loudly rather than drifting quietly.
+            "adj_close": closes * 0.5,
+        }
+    )
+    store.write_bronze(dataset_id("spy"), ingest_date, df)
+
+    prices, _ = load_asof_series(store, "spy", ingest_date)
+
+    assert prices.iloc[-1] == pytest.approx(100.0)
+    assert prices.iloc[0] == pytest.approx(100.0)
+    # The adjusted series would have put every price at 50.0.
+    assert not np.isclose(prices.to_numpy(), 50.0).any()
