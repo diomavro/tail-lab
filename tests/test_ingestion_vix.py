@@ -248,5 +248,11 @@ def test_ingest_raises_when_every_source_is_dead(tmp_path: Any) -> None:
             store,
             ingest_date=dt.date(2026, 1, 6),
             cboe_csv="DATE,OPEN,HIGH,LOW,CLOSE\n",
-            raw={"chart": {"result": [{"meta": {}, "timestamp": [], "indicators": {"quote": [{"close": []}]}}]}},
+            raw={
+                "chart": {
+                    "result": [
+                        {"meta": {}, "timestamp": [], "indicators": {"quote": [{"close": []}]}}
+                    ]
+                }
+            },
         )

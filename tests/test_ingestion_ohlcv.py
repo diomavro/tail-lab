@@ -170,7 +170,14 @@ def test_parse_nasdaq_against_real_fixture(nasdaq_ohlcv_sample: dict[str, Any]) 
     df = parse_nasdaq_historical("SPY", nasdaq_ohlcv_sample)
 
     assert list(df.columns) == [
-        "symbol", "trade_date", "open", "high", "low", "close", "volume", "adj_close",
+        "symbol",
+        "trade_date",
+        "open",
+        "high",
+        "low",
+        "close",
+        "volume",
+        "adj_close",
     ]
     assert (df["symbol"] == "SPY").all()
     assert df["trade_date"].is_monotonic_increasing
@@ -220,8 +227,14 @@ def test_parse_nasdaq_sets_adj_close_equal_to_close() -> None:
         "data": {
             "tradesTable": {
                 "rows": [
-                    {"date": "08/20/2026", "close": "762.60", "volume": "1", "open": "760",
-                     "high": "765", "low": "759"}
+                    {
+                        "date": "08/20/2026",
+                        "close": "762.60",
+                        "volume": "1",
+                        "open": "760",
+                        "high": "765",
+                        "low": "759",
+                    }
                 ]
             }
         }
@@ -235,10 +248,22 @@ def test_parse_nasdaq_drops_rows_missing_a_field() -> None:
         "data": {
             "tradesTable": {
                 "rows": [
-                    {"date": "08/20/2026", "close": "762.60", "volume": "1", "open": "760",
-                     "high": "765", "low": "759"},
-                    {"date": "08/19/2026", "close": "--", "volume": "1", "open": "760",
-                     "high": "765", "low": "759"},
+                    {
+                        "date": "08/20/2026",
+                        "close": "762.60",
+                        "volume": "1",
+                        "open": "760",
+                        "high": "765",
+                        "low": "759",
+                    },
+                    {
+                        "date": "08/19/2026",
+                        "close": "--",
+                        "volume": "1",
+                        "open": "760",
+                        "high": "765",
+                        "low": "759",
+                    },
                 ]
             }
         }
@@ -259,15 +284,19 @@ def test_ingest_prefers_nasdaq_and_records_source_and_basis(tmp_path: Any) -> No
         "data": {
             "tradesTable": {
                 "rows": [
-                    {"date": "01/02/2026", "close": "100.0", "volume": "5", "open": "99",
-                     "high": "101", "low": "98"}
+                    {
+                        "date": "01/02/2026",
+                        "close": "100.0",
+                        "volume": "5",
+                        "open": "99",
+                        "high": "101",
+                        "low": "98",
+                    }
                 ]
             }
         }
     }
-    result = ingest_ohlcv(
-        store, "SPY", ingest_date=dt.date(2026, 1, 6), nasdaq_raw=nasdaq_raw
-    )
+    result = ingest_ohlcv(store, "SPY", ingest_date=dt.date(2026, 1, 6), nasdaq_raw=nasdaq_raw)
 
     assert result.source_id == "nasdaq"
     assert result.adjustment_basis == "splits_only"
@@ -286,8 +315,15 @@ def test_ingest_falls_back_to_yahoo_and_flags_the_richer_basis(tmp_path: Any) ->
                     "meta": {"gmtoffset": 0},
                     "timestamp": [1767312000],
                     "indicators": {
-                        "quote": [{"open": [99.0], "high": [101.0], "low": [98.0],
-                                   "close": [100.0], "volume": [5]}],
+                        "quote": [
+                            {
+                                "open": [99.0],
+                                "high": [101.0],
+                                "low": [98.0],
+                                "close": [100.0],
+                                "volume": [5],
+                            }
+                        ],
                         "adjclose": [{"adjclose": [97.5]}],
                     },
                 }
@@ -331,8 +367,15 @@ def test_injecting_one_source_never_reaches_the_network_for_the_other(
                     "meta": {"gmtoffset": 0},
                     "timestamp": [1767312000],
                     "indicators": {
-                        "quote": [{"open": [99.0], "high": [101.0], "low": [98.0],
-                                   "close": [100.0], "volume": [5]}],
+                        "quote": [
+                            {
+                                "open": [99.0],
+                                "high": [101.0],
+                                "low": [98.0],
+                                "close": [100.0],
+                                "volume": [5],
+                            }
+                        ],
                         "adjclose": [{"adjclose": [97.5]}],
                     },
                 }

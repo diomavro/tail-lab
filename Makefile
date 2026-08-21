@@ -37,6 +37,11 @@ setup:
 
 lint:
 	env -u PYTHONPATH $(VENV)/bin/ruff check src tests
+# CI runs `ruff format --check` as a separate gate (.github/workflows/ci.yml).
+# It lives here so `make check` really is every CI gate: without it a file
+# appended by a script rather than an editor can pass locally and fail CI,
+# which is exactly what happened on 2026-08-21.
+	env -u PYTHONPATH $(VENV)/bin/ruff format --check src tests
 
 format:
 	env -u PYTHONPATH $(VENV)/bin/ruff format src tests
