@@ -409,3 +409,39 @@ item 2 is time-sensitive in a way nothing else in this file is.
 - **Add the dataset contract in the same PR as the adapter**, never after.
 - **One item per PR.** These are deliberately independent; a PR that does
   two of them is harder to review and to revert.
+
+## Second-deep-dive increments (2026-08-21 — see `docs/DATA_SOURCING.md` §10)
+
+- [ ] **Validate the lambdaclass `data-v1` chains against PPUT — before
+      ingesting them.** `docs/DATA_SOURCING.md` §10.1 found free EOD option
+      chains covering **SPY 2008–2025** (602 MB parquet, SHA-256 pinned, no
+      account needed) at
+      `https://github.com/lambdaclass/options_backtester/releases/download/data-v1/SPY_options.parquet`
+      — the 2008–2009 window optionsDX cannot reach. But its **provenance is
+      undocumented** (the upstream vanished in 2026 and never documented its
+      own sourcing), so it must not become a source of record on trust.
+      **Do this first:** build a 5% OTM monthly SPY put roll from the parquet
+      over 2008→present and compare it to the real `PPUT` series already in
+      bronze. PPUT is Cboe's OPRA-transaction-priced program, so it is the
+      free authoritative referee. **Acceptance:** a written verdict —
+      tracking error vs PPUT, where it diverges, and an explicit
+      trusted / not-trusted call with the evidence. A clean result unlocks
+      real-quote backtesting through the GFC; a dirty one saves us from
+      building on sand. Either outcome is a good day's work.
+      **Do not add a dataset contract or an ingestion adapter until the
+      verdict is written** — this item is research, not plumbing, and the
+      licence posture (research/educational, takedown offer) is a human call
+      that is queued separately in `HUMAN_TODO.md`.
+- [ ] **Hao Zhou 5-minute realized-variance series as a pricer input.**
+      Free, monthly, **1990 → December 2024**, from the Bollerslev-Tauchen-
+      Zhou variance-risk-premium dataset (link via
+      `sites.google.com/site/haozhouspersonalhomepage`): risk-neutral implied
+      variance (VIX²/12), realized variance from **5-minute** S&P 500 log
+      returns, and their difference. `research/backtest/put_roll.py` derives
+      its IV proxy from *daily*-bar trailing realized vol; the 5-minute
+      series is a strictly better volatility measure and needs intraday
+      history we otherwise do not have. Monthly frequency makes this a
+      **calibration target**, not a per-roll input — wire it in as a
+      benchmark the daily-bar proxy is scored against, and quantify the bias
+      the daily proxy carries. Note the file is served from Google Drive, so
+      mirror it into the lake rather than fetching it on every run.

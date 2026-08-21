@@ -141,3 +141,21 @@ from *residential* IPs too, not just datacenter ones (probed from your
 workstation, 2026-08-21). `ingestion/ohlcv.py` still has Yahoo as
 primary, so the Tiingo key above is now a genuine fix rather than an
 upgrade.
+
+## One licence call (2026-08-21 second deep dive, `docs/DATA_SOURCING.md` §10)
+
+- [ ] Decide whether tail-lab may use the **lambdaclass `data-v1`** option
+      chains (SPY 2008–2025, QQQ 2011–2025, IWM 2008–2025; free, no account,
+      SHA-256 pinned GitHub Release assets). This closes the 2008–2009 gap
+      that every paid option in §3 was priced to close — but it is
+      redistributed **"for research and educational reproducibility only"**,
+      with a standing takedown offer to any rights-holder, and its
+      **provenance is undocumented**: the upstream it was mirrored from
+      (`philippdubach/options-data`) vanished in 2026 without ever recording
+      where its quotes came from. Reading: fine for a private lake feeding a
+      private dashboard and for validating the model pricer; not something to
+      republish, and not something to make source-of-record on trust. The
+      agent has been told to *validate it against Cboe's PPUT first and write
+      a verdict*, and to build no adapter until you have answered this.
+      **Nothing is blocked on you** — the free Cboe benchmark path (§9) works
+      regardless; this only decides whether real 2008 chains join it.

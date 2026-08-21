@@ -384,3 +384,121 @@ all and are agent-buildable today.
 - Whether an S&P 500 total-return series is obtainable free (for the
   §9.1(3) PPUT inversion) — FRED dividend-yield reconstruction is the
   obvious candidate and is already key-provisioned.
+
+---
+
+## 10. Second data deep dive (2026-08-21, later) — the 2008 gap closes
+
+Dio asked for another pass, plus a sweep of the self-starter/practitioner
+trading literature for sources the vendor-facing search missed. This round
+produced **one significant win, one useful minor one, and four negative
+results worth recording** so they are not re-chased.
+
+### 10.1 The win — real SPY/QQQ/IWM EOD chains including 2008-2009
+
+`github.com/lambdaclass/options_portfolio_backtester` (MIT, 263 stars, last
+updated 2026-08-19) is an open-source options backtester built to settle the
+Spitznagel-vs-AQR tail-hedge argument. To make its published results
+reproducible it **redistributes its dataset as GitHub Release assets**, and
+that dataset is exactly what §3 said only money could buy:
+
+| File | Coverage | Size | Verified |
+|---|---|---|---|
+| `SPY_options.parquet` | **2008–2025** EOD chains | **602 MB** | HTTP 200, 26,143 downloads |
+| `QQQ_options.parquet` | 2011–2025 | 369 MB | HTTP 200 |
+| `IWM_options.parquet` | **2008–2025** | 294 MB | HTTP 200 |
+| `{SYM}_underlying.parquet` | matching underlying prices | small | HTTP 200 |
+
+Base URL:
+`https://github.com/lambdaclass/options_backtester/releases/download/data-v1/{fname}`
+(note the release lives on the sibling repo `options_backtester`). Every
+file is **SHA-256 pinned** in `scripts/fetch_data.py` (`CANONICAL_HASHES`),
+so a mirror cannot silently serve different bytes — `python
+scripts/fetch_data.py verify` proves any copy byte-identical.
+
+**This covers 2008–2009**, the one window optionsDX (2010+) cannot reach and
+the window that drives every tail-hedge result worth having. No account, no
+key, no signup — an agent can fetch it.
+
+**Three caveats that must travel with it, and they are not small:**
+
+1. **Provenance is undocumented.** The repo's own `data/DATA_NOTICE.md` says
+   the files were mirrored from `philippdubach/options-data` ("Historical
+   Options Chain Data for 100+ US Equities, 2008–2025"), that this upstream
+   — CDN *and* GitHub repo — **disappeared in 2026**, and, verbatim: *"The
+   upstream's own sourcing was not documented."* Nobody can say which
+   exchange or vendor these quotes came from.
+2. **Redistribution posture is research/educational only**, with an explicit
+   takedown offer to any rights-holder. Fine for a private lake and a
+   private dashboard; it is not a commercial-grade license.
+3. **Quality is unverified.** Known gaps are documented (IWM's
+   `underlying.parquet` ships `adjClose` all-NaN; QQQ's chain starts
+   2011-03-23), but the chains themselves have not been audited by anyone
+   whose audit we can read.
+
+**Therefore: use it for validation, not as a source of record.** And the
+cross-check is now free and authoritative — §9.1's `PPUT`/`PPUT3M` are
+Cboe's own OPRA-transaction-priced put programs over the same window, so a
+5% OTM SPY put roll built from this parquet should track PPUT. If it does,
+the dataset is real; if it does not, we have learned that cheaply. That
+validation is the gate this data must pass before anything depends on it.
+
+### 10.2 The minor win — free 5-minute realized variance, 1990→2024
+
+Hao Zhou's variance-risk-premium dataset (the Bollerslev-Tauchen-Zhou
+series), linked from his homepage, **updated through December 2024**,
+monthly, free: risk-neutral implied variance (VIX²/12, de-annualized),
+**realized variance computed from 5-minute S&P 500 log returns**, and the
+VRP difference.
+
+The valuable column is the middle one. `research/backtest/put_roll.py`
+currently derives its IV proxy from *daily*-bar trailing realized vol; a
+5-minute realized-variance series is a strictly better volatility input and
+is otherwise expensive to construct (it needs intraday history we do not
+have). Monthly frequency limits it to calibration rather than per-roll
+pricing, but as a calibration target for the skew-aware pricer it is free
+and it spans every crisis back to 1990.
+
+### 10.3 What the practitioner literature actually says
+
+Worth recording because it validates the platform's approach rather than
+changing it: the tail-hedging literature does not have a secret data source.
+
+- The **Spitznagel/AQR tail-hedge debate** was settled publicly using real
+  SPY chains 2008–2025 and the open-source backtester above — i.e. the same
+  data now available in §10.1, and an existence proof that this question is
+  answerable with free data. It is also a useful comparable: an independent
+  implementation of the exact strategy family tail-lab is building.
+- **Cboe's VXTH methodology is free** (`cdn.cboe.com/api/global/us_indices/
+  governance/Cboe_VIX_Tail_Hedge_Index_Methodology.pdf`), and a published
+  Stanford replication of VXTH exists — a reference implementation for §9.5's
+  replication-harness item, so it need not be written from scratch.
+- Spitznagel's *Safe Haven* deliberately gives no strategy or data detail;
+  Sinclair, Krishnan and the rest name no free source the vendor sweep
+  missed. **The practitioner path is the same one §9 found: model the puts,
+  benchmark against Cboe's published indices.**
+
+### 10.4 Negative results (verified — do not re-chase)
+
+- **marketdata.app's "15+ years of historical options data, 100% free" is
+  marketing copy.** Their own plan-limits documentation states Free Forever =
+  **1 Year**, Starter = 5 Years. The claim appears in third-party listicles
+  and the Workspace marketplace blurb; the vendor's docs contradict it.
+- **QuantConnect / AlgoSeek does not reach 2008.** US **Index** Options
+  (SPX, VIX, NDX, RUT + weeklies) start **January 2012**; US Equity Options
+  start 2010–2012. Cloud-first, with export via LEAN CLI unclear. Strictly
+  worse than optionsDX for our window.
+- **QuantPedia's curated historical-data list yields nothing new** — the only
+  options provider on it with a free tier is ORATS, and ORATS's free tier is
+  not the historical bulk we need.
+- **GitHub / archive.org / Hugging Face bulk sweeps found nothing** beyond
+  what §3, §9 and §10.1 already list. DoltHub `post-no-preference/options`
+  (2019+) remains the only other free chain repository.
+
+### 10.5 What this changes
+
+`PPUT` replication (§9.5 item 2) becomes **more** important, not less: it is
+now doing double duty as the platform's model-vs-market measurement *and* as
+the audit that decides whether the §10.1 dataset can be trusted. Do it
+first. Nothing here displaces §9.5's ordering otherwise, and nothing here
+revives the case for a paid feed.
