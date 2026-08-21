@@ -1,11 +1,13 @@
 import { useState } from 'react'
 import type {
+  AccuracyResponse,
   CadenceResponse,
   PutBacktestResponse,
   RegimeVerdictResponse,
   SweepResponse,
   UniverseMember,
 } from '../../../api/client'
+import { AccuracyPanel } from '../AccuracyPanel'
 import { CadencePanel } from '../CadencePanel'
 import { ChartCockpit } from '../ChartCockpit'
 import { ConceptInfo } from '../ConceptInfo'
@@ -30,6 +32,7 @@ import type { PutLabControls } from '../types'
 export function BacktestView({
   controls,
   backtest,
+  accuracy,
   sweep,
   cadence,
   regimeVerdict,
@@ -38,6 +41,7 @@ export function BacktestView({
 }: {
   controls: PutLabControls
   backtest: ResourceState<PutBacktestResponse>
+  accuracy: ResourceState<AccuracyResponse>
   sweep: ResourceState<SweepResponse>
   cadence: ResourceState<CadenceResponse>
   regimeVerdict: RegimeVerdictResponse | null
@@ -84,6 +88,11 @@ export function BacktestView({
       </p>
 
       <StatBand backtest={bt} />
+
+      {/* Directly under the headline numbers, never behind "More detail": the
+          constitution requires the size of a result's error to be visible where
+          the result is, and a collapsed panel is a filed one. */}
+      <AccuracyPanel accuracy={accuracy} />
 
       {/* Main plot 1: the strategy tape (keeps its cumulative-P&L pane). */}
       <section className="panel">

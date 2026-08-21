@@ -36,6 +36,15 @@ from tail_lab.contracts.options_calendar import (
 )
 from tail_lab.lake.store import LakeStore
 from tail_lab.observability import log_event
+from tail_lab.research.accuracy import (
+    RESIDUAL_PROGRAMS,
+    AccuracyReport,
+    compute_accuracy_report,
+)
+from tail_lab.research.backtest.index_replication import (
+    IndexReplicationResult,
+    compute_index_replication,
+)
 from tail_lab.research.backtest.metric_screen import (
     MetricScreenComparison,
     compare_metric_screens,
@@ -87,6 +96,15 @@ _METRIC_SCREEN_CACHE: dict[
     tuple[float, float, float, int, str], tuple[float, MetricScreenComparison]
 ] = {}
 _METRIC_SCREEN_TTL_S = 120.0
+
+#: The accuracy panel's residual comes from replaying 438 monthly PPUT rolls,
+#: which is far too expensive to redo per request and depends only on the
+#: as-of date. Memoized separately from the report so every asset and every
+#: parameter combination on the same day shares one replication.
+_REPLICATION_CACHE: dict[str, tuple[float, list[IndexReplicationResult]]] = {}
+_REPLICATION_TTL_S = 900.0
+_ACCURACY_CACHE: dict[tuple[str, float, float, float, str], tuple[float, AccuracyReport]] = {}
+_ACCURACY_TTL_S = 120.0
 
 
 @lru_cache(maxsize=1)
@@ -375,6 +393,86 @@ def putlab_data_quality(
         return assess_asset_quality(store, asset=asset, as_of=_resolve_as_of(as_of))
     except LookupError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+def _cached_replications(store: LakeStore, as_of: dt.date) -> list[IndexReplicationResult]:
+    """The reference replications for ``as_of``, memoized — including an empty
+    list when the lake has none.
+
+    A lake with no Cboe snapshot is a legitimate state (a fresh local dev
+    environment), and replaying hundreds of rolls on every request just to
+    rediscover that would be the slowest possible way to serve a null, so the
+    empty result is cached with the same TTL as a hit.
+    """
+    key = as_of.isoformat()
+    hit = _REPLICATION_CACHE.get(key)
+    if hit is not None and hit[0] > time.monotonic():
+        return hit[1]
+    results: list[IndexReplicationResult] = []
+    for symbol in RESIDUAL_PROGRAMS:
+        try:
+            results.append(compute_index_replication(store, index_symbol=symbol, as_of=as_of))
+        except (LookupError, KeyError) as exc:
+            log_event(
+                logger,
+                "putlab.accuracy.no_residual",
+                program=symbol,
+                as_of=as_of,
+                reason=str(exc),
+            )
+    _REPLICATION_CACHE[key] = (time.monotonic() + _REPLICATION_TTL_S, results)
+    return results
+
+
+@router.get("/api/putlab/accuracy")
+def putlab_accuracy(
+    asset: str = Query(description="Underlying ticker, e.g. spy."),
+    moneyness_pct: float = Query(default=5.0, gt=0, lt=100),
+    tenor_weeks: float = Query(default=4.0, gt=0, le=52),
+    years: float = Query(default=4.0, gt=0, le=20, description="Lookback window."),
+    as_of: dt.date | None = Query(default=None),
+    store: LakeStore = Depends(get_lake_store),
+) -> AccuracyReport:
+    """How wrong the matching backtest is likely to be.
+
+    The constitution requires a result to be shown with the known size of its
+    error (README, "Accuracy is surfaced, not filed"), so this endpoint is the
+    companion of ``/api/putlab/backtest`` and is never optional on the surface.
+    It **does not 404**: every component degrades independently and a missing
+    input is reported as a missing input, because a silent accuracy panel is
+    indistinguishable from an accurate result.
+    """
+    resolved = _resolve_as_of(as_of)
+    key = (asset, moneyness_pct, tenor_weeks, years, resolved.isoformat())
+    hit = _ACCURACY_CACHE.get(key)
+    if hit is not None and hit[0] > time.monotonic():
+        return hit[1]
+
+    report = compute_accuracy_report(
+        store,
+        asset=asset,
+        as_of=resolved,
+        years=years,
+        moneyness_pct=moneyness_pct,
+        tenor_weeks=tenor_weeks,
+        replications=_cached_replications(store, resolved),
+    )
+    _ACCURACY_CACHE[key] = (time.monotonic() + _ACCURACY_TTL_S, report)
+    _log_run(
+        store,
+        "putlab.accuracy",
+        asset=asset,
+        as_of=resolved,
+        params={"moneyness_pct": moneyness_pct, "tenor_weeks": tenor_weeks, "years": years},
+        outputs={
+            "expected_optimism": report.model.expected_optimism,
+            "reference": report.model.reference,
+            "applicability": report.model.applicability,
+            "n_benchmarks": len(report.benchmarks),
+            "data_quality_flags": report.data_quality_flags,
+        },
+    )
+    return report
 
 
 @router.post("/api/putlab/portfolio")

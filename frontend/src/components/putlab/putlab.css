@@ -1337,3 +1337,188 @@
 .putlab-root .concept-pop-how strong {
   color: var(--text);
 }
+
+/* --- Accuracy panel -------------------------------------------------------
+   Sits directly under the stat band on the Backtest tab. Deliberately styled
+   as a first-class result panel, not a footnote: the constitution treats the
+   size of a result's error as part of the result. */
+.acc-panel {
+  border-left: 3px solid var(--warm);
+}
+.acc-title {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  margin: 0 0 0.75rem;
+  font-size: 0.95rem;
+  letter-spacing: 0.01em;
+}
+.acc-badge {
+  font-size: 0.65rem;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  padding: 0.12rem 0.42rem;
+  border-radius: 999px;
+  border: 1px solid var(--line-strong);
+  color: var(--muted);
+}
+.acc-badge-direct {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+.acc-badge-unmeasured {
+  border-color: var(--loss);
+  color: var(--loss);
+}
+.acc-headline {
+  margin: 0 0 0.7rem;
+  font-size: 1rem;
+  line-height: 1.45;
+}
+.acc-headline-warn strong {
+  color: var(--warm);
+}
+.acc-headline-cool strong {
+  color: var(--accent);
+}
+.acc-headline-unknown {
+  color: var(--loss);
+}
+
+/* Regime mix: one stacked bar so the window's character reads at a glance,
+   with each regime's own measured residual beside it. */
+.acc-mix-bar {
+  display: flex;
+  height: 8px;
+  border-radius: 4px;
+  overflow: hidden;
+  background: var(--surface-2);
+  margin-bottom: 0.45rem;
+}
+.acc-mix-seg {
+  display: block;
+  height: 100%;
+}
+.acc-mix-calm {
+  background: var(--accent);
+}
+.acc-mix-elevated {
+  background: var(--warm);
+}
+.acc-mix-crisis {
+  background: var(--loss);
+}
+.acc-mix-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.9rem;
+  list-style: none;
+  margin: 0 0 0.7rem;
+  padding: 0;
+  font-size: 0.78rem;
+  color: var(--muted);
+}
+.acc-mix-legend li {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+}
+.acc-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+}
+.acc-mix-residual {
+  color: var(--faint);
+  font-variant-numeric: tabular-nums;
+}
+.acc-note {
+  margin: 0 0 0.5rem;
+  font-size: 0.8rem;
+  line-height: 1.5;
+  color: var(--muted);
+}
+.acc-basis {
+  margin: 0;
+  font-size: 0.72rem;
+  color: var(--faint);
+  font-variant-numeric: tabular-nums;
+}
+.acc-block {
+  margin-top: 1.1rem;
+  padding-top: 0.9rem;
+  border-top: 1px solid var(--line);
+}
+.acc-block h4 {
+  margin: 0 0 0.5rem;
+  font-size: 0.8rem;
+  text-transform: uppercase;
+  letter-spacing: 0.07em;
+  color: var(--muted);
+}
+.acc-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.82rem;
+  font-variant-numeric: tabular-nums;
+}
+.acc-table th[scope='col'] {
+  text-align: right;
+  font-weight: 500;
+  color: var(--faint);
+  font-size: 0.7rem;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  padding-bottom: 0.3rem;
+}
+.acc-table th[scope='col']:first-child,
+.acc-table th[scope='row'] {
+  text-align: left;
+}
+.acc-table th[scope='row'] {
+  font-weight: 600;
+  color: var(--text);
+}
+.acc-table td {
+  text-align: right;
+  padding: 0.22rem 0;
+  color: var(--ink);
+}
+.acc-table tbody tr + tr th,
+.acc-table tbody tr + tr td {
+  border-top: 1px solid var(--line);
+}
+.acc-clean {
+  margin: 0;
+  font-size: 0.82rem;
+  color: var(--accent);
+}
+.acc-flagged {
+  margin: 0;
+  font-size: 0.82rem;
+  color: var(--warm);
+}
+.acc-assumptions summary {
+  cursor: pointer;
+  font-size: 0.8rem;
+  text-transform: uppercase;
+  letter-spacing: 0.07em;
+  color: var(--muted);
+}
+.acc-assumptions dl {
+  margin: 0.7rem 0 0;
+  font-size: 0.82rem;
+}
+.acc-assumptions dt {
+  font-weight: 600;
+  color: var(--text);
+  margin-top: 0.55rem;
+}
+.acc-assumptions dd {
+  margin: 0.1rem 0 0;
+  color: var(--muted);
+  line-height: 1.5;
+}
+.acc-leverage {
+  color: var(--faint);
+}

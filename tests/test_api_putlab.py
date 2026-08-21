@@ -57,6 +57,8 @@ def client(tmp_path: Path) -> Iterator[TestClient]:
     putlab_routes._BACKTEST_CACHE.clear()
     putlab_routes._SWEEP_CACHE.clear()
     putlab_routes._REGIME_VERDICT_CACHE.clear()
+    putlab_routes._ACCURACY_CACHE.clear()
+    putlab_routes._REPLICATION_CACHE.clear()
     app.dependency_overrides[putlab_get_lake_store] = lambda: store
     try:
         yield TestClient(app)
@@ -401,3 +403,53 @@ def test_cadence_known_and_unknown(client: TestClient) -> None:
     body = unknown.json()
     assert body["symbol"] == "ZZZ"
     assert "assumed" in body["label"].lower()  # flagged as a default, not a verified listing
+
+
+def test_accuracy_never_404s_even_with_nothing_to_report(client: TestClient) -> None:
+    """The constitutional guarantee. A 404 here would let the frontend render
+    an empty space where the size of the error belongs, and an empty space
+    reads as "no concerns"."""
+    resp = client.get(
+        "/api/putlab/accuracy",
+        params={"asset": "nosuchticker", "moneyness_pct": 5, "tenor_weeks": 4, "years": 1},
+    )
+
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["model"]["applicability"] == "unmeasured"
+    assert body["model"]["expected_optimism"] is None
+    assert body["data_quality_note"] == "no price snapshot to scan"
+    assert body["assumptions"]  # never depends on the lake
+
+
+def test_accuracy_reports_the_regime_mix_and_the_input_scan(client: TestClient) -> None:
+    resp = client.get(
+        "/api/putlab/accuracy",
+        params={"asset": "spy", "moneyness_pct": 5, "tenor_weeks": 4, "years": 1},
+    )
+
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["asset"] == "SPY"
+    # The seeded VIX oscillates across all three buckets, so the mix is real.
+    assert sum(s["share"] for s in body["model"]["regime_mix"]) == pytest.approx(1.0)
+    assert body["data_quality_flags"] is not None
+    assert body["model"]["caveat"]
+
+
+def test_accuracy_is_cached_per_parameter_set(client: TestClient) -> None:
+    params = {"asset": "spy", "moneyness_pct": 5, "tenor_weeks": 4, "years": 1}
+    first = client.get("/api/putlab/accuracy", params=params).json()
+    assert putlab_routes._ACCURACY_CACHE
+    assert client.get("/api/putlab/accuracy", params=params).json() == first
+
+
+def test_a_lake_with_no_cboe_snapshot_caches_the_absent_residual(client: TestClient) -> None:
+    """Rediscovering "there is no snapshot" by replaying 438 rolls on every
+    request would be the slowest possible way to serve a null."""
+    client.get(
+        "/api/putlab/accuracy",
+        params={"asset": "spy", "moneyness_pct": 5, "tenor_weeks": 4, "years": 1},
+    )
+    assert putlab_routes._REPLICATION_CACHE
+    assert all(cached[1] == [] for cached in putlab_routes._REPLICATION_CACHE.values())

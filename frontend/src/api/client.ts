@@ -129,6 +129,74 @@ export async function fetchPutBacktest(
   return (await resp.json()) as PutBacktestResponse
 }
 
+export interface RegimeShare {
+  regime: 'calm' | 'elevated' | 'crisis'
+  n_days: number
+  share: number
+}
+
+export interface ModelAccuracy {
+  /** Return per year by which this window's backtest is likely overstated.
+   *  Positive = the model prices puts too cheap. Null = not measured. */
+  expected_optimism: number | null
+  applicability: 'direct' | 'indicative' | 'unmeasured'
+  /** The published Cboe program this error bar was measured on. */
+  reference: string | null
+  regime_mix: RegimeShare[]
+  residual_by_regime: Record<string, number>
+  basis: string
+  caveat: string
+}
+
+export interface BenchmarkComparison {
+  index_symbol: string
+  label: string
+  total_return: number
+  annualized: number
+}
+
+export interface Assumption {
+  name: string
+  value: string
+  leverage: string | null
+}
+
+export interface AccuracyResponse {
+  asset: string
+  as_of: string
+  years: number
+  window_start: string
+  model: ModelAccuracy
+  benchmarks: BenchmarkComparison[]
+  data_quality_flags: number | null
+  data_quality_note: string
+  assumptions: Assumption[]
+}
+
+export interface AccuracyParams {
+  asset: string
+  moneyness_pct: number
+  tenor_weeks: number
+  years: number
+}
+
+export async function fetchAccuracy(
+  params: AccuracyParams,
+  signal?: AbortSignal,
+): Promise<AccuracyResponse> {
+  const qs = new URLSearchParams({
+    asset: params.asset,
+    moneyness_pct: String(params.moneyness_pct),
+    tenor_weeks: String(params.tenor_weeks),
+    years: String(params.years),
+  })
+  const resp = await fetch(`/api/putlab/accuracy?${qs.toString()}`, { signal })
+  if (!resp.ok) {
+    throw new ApiError(`GET /api/putlab/accuracy failed: ${resp.status}`, resp.status)
+  }
+  return (await resp.json()) as AccuracyResponse
+}
+
 export interface SweepCell {
   moneyness_pct: number
   tenor_weeks: number

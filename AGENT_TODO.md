@@ -368,10 +368,12 @@ item 2 is time-sensitive in a way nothing else in this file is.
 - [x] **PPUT replication harness — done 2026-08-22.**
       `research/backtest/index_replication.py`, `make residual`, results in
       `docs/MODEL_RESIDUAL.md`. Residual vs `PPUT` is **+1.34%/yr** over 438
-      monthly rolls (36.5y, correlation 0.9913) and **+0.43%/yr** vs `PPUT3M`
-      over 89 quarterly rolls. **It flips sign by regime** — +1.55%/yr calm,
-      −1.46%/yr crisis (`docs/DISCOVERIES.md` §9). Runs on free Cboe data
-      only; needs no option chains.
+      monthly rolls (36.5y, correlation 0.9913) and **+2.71%/yr** vs `PPUT3M`
+      over 89 quarterly rolls (correlation 0.9972). **It flips sign by
+      regime** at 5% OTM — +1.55%/yr calm, −1.46%/yr crisis — and **doubles
+      with strike depth**, which is the strongest skew evidence in the project
+      (`docs/DISCOVERIES.md` §9, §10). Runs on free Cboe data only; needs no
+      option chains.
 
 - [ ] **Surface the accuracy context on every result — now a constitutional
       requirement**, not a nice-to-have (README, "Accuracy is surfaced, not

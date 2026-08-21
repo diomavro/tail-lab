@@ -98,9 +98,10 @@ class ReplicationProgram(BaseModel):
     description: str
 
 
-#: The programs this harness can replicate. Both are 5% OTM put-protection
-#: overlays on the S&P 500; they differ only in tenor, which is exactly the
-#: dimension a pricing residual should be checked along.
+#: The programs this harness can replicate: two S&P 500 put-protection
+#: overlays that differ in *both* tenor and strike (monthly 5% OTM vs quarterly
+#: 10% OTM). That is deliberate coverage -- a pricing residual should be
+#: checked along the two axes the volatility surface actually varies over.
 PROGRAMS: dict[str, ReplicationProgram] = {
     "PPUT": ReplicationProgram(
         index_symbol="PPUT",
@@ -108,11 +109,14 @@ PROGRAMS: dict[str, ReplicationProgram] = {
         rolls_per_year=12,
         description="S&P 500 + 5% OTM one-month put, rolled monthly",
     ),
+    # Cboe names this one the "S&P 500 Tail Risk Index", which hides that it is
+    # the quarterly sibling of PPUT -- and, crucially, that it is struck at
+    # **10%** OTM, not 5%. Read the methodology, not the ticker.
     "PPUT3M": ReplicationProgram(
         index_symbol="PPUT3M",
-        moneyness_pct=5.0,
+        moneyness_pct=10.0,
         rolls_per_year=4,
-        description="S&P 500 + 5% OTM three-month put, rolled quarterly",
+        description="S&P 500 + 10% OTM quarterly put (Cboe S&P 500 Tail Risk Index)",
     ),
 }
 

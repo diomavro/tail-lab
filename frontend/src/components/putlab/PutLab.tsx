@@ -1,11 +1,13 @@
 import { useEffect, useState } from 'react'
 import {
   ApiError,
+  fetchAccuracy,
   fetchCadence,
   fetchPutBacktest,
   fetchDataQuality,
   fetchRegimeVerdict,
   fetchSweep,
+  type AccuracyResponse,
   type DataQualityResponse,
   fetchUniverse,
   type CadenceResponse,
@@ -57,6 +59,7 @@ const SWEEP_CACHE = new Map<string, SweepResponse>()
 const CADENCE_CACHE = new Map<string, CadenceResponse>()
 const DATA_QUALITY_CACHE = new Map<string, DataQualityResponse>()
 const REGIME_VERDICT_CACHE = new Map<string, RegimeVerdictResponse>()
+const ACCURACY_CACHE = new Map<string, AccuracyResponse>()
 
 function cachePut<T>(cache: Map<string, T>, key: string, value: T): void {
   // Bounded LRU-ish: evict the oldest inserted key past the cap.
@@ -234,6 +237,27 @@ export function PutLab() {
       ),
     DEBOUNCE_MS,
   )
+  // The accuracy companion. Keyed on the same axes as the backtest minus
+  // notional -- the model's error is a rate, so it does not depend on how much
+  // was spent. Fetched independently so a slow residual never delays the tape.
+  const accuracyKey = onBacktest
+    ? JSON.stringify([controls.asset, controls.moneyness_pct, controls.tenor_weeks, controls.years])
+    : null
+  const accuracy = useCachedResource(
+    ACCURACY_CACHE,
+    accuracyKey,
+    (signal) =>
+      fetchAccuracy(
+        {
+          asset: controls.asset,
+          moneyness_pct: controls.moneyness_pct,
+          tenor_weeks: controls.tenor_weeks,
+          years: controls.years,
+        },
+        signal,
+      ),
+    DEBOUNCE_MS,
+  )
   const sweep = useCachedResource(
     SWEEP_CACHE,
     sweepKey,
@@ -361,6 +385,7 @@ export function PutLab() {
             <BacktestView
               controls={controls}
               backtest={backtest}
+              accuracy={accuracy}
               sweep={sweep}
               cadence={cadence}
               regimeVerdict={regimeVerdict.status === 'ready' ? regimeVerdict.data : null}

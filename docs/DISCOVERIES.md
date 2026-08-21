@@ -257,15 +257,24 @@ constant would have been dominated by the regime that matters least.
 
 The mechanism is skew: `sigma` is the VIX, a ~30-day ATM vol, but the option
 is 5% OTM. Steep skew in calm markets means VIX understates the OTM put's
-vol; a crisis flattens the surface and VIX overshoots it. The tenor evidence
-agrees — PPUT3M's residual is a third of PPUT's, and a 5% OTM strike three
-months out sits far closer to the money in standard deviations.
+vol; a crisis flattens the surface and VIX overshoots it.
+
+**The strike evidence, added after the correction in §10, is stronger than the
+regime evidence.** PPUT3M is struck at **10%** OTM, and its residual is
+**+2.71%/yr — double PPUT's** — even though its longer quarterly tenor should
+push the other way (a 10% strike three months out is fewer standard deviations
+from the money than a 5% strike one month out). Strike depth dominates tenor,
+which is exactly what a missing volatility skew looks like. It also refines the
+flip: PPUT3M's residual stays positive *through crises*, so the sign change is
+a near-the-money phenomenon, not a crisis phenomenon.
 
 **Changed:** the residual is now reported **per regime, never as one number**
-(`make residual`), and the skew-aware pricer in `AGENT_TODO.md` has a
-falsifiable acceptance test instead of a vague one: it must shrink the
-calm/elevated residual *and* the crisis flip together. Shrinking only one
-would mean the skew story is wrong.
+(`make residual`); the Put Lab's accuracy panel measures each run against
+whichever published program sits closer to its strike and tenor, rather than
+quoting the 5%-OTM figure at a 20%-OTM tail hedge; and the skew-aware pricer in
+`AGENT_TODO.md` has a falsifiable acceptance test instead of a vague one. It
+must shrink **PPUT3M's residual by more than PPUT's** *and* close the 5%-OTM
+crisis flip. Fixing only part of that means the skew story is wrong.
 
 **Method note worth keeping:** the harness reports a **dividend-yield
 sensitivity beside every residual**, because the equity leg's dividends are an
@@ -273,3 +282,38 @@ assumption (`SPXT` is paywalled), not a measurement. It earns its keep
 immediately — PPUT's residual holds its sign across the plausible yield range
 and PPUT3M's does not. A residual quoted without that sensitivity would have
 been a number pretending to be a measurement.
+
+
+---
+
+## 10. Cboe's index *names* do not describe their strikes
+
+*2026-08-22*
+
+**Believed:** `PPUT3M` is the three-month sibling of `PPUT`, so it runs the
+same 5% OTM strike over a longer tenor. The name and the shared 2004 launch
+date both point that way, and `CLL3M` really is the 3-month `CLL`.
+
+**True:** Cboe calls `PPUT3M` the **"S&P 500 Tail Risk Index"**, and it buys a
+**10% OTM** quarterly put. The replication harness shipped with 5% hard-coded
+and published a residual of **+0.43%/yr** for a strategy that does not exist.
+
+The error was invisible from the outputs: a 5%-struck replication still
+correlated 0.9812 with the real index, because both are dominated by the same
+equity leg. **A high correlation with an index is not evidence you replicated
+that index** — it is mostly evidence you held the same underlying. The tell
+only appears on correction: the right strike moved correlation to **0.9972**
+and tracking error from 2.89%/yr to **0.98%/yr**, better than PPUT's own fit.
+
+**Changed:** the strike is fixed, `PROGRAMS` carries a comment saying to read
+the methodology rather than the ticker, and the corrected number turned out to
+be the most useful measurement in the file — see §9's strike evidence.
+
+**The general lesson, and it is the same shape as §6 (read the data back, do
+not trust the header):** a vendor's *label* is not a specification. Cboe
+publishes methodology PDFs for every index in this catalogue; the definitions
+endpoint `cdn.cboe.com/api/global/us_indices/definitions/all_indices.json`
+gives each ticker's official description keylessly and is the cheapest first
+check. Before replicating any published rule, confirm the rule from the
+publisher — not from the ticker, and not from a sibling index's naming
+pattern.
