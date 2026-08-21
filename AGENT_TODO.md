@@ -373,14 +373,33 @@ item 2 is time-sensitive in a way nothing else in this file is.
       −1.46%/yr crisis (`docs/DISCOVERIES.md` §9). Runs on free Cboe data
       only; needs no option chains.
 
-- [ ] **Benchmark row in the Put Lab.** Surface `PPUT`/`PPUT3M`/`VXTH` next
-      to a backtest result the way the S&P hurdle is already surfaced on the
-      sweep heatmap: the honest question for any put program is not "did it
-      make money" but "did it beat the published put program you could have
-      bought instead". Reuse the existing benchmark plumbing rather than
-      adding a parallel one. Measured reference points for the panel, from
-      the first live ingest (2007-10-09 to 2009-03-09): SPX -56.8%,
-      PPUT -41.5%, PPUT3M -38.6%, VXTH -43.3%, CLL -21.8%.
+- [ ] **Surface the accuracy context on every result — now a constitutional
+      requirement**, not a nice-to-have (README, "Accuracy is surfaced, not
+      filed"). A backtest figure shown without the known size of its error is
+      the one failure mode this platform cannot afford. Four things exist
+      already and are all currently invisible in the UI:
+      1. **The model-vs-market residual.** `make residual` /
+         `docs/MODEL_RESIDUAL.md` says a model-priced put roll runs
+         **+1.34%/yr optimistic** against PPUT, and **flips to -1.46%/yr in
+         crisis**. A Put Lab result should say so *for the regime mix of the
+         window it just ran*, not quote the global number.
+      2. **The published benchmark.** The honest question for a put program
+         is not "did it make money" but "did it beat the published put
+         program you could have bought instead". Reuse the existing benchmark
+         plumbing (the S&P hurdle on the sweep heatmap), do not add a second.
+         Measured reference points, first live ingest (2007-10-09 to
+         2009-03-09): SPX -56.8%, PPUT -41.5%, PPUT3M -38.6%, VXTH -43.3%,
+         CLL -21.8%.
+      3. **Data-quality flags on the inputs.** `research/data_quality.py`
+         already scans for bad ticks and stale runs and nothing shows it.
+      4. **The assumptions and their leverage.** Flat 4% rate, VIX as the IV
+         proxy, the dividend yield. Where a sensitivity is computed, show it
+         next to the number, as the residual report does.
+      **Acceptance:** a backtest result in the UI cannot be read without also
+      reading how wrong it might be. If a piece of context is not yet known
+      for a given asset or window, the surface says *that* rather than
+      staying silent.
+
 - [ ] **Free-source health canary.** Yahoo degraded from "works" to "429s
       everywhere" between 2026-08-19 and 2026-08-21 and nothing in the
       platform noticed — the failure surfaced only because a human went
