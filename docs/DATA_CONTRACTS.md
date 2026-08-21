@@ -339,6 +339,51 @@ shift observations by months around a crash.
 
 ---
 
+## 8. `option_quotes` — real historical put smile (optional, licence-limited)
+
+**Schema.** `contracts/option_quotes.py`. Columns: `underlying`,
+`quote_date`, `expiration`, `strike`, `bid`, `ask`, `volume`,
+`open_interest`, `spot`. Keyed by `(underlying, quote_date, expiration,
+strike)`.
+
+**Source.** A **local file**, not the network: the lambdaclass `data-v1` SPY
+chains, downloaded and SHA-256-verified by hand and refereed against Cboe's
+PPUT in `docs/DATA_VERDICTS.md`. `make ingest-option-quotes` extracts the
+slice; `ingestion/option_quotes.py` is the only adapter here that never
+opens a socket.
+
+**A slice, not the file.** 632 MB and 24.7M rows in, **42,131 rows out** — the
+put wing (40%–105% of spot) at each of 210 monthly roll dates, for the expiry
+that roll buys. First quote 2008-01-18, last 2025-11-21. Committing the whole
+file would cost real object storage to answer questions nobody asks.
+
+**Columns deliberately absent.** The vendor ships `mark`,
+`implied_volatility` and the greeks. All are sentinel-filled before 2011 —
+`mark` is $0.01 in 87–91% of 2008–2009 rows, IV sits on a 0.01488 floor in
+60% of them (`docs/DATA_VERDICTS.md`). The schema drops them rather than
+carrying them with a warning: a schema is the cheapest place to make a bad
+column unavailable. Anything downstream prices off `(bid+ask)/2` and inverts
+its own IV (`research/skew.py`).
+
+**`spot` is denormalized onto every row** so a quote is self-describing.
+Moneyness is the only question anyone asks of it, and recovering it should not
+require joining an OHLCV dataset that may have been re-ingested from a
+different vendor since (`docs/DISCOVERIES.md` #2).
+
+**Optional by construction.** This dataset is licence-limited (cleared for
+private research use only, `HUMAN_TODO.md`) and its upstream has vanished once
+already. **Nothing in `research/` or `api/` may require it.** The one consumer,
+`research/skew.py`, is a hand-run measurement that is allowed to fail with
+`LookupError` when the snapshot is absent — unlike the accuracy panel, which
+must never go silent.
+
+**Bronze partition key.** `ingest_date=<YYYY-MM-DD>`, same as every other
+dataset. Bad rows go to `option_quotes__quarantine`; an empty extraction
+raises rather than committing a partition that would shadow a good one
+(`docs/DISCOVERIES.md` #3).
+
+---
+
 ## Deferred datasets (backlog, not built)
 
 Tracked in `docs/END_STATE.md` §2.2 — do not build adapters for these

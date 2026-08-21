@@ -325,6 +325,11 @@ item 2 is time-sensitive in a way nothing else in this file is.
       2010–2023 overlap first (needs the `HUMAN_TODO.md` account), then
       extend back to 1990. Do not ship it as the default pricer until the
       overlap validation is in a test.
+      **The calibration target is now measured, not guessed** (`make skew`,
+      `docs/MODEL_RESIDUAL.md`): real SPY quotes over 210 roll dates put the
+      market's implied vol **+2.2 vol points above VIX at 5% OTM, +7.2 at
+      10%, +18.2 at 20%**. Success is `make residual` moving toward zero once
+      those gaps are priced in.
       **It now has a falsifiable acceptance test that needs no account.**
       Re-run `make residual` before and after (`docs/MODEL_RESIDUAL.md`).
       The skew story predicts the new pricer shrinks the calm/elevated

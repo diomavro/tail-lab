@@ -144,7 +144,18 @@ upgrade.
 
 ## One licence call (2026-08-21 second deep dive, `docs/DATA_SOURCING.md` §10)
 
-- [ ] Decide whether tail-lab may use the **lambdaclass `data-v1`** option
+- [x] **Decided 2026-08-22: use it, do not depend on it.** (Dio.) Cleared
+      for the private lake and the private dashboard; not republished, not a
+      source of record, and nothing in `research/` or `api/` may require it —
+      `ingestion/option_quotes.py` reads it from a local hash-verified
+      download and every consumer degrades if the snapshot is absent. The
+      realistic risk is not legal but disappearance: its own upstream vanished
+      in 2026, and the SHA-256 pin protects against tampering, not deletion.
+      If a clean posture is ever wanted, an Alpha Vantage subscription buys
+      the same data under your own terms.
+
+      Original decision text, kept for the reasoning:
+      Decide whether tail-lab may use the **lambdaclass `data-v1`** option
       chains (SPY 2008–2025, QQQ 2011–2025, IWM 2008–2025; free, no account,
       SHA-256 pinned GitHub Release assets). This closes the 2008–2009 gap
       that every paid option in §3 was priced to close — but it is

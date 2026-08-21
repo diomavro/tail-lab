@@ -94,6 +94,60 @@ In a crisis the surface flattens as ATM vol catches up, VIX overshoots the
 strike table above: doubling the strike depth roughly doubles the residual
 even though the longer tenor pushes the other way.
 
+## Skew explains it — measured, not argued
+
+*Added 2026-08-22, from 210 roll dates of **real SPY quotes**, 2008-01 to
+2025-11 (`make skew`, `research/skew.py`).*
+
+Everything above this section is an *argument* that skew causes the residual.
+With real historical quotes in the lake the same put can be priced twice on the
+same day — once by the model at the VIX, once by the market — which turns the
+argument into a number.
+
+| Strike | VIX (model input) | Market IV | Gap | Median market/model premium | Annualized underpayment |
+|---|---|---|---|---|---|
+| 5% OTM | 19.8% | **22.0%** | **+2.2 vol pts** | 1.42× | **+1.57 %/yr** |
+| 10% OTM | 19.8% | **27.0%** | **+7.2** | 7.38× | **+2.05 %/yr** |
+| 15% OTM | 19.8% | 32.4% | +12.6 | 180× | +1.51 %/yr |
+| 20% OTM | 19.8% | **38.0%** | **+18.2** | **21,663×** | +1.01 %/yr |
+
+**At 5% OTM, skew alone accounts for +1.57%/yr against a measured residual of
++1.34%/yr — the whole thing.** The pricing error is not *partly* skew with the
+rest hiding in settlement conventions and the flat rate; skew slightly
+overshoots, meaning the conventions net out marginally in the other direction.
+The argument in this file is now closed.
+
+Three things in that table deserve to be read slowly.
+
+**The market charges 22% vol for a put the model prices at 19.8%.** That 2.2
+vol-point gap is small enough to look like noise and large enough to be the
+entire residual, because it is paid twelve times a year on every roll.
+
+**At 20% OTM the model's price is essentially zero and the market's is not.**
+A 21,663× median ratio is not a precision figure — it is the ratio of a real
+premium to a Black-Scholes-at-VIX price that has rounded to nothing. This is
+the deep tail, the part of the surface the S1 thesis is actually about, and a
+flat-vol model does not merely misprice it: **it reports that the option is
+free.** Any backtest of a 20%-OOM hedge priced this way is measuring the cost
+of a lottery ticket the model thinks is being given away.
+
+**The cost peaks in the middle, not at the extreme.** Annualized underpayment
+rises from 5% to 10% OTM and then *falls* — at 20% OTM the ratio is
+astronomical but the absolute dollars are small. So the most expensive place to
+be wrong is moderate OTM, not the deep tail, even though the deep tail is where
+the model is most embarrassingly wrong in relative terms.
+
+**Caveat on the 10% row.** These quotes are ~30-day; PPUT3M is quarterly. The
++2.05%/yr is therefore not directly comparable to PPUT3M's +2.71%/yr residual,
+and the gap between them is a tenor effect this measurement does not yet
+isolate.
+
+**Provenance.** The quotes are the licence-limited lambdaclass `data-v1`
+extract (`docs/DATA_VERDICTS.md`, cleared in `HUMAN_TODO.md`), priced off
+`(bid+ask)/2` — never the vendor's `mark` or its sentinel-filled IV column,
+which is why implied vol is re-inverted here by bisection rather than read off
+the file.
+
 ## How much of this is the dividend assumption?
 
 `SPXT` is not free (HTTP 403), so the equity leg's dividends come from a flat
@@ -112,12 +166,12 @@ on while the exact levels are not.
 
 ## What would move these numbers
 
-- **A skew-aware pricer** (queued in `AGENT_TODO.md`, needs `SKEW` in the
-  lake, which needs the vol complex finished). This is the direct test, and
-  the strike evidence makes it sharper: a VIX+SKEW pricer should shrink
-  **PPUT3M's +2.71%/yr by more than PPUT's +1.34%/yr** (deeper strike, more
-  skew to recover) *and* close the 5%-OTM crisis flip. Fixing only one of the
-  three is a sign the mechanism is not skew.
+- **A skew-aware pricer** (queued in `AGENT_TODO.md`). No longer a
+  hypothesis-test but a *calibration target*: the measurement above says
+  exactly how many vol points it has to add at each strike (+2.2 at 5%, +7.2
+  at 10%, +18.2 at 20%). Success is `make residual` moving toward zero after
+  `make skew`'s gaps are priced in. It should shrink **PPUT3M's +2.71%/yr by
+  more than PPUT's +1.34%/yr** and close the 5%-OTM crisis flip.
 - **A real rate curve.** A flat 4% across a window where rates ran 0%–6.5%
   misprices the discount leg, especially for the quarterly program.
 - **AM settlement.** Bronze carries closes only. Measured cost of this exact

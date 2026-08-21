@@ -11,7 +11,7 @@ VENV := .venv
 PY := env -u PYTHONPATH $(VENV)/bin/python
 PIP := env -u PYTHONPATH $(VENV)/bin/pip
 
-.PHONY: setup lint format typecheck import-lint test check cov-floors ingest-vix ingest-ohlcv ingest-cboe-strategy residual api frontend clean
+.PHONY: setup lint format typecheck import-lint test check cov-floors ingest-vix ingest-ohlcv ingest-cboe-strategy ingest-option-quotes residual skew api frontend clean
 
 help:
 	@echo "Targets:"
@@ -66,6 +66,20 @@ check: lint typecheck import-lint test cov-floors
 
 ingest-vix:
 	env -u PYTHONPATH $(VENV)/bin/python -c "from tail_lab.ingestion.vix import ingest_vix; from tail_lab.config import get_lake_store; from tail_lab.observability import configure_logging; configure_logging(); r = ingest_vix(get_lake_store()); print(f'committed {r.valid_rows} rows from {r.source_id} -> {r.bronze_path} ({r.quarantined_rows} quarantined)')"
+
+# Reads a LOCAL, hash-verified vendor download (docs/DATA_VERDICTS.md), not the
+# network, and extracts ~42k rows of real put smile from its 632 MB. Optional
+# by design: nothing in research/ or api/ requires the resulting snapshot.
+UNDERLYING ?= SPY
+ingest-option-quotes:
+	env -u PYTHONPATH $(VENV)/bin/python -c "from tail_lab.ingestion.option_quotes import ingest_option_quotes; from tail_lab.config import get_lake_store; from tail_lab.observability import configure_logging; configure_logging(); r = ingest_option_quotes(get_lake_store(), underlying='$(UNDERLYING)'); print(f'committed {r.valid_rows} quotes for {r.underlying} -> {r.bronze_path} ({r.quarantined_rows} quarantined)')"
+
+# Read-only: prices the same put by model and by market at every roll date and
+# reports what the volatility skew explains of the residual. Needs the
+# licence-limited quote snapshot (`make ingest-option-quotes`).
+SKEW_TARGETS ?= 5 10 15 20
+skew:
+	env -u PYTHONPATH $(VENV)/bin/python -c "import datetime as dt; from tail_lab.config import get_lake_store; from tail_lab.research.skew import compute_skew_measurement as m; s=get_lake_store(); t=dt.date.today(); print(f\"{'target':>7} {'VIX':>6} {'mkt IV':>7} {'gap':>6} {'med mkt/model':>14} {'annualized underpay':>20}\"); [print(f'{r.moneyness_pct:6.0f}% {r.mean_model_iv*100:5.1f}% {(r.mean_market_iv or 0)*100:6.1f}% {(r.mean_iv_gap or 0)*100:+5.1f} {r.median_premium_ratio:13.2f}x {r.annualized_underpayment*100:+18.2f}%/yr') for r in (m(s, as_of=t, moneyness_pct=float(x)) for x in '$(SKEW_TARGETS)'.split())]"
 
 # Read-only: replicates the published Cboe put-protection indices with our own
 # pricer and prints the model-vs-market residual. Touches no lake writes, so

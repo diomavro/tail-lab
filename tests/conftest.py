@@ -60,3 +60,18 @@ def cboe_chain_sample() -> dict[str, Any]:
     with two contracts each -- enough to prove de-duplication works."""
     raw: dict[str, Any] = json.loads((FIXTURES_DIR / "cboe_chain_sample.json").read_text())
     return raw
+
+
+@pytest.fixture
+def lambdaclass_vendor_dir() -> Path:
+    """Directory holding a small **real** slice of the lambdaclass ``data-v1``
+    SPY chains, cut straight from the 632 MB original: two roll dates (one
+    pre-2015 with its Saturday expiration, one mid-COVID), each carrying both
+    calls and puts across the target monthly expiry *and* deliberate decoy
+    expiries that are too near and too far. The extractor's whole job is
+    filtering, so a fixture with nothing to reject would prove nothing.
+
+    The files keep the vendor's own column names and dtypes, including the
+    sentinel-filled ``mark``/IV/greek columns the contract drops
+    (``docs/DATA_VERDICTS.md``)."""
+    return FIXTURES_DIR / "lambdaclass"

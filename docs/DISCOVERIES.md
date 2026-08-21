@@ -317,3 +317,48 @@ gives each ticker's official description keylessly and is the cheapest first
 check. Before replicating any published rule, confirm the rule from the
 publisher — not from the ticker, and not from a sibling index's naming
 pattern.
+
+---
+
+## 11. A flat-vol model reports deep-tail puts as free
+
+*2026-08-22*
+
+**Believed:** the model-vs-market gap was a *level* error that got somewhat
+worse at deeper strikes. §9 measured +1.34%/yr at 5% OTM and +2.71%/yr at 10%
+and read that as skew, by argument.
+
+**True:** with real quotes in the lake the argument became a measurement
+(`make skew`, 210 roll dates of SPY quotes 2008–2025), and the deep tail is
+not a worse version of the same error — it is a different kind of error:
+
+| Strike | VIX | Market IV | Median market/model premium |
+|---|---|---|---|
+| 5% OTM | 19.8% | 22.0% | **1.42×** |
+| 10% OTM | 19.8% | 27.0% | 7.38× |
+| 20% OTM | 19.8% | **38.0%** | **21,663×** |
+
+At 20% OTM the Black-Scholes-at-VIX price has rounded to approximately
+nothing while the market charges real money. The model does not misprice the
+deep tail; **it reports that the option is free.** That is precisely the
+region the S1 thesis is about, and precisely where a model-priced backtest is
+least trustworthy — the opposite of the intuition that a cheap option is a
+small error.
+
+**The counter-intuitive part:** the *annualized cost* of the error peaks at
+10% OTM (+2.05%/yr) and **falls** to +1.01%/yr at 20%. The ratio explodes
+while the dollars shrink. So the most expensive place to be wrong is moderate
+OTM, and the most embarrassing place is the deep tail. Reporting either
+number alone would mislead.
+
+**Changed:** at 5% OTM skew accounts for **+1.57%/yr against a +1.34%/yr
+residual — the whole thing**, so `docs/MODEL_RESIDUAL.md` no longer argues
+that skew is the cause, it measures it. The skew-aware pricer in
+`AGENT_TODO.md` stops being a hypothesis test and becomes a calibration with
+a stated target: +2.2 vol points at 5% OTM, +7.2 at 10%, +18.2 at 20%.
+
+**Method note:** implied vol is re-inverted from `(bid+ask)/2` by bisection,
+never read from the vendor's `implied_volatility` column, which is
+sentinel-filled before 2011 (§7). Bisection rather than Newton because a put
+price is monotone in vol and cannot diverge, while Newton can — exactly on the
+near-zero-vega deep strikes that produced the finding above.
