@@ -11,7 +11,7 @@ VENV := .venv
 PY := env -u PYTHONPATH $(VENV)/bin/python
 PIP := env -u PYTHONPATH $(VENV)/bin/pip
 
-.PHONY: setup lint format typecheck import-lint test check cov-floors ingest-vix ingest-ohlcv ingest-cboe-strategy api frontend clean
+.PHONY: setup lint format typecheck import-lint test check cov-floors ingest-vix ingest-ohlcv ingest-cboe-strategy residual api frontend clean
 
 help:
 	@echo "Targets:"
@@ -66,6 +66,14 @@ check: lint typecheck import-lint test cov-floors
 
 ingest-vix:
 	env -u PYTHONPATH $(VENV)/bin/python -c "from tail_lab.ingestion.vix import ingest_vix; from tail_lab.config import get_lake_store; from tail_lab.observability import configure_logging; configure_logging(); r = ingest_vix(get_lake_store()); print(f'committed {r.valid_rows} rows from {r.source_id} -> {r.bronze_path} ({r.quarantined_rows} quarantined)')"
+
+# Read-only: replicates the published Cboe put-protection indices with our own
+# pricer and prints the model-vs-market residual. Touches no lake writes, so
+# unlike the ingest-* targets it is safe for an agent to run.
+PROGRAMS ?= PPUT PPUT3M
+residual:
+	env -u PYTHONPATH $(VENV)/bin/python -c "import datetime as dt; from tail_lab.config import get_lake_store; from tail_lab.research.backtest.index_replication import compute_index_replication, format_replication_report; s = get_lake_store(); print(chr(10).join(format_replication_report(compute_index_replication(s, index_symbol=p, as_of=dt.date.today())) for p in '$(PROGRAMS)'.split()))"
+
 
 SYMBOL ?= AAPL
 ingest-ohlcv:

@@ -325,6 +325,12 @@ item 2 is time-sensitive in a way nothing else in this file is.
       2010–2023 overlap first (needs the `HUMAN_TODO.md` account), then
       extend back to 1990. Do not ship it as the default pricer until the
       overlap validation is in a test.
+      **It now has a falsifiable acceptance test that needs no account.**
+      Re-run `make residual` before and after (`docs/MODEL_RESIDUAL.md`).
+      The skew story predicts the new pricer shrinks the calm/elevated
+      residual (**+1.6%/yr**) **and** the crisis flip (**-1.5%/yr**)
+      *together*. If it fixes only one, skew is not the mechanism and the
+      write-up must say so rather than shipping the half that worked.
 - [~] **Migrate the vol complex off Yahoo onto the Cboe CDN, and finish it.**
       **Source migration done 2026-08-21** — `ingestion/vix.py` now resolves
       an ordered chain (Cboe primary, Yahoo fallback) via the new
@@ -359,25 +365,14 @@ item 2 is time-sensitive in a way nothing else in this file is.
       path removed or explicitly demoted to fallback in both the code and
       contract #2's source section, in the same PR. This also unblocks the
       skew-aware pricer above, which cannot run without `SKEW` in the lake.
-- [ ] **PPUT replication harness — the model-vs-market residual.** The
-      research payoff of the `cboe_strategy` dataset and the answer to
-      `docs/adr/0004`'s admitted limitation. Cboe's PPUT rule is public and
-      deterministic (long S&P 500 + a 5% OTM SPX put, monthly roll at the
-      SOQ strike), so `research/backtest/put_roll.py` can be run under that
-      exact rule and the resulting NAV differenced against the real `PPUT`
-      series in bronze. The residual **is** the model-vs-market pricing gap
-      the S1 thesis rests on — measured, for free, instead of inferred.
-      Do it for `PPUT` (monthly, 5% OTM) and `PPUT3M` (quarterly) so the
-      tenor dimension is covered too.
-      **Acceptance:** a `research/` module with a pinned test on a synthetic
-      path where the residual is analytically known; a reported residual
-      series (level and annualized drag) over 2004→present; and an honest
-      write-up of what the replication does *not* match (dividend treatment,
-      SOQ vs close, cash drag) rather than a single headline number.
-      **Caveat to respect:** an exact match is not the goal and claiming one
-      would be wrong — `SPXT` (total return) is not served by the CDN
-      (HTTP 403), so the dividend leg has to be reconstructed and the
-      replication is an approximation. Say so in the output.
+- [x] **PPUT replication harness — done 2026-08-22.**
+      `research/backtest/index_replication.py`, `make residual`, results in
+      `docs/MODEL_RESIDUAL.md`. Residual vs `PPUT` is **+1.34%/yr** over 438
+      monthly rolls (36.5y, correlation 0.9913) and **+0.43%/yr** vs `PPUT3M`
+      over 89 quarterly rolls. **It flips sign by regime** — +1.55%/yr calm,
+      −1.46%/yr crisis (`docs/DISCOVERIES.md` §9). Runs on free Cboe data
+      only; needs no option chains.
+
 - [ ] **Benchmark row in the Put Lab.** Surface `PPUT`/`PPUT3M`/`VXTH` next
       to a backtest result the way the S&P hurdle is already surfaced on the
       sweep heatmap: the honest question for any put program is not "did it
@@ -427,26 +422,14 @@ item 2 is time-sensitive in a way nothing else in this file is.
 
 ## Second-deep-dive increments (2026-08-21 — see `docs/DATA_SOURCING.md` §10)
 
-- [ ] **Validate the lambdaclass `data-v1` chains against PPUT — before
-      ingesting them.** `docs/DATA_SOURCING.md` §10.1 found free EOD option
-      chains covering **SPY 2008–2025** (602 MB parquet, SHA-256 pinned, no
-      account needed) at
-      `https://github.com/lambdaclass/options_backtester/releases/download/data-v1/SPY_options.parquet`
-      — the 2008–2009 window optionsDX cannot reach. But its **provenance is
-      undocumented** (the upstream vanished in 2026 and never documented its
-      own sourcing), so it must not become a source of record on trust.
-      **Do this first:** build a 5% OTM monthly SPY put roll from the parquet
-      over 2008→present and compare it to the real `PPUT` series already in
-      bronze. PPUT is Cboe's OPRA-transaction-priced program, so it is the
-      free authoritative referee. **Acceptance:** a written verdict —
-      tracking error vs PPUT, where it diverges, and an explicit
-      trusted / not-trusted call with the evidence. A clean result unlocks
-      real-quote backtesting through the GFC; a dirty one saves us from
-      building on sand. Either outcome is a good day's work.
-      **Do not add a dataset contract or an ingestion adapter until the
-      verdict is written** — this item is research, not plumbing, and the
-      licence posture (research/educational, takedown offer) is a human call
-      that is queued separately in `HUMAN_TODO.md`.
+- [x] **Validate the lambdaclass `data-v1` chains against PPUT — done
+      2026-08-21.** Verdict in `docs/DATA_VERDICTS.md`: the chains reproduce
+      `PPUT` at **ρ=0.9927, TE 1.63%/yr** across 207 monthly rolls
+      (2008-01→2025-11), zero unpriceable rolls; provenance traced to **Alpha
+      Vantage `HISTORICAL_OPTIONS`**. Quotes trusted; `mark`, IV and greeks
+      are sentinel-filled before 2011 and must not be used. **Still no
+      adapter** — the licence call in `HUMAN_TODO.md` is unanswered.
+
 - [ ] **Hao Zhou 5-minute realized-variance series as a pricer input.**
       Free, monthly, **1990 → December 2024**, from the Bollerslev-Tauchen-
       Zhou variance-risk-premium dataset (link via

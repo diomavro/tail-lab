@@ -14,10 +14,12 @@ read all of it to learn that Stooq is walled or that Yahoo started failing.
 The negative half is the more valuable half: **a verified dead end is a
 result, and re-chasing it is pure waste.**
 
-**Sibling file.** `docs/DISCOVERIES.md` records what we *learned* — beliefs
+**Sibling files.** `docs/DISCOVERIES.md` records what we *learned* — beliefs
 that turned out wrong and what changed as a result (e.g. why the backtester
-prices off raw `close`, not `adj_close`). This file is *which sources work*;
-that one is *what we now know*.
+prices off raw `close`, not `adj_close`). `docs/DATA_VERDICTS.md` holds the
+referee reports for datasets that had to be measured against a benchmark
+before they could be believed, column by column. This file is *which sources
+work*; those are *what we now know* and *what may be trusted*.
 
 **Maintenance rule.** When you probe a source, add or update a row here in
 the same PR, with the date you probed it. A row without a `Verified` date is
@@ -55,7 +57,7 @@ a vendor's marketing page — the difference has already mattered twice
 
 | Source | What it gives | Gate | Detail |
 |---|---|---|---|
-| **lambdaclass `data-v1`** GitHub Release | **SPY 2008–2025** (602 MB), QQQ 2011–2025, IWM 2008–2025 EOD chains, SHA-256 pinned | ⚠️ **Validate-first.** Provenance undocumented, licence is research/educational with takedown offer. Referee against `PPUT` before trusting; licence call in `HUMAN_TODO.md` | §10.1 |
+| **lambdaclass `data-v1`** GitHub Release | **SPY 2008–2025** (632 MB, 24.7M rows), QQQ 2011–2025, IWM 2008–2025 EOD chains, SHA-256 pinned | ✅ **Validated 2026-08-21** — tracks Cboe `PPUT` at **ρ=0.9927, TE 1.63%/yr** over 207 monthly rolls. Quotes trustworthy; `mark`/IV/greeks are sentinel-filled pre-2011. Provenance resolved: **Alpha Vantage `HISTORICAL_OPTIONS`**. Remaining gate is the **licence call** in `HUMAN_TODO.md` | `docs/DATA_VERDICTS.md`, §10.1 |
 | **optionsDX** | SPX/SPY/QQQ/VIX EOD chains **2010–2023**, bid/ask + IV + greeks | Free account | §9.2 |
 | **historicaloptiondata.com free data** | Full L2 EOD chains, **Jan 2003 →**, one rotating symbol/month (DIA Dec 2008, RUT Jan 2009) | Name + email | §9.3 |
 | **historicaldata.net** | Free 2013 archive (Jan–Jun, 1.8 GB), broad universe, L2 fields | Download | §9.2 |

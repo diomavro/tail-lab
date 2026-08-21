@@ -149,13 +149,27 @@ upgrade.
       SHA-256 pinned GitHub Release assets). This closes the 2008–2009 gap
       that every paid option in §3 was priced to close — but it is
       redistributed **"for research and educational reproducibility only"**,
-      with a standing takedown offer to any rights-holder, and its
-      **provenance is undocumented**: the upstream it was mirrored from
-      (`philippdubach/options-data`) vanished in 2026 without ever recording
-      where its quotes came from. Reading: fine for a private lake feeding a
-      private dashboard and for validating the model pricer; not something to
-      republish, and not something to make source-of-record on trust. The
-      agent has been told to *validate it against Cboe's PPUT first and write
-      a verdict*, and to build no adapter until you have answered this.
+      with a standing takedown offer to any rights-holder.
+
+      **Two of the three unknowns are now closed (2026-08-21,
+      `docs/DATA_VERDICTS.md`).** *Quality:* the chains reproduce Cboe's
+      `PPUT` at **ρ=0.9927, tracking error 1.63%/yr** over 207 monthly rolls
+      and 17.8 years, with zero unpriceable rolls — the quotes are real
+      (though `mark`/IV/greeks are sentinel-filled before 2011 and must not
+      be used). *Provenance:* the schema is a field-for-field match with
+      **Alpha Vantage's `HISTORICAL_OPTIONS`** endpoint, so this is a
+      commercial vendor's premium data, mirrored twice.
+
+      **That cuts both ways, and the licence call is now yours alone.** A
+      named vendor with published methodology is a much better quality story
+      than an anonymous scrape — and a slightly worse redistribution story,
+      because Alpha Vantage's terms, not merely "factual market data", are
+      what the mirror's takedown offer is hedging. Reading: fine for a
+      private lake feeding a private dashboard and for validating the model
+      pricer over 2008–2009; not something to republish, and not something to
+      make source-of-record. If you want a clean posture instead, an Alpha
+      Vantage subscription buys the same data under your own terms.
+      The agent has been told to build no adapter until you have answered
+      this.
       **Nothing is blocked on you** — the free Cboe benchmark path (§9) works
       regardless; this only decides whether real 2008 chains join it.

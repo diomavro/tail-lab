@@ -172,3 +172,104 @@ Both were caught only by ingesting and reading back what landed.
 **Changed:** `docs/DATA_FINDINGS.md` records a `Verified` date per source
 and distinguishes "measured with a real request" from "read off a vendor
 page". Use `CLLZ` (1986) and `PUTY` (1986) when long history matters.
+
+---
+
+## 7. Trust is per-column, not per-dataset
+
+*2026-08-21*
+
+**Believed:** a dataset is either good enough to use or it isn't. The
+lambdaclass validation was framed as one question — are these quotes real?
+
+**True:** the answer was *yes for the quotes and no for everything derived
+from them*, in the same file, for the same rows. Its `bid`/`ask`/`strike`
+reproduce Cboe's `PPUT` at **ρ=0.9927** across 17.8 years, while in the same
+2008–2009 rows:
+
+- `mark` is **$0.01 in 87–91%** of rows — a sentinel wearing a price's name
+- `implied_volatility` sits on a **0.01488 floor in 60%** of 2008 puts,
+  during a VIX-80 crisis
+- median put delta at 20–45 DTE reads **−1.0000**
+
+A blanket "validated ✅" would have licensed exactly the wrong use. The most
+dangerous fields were the *convenient* ones — the pre-computed columns you
+reach for to skip work.
+
+**What makes sentinels worse than nulls:** a null fails loudly at the first
+arithmetic. `mark = 0.01` and `iv = 0.01488` propagate silently into a
+backtest and produce a plausible, wrong number. Note that the sentinel is
+neither round nor obviously fake; it was found by asking *how many rows share
+the minimum value*, not by looking at any single row.
+
+**Changed:** `docs/DATA_VERDICTS.md` records verdicts as a **column-level
+trust table**, never a single verdict per dataset. When probing a new source,
+check the derived columns separately from the raw ones, and check the *share
+of rows at the extreme value* rather than eyeballing a sample.
+
+---
+
+## 8. A schema is a fingerprint — provenance can be recovered from it
+
+*2026-08-21*
+
+**Believed:** the lambdaclass dataset's provenance was permanently
+unknowable. The upstream vanished in 2026 and, verbatim, *"the upstream's own
+sourcing was not documented"*. That unknown was blocking a human licence
+decision.
+
+**True:** field names and field *order* are a vendor's fingerprint. The
+parquet's twenty columns are a field-for-field match with Alpha Vantage's
+`HISTORICAL_OPTIONS` — including idiosyncratic choices no two vendors would
+converge on independently (`mark` alongside `bid`/`ask`; `bid_size` and
+`ask_size` as separate columns; that exact ordering). The underlying file
+matches `TIME_SERIES_DAILY_ADJUSTED` just as exactly, and the coverage start
+dates line up on both. Cost: one demo API call.
+
+**Changed:** when a dataset's origin is unknown, **fingerprint the schema
+against candidate vendors' documented responses before recording "provenance
+unknown"**. It is cheap, and it converts an unanswerable question into a
+licence question — which at least has an answer.
+
+**The corollary is uncomfortable:** knowing the vendor made the *quality*
+story better and the *redistribution* story worse. Resolving an unknown does
+not always resolve it in your favour, and that is still better than not
+knowing.
+
+---
+
+## 9. The model's pricing error flips sign in a crisis
+
+*2026-08-22*
+
+**Believed:** the model-vs-market gap (`docs/adr/0004`'s admitted limitation)
+was a *level* problem — our Black-Scholes premium is probably a bit off, and
+once measured it could be corrected with a calibration factor.
+
+**True:** measured against Cboe's PPUT over **438 monthly rolls and 36.5
+years**, the residual is **+1.34%/yr overall but −1.46%/yr in crisis**
+(`docs/MODEL_RESIDUAL.md`). The model underpays for puts in calm and elevated
+markets and **overpays in exactly the regime the platform exists to study**.
+
+A single multiplier would have fixed the common case and made the important
+case worse — and, because calm rolls outnumber crisis rolls 5:1, a fitted
+constant would have been dominated by the regime that matters least.
+
+The mechanism is skew: `sigma` is the VIX, a ~30-day ATM vol, but the option
+is 5% OTM. Steep skew in calm markets means VIX understates the OTM put's
+vol; a crisis flattens the surface and VIX overshoots it. The tenor evidence
+agrees — PPUT3M's residual is a third of PPUT's, and a 5% OTM strike three
+months out sits far closer to the money in standard deviations.
+
+**Changed:** the residual is now reported **per regime, never as one number**
+(`make residual`), and the skew-aware pricer in `AGENT_TODO.md` has a
+falsifiable acceptance test instead of a vague one: it must shrink the
+calm/elevated residual *and* the crisis flip together. Shrinking only one
+would mean the skew story is wrong.
+
+**Method note worth keeping:** the harness reports a **dividend-yield
+sensitivity beside every residual**, because the equity leg's dividends are an
+assumption (`SPXT` is paywalled), not a measurement. It earns its keep
+immediately — PPUT's residual holds its sign across the plausible yield range
+and PPUT3M's does not. A residual quoted without that sensitivity would have
+been a number pretending to be a measurement.

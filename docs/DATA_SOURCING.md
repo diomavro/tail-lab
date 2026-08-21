@@ -426,28 +426,39 @@ scripts/fetch_data.py verify` proves any copy byte-identical.
 the window that drives every tail-hedge result worth having. No account, no
 key, no signup — an agent can fetch it.
 
-**Three caveats that must travel with it, and they are not small:**
+**Three caveats travelled with it. Two are now closed — see
+`docs/DATA_VERDICTS.md` for the referee report (2026-08-21).**
 
-1. **Provenance is undocumented.** The repo's own `data/DATA_NOTICE.md` says
-   the files were mirrored from `philippdubach/options-data` ("Historical
-   Options Chain Data for 100+ US Equities, 2008–2025"), that this upstream
-   — CDN *and* GitHub repo — **disappeared in 2026**, and, verbatim: *"The
-   upstream's own sourcing was not documented."* Nobody can say which
-   exchange or vendor these quotes came from.
+1. ~~**Provenance is undocumented.**~~ **Resolved: Alpha Vantage.** The
+   repo's `data/DATA_NOTICE.md` says the files were mirrored from
+   `philippdubach/options-data`, that this upstream — CDN *and* GitHub repo —
+   **disappeared in 2026**, and, verbatim: *"The upstream's own sourcing was
+   not documented."* But the schema settles it: the parquet is a
+   **field-for-field match with Alpha Vantage's `HISTORICAL_OPTIONS`
+   endpoint** (verified against a live demo response — same twenty fields,
+   same order, including `mark` and `bid_size`), and the underlying file
+   matches `TIME_SERIES_DAILY_ADJUSTED` exactly. Alpha Vantage's options
+   history starts 2008; the parquet's first row is 2008-01-02. This is a
+   commercial vendor's premium endpoint, not an anonymous scrape.
 2. **Redistribution posture is research/educational only**, with an explicit
    takedown offer to any rights-holder. Fine for a private lake and a
    private dashboard; it is not a commercial-grade license.
-3. **Quality is unverified.** Known gaps are documented (IWM's
+3. ~~**Quality is unverified.**~~ **Measured.** The chains reproduce Cboe's
+   `PPUT` at **ρ=0.9927, tracking error 1.63%/yr** across 207 monthly rolls
+   and 17.8 years, with **zero unpriceable rolls** — the quotes are real. But
+   the *derived* columns are not: `mark` is a $0.01 sentinel in **87–91%** of
+   2008–2009 rows, and `implied_volatility` sits on a 0.01488 floor in
+   **60%** of 2008 puts (greeks likewise). **Price off `(bid+ask)/2` and
+   compute your own greeks.** Known gaps also documented upstream (IWM's
    `underlying.parquet` ships `adjClose` all-NaN; QQQ's chain starts
-   2011-03-23), but the chains themselves have not been audited by anyone
-   whose audit we can read.
+   2011-03-23).
 
-**Therefore: use it for validation, not as a source of record.** And the
-cross-check is now free and authoritative — §9.1's `PPUT`/`PPUT3M` are
-Cboe's own OPRA-transaction-priced put programs over the same window, so a
-5% OTM SPY put roll built from this parquet should track PPUT. If it does,
-the dataset is real; if it does not, we have learned that cheaply. That
-validation is the gate this data must pass before anything depends on it.
+**Therefore: use it for validation, not as a source of record.** The
+cross-check was free and authoritative — §9.1's `PPUT` is Cboe's own
+OPRA-transaction-priced put program over the same window — and **the data
+passed it on 2026-08-21**. The full referee report, including the
+column-by-column trust table, is `docs/DATA_VERDICTS.md`. What remains is
+not a data question but the licence call in `HUMAN_TODO.md`.
 
 ### 10.2 The minor win — free 5-minute realized variance, 1990→2024
 
