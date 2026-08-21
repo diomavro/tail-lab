@@ -51,11 +51,13 @@
 }
 
 #root {
-  width: 1126px;
+  /* Fluid: fill the viewport so the dashboard uses a full-screen monitor. The
+     Put Lab workspace (.putlab-root .wrap) owns the actual content max-width
+     (min(1840px, 95vw)) and centering. */
+  width: 100%;
   max-width: 100%;
   margin: 0 auto;
   text-align: center;
-  border-inline: 1px solid var(--border);
   min-height: 100svh;
   display: flex;
   flex-direction: column;
