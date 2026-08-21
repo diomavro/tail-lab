@@ -100,10 +100,33 @@ def scan_price_anomalies(
     return flags
 
 
-def _adj_close(bronze: pd.DataFrame) -> pd.Series:
+def _close(bronze: pd.DataFrame) -> pd.Series:
+    """Raw closing prices — the series this scanner must check.
+
+    **Raw ``close``, not ``adj_close``, and the distinction has teeth here.**
+    This module hunts *print errors*, so it has to look at what was actually
+    printed; ``adj_close`` is a derived series, one indirection away. Three
+    concrete consequences of getting this wrong:
+
+    1. The stale-feed check below flags ``STALE_RUN`` consecutive **identical**
+       closes. ``adj_close`` carries a cumulative adjustment factor that steps
+       at every ex-dividend date, so a genuinely frozen feed spanning an
+       ex-div date yields four *slightly different* adjusted values, the run
+       is broken, and the freeze is silently missed. SPY goes ex-dividend
+       quarterly, so this is a live false negative, not a hypothetical.
+    2. It would guard a series nothing reads: the backtester prices off raw
+       ``close`` (``research/backtest/put_roll.py``).
+    3. ``adj_close`` is vendor-dependent — Nasdaq sets it equal to ``close``,
+       Yahoo does not (`docs/DISCOVERIES.md` §2) — so the scanner's input
+       would change meaning with whichever source served the partition. That
+       is the worst possible property for a guard.
+
+    The spike-and-revert check is genuinely indifferent: dividend adjustment
+    is smooth and multiplicative, so a 35% spike appears in both series.
+    """
     ordered = bronze.sort_values("trade_date").drop_duplicates(subset="trade_date", keep="last")
     return pd.Series(
-        ordered["adj_close"].to_numpy(dtype=float),
+        ordered["close"].to_numpy(dtype=float),
         index=pd.DatetimeIndex(ordered["trade_date"]),
     )
 
@@ -118,7 +141,7 @@ def assess_asset_quality(store: LakeStore, *, asset: str, as_of: dt.date) -> Dat
         raise LookupError(f"no OHLCV for {asset} known as of {as_of.isoformat()}") from exc
     if bronze.empty:
         raise LookupError(f"no OHLCV for {asset} known as of {as_of.isoformat()}")
-    prices = _adj_close(bronze)
+    prices = _close(bronze)
     flags = scan_price_anomalies(prices)
     return DataQualityReport(
         asset=asset, as_of=as_of, n_bars=len(prices), n_suspicious=len(flags), flags=flags

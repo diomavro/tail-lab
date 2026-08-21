@@ -43,10 +43,19 @@ export function Leaderboard({
   controls,
   currentAsset,
   autoRun = false,
+  onSelectAsset,
+  collapsed = false,
+  onToggleCollapse,
 }: {
   controls: PutLabControls
   currentAsset: string
   autoRun?: boolean
+  // Picking a row is the primary way to choose what to backtest -- the old
+  // dropdown made you already know the ticker you wanted, which defeats the
+  // point of a screen whose whole job is telling you which ticker to want.
+  onSelectAsset?: (asset: string) => void
+  collapsed?: boolean
+  onToggleCollapse?: () => void
 }) {
   const [state, setState] = useState<State>({ status: 'idle' })
   const [sortKey, setSortKey] = useState<SortKey>('fragility_score')
@@ -108,7 +117,7 @@ export function Leaderboard({
   const arrow = (key: SortKey) => (key === sortKey ? (asc ? ' ▲' : ' ▼') : '')
 
   return (
-    <section className="panel" style={{ marginTop: 22 }}>
+    <section className="panel lb-panel">
       <div className="panel-head">
         <div>
           <span className="eyebrow">
@@ -116,6 +125,7 @@ export function Leaderboard({
             <ConceptInfo id="fragility_thesis" />
           </span>
           <h2 style={{ marginTop: 6 }}>Which names are most fragile?</h2>
+          {!collapsed && (
           <div className="hint">
             Rank the universe by <strong>fragility</strong> vs the market &mdash; downside beta, co-skewness,
             co-kurtosis, tail beta and downside capture combined &mdash; then hold puts on the most fragile names.
@@ -125,11 +135,35 @@ export function Leaderboard({
               {controls.moneyness_pct}% OOM &middot; {controls.tenor_weeks}-week
             </span>{' '}
             puts, so you can spot <em>cheap fragility</em>: fragile names whose puts still paid.
+            {onSelectAsset && (
+              <>
+                {' '}
+                <strong>Click any row</strong> to load that name into the backtest.
+              </>
+            )}
           </div>
+          )}
         </div>
-        <button className="lb-run" onClick={run} disabled={state.status === 'loading'}>
-          {state.status === 'loading' ? 'Screening 35 names…' : 'Screen the universe'}
-        </button>
+        <div className="lb-head-actions">
+          {onSelectAsset && (
+            <span className="lb-selected" title="The name every tab is currently showing">
+              showing <strong>{currentAsset.toUpperCase()}</strong>
+            </span>
+          )}
+          <button className="lb-run" onClick={run} disabled={state.status === 'loading'}>
+            {state.status === 'loading' ? 'Screening 35 names…' : 'Screen the universe'}
+          </button>
+          {onToggleCollapse && (
+            <button
+              className="lb-collapse"
+              onClick={onToggleCollapse}
+              aria-expanded={!collapsed}
+              title={collapsed ? 'Show the full ranking' : 'Collapse the ranking'}
+            >
+              {collapsed ? 'Expand ▾' : 'Collapse ▴'}
+            </button>
+          )}
+        </div>
       </div>
 
       {state.status === 'loading' && (
@@ -143,7 +177,7 @@ export function Leaderboard({
         </p>
       )}
 
-      {state.status === 'ready' && (
+      {state.status === 'ready' && !collapsed && (
         <div className="lb-scroll">
           <table className="lb-table mono">
             <thead>
@@ -204,8 +238,33 @@ export function Leaderboard({
               </tr>
             </thead>
             <tbody>
-              {rows.map((r, i) => (
-                <tr key={r.asset} className={r.asset === currentAsset ? 'lb-current' : undefined}>
+              {rows.map((r, i) => {
+                const selected = r.asset === currentAsset
+                const pick = () => onSelectAsset?.(r.asset)
+                return (
+                <tr
+                  key={r.asset}
+                  className={[selected ? 'lb-current' : '', onSelectAsset ? 'lb-pick' : '']
+                    .filter(Boolean)
+                    .join(' ')}
+                  onClick={onSelectAsset ? pick : undefined}
+                  // Rows carry a real action, so they need real affordances:
+                  // focusable, Enter/Space activated, and announced as selected.
+                  tabIndex={onSelectAsset ? 0 : undefined}
+                  role={onSelectAsset ? 'button' : undefined}
+                  aria-pressed={onSelectAsset ? selected : undefined}
+                  title={onSelectAsset ? `Backtest ${r.name}` : undefined}
+                  onKeyDown={
+                    onSelectAsset
+                      ? (e) => {
+                          if (e.key === 'Enter' || e.key === ' ') {
+                            e.preventDefault()
+                            pick()
+                          }
+                        }
+                      : undefined
+                  }
+                >
                   <td className="lb-num lb-rank">{i + 1}</td>
                   <td className="lb-name">{r.name}</td>
                   <td className="lb-num" style={{ fontWeight: 700 }}>
@@ -227,7 +286,8 @@ export function Leaderboard({
                   </td>
                   <td className="lb-num">{Math.round(r.hit_rate * 100)}%</td>
                 </tr>
-              ))}
+                )
+              })}
             </tbody>
           </table>
         </div>

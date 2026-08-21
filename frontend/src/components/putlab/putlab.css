@@ -823,6 +823,63 @@
 .putlab-root .lb-table .lb-current td {
   border-bottom-color: color-mix(in srgb, var(--accent) 30%, var(--line));
 }
+
+/* ---------- pinned fragility ranking (selectable rows) ---------- */
+/* The ranking sits above the tab bar so a name can be picked from any tab.
+   Rows are real controls: pointer, hover lift, focus ring, and a left rail on
+   the selected row so "which name am I looking at" survives a scrolled table. */
+.putlab-root .lb-table tbody tr.lb-pick {
+  cursor: pointer;
+}
+.putlab-root .lb-table tbody tr.lb-pick:hover {
+  background: color-mix(in srgb, var(--accent) 8%, var(--surface-2));
+}
+.putlab-root .lb-table tbody tr.lb-pick:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+.putlab-root .lb-table tbody tr.lb-pick .lb-name {
+  font-weight: 600;
+}
+.putlab-root .lb-table tbody tr.lb-current .lb-rank {
+  box-shadow: inset 3px 0 0 var(--accent);
+}
+.putlab-root .lb-head-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+.putlab-root .lb-selected {
+  font-size: 0.82rem;
+  color: var(--muted);
+  white-space: nowrap;
+}
+.putlab-root .lb-selected strong {
+  color: var(--accent);
+  font-family: var(--mono, ui-monospace, monospace);
+}
+.putlab-root .lb-collapse {
+  background: transparent;
+  color: var(--muted);
+  border: 1px solid var(--line-strong);
+  border-radius: 7px;
+  padding: 6px 10px;
+  font-size: 0.8rem;
+  cursor: pointer;
+}
+.putlab-root .lb-collapse:hover {
+  color: var(--accent);
+  border-color: var(--accent);
+}
+.putlab-root .lb-collapse:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+/* Pinned above the tabs, so it opens the page rather than floating mid-scroll. */
+.putlab-root .panel.lb-panel {
+  margin-top: 14px;
+}
 .putlab-root .badge.untested {
   background: var(--surface-2);
   color: var(--faint);

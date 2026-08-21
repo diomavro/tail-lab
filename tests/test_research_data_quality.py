@@ -83,3 +83,55 @@ def test_assess_asset_quality_missing_raises(tmp_path: Path) -> None:
     store = DeltaLakeStore(tmp_path)
     with pytest.raises(LookupError, match="no OHLCV"):
         assess_asset_quality(store, asset="nope", as_of=dt.date(2026, 3, 2))
+
+
+def test_frozen_feed_across_an_ex_dividend_date_is_still_flagged(tmp_path: Path) -> None:
+    """The reason this scanner reads raw ``close`` and not ``adj_close``.
+
+    A frozen feed prints the *same* price every day. ``adj_close`` carries a
+    cumulative dividend-adjustment factor that steps at each ex-dividend date,
+    so those identical prints come back as two shorter runs of *different*
+    adjusted values. When the split leaves both halves under ``STALE_RUN`` the
+    freeze disappears entirely — a real false negative, and SPY goes
+    ex-dividend quarterly.
+
+    Constructed to sit exactly on that boundary: a **6-bar** freeze with the
+    dividend going ex in the middle. Raw closes see one 6-bar run (flagged);
+    the adjusted series sees 3 + 3 (both below the threshold, silent).
+    """
+    store = DeltaLakeStore(tmp_path)
+    ingest = dt.date(2026, 3, 2)
+    #        0    1    2   |<------ 6-bar freeze ------>|   9    10   11
+    closes = np.array(
+        [100.0, 101.0, 102.0, 105.0, 105.0, 105.0, 105.0, 105.0, 105.0, 106.0, 107.0, 108.0]
+    )
+    n = len(closes)
+    # Dividend goes ex at bar 6, i.e. halfway through the freeze.
+    adj = closes.copy()
+    adj[:6] *= 0.997
+
+    df = pd.DataFrame(
+        {
+            "symbol": "SPY",
+            "trade_date": pd.date_range(end=ingest, periods=n, freq="B"),
+            "open": closes,
+            "high": closes * 1.001,
+            "low": closes * 0.999,
+            "close": closes,
+            "volume": np.full(n, 1_000_000, dtype=int),
+            "adj_close": adj,
+        }
+    )
+    store.write_bronze(dataset_id("spy"), ingest, df)
+
+    report = assess_asset_quality(store, asset="spy", as_of=ingest)
+    assert any(f.kind == "stale" for f in report.flags), (
+        "a frozen feed must be flagged even when a dividend goes ex mid-run"
+    )
+
+    # Prove the false negative rather than asserting it: on the adjusted
+    # series the same freeze is invisible.
+    adj_flags = scan_price_anomalies(pd.Series(adj, index=pd.DatetimeIndex(df["trade_date"])))
+    assert not [f for f in adj_flags if f.kind == "stale"], (
+        "this test is only meaningful if adj_close really does hide the freeze"
+    )

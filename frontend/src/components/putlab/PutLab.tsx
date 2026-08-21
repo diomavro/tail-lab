@@ -16,6 +16,7 @@ import {
 } from '../../api/client'
 import { FeedbackPanel } from '../FeedbackPanel'
 import { ConceptInfo } from './ConceptInfo'
+import { Leaderboard } from './Leaderboard'
 import './putlab.css'
 import { QuestionBar } from './QuestionBar'
 import { TabNav } from './TabNav'
@@ -154,8 +155,22 @@ export function PutLab() {
   const [controls, setControls] = useState<PutLabControls>(PUTLAB_DEFAULT_CONTROLS)
   const [universe, setUniverse] = useState<UniverseMember[]>([])
   const [activeTab, setActiveTab] = useState<TabId>('screen')
+  // The fragility ranking is pinned above the tabs (Dio, 2026-08-21): picking a
+  // ticker from a dropdown means you already knew which ticker you wanted,
+  // which defeats the point of a screen whose job is to tell you. Collapsible
+  // because 35 rows permanently on top would bury the tab it feeds.
+  const [rankingCollapsed, setRankingCollapsed] = useState(false)
 
   const updateControls = (patch: Partial<PutLabControls>) => setControls((c) => ({ ...c, ...patch }))
+
+  // Picking a name from the ranking selects it AND jumps to the backtest --
+  // that is the whole point of the shortcut. Safe to navigate on click only
+  // because the ranking stays pinned above the tabs, so the next pick is
+  // always one click away rather than a trip back to another tab.
+  const selectAsset = (asset: string) => {
+    updateControls({ asset })
+    setActiveTab('backtest')
+  }
 
   // The screening universe drives the dropdowns; fetched once. Failure just
   // leaves the QuestionBar on its built-in fallback list.
@@ -327,12 +342,21 @@ export function PutLab() {
           </div>
         </header>
 
+        <Leaderboard
+          controls={controls}
+          currentAsset={controls.asset}
+          autoRun
+          onSelectAsset={selectAsset}
+          collapsed={rankingCollapsed}
+          onToggleCollapse={() => setRankingCollapsed((c) => !c)}
+        />
+
         <TabNav activeTab={activeTab} onChange={setActiveTab} />
 
         {showQuestionBar && <QuestionBar controls={controls} onChange={updateControls} universe={universe} />}
 
         <div role="tabpanel" id={`panel-${activeTab}`} aria-labelledby={`tab-${activeTab}`} tabIndex={0}>
-          {activeTab === 'screen' && <ScreenView controls={controls} currentAsset={controls.asset} />}
+          {activeTab === 'screen' && <ScreenView controls={controls} />}
           {activeTab === 'backtest' && (
             <BacktestView
               controls={controls}

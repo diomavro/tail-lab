@@ -88,7 +88,20 @@ class SensitivityLeaderboardResult(BaseModel):
 
 
 def _adj_close_returns(bronze: pd.DataFrame) -> pd.Series:
-    """Daily simple returns of adjusted close, sorted and de-duplicated."""
+    """Daily simple returns of adjusted close, sorted and de-duplicated.
+
+    **``adj_close`` here is deliberate — do not "fix" this into consistency
+    with the backtester.** ``research/backtest/put_roll.py`` prices options off
+    raw ``close`` because an option is written on the price that actually
+    printed (`docs/DISCOVERIES.md` §1). This module computes something
+    different: the co-movement of *total returns* for downside beta and
+    co-skewness. Raw closes inject an artificial negative return on every
+    ex-dividend date, and because names go ex-dividend on different dates that
+    noise is idiosyncratic — precisely what a cross-sectional sensitivity
+    ranking must not absorb. Measured on real bronze (2026-08-21) the two
+    bases differ by ~0.4% relative on downside beta (QQQ 1.2194 vs 1.2245),
+    so this is a correctness choice, not a material one.
+    """
     ordered = bronze.sort_values("trade_date").drop_duplicates(subset="trade_date", keep="last")
     prices = pd.Series(
         ordered["adj_close"].to_numpy(dtype=float),
