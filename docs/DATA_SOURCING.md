@@ -11,6 +11,12 @@ Decisions taken from it live in `HUMAN_TODO.md` (accounts/purchases) and
 changes must still land in `docs/DATA_CONTRACTS.md` when an adapter
 actually switches.
 
+> **Looking for the short version?** `docs/DATA_FINDINGS.md` is the one-page
+> status board — every source probed, what it gives, whether it still works,
+> and the verified dead ends worth not re-chasing. This document is the
+> reasoning behind it; that one is the lookup table. Update both in the same
+> PR when a source changes.
+
 ---
 
 ## 1. Gap analysis — what "proper" backtesting still needs
