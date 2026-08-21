@@ -94,6 +94,12 @@ into the lake permanently. The $1,495 one-off is the alternative if
 ORATS's bulk-export fair-use terms turn out restrictive (unverified —
 check before subscribing).
 
+> **Superseded for the *strategy-evaluation* half of G1 by §9 below**
+> (2026-08-21). §9 found free sources that cover strategy evaluation
+> outright, including 2008, and demotes every paid option here to
+> "only if evaluation says the model gap actually matters". The
+> *signal/screening* half of G1 is untouched by §9.
+
 ## 4. Survivorship bias & point-in-time constituents (G2 + G3)
 
 | Source | Delisted prices | PIT constituents | Price | Notes |
@@ -182,3 +188,199 @@ Sharadar/ORATS/Tiingo/optionsDX). Results/derived metrics are fine.
   (trivial to test with a free key)?
 - Exact IBKR non-pro OPRA bundle fee (check inside Client Portal, when an
   account exists).
+
+---
+
+## 9. Free sources for historical put prices (deep dive, 2026-08-21)
+
+Re-opened at Dio's challenge — *"I don't believe there are NO free data
+sources"* — and scoped by his follow-up to **strategy evaluation only**
+(*"our strategy evaluation just needs historical put prices; our signal
+for picking needs more, but for now let's focus only on the historical
+puts"*). Every endpoint below was probed live from the workstation on
+2026-08-21; HTTP codes, row counts and date ranges are measured, not
+quoted from a vendor page.
+
+**Verdict: he was right.** For evaluating a put-buying tail strategy,
+free data covers the whole history including 2008. §3's ORATS/$1,495
+recommendation is not needed to answer "did this strategy work, and what
+did the protection actually cost". It remains open only for the *signal*
+side (cross-sectional, full-universe chains), which §3 still governs.
+
+### 9.1 Tier 1 — real transacted put P&L, daily, free, back to 1986
+
+Cboe publishes daily history for its **option-strategy benchmark
+indices** on the same keyless `cdn.cboe.com` pattern the VIX adapter
+already uses:
+`https://cdn.cboe.com/api/global/us_indices/daily_prices/{TICKER}_History.csv`.
+
+These are not model output. Per the official methodology
+(`cdn.cboe.com/api/global/us_indices/governance/Cboe_SP_500_Put_Protection_Indices_Methodology.pdf`,
+HTTP 200, 744 KB, rev. Aug 2025), the roll premium is the **volume-
+weighted average of actual OPRA transaction prices** in the roll window,
+falling back to the last reported ask if the strike does not trade. That
+is real executed put pricing, embedded in a daily index level.
+
+Measured live (all HTTP 200, all current through 2026-08-20):
+
+| Ticker | Index | First obs | Rows |
+|---|---|---|---|
+| `PPUT` | S&P 500 5% Put Protection | 1986-06-30 | 10,108 |
+| `PPUT3M` | **S&P 500 Tail Risk Index** | 2004-03-19 | 5,640 |
+| `VXTH` | VIX Tail Hedge | 2006-03-31 | 5,126 |
+| `LTV` | **S&P 500 Left Tail Volatility** | 2006-01-03 | 5,183 |
+| `CLLZ` | S&P 500 Zero-Cost Put Spread Collar | 1986-06-20 | 10,114 |
+| `CLL3M` | S&P 500 3-Month 95-110 Collar | 2004-03-19 | 5,640 |
+| `CLL` | S&P 500 95-110 Collar | **2008-08-26** (see note) | 4,483 |
+| `CLLR` | Russell 2000 Zero-Cost Put Spread Collar | 2001-01-31 | 6,423 |
+| `SPRO`, `SPRO01`…`SPRO12` | S&P 500 Buffer Protect, 12 staggered monthly series | 2005 | ~5,200 ea |
+| `PUTY` | S&P 500 2% OTM PutWrite (short-put side) | 1986-06-30 | 10,110 |
+| `PUT` | S&P 500 PutWrite | **1991-03-04** (see note) | 4,946 |
+| `PUTD`, `PUTVM`, `PUTR`, `PTLT` | rest of the PutWrite family | 2001–2005 | — |
+| `SKEW`, `VIX`, `VIX3M`, `VIX9D`, `VVIX` | implied-moment complex | 1990 / 1990 / 2009 / 2011 / 2006 | 9,211 (SKEW) |
+| `SPX` | S&P 500 price index | **1975-01-02** | 13,017 |
+
+The full catalogue is at
+`cdn.cboe.com/api/global/us_indices/definitions/all_indices.json`
+(HTTP 200, 1.4 MB, 2,495 indices; 129 match put/tail/collar/protect).
+
+**Corrected against the shipped adapter's first live run (2026-08-21).** The
+row counts and first-observation dates above are now what actually landed in
+bronze (74,367 rows across the ten default tickers), not what the CSV headers
+suggested. Two of the CDN files start much later than the index itself is
+quoted elsewhere: **`CLL` begins 2008-08-26** and **`PUT` begins 1991-03-04**.
+Use `CLLZ` (1986-06-20) when pre-crisis collar history is needed and `PUTY`
+(1986-06-30) for the long-run putwrite series — the earlier draft of this
+table claimed 1986 for both `CLL` and `PUT`, which the ingest disproved.
+
+Sanity check on the same run, 2007-10-09 to 2009-03-09 (peak to trough):
+`SPX` **-56.8%**, `PPUT` **-41.5%**, `PPUT3M` **-38.6%**, `VXTH` **-43.3%**,
+`CLL` **-21.8%**. The protection did what protection is supposed to do, in
+the one period that matters most — which is the whole point of having a
+real-quote benchmark rather than a modelled one.
+
+Why this closes evaluation:
+
+1. **A benchmark that already is the strategy.** `PPUT3M` is literally
+   Cboe's S&P 500 Tail Risk Index and `PPUT` a 5% OTM monthly put
+   overlay. Any Put Lab result can be scored against a real, executed,
+   published program across 2008, 2011, 2015, 2018, 2020 and 2022 —
+   at zero cost and with no signup.
+2. **The model-vs-market gap becomes measurable without buying quotes.**
+   Run the `OptionPricer` proxy through PPUT's published rule
+   (5% OTM, monthly roll, SOQ strike) and difference the resulting NAV
+   against the real PPUT series. The residual *is* the mispricing the
+   S1 thesis is about — which is exactly what §3 proposed to spend
+   $99–$1,495 to see.
+3. **Put premia are recoverable at roll granularity.** PPUT = long S&P
+   500 total return + long the 5% OTM put. With the index level and the
+   methodology both free, the protection leg can be backed out.
+   *Caveat, verified:* `SPXT` (total-return) is **not** served by the
+   CDN (HTTP 403 AccessDenied) — the dividend leg has to come from
+   elsewhere (FRED) — so treat the inversion as an approximation to be
+   pinned against optionsDX quotes on the 2010–2023 overlap before it
+   is trusted.
+
+### 9.2 Tier 2 — real chains, free, 2010→present
+
+- **optionsDX** — every one of the 10 datasets in their shop is listed
+  at **$0.00**: SPY, SPX, VIX, QQQ, TSLA, AAPL, NVDA, UVXY, SLV, BTC.
+  SPX product page states **2010–2023**, EOD, "all expirations and
+  strikes, greeks, implied volatility, bid/ask/last, and underlying
+  price". Free account. Covers five of the six target tail events.
+- **`cdn.cboe.com/api/global/delayed_quotes/options/_SPX.json`** —
+  **verified live today: HTTP 200, 13.7 MB, 30,842 SPX contracts**, each
+  with `bid`/`ask`/`bid_size`/`ask_size`/`iv`/`open_interest`/`volume`/
+  `delta`/`gamma`/`vega`/`theta`/`rho`/`theo`/`last_trade_price`. No key,
+  no account, no rate-limit encountered. Same path serves `_VIX`, `_RUT`,
+  `SPY`, `QQQ` and single names. **This is a free forward-collection tap
+  that should be switched on immediately** — every day it is not running
+  is a day of real chains permanently lost.
+- **historicaldata.net** — free 2013 archive (Jan–Jun, ~1.8 GB, six
+  monthly zips), broad US universe, with bid/ask + sizes, OI, all
+  greeks, IV. Useful as a breadth cross-check on one known year.
+- **DoltHub `post-no-preference/options`** — free (`dolt clone`), ~2,098
+  underlyings, 2019→present.
+
+### 9.3 Tier 3 — 2008 itself, free
+
+- **historicaloptiondata.com free-data programme** — full-format L2 EOD
+  chains, **January 2003 → most recent month**, *one rotating symbol per
+  calendar month* (their own examples: **DIA for December 2008**, RUT
+  for January 2009, TGT for February 2019). Name + email, files at
+  dnfilevault.com. This is the only free source found that puts real
+  2008–2009 option quotes on disk. Not a continuous program, but exactly
+  right for pinning a pricer against crisis-period reality.
+- **Minneapolis Fed Market-Based Probability Densities** — official Fed
+  risk-neutral densities backed out of real SPX option prices by
+  Breeden-Litzenberger. `sp12m` (S&P 500, 12-month) runs
+  **2007-01-12 → 2026-08-19, 821 observations** with `mu`, `sd`, `skew`,
+  `kurt`, `p10`/`p50`/`p90` and P(±20%). Free CSV, no key:
+  `minneapolisfed.org/-/media/files/banking/mpd/mpd_stats.csv`
+  (dictionary at `mpd_data_dictionary.csv`). Weekly, single tenor — a
+  calibration target through the crisis, not a chain.
+- **`SKEW` + the VIX term structure** — free, daily, `SKEW` from
+  **1990**. These are Cboe's implied 2nd and 3rd moments from real OTM
+  SPX option prices. A Gram-Charlier/Corrado-Su pricer calibrated to
+  VIX + SKEW prices OTM puts with the market's actual skew back to 1990,
+  which is strictly better than the flat Black-Scholes proxy and costs
+  nothing. Validate it on the optionsDX 2010–2023 overlap, then run it
+  across 1990–2009.
+
+### 9.4 Negative results — verified, do not re-litigate
+
+- **Wayback Machine is not an option-chain archive.** The Cboe SPX
+  delayed-quote JSON has exactly **three** captures ever
+  (2021-07-20, 2022-12-31, 2023-03-26). Checked because it would have
+  been the cheapest possible backfill; it isn't one.
+- **Yahoo's chart endpoint now 429s from residential IPs too.** Probed
+  from Dio's workstation: `HTTP 429`. §2's "residential + pacing may
+  work" is **no longer true** — this affects `ingestion/ohlcv.py`, which
+  currently has Yahoo as primary (`docs/DATA_CONTRACTS.md` #1).
+- **Stooq is still fully walled**, JS proof-of-work on both `spy.us` and
+  `leh.us`. Its bulk `/db/h/` index page returns 200 but is an HTML
+  shell, not a download.
+- **Cboe's free "historical options data" page is aggregate only** —
+  volume and put/call ratios (`totalpc.csv`, `indexpc.csv`, `spxpc.csv`,
+  `equitypc.csv`, `vixpc.csv` + `*archive.csv`), frozen 2019-10-04, plus
+  monthly volume-rank xlsx. No per-series prices. Cboe DataShop's
+  `optsum` (SPX/OEX/VIX EOD, 2005–2019-09-30, with bid/ask) is real but
+  cart-priced.
+- **marketdata.app free tier is 1 year of history**, 24-hour delayed —
+  useless for backtesting.
+- **`cdn.cboe.com` per-day historical option-summary paths 403.** Only
+  the index/`daily_prices`, `delayed_quotes`, futures-archive and
+  `volume_and_call_put_ratios` trees are public.
+
+### 9.5 Revised plan for the puts
+
+Ordered by value per unit of effort; the first two need no account at
+all and are agent-buildable today.
+
+1. **Cboe strategy-index adapter** (`AGENT_TODO.md`) — PPUT, PPUT3M,
+   VXTH, LTV, CLL/CLL3M/CLLZ, SPRO family, PUT/PUTY. Identical shape to
+   `ingestion/vix.py`. Gives Put Lab a real benchmark row and the
+   model-vs-market residual, free, back to 1986.
+2. **Daily SPX/SPY/VIX chain snapshots** from the delayed-quote JSON
+   into bronze (`AGENT_TODO.md`). Start now; it only accrues.
+3. **optionsDX free account** (`HUMAN_TODO.md`) — 2010–2023 SPX/SPY/QQQ
+   for the `OptionPricer` v2 validation §3 wanted.
+4. **historicaloptiondata.com free data** (`HUMAN_TODO.md`) — 2008–2009
+   crisis-period spot checks.
+5. **Re-decide ORATS only after (1)–(4)**, on evidence: if the measured
+   model-vs-PPUT residual is small, the $99/mo buys little for
+   evaluation and its real justification is the signal side, not this.
+
+### 9.6 Still to verify by hand
+
+- Which optionsDX *years* sit at $0.00 (shop lists the range
+  "$0.00 – $50.00" per product; the free/paid split per year is only
+  visible in the variant selector after login).
+- Whether historicaloptiondata.com's rotating free symbol can be
+  requested for a *chosen* past month (e.g. Sep–Dec 2008) or only the
+  current month's offering.
+- Cboe's terms for automated polling of `delayed_quotes` — pace it and
+  cache, same discipline as the Nasdaq earnings endpoint (§2).
+- Whether an S&P 500 total-return series is obtainable free (for the
+  §9.1(3) PPUT inversion) — FRED dividend-yield reconstruction is the
+  obvious candidate and is already key-provisioned.

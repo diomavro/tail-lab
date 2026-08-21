@@ -99,3 +99,45 @@ Phase 2/3 — paid decisions (small):
       Ireland — execution venue only, not a data source (no broker serves
       expired-option history); US listed options are Hungary-eligible;
       OPRA live data ~$10/mo, commission-waivable.
+
+## Historical puts — revised after the 2026-08-21 deep dive
+
+`docs/DATA_SOURCING.md` §9 supersedes the options half of the Phase 1–3
+queue above. Short version: for **evaluating** a put-buying tail strategy,
+free data now covers the entire history including 2008, so the ORATS
+$99/mo and the $945/$1,495 one-offs are no longer on the critical path.
+Two free Cboe taps need no account at all and are queued for the agent
+(`AGENT_TODO.md`); only these two items need you.
+
+- [ ] Create the free **optionsDX** account (as already listed above) —
+      now higher priority, because it is the validation set for the
+      skew-aware pricer, not just a nice-to-have. All ten of their
+      datasets list at **$0.00** (SPY, SPX, VIX, QQQ, TSLA, AAPL, NVDA,
+      UVXY, SLV, BTC); SPX is stated as **2010–2023** EOD with bid/ask,
+      IV and greeks. **While you are logged in, check which years are
+      actually free** — the shop shows a "$0.00 – $50.00" range per
+      product and the per-year split is only visible in the variant
+      selector (`docs/DATA_SOURCING.md` §9.6).
+- [ ] Request the **historicaloptiondata.com free data** (name + email at
+      `historicaloptiondata.com/free-data/`, files land at
+      dnfilevault.com). Full-format L2 EOD chains, **January 2003 →
+      present**, one rotating symbol per calendar month — their own
+      examples are **DIA for December 2008** and RUT for January 2009.
+      This is the only free source found with real 2008–2009 option
+      quotes. **When you request it, ask whether you can pick a past
+      month** (Sep–Dec 2008 would be worth more than the current one);
+      if not, it is still worth taking whatever month is on offer.
+
+**Not needed now (was Phase 3):** ORATS at $99/mo. Re-decide only after
+the agent has measured the model-vs-PPUT residual — if the proxy pricer
+tracks Cboe's real-transaction PPUT/PPUT3M series closely, the paid
+chains buy little for evaluation and their real justification is the
+*signal* side (full-universe cross-sectional chains), which is a separate
+decision. Sharadar at $9/mo is unaffected by this — it addresses G2/G3/G4
+(survivorship and the broad-universe feed), not puts.
+
+**One regression worth knowing:** Yahoo's chart endpoint now returns 429
+from *residential* IPs too, not just datacenter ones (probed from your
+workstation, 2026-08-21). `ingestion/ohlcv.py` still has Yahoo as
+primary, so the Tiingo key above is now a genuine fix rather than an
+upgrade.

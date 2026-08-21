@@ -264,3 +264,148 @@ a large one strictly in order.
       Once a dataset's ingest volume makes this costly, consider a
       diff/merge write for that dataset specifically — must not change the
       as-of/immutability contract or the point-in-time tests.
+
+## Free historical-put increments (2026-08-21 — see `docs/DATA_SOURCING.md` §9)
+
+Both items are keyless, need no account, and were probed live on
+2026-08-21. They exist because Dio pushed back on §3's "you must pay for
+real option quotes" conclusion, and he was right for the evaluation half
+of the problem. Take them in order — item 1 is the higher-value one, but
+item 2 is time-sensitive in a way nothing else in this file is.
+
+- [x] **Cboe option-strategy benchmark index adapter.** **Done 2026-08-21.**
+      `contracts/cboe_strategy.py` + `ingestion/cboe_strategy.py` +
+      `make ingest-cboe-strategy` (`TICKERS=` override), dataset #7 in
+      `docs/DATA_CONTRACTS.md`, 24 new tests, parser pinned to a committed
+      fixture of real PPUT rows (1986 inception + the Sep-Oct 2008 window).
+      First live run committed **74,367 rows across 10 indices,
+      1975-01-02 to 2026-08-20, 0 quarantined**. Sanity check over
+      2007-10-09 to 2009-03-09: SPX -56.8% vs PPUT -41.5%, PPUT3M -38.6%,
+      VXTH -43.3%, CLL -21.8%. Two source quirks found and documented:
+      `CLL`'s CDN file starts 2008-08-26 and `PUT`'s 1991-03-04, not 1986.
+      **Still open:** wire the series into the Put Lab as a benchmark row
+      and then as the model-vs-market residual — the original description
+      below is retained for that remaining half.
+- [ ] ~~**Cboe option-strategy benchmark index adapter.**~~ Same shape and
+      same host as `ingestion/vix.py`:
+      `https://cdn.cboe.com/api/global/us_indices/daily_prices/{TICKER}_History.csv`,
+      `DATE,<TICKER>` two-column CSV, keyless, all HTTP 200 and current
+      through 2026-08-20. Ingest at minimum `PPUT` (5% put protection,
+      from 1986-06-30, 10,109 rows), `PPUT3M` (Cboe **S&P 500 Tail Risk
+      Index**, 2004-03-19), `VXTH` (VIX tail hedge, 2006-03-31), `LTV`
+      (**S&P 500 Left Tail Volatility**, 2006-01-03) and `SPX` (price
+      index, from 1975); `CLL`/`CLL3M`/`CLLZ`/`CLLR`, the `SPRO01..12`
+      buffer series and the `PUT`/`PUTY` putwrite family are the same
+      adapter with a longer ticker list. These indices price their puts
+      at **actual OPRA volume-weighted transaction prices** (Cboe
+      methodology PDF, §9.1) — so they are a real-quote benchmark for the
+      Put Lab, covering 2008/2011/2015/2018/2020/2022, for $0. Wire the
+      result into the Put Lab as a benchmark series and, once that lands,
+      as the model-vs-market residual (`docs/END_STATE.md` §4 research
+      question on `docs/adr/0004`'s model-priced limitation).
+- [ ] **Daily Cboe delayed-quote chain snapshots into bronze.**
+      `https://cdn.cboe.com/api/global/delayed_quotes/options/_SPX.json`
+      verified live: HTTP 200, 13.7 MB, **30,842 SPX contracts**, each
+      carrying `bid`/`ask`/`bid_size`/`ask_size`/`iv`/`open_interest`/
+      `volume`/`delta`/`gamma`/`vega`/`theta`/`rho`/`theo`/
+      `last_trade_price`/`prev_day_close`, plus a top-level `timestamp`
+      and the underlying's `current_price`/`iv30`. Same path serves
+      `_VIX`, `_RUT`, `SPY`, `QQQ`. **Time-sensitive:** this is forward
+      collection — every day the snapshot does not run is a day of real
+      chains permanently lost, and the Wayback Machine cannot backfill it
+      (exactly three captures ever exist — §9.4). Pace and cache politely,
+      as with the Nasdaq earnings endpoint. Needs a new dataset entry in
+      `docs/DATA_CONTRACTS.md` before the adapter lands.
+- [ ] **Skew-aware `OptionPricer` calibrated to VIX + SKEW.** `SKEW` is
+      free and daily from **1990** and is Cboe's implied third moment from
+      real OTM SPX put prices; a Gram-Charlier/Corrado-Su expansion on
+      VIX (2nd moment) + SKEW (3rd) prices OTM puts with the market's
+      actual skew, instead of the flat Black-Scholes proxy
+      (`docs/adr/0004`). Validate against optionsDX quotes on the
+      2010–2023 overlap first (needs the `HUMAN_TODO.md` account), then
+      extend back to 1990. Do not ship it as the default pricer until the
+      overlap validation is in a test.
+- [ ] **Migrate the vol complex off Yahoo onto the Cboe CDN, and finish it.**
+      Highest-value item in this section: `docs/DATA_CONTRACTS.md` #2
+      specifies Cboe as the source for `VIX`, `VIX3M`, `VIX9D`, `VVIX` and
+      `SKEW`, but `ingestion/vix.py` ingests only `VIX`, and it does so from
+      **Yahoo's chart endpoint, which now returns HTTP 429 from residential
+      IPs as well as datacenter ones** (probed 2026-08-21,
+      `docs/DATA_SOURCING.md` §9.4) — so the platform's most-used dataset is
+      on a source that is actively failing. The shipped
+      `ingestion/cboe_strategy.py` proves the replacement path works:
+      `https://cdn.cboe.com/api/global/us_indices/daily_prices/{TICKER}_History.csv`,
+      keyless, HTTP 200, full history every fetch. These files serve
+      `DATE,OPEN,HIGH,LOW,CLOSE` (unlike the strategy indices' two-column
+      shape), which `parse_index_history_csv` already handles — prefer
+      reusing/generalising that parser over writing a second one.
+      **Acceptance:** all five series ingested; contract #2's OHLC schema
+      honoured (not just close); `source_id` becomes `"cboe"`; the Yahoo
+      path removed or explicitly demoted to fallback in both the code and
+      contract #2's source section, in the same PR. This also unblocks the
+      skew-aware pricer above, which cannot run without `SKEW` in the lake.
+- [ ] **PPUT replication harness — the model-vs-market residual.** The
+      research payoff of the `cboe_strategy` dataset and the answer to
+      `docs/adr/0004`'s admitted limitation. Cboe's PPUT rule is public and
+      deterministic (long S&P 500 + a 5% OTM SPX put, monthly roll at the
+      SOQ strike), so `research/backtest/put_roll.py` can be run under that
+      exact rule and the resulting NAV differenced against the real `PPUT`
+      series in bronze. The residual **is** the model-vs-market pricing gap
+      the S1 thesis rests on — measured, for free, instead of inferred.
+      Do it for `PPUT` (monthly, 5% OTM) and `PPUT3M` (quarterly) so the
+      tenor dimension is covered too.
+      **Acceptance:** a `research/` module with a pinned test on a synthetic
+      path where the residual is analytically known; a reported residual
+      series (level and annualized drag) over 2004→present; and an honest
+      write-up of what the replication does *not* match (dividend treatment,
+      SOQ vs close, cash drag) rather than a single headline number.
+      **Caveat to respect:** an exact match is not the goal and claiming one
+      would be wrong — `SPXT` (total return) is not served by the CDN
+      (HTTP 403), so the dividend leg has to be reconstructed and the
+      replication is an approximation. Say so in the output.
+- [ ] **Benchmark row in the Put Lab.** Surface `PPUT`/`PPUT3M`/`VXTH` next
+      to a backtest result the way the S&P hurdle is already surfaced on the
+      sweep heatmap: the honest question for any put program is not "did it
+      make money" but "did it beat the published put program you could have
+      bought instead". Reuse the existing benchmark plumbing rather than
+      adding a parallel one. Measured reference points for the panel, from
+      the first live ingest (2007-10-09 to 2009-03-09): SPX -56.8%,
+      PPUT -41.5%, PPUT3M -38.6%, VXTH -43.3%, CLL -21.8%.
+- [ ] **Free-source health canary.** Yahoo degraded from "works" to "429s
+      everywhere" between 2026-08-19 and 2026-08-21 and nothing in the
+      platform noticed — the failure surfaced only because a human went
+      looking. Add a small scheduled check that probes each keyless source
+      the platform depends on (Cboe index CDN, Cboe delayed quotes, Nasdaq
+      earnings, FRED, Yahoo) and records status + latency through
+      `observability.log_event`, feeding the activity-log surface queued
+      above. **Acceptance:** a red canary is visible in the cockpit without
+      anyone reading logs. Keep it cheap — one HEAD/small-GET per source per
+      day, not a crawl.
+- [ ] **Minneapolis Fed MPD adapter** (free, keyless, official). Risk-neutral
+      density statistics for the S&P 500 backed out of real option prices by
+      Breeden-Litzenberger:
+      `https://www.minneapolisfed.org/-/media/files/banking/mpd/mpd_stats.csv`
+      (dictionary at `mpd_data_dictionary.csv`). The `sp12m` market runs
+      **2007-01-12 to 2026-08-19, 821 weekly observations**, carrying `mu`,
+      `sd`, `skew`, `kurt`, `p10`/`p50`/`p90` and the probability of a ±20%
+      move. Weekly and single-tenor, so it is a *calibration and validation
+      target* for the skew-aware pricer through the 2008 crisis — not a
+      chain and not a substitute for one. Ingest the `sp12m` rows at
+      minimum; the file also carries per-firm densities (aig, citi, bac, gs,
+      ms...) that the fragility screen may want later.
+
+### Working rules for this section
+
+- **Do not run `make ingest-*`.** Ingestion targets write to the *production*
+  Tigris lake when `.env` is present, and a wrong `range_` has already
+  silently shadowed a good partition and truncated prod backtests once
+  (see the OHLCV truncation incident). Build adapters against committed
+  fixtures, let CI prove them, and leave the live run to Dio. The
+  `cboe_strategy` adapter is safe by construction here — it refetches full
+  history every time, so it cannot truncate — but the rule stands.
+- **Tests never touch the network** (`docs/STANDARDS.md`). Every adapter
+  above splits pure-parse from fetch and commits a real fixture, exactly as
+  `ingestion/cboe_strategy.py` does.
+- **Add the dataset contract in the same PR as the adapter**, never after.
+- **One item per PR.** These are deliberately independent; a PR that does
+  two of them is harder to review and to revert.

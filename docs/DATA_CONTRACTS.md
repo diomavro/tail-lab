@@ -244,6 +244,62 @@ correct behavior, not a bug to work around.
 
 ---
 
+## 7. Cboe option-strategy benchmark indices
+
+**Purpose.** The platform's **real-quote benchmark** for a put-buying tail
+strategy. The backtester prices options with a Black-Scholes proxy
+(`docs/adr/0004`), and the S1 thesis is that the market *misprices* tails —
+which a model-priced backtest structurally cannot see. Cboe's strategy
+indices are the realised daily P&L of real, executed option programs, so
+the difference between a modelled run and the matching index *is* the
+mispricing the platform is looking for. See `docs/DATA_SOURCING.md` §9.1
+for why this replaced a $99/mo–$1,495 purchase.
+
+**Source (free, keyless).** Cboe's public index CSVs,
+`https://cdn.cboe.com/api/global/us_indices/daily_prices/{TICKER}_History.csv`
+— same host and URL family as dataset #2's vol complex. Per Cboe's
+published methodology, each roll is priced at the **volume-weighted average
+of actual OPRA transaction prices** (fallback: last reported ask), which is
+what makes these real quotes rather than model output.
+
+**Tickers.** The catalogue and the default ingest set live in
+`contracts/cboe_strategy.py` (`STRATEGY_INDEX_CATALOGUE`,
+`DEFAULT_TICKERS`) — that module, not this doc, is the source of truth for
+which indices are ingested. Default set: `PPUT`, `PPUT3M`, `VXTH`, `LTV`,
+`CLL`, `CLL3M`, `CLLZ`, `PUT`, `PUTY`, `SPX`.
+
+**Cadence.** Daily, after Cboe publishes (~EOD). The files are full
+history every time, so a run is a complete re-fetch, not an increment.
+
+**Schema — `CboeStrategyRow`:**
+
+| Column | Type | Constraints |
+|---|---|---|
+| `index_symbol` | `str` | non-null, uppercase Cboe ticker |
+| `trade_date` | `date` | non-null |
+| `close` | `float` | > 0, ≤ 1e6 (NAV-style level rebased to 100 at inception; the ceiling catches unit errors, not compounding) |
+
+Unique on `(index_symbol, trade_date)` — **not** on `trade_date` alone: the
+whole family shares one dataset, so two indices quoting the same trading
+day is the normal case, not a duplicate.
+
+**Bronze partition key.** `source_id=cboe/index_symbol=<ticker>/trade_date=<YYYY-MM-DD>/`.
+
+**Point-in-time rule.** Same shape as datasets #1 and #2 — as-of on
+`ingested_at`, not `trade_date`. Cboe restates strategy-index levels only
+rarely, but the rule is enforced uniformly rather than special-cased, and
+bronze immutability means a restatement arrives as a new `ingest_date`
+partition.
+
+**Known source quirks (measured on the first live run, 2026-08-21).** Two
+CDN files start later than the index is quoted elsewhere: `CLL` begins
+**2008-08-26** and `PUT` begins **1991-03-04**. Prefer `CLLZ` (1986-06-20)
+and `PUTY` (1986-06-30) when long history matters. Dates are `MM/DD/YYYY`
+and are parsed with an explicit format — an inferred parse would silently
+shift observations by months around a crash.
+
+---
+
 ## Deferred datasets (backlog, not built)
 
 Tracked in `docs/END_STATE.md` §2.2 — do not build adapters for these
