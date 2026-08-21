@@ -32,6 +32,7 @@ a vendor's marketing page — the difference has already mattered twice
 | **FRED / ALFRED** | Rates, credit, vintages (`realtime_start/end`) | ✅ Live, free key held | 2026-08-19 | §2 |
 | **Cboe VX futures archive** | Per-contract VIX futures settlement, 2004→ | ✅ Live, keyless | 2026-08-19 | §2 |
 | **Nasdaq earnings calendar** `api.nasdaq.com/api/calendar/earnings` | Historical earnings dates + EPS surprise, 2010→ | ✅ Live, keyless (browser UA required) | 2026-08-19 | §2 |
+| **Nasdaq historical** `api.nasdaq.com/api/quote/{SYM}/historical` | Daily OHLCV, **~2,513 rows (~10 yr) hard cap**, split-adjusted only. **Primary for dataset #1** | ✅ **Wired** — keyless, browser UA + JSON Accept; `assetclass` must be `etf` or `stocks` (400s on the wrong one) | 2026-08-21 | contracts #1 |
 
 ### Live, free, not yet used
 
@@ -61,7 +62,7 @@ a vendor's marketing page — the difference has already mattered twice
 
 | Source / idea | What we found | Verified |
 |---|---|---|
-| **Yahoo chart endpoint** | **429s from residential IPs too**, not just datacenter. Previously believed "residential may work". ⚠️ **Three adapters still depend on it** (`ohlcv.py`, `vix.py`, `options_expiry.py`) | 2026-08-21 |
+| **Yahoo chart endpoint** | **429s from residential IPs too**, not just datacenter. Previously believed "residential may work". ✅ **Resolved 2026-08-21** — all three adapters (`vix.py`, `ohlcv.py`, `options_expiry.py`) now resolve an ordered source chain and Yahoo is the *fallback* in each, no longer the primary | 2026-08-21 |
 | **Wayback Machine as a chain archive** | Exactly **3 captures ever** of the Cboe SPX chain JSON (2021-07-20, 2022-12-31, 2023-03-26). Cannot backfill forward-collection | 2026-08-21 |
 | **Stooq** | JS proof-of-work wall on symbol CSV (`spy.us`, `leh.us`) *and* the bulk `/db/h/` page is an HTML shell | 2026-08-21 |
 | **marketdata.app "15+ years free"** | Marketing copy. Their own plan-limits doc: **Free Forever = 1 year**, Starter = 5 years. Claim appears only in third-party listicles | 2026-08-21 |
@@ -89,10 +90,25 @@ Recorded so the decision is not re-opened without new information.
 
 ---
 
+## Cross-validation results
+
+Independent agreement between two sources is the only cheap evidence we can
+get that either is telling the truth. Recorded here when measured.
+
+| Pair | Window | Result |
+|---|---|---|
+| **Nasdaq vs Yahoo**, SPY `close` | 1,253 overlapping days to 2026-08-20 | **max absolute difference 0.000029** — effectively identical. The raw price series is trustworthy from either feed |
+| **Nasdaq vs Yahoo**, SPY `adj_close` | same | max **$29.62**, mean **$14.00**; total return over the overlap **+82.43%** (Yahoo, dividend-adjusted) vs **+70.50%** (Nasdaq, split-only) — a **11.93pp** gap that is entirely the dividend stream. Do not compare partitions across sources |
+| **Cboe `PPUT` vs a model-priced put roll** | 2004→ | *Not yet run* — queued in `AGENT_TODO.md`; also the referee for §10.1's unknown-provenance chains |
+
+---
+
 ## The one-line summary
 
 For **evaluating** a put-buying tail strategy, the free path is complete:
 Cboe's own transaction-priced indices are the benchmark (1986→, ingested),
 optionsDX covers 2010–2023 real chains, and §10.1 covers 2008–2009 pending
-validation. **The binding constraint is no longer data — it is that three
-adapters still read from a Yahoo endpoint that is now failing.**
+validation. The Yahoo dependency is closed — every adapter now falls back
+rather than fails. **The binding constraint is now a research question, not
+a plumbing one: nobody has yet measured the model-priced backtest against
+PPUT.**

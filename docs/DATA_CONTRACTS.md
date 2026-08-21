@@ -28,19 +28,45 @@ validates against the schema below, quarantining rows that fail
 every sensitivity metric and the backtest engine's underlying paths are
 computed from.
 
-**Source (free, keyless).** Stooq (`stooq.com`) daily CSV downloads, no
-key required. Yahoo Finance (via `yfinance`, unofficial/keyless) as a
-fallback/cross-check adapter for symbols Stooq covers poorly.
+**Source (free, keyless) — an ordered chain, not one endpoint.**
+`ingestion/ohlcv.py` resolves through `ingestion/sources.py`:
 
-**Implementation note (v1 deviation).** As of this writing, Stooq's CSV
-export serves a JavaScript proof-of-work anti-bot challenge to plain HTTP
-clients for symbol downloads (confirmed live, the same failure mode
-`ingestion/vix.py` already hit for the VIX series and documents in
-`README.md`). `ingestion/ohlcv.py` uses Yahoo Finance's public chart JSON
-endpoint (`query1.finance.yahoo.com/v8/finance/chart/<SYMBOL>`) instead —
-still free and keyless, and the fallback named above, just promoted to
-primary until Stooq's block lifts or a `yfinance`-package adapter is
-built.
+1. **Nasdaq** (`api.nasdaq.com/api/quote/{SYM}/historical`) — primary.
+   Keyless (browser UA + JSON Accept header required).
+2. **Yahoo chart JSON** (`query1.finance.yahoo.com/v8/finance/chart/<SYM>`)
+   — fallback. Was primary until 2026-08-21; now returns HTTP 429 to
+   residential *and* datacenter clients, which is what motivated the chain.
+
+Stooq, the original v1 primary, remains behind a JavaScript proof-of-work
+wall and is not in the chain. Cboe is deliberately **not** in this chain:
+its CDN serves indices, not ETFs or single names, and its `delayed_quotes`
+endpoint carries only a current-day bar — a one-row source would satisfy
+the chain and then shadow a multi-year partition under as-of resolution.
+
+**`adj_close` basis differs by source — measured, and it matters.** Nasdaq
+prices are split-adjusted but **not dividend-adjusted**, and Nasdaq exposes
+no separate adjusted series, so the adapter sets `adj_close = close` for
+Nasdaq rows. Measured on SPY over the 1,253-day overlap with the previous
+Yahoo partition (2026-08-21):
+
+| | Yahoo | Nasdaq |
+|---|---|---|
+| `close` agreement | — | **max abs diff 0.000029** (i.e. identical) |
+| `adj_close` diff | — | max **$29.62**, mean **$14.00** |
+| total return over overlap | **+82.43%** | **+70.50%** (gap **11.93pp**) |
+
+The raw price series cross-validates almost exactly; the gap is entirely
+the dividend stream. Every consumer of `adj_close` (`research/backtest/
+put_roll.py`, `research/leaderboard.py`, `research/data_quality.py`) is
+therefore basis-sensitive, and a Nasdaq partition must not be compared
+against a Yahoo one. `IngestResult.adjustment_basis` and the run log record
+which basis produced a given partition; a single partition is always
+internally consistent, since as-of resolution reads one partition.
+
+**History depth.** Nasdaq caps at ~2,513 rows (~10 years) regardless of the
+`fromdate` requested — measured, not documented by Nasdaq. That is double
+Yahoo's 5-year default and still nowhere near the GFC; a 2008-era backtest
+needs `docs/DATA_SOURCING.md` §10.1's dataset, not this adapter.
 
 **Cadence.** Daily, after US market close (~21:00 UTC).
 
@@ -72,10 +98,23 @@ a simulation clock sitting between `trade_date` and the real
 **Purpose.** The vol-surface proxy the model-priced backtest (`docs/adr/0004`)
 and the regime panel are built from.
 
-**Source (free, keyless).** CBOE historical data downloads
-(`cboe.com/tradable_products/vix/vix_historical_data/`, and the equivalent
-pages for VIX3M, VIX9D, VVIX, SKEW) — public CSV, no key. Realized vol is
-**not fetched**; it's computed in `transforms/` from dataset #1.
+**Source (free, keyless) — an ordered chain.** `ingestion/vix.py`
+resolves through `ingestion/sources.py`:
+
+1. **Cboe** — `cdn.cboe.com/api/global/us_indices/daily_prices/VIX_History.csv`,
+   `DATE,OPEN,HIGH,LOW,CLOSE` from **1990-01-02**. Cboe computes the VIX, so
+   this is the index's publisher rather than a redistributor. Promoted to
+   primary 2026-08-21; the first live run committed **9,255 rows covering
+   1990-01-02 → 2026-08-20**, against the ~126 rows Yahoo's 6-month default
+   had been supplying.
+2. **Yahoo chart JSON** — fallback, for the 429 reason in dataset #1.
+
+The equivalent CSVs for VIX3M, VIX9D, VVIX and SKEW live on the same host
+and are confirmed live, but **only `VIX` is ingested today**, and only its
+`CLOSE`: widening the committed shape to OHLC across the whole complex
+would touch `transforms/vix.py`, `research/vix_stretch.py` and the
+dashboard tile, so it is queued separately (`AGENT_TODO.md`). Realized vol
+is **not fetched**; it's computed in `transforms/` from dataset #1.
 
 **Cadence.** Daily, after CBOE publishes (~EOD).
 

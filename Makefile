@@ -22,8 +22,8 @@ help:
 	@echo "  import-lint  import-linter (module layering)"
 	@echo "  test         pytest with coverage"
 	@echo "  check        lint + typecheck + import-lint + test (all CI gates)"
-	@echo "  ingest-vix   Live VIX fetch -> bronze (network; not run in CI)"
-	@echo "  ingest-ohlcv Live OHLCV fetch -> bronze for SYMBOL (default AAPL; network; not run in CI)"
+	@echo "  ingest-vix   Live VIX fetch (Cboe, Yahoo fallback) -> bronze (network; not run in CI)"
+	@echo "  ingest-ohlcv Live OHLCV fetch (Nasdaq, Yahoo fallback) -> bronze for SYMBOL (default AAPL; network; not run in CI)"
 	@echo "  ingest-cboe-strategy  Live Cboe strategy-index fetch -> bronze (TICKERS=... ; network; not run in CI)"
 	@echo "  api          Run FastAPI on :8000 with auto-reload"
 	@echo "  frontend     Run the Vite dev server"
@@ -60,11 +60,11 @@ cov-floors:
 check: lint typecheck import-lint test cov-floors
 
 ingest-vix:
-	env -u PYTHONPATH $(VENV)/bin/python -c "from tail_lab.ingestion.vix import ingest_vix; from tail_lab.config import get_lake_store; r = ingest_vix(get_lake_store()); print(f'committed {r.valid_rows} rows -> {r.bronze_path} ({r.quarantined_rows} quarantined)')"
+	env -u PYTHONPATH $(VENV)/bin/python -c "from tail_lab.ingestion.vix import ingest_vix; from tail_lab.config import get_lake_store; from tail_lab.observability import configure_logging; configure_logging(); r = ingest_vix(get_lake_store()); print(f'committed {r.valid_rows} rows from {r.source_id} -> {r.bronze_path} ({r.quarantined_rows} quarantined)')"
 
 SYMBOL ?= AAPL
 ingest-ohlcv:
-	env -u PYTHONPATH $(VENV)/bin/python -c "from tail_lab.ingestion.ohlcv import ingest_ohlcv; from tail_lab.config import get_lake_store; r = ingest_ohlcv(get_lake_store(), '$(SYMBOL)'); print(f'committed {r.valid_rows} rows -> {r.bronze_path} ({r.quarantined_rows} quarantined)')"
+	env -u PYTHONPATH $(VENV)/bin/python -c "from tail_lab.ingestion.ohlcv import ingest_ohlcv; from tail_lab.config import get_lake_store; from tail_lab.observability import configure_logging; configure_logging(); r = ingest_ohlcv(get_lake_store(), '$(SYMBOL)'); print(f'committed {r.valid_rows} rows from {r.source_id} (adj_close basis: {r.adjustment_basis}) -> {r.bronze_path} ({r.quarantined_rows} quarantined)')"
 
 # TICKERS is an optional comma-separated override; empty means the adapter's
 # DEFAULT_TICKERS (the tail-hedge family + SPX).

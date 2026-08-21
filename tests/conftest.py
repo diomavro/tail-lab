@@ -36,3 +36,27 @@ def cboe_pput_sample() -> str:
     source formatting (and against a period the strategy actually cares
     about) rather than a hand-invented shape."""
     return (FIXTURES_DIR / "cboe_pput_sample.csv").read_text()
+
+
+@pytest.fixture
+def cboe_vix_sample() -> str:
+    """Real Cboe VIX_History.csv rows: the 1990 inception days plus the
+    Oct-2008 and Mar-2020 spikes, so the parser is pinned against actual
+    source formatting and against the regimes the platform exists to study."""
+    return (FIXTURES_DIR / "cboe_vix_sample.csv").read_text()
+
+
+@pytest.fixture
+def nasdaq_ohlcv_sample() -> dict[str, Any]:
+    """A real Nasdaq historical payload (SPY), kept intact down to the ``$``
+    prefixes and thousands separators the parser has to strip."""
+    raw: dict[str, Any] = json.loads((FIXTURES_DIR / "nasdaq_ohlcv_sample.json").read_text())
+    return raw
+
+
+@pytest.fixture
+def cboe_chain_sample() -> dict[str, Any]:
+    """A real Cboe delayed-quote chain slice (SPY) spanning six expiries,
+    with two contracts each -- enough to prove de-duplication works."""
+    raw: dict[str, Any] = json.loads((FIXTURES_DIR / "cboe_chain_sample.json").read_text())
+    return raw

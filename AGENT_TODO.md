@@ -325,7 +325,22 @@ item 2 is time-sensitive in a way nothing else in this file is.
       2010–2023 overlap first (needs the `HUMAN_TODO.md` account), then
       extend back to 1990. Do not ship it as the default pricer until the
       overlap validation is in a test.
-- [ ] **Migrate the vol complex off Yahoo onto the Cboe CDN, and finish it.**
+- [~] **Migrate the vol complex off Yahoo onto the Cboe CDN, and finish it.**
+      **Source migration done 2026-08-21** — `ingestion/vix.py` now resolves
+      an ordered chain (Cboe primary, Yahoo fallback) via the new
+      `ingestion/sources.py`, and the first live run committed **9,255 rows
+      covering 1990-01-02 → 2026-08-20**, against the ~126 rows Yahoo's
+      6-month default had been giving. `ingestion/ohlcv.py` (Nasdaq primary)
+      and `ingestion/options_expiry.py` (Cboe chain primary) moved in the
+      same change, so **no adapter has Yahoo as its primary any more**.
+      **Still open, and the reason this is `[~]` not `[x]`:** only `VIX` is
+      ingested, and only its `CLOSE`. `VIX3M`/`VIX9D`/`VVIX`/**`SKEW`** are
+      confirmed live on the same host and still unwired — and `SKEW` is the
+      hard blocker on the skew-aware pricer below. Widening the committed
+      shape to OHLC touches `transforms/vix.py`, `research/vix_stretch.py`
+      and the dashboard tile, so treat that as the real work here.
+      *Original description follows.*
+- [ ] ~~**Migrate the vol complex off Yahoo onto the Cboe CDN.**~~
       Highest-value item in this section: `docs/DATA_CONTRACTS.md` #2
       specifies Cboe as the source for `VIX`, `VIX3M`, `VIX9D`, `VVIX` and
       `SKEW`, but `ingestion/vix.py` ingests only `VIX`, and it does so from
@@ -445,3 +460,27 @@ item 2 is time-sensitive in a way nothing else in this file is.
       benchmark the daily-bar proxy is scored against, and quantify the bias
       the daily proxy carries. Note the file is served from Google Drive, so
       mirror it into the lake rather than fetching it on every run.
+
+- [ ] **Decide what `adj_close` should mean now that Nasdaq is the OHLCV
+      primary.** Measured on SPY over 1,253 overlapping days (2026-08-21):
+      the two sources agree on `close` to **0.000029** — effectively
+      identical, a strong cross-validation — but their `adj_close` differs
+      by up to **$29.62** (mean $14.00), because Yahoo back-adjusts for
+      dividends and Nasdaq does not. Over that overlap the total return is
+      **+82.43% (Yahoo) vs +70.50% (Nasdaq)** — an **11.93pp** gap that is
+      entirely the dividend stream. Every consumer of `adj_close`
+      (`put_roll.py`, `leaderboard.py`, `data_quality.py`) is therefore
+      basis-sensitive.
+      Three options, and this needs a decision before prod OHLCV is
+      re-ingested — a Nasdaq partition would shadow the Yahoo ones under
+      as-of resolution and silently shift every backtest by ~12pp:
+      (a) accept split-only and document it everywhere;
+      (b) reconstruct a dividend-adjusted series from a free dividend source;
+      (c) **argue `put_roll.py` should use raw `close` anyway** — options
+      settle on actual prices, not dividend-adjusted ones, so the current
+      use of `adj_close` for option payoffs may be the real bug and this
+      migration merely exposed it. (c) is the most likely right answer and
+      the cheapest to test.
+      **Until this is decided, do not re-ingest prod OHLCV.** The existing
+      Yahoo partitions are internally consistent and still readable; nothing
+      is broken today.
