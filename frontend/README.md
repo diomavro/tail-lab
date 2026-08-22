@@ -16,8 +16,9 @@ npm run e2e        # Playwright
 
 `npm run e2e` is **hermetic**. Playwright starts its own dev server on `:5178`
 and `e2e/fixtures/mock-api.ts` answers every `/api/**` call from
-`e2e/fixtures/putlab.ts`. No lake, no backend, no network — so it is CI-safe, it
-runs in about 30 seconds, and its assertions are about rendered behaviour rather
+`e2e/fixtures/putlab.ts`. No lake, no backend, no network — so it runs in about
+30 seconds as a **CI gate** (the `e2e` job in `.github/workflows/ci.yml`; a
+deploy is gated on it), and its assertions are about rendered behaviour rather
 than about whatever the lake happens to hold today.
 
 That last part is the point. A live backend cannot be relied on to produce a

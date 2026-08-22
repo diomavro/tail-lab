@@ -4,7 +4,8 @@ import { defineConfig, devices } from '@playwright/test'
 //
 // The default run is HERMETIC: Playwright starts the Vite dev server on :5178
 // and every /api/** call is answered from e2e/fixtures/ (see mock-api.ts). No
-// lake, no backend, no network — so the suite is CI-safe and its assertions are
+// lake, no backend, no network — so it runs as a CI gate (the `e2e` job in
+// .github/workflows/ci.yml, which a deploy is gated on) and its assertions are
 // about rendered behaviour rather than about whatever the lake happens to hold.
 // A live backtest takes seconds and the bake-off runs ~35 of them; mocking is
 // what makes it possible to assert on both branches of the bake-off verdict in
