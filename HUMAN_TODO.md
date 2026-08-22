@@ -51,7 +51,7 @@ acts on, removes, or reorders anything in this file.**
       gets, deliberately not FRED/AWS/deploy creds). Until this is set, the
       feedback panel's writes (`POST /api/feedback`) still work — only the
       agent's read/resolve calls no-op (404, treated as "nothing pending").
-- [ ] Provision `FLY_API_TOKEN` as a GitHub Actions repo secret
+- [x] Provision `FLY_API_TOKEN` as a GitHub Actions repo secret
       (`flyctl tokens create deploy -a tail-lab`) so the new CD workflow
       (`.github/workflows/deploy.yml`, `docs/adr/0016`) can auto-deploy
       every green `main` commit. Until set, the workflow no-ops with a

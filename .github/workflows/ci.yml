@@ -1,9 +1,10 @@
 name: CI
 
-# Every gate in `make check`, plus the frontend build — nothing merges red.
-# No external accounts are needed: the VIX adapter's network call is only
-# exercised by `make ingest-vix` (a human-run target), never here — tests
-# run entirely against the committed fixture.
+# Every gate in `make check`, plus the frontend build and the browser suite —
+# nothing merges red. No external accounts are needed and nothing here touches
+# the network: the VIX adapter's live call is only exercised by
+# `make ingest-vix` (a human-run target), and the Playwright suite answers
+# every /api/** call from `frontend/e2e/fixtures/` (docs/adr/0017).
 
 on:
   push:
@@ -70,6 +71,57 @@ jobs:
       - name: npm run build
         run: npm run build
 
+  # The browser suite. Hermetic by construction — Playwright starts its own Vite
+  # dev server and `e2e/fixtures/mock-api.ts` answers every /api/** call, so this
+  # needs no lake, no backend and no network, and it is deterministic enough to
+  # gate a deploy on. It is a separate job from `frontend` so a red run says
+  # "e2e", not "build", and so the fast build gate stays fast.
+  e2e:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: npm ci
+        run: npm ci
+
+      # Keyed on the lockfile: the browser build Playwright wants is pinned by
+      # the @playwright/test version, so a lockfile change is exactly when the
+      # cache should miss.
+      - name: Cache Playwright browsers
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ runner.os }}-${{ hashFiles('frontend/package-lock.json') }}
+
+      # Chromium only — the suite declares one project. `--with-deps` still runs
+      # on a cache hit (it installs the system libraries, not the browser) and
+      # is cheap once the download is skipped.
+      - name: Install Chromium
+        run: npx playwright install --with-deps chromium
+
+      - name: npm run e2e
+        run: npm run e2e
+
+      # Traces and failure screenshots, per playwright.config.ts's
+      # retain-on-failure / only-on-failure. The `list` reporter writes no HTML
+      # report, so this is the artifact worth keeping.
+      - name: Upload failure traces
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-traces
+          path: frontend/test-results/
+          retention-days: 7
+
   # The "constitution" (big-picture docs) stays human-curated: an agent/* PR
   # that edits it fails here, so auto-merge cannot land it — a human must.
   # Human PRs are unaffected. Required check, so auto-merge can't skip it.
@@ -104,7 +156,7 @@ jobs:
   # Runs only on main (push or dispatched-by-automerge), only when every
   # gate above is green.
   trigger-deploy:
-    needs: [backend, frontend, constitution-guard]
+    needs: [backend, frontend, e2e, constitution-guard]
     if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     permissions:
