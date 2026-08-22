@@ -35,10 +35,15 @@ export function FeedbackPanel() {
   }
 
   return (
-    <div className="tile feedback-panel">
-      <h2>Feedback</h2>
-      <form onSubmit={(e) => void handleSubmit(e)}>
-        <fieldset className="feedback-kind">
+    // Rendered inside .putlab-root, so it wears the workspace's own classes --
+    // App.css's `.tile` chrome would print a bordered card in the middle of a
+    // page whose whole argument is that hierarchy comes from type, not boxes.
+    <div className="pl-feedback">
+      <div className="pl-kicker" style={{ marginBottom: 8 }}>
+        Feedback
+      </div>
+      <form onSubmit={(e) => void handleSubmit(e)} className="pl-feedback-form">
+        <fieldset className="pl-feedback-kind">
           <label>
             <input
               type="radio"
@@ -61,18 +66,28 @@ export function FeedbackPanel() {
           </label>
         </fieldset>
         <textarea
+          className="pl-input"
           value={text}
           onChange={(e) => handleTextChange(e.target.value)}
           placeholder="What should the daily agent know?"
+          aria-label="Feedback"
           maxLength={4000}
           rows={2}
           disabled={state.status === 'submitting'}
         />
-        <button type="submit" disabled={state.status === 'submitting' || !text.trim()}>
-          {state.status === 'submitting' ? 'Submitting…' : 'Submit'}
+        <button
+          type="submit"
+          className="pl-btn pl-btn-secondary"
+          disabled={state.status === 'submitting' || !text.trim()}
+        >
+          {state.status === 'submitting' ? 'Submitting…' : 'Send feedback'}
         </button>
-        {state.status === 'success' && <p className="feedback-success">Saved.</p>}
-        {state.status === 'error' && <p className="tile-error">{state.message}</p>}
+        {state.status === 'success' && <p className="pl-micro">Saved.</p>}
+        {state.status === 'error' && (
+          <p className="pl-status pl-status-error" role="alert">
+            {state.message}
+          </p>
+        )}
       </form>
     </div>
   )

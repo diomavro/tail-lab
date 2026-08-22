@@ -28,6 +28,10 @@ export const PUTLAB_TENORS: { weeks: number; label: string }[] = [
   { weeks: 12, label: '1 quarter' },
 ]
 
+// The lookback windows the rail offers. Shared so the rail and any caller that
+// needs to know the legal set (e.g. a preset) cannot drift apart.
+export const PUTLAB_YEARS: number[] = [4, 3, 2]
+
 export const PUTLAB_DEFAULT_CONTROLS: PutLabControls = {
   asset: 'spy',
   notional: 1000,

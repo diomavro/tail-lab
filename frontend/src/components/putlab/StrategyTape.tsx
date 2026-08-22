@@ -1,202 +1,269 @@
-import { useEffect, useRef } from 'react'
-import type { AnnualizedPoint, EquityPoint, PricePoint, PutBacktestCycle } from '../../api/client'
-import { fmtDollar, fmtPct, svgEl } from './format'
+import { useMemo } from 'react'
+import type {
+  AnnualizedPoint,
+  EquityPoint,
+  PricePoint,
+  PutBacktestCycle,
+  RegimeSegment,
+} from '../../api/client'
+import { fmtDollar, fmtPct } from './format'
 
-interface StrategyTapeProps {
+/* The strategy tape: what actually happened, on one date axis.
+ *
+ * Three changes from the file this replaces.
+ *
+ *  1. Markers are on the same basis as the stat card above them. They used to
+ *     filter on `payoff > 0` -- any intrinsic value -- while `hit_rate` counts
+ *     `payoff > notional`. The dots and the number disagreed. Both now mean
+ *     "the payoff cleared the premium budget", and the dot is SIZED on
+ *     `payoff / notional`, which is what `biggest_payoff_mult` reports.
+ *  2. The price pane is on a LOG y-axis. A four-year single-name path is
+ *     exponential; against a linear axis it reads as a flat line with one late
+ *     kink, and the strike ladder's constant %-below-spot offset stops looking
+ *     constant.
+ *  3. Axis labels are HTML positioned in a gutter beside the SVG rather than
+ *     SVG <text>. SVG text cannot inherit the theme's font stack reliably, does
+ *     not pick up `tabular-nums`, and cannot wrap.
+ *
+ * Rendered declaratively rather than by imperative DOM building in an effect:
+ * the same data always produces the same markup, which is what makes the marker
+ * basis assertable at all.
+ */
+
+/** Drop any tick that lands within `minGap` px of one already kept. */
+function thinTicks(values: number[], y: (v: number) => number, minGap = 13): number[] {
+  const kept: number[] = []
+  for (const v of values) {
+    if (kept.every((k) => Math.abs(y(k) - y(v)) >= minGap)) kept.push(v)
+  }
+  return kept
+}
+
+const W = 1000
+const PRICE_H = 292
+const PNL_H = 120
+const PAD_L = 8
+const PAD_R = 8
+
+interface Props {
   pricePath: PricePoint[]
   mtmCurve: EquityPoint[]
   cycles: PutBacktestCycle[]
-  // The running "annualized return so far" curve + the S&P buy-and-hold hurdle,
-  // shown in their OWN pane (not overlaid on the $ P&L) so the two comparisons
-  // never blur together.
   annualizedSoFar: AnnualizedPoint[]
   benchmarkAnnualized: number | null
+  notional: number
+  /** VIX-level regime bands (calm < 17 · elevated 17-28 · crisis >= 28) painted
+   *  behind the price pane. Calm is the ground and prints as nothing. */
+  regimes: RegimeSegment[]
 }
 
-// The strategy tape: three stacked panes sharing one date axis.
-//   1. underlying price + each roll's OOM strike bar (where the put sat vs spot),
-//   2. cumulative $ P&L (does the P&L jump when the stock dives under a strike?),
-//   3. annualized-return-so-far vs the S&P hurdle (at what HORIZON did it beat
-//      just holding the market — the strategy line above the dashed hurdle).
-// Each pane is one comparison in one colour, so nothing collides.
 export function StrategyTape({
   pricePath,
   mtmCurve,
   cycles,
   annualizedSoFar,
   benchmarkAnnualized,
-}: StrategyTapeProps) {
-  const svgRef = useRef<SVGSVGElement | null>(null)
-
-  useEffect(() => {
-    const svg = svgRef.current
-    if (!svg) return
-    svg.innerHTML = ''
-    if (pricePath.length === 0 || mtmCurve.length === 0) return
-
-    const W = 1000
-    const P = { l: 58, r: 58 }
-    // Three stacked panes sharing the x-axis.
-    const price = { t: 16, h: 132 }
-    const pnl = { t: 182, h: 84 }
-    const annp = { t: 300, h: 84 }
+  notional,
+  regimes,
+}: Props) {
+  const model = useMemo(() => {
+    if (pricePath.length === 0 || mtmCurve.length === 0) return null
 
     const px = pricePath.map((p) => ({ t: Date.parse(p.date), v: p.price }))
     const eq = mtmCurve.map((p) => ({ t: Date.parse(p.date), v: p.cum_pnl }))
-    const xs = px[0]!.t
-    const xe = Math.max(px[px.length - 1]!.t, xs + 1)
-    const X = (t: number) => P.l + ((t - xs) / (xe - xs)) * (W - P.l - P.r)
+    const t0 = px[0]!.t
+    const t1 = Math.max(px[px.length - 1]!.t, t0 + 1)
+    const X = (t: number) => PAD_L + ((t - t0) / (t1 - t0)) * (W - PAD_L - PAD_R)
 
-    const add = (tag: keyof SVGElementTagNameMap, attrs: Record<string, string | number>, text?: string) => {
-      const e = svgEl(tag, attrs)
-      if (text !== undefined) e.textContent = text
-      svg.appendChild(e)
-    }
-    const path = (pts: { t: number; v: number }[], y: (v: number) => number, attrs: Record<string, string | number>) => {
-      let d = ''
-      pts.forEach((p, k) => {
-        d += (k ? ' L ' : 'M ') + X(p.t) + ' ' + y(p.v)
-      })
-      add('path', { d, fill: 'none', ...attrs })
-    }
+    // --- price pane, log scale -------------------------------------------
+    const lo = Math.min(...px.map((p) => p.v), ...cycles.map((c) => c.strike))
+    const hi = Math.max(...px.map((p) => p.v), ...cycles.map((c) => c.strike))
+    const logLo = Math.log(Math.max(lo, 0.01))
+    const logHi = Math.log(Math.max(hi, lo * 1.0001))
+    const PY = (v: number) =>
+      8 + (1 - (Math.log(Math.max(v, 0.01)) - logLo) / (logHi - logLo)) * (PRICE_H - 16)
+    // Geometric ticks, so the gutter reads as the axis it actually is.
+    const priceTicks = [0, 1, 2, 3].map((i) => Math.exp(logLo + ((logHi - logLo) * i) / 3))
 
-    // ---------- pane 1: underlying price + strike bars ----------
-    const pricesOnly = px.map((p) => p.v)
-    const strikes = cycles.map((c) => c.strike)
-    const pmin = Math.min(...pricesOnly, ...strikes)
-    const pmax = Math.max(...pricesOnly, ...strikes)
-    const PY = (v: number) => price.t + (1 - (v - pmin) / (pmax - pmin || 1)) * price.h
-    for (let g = 0; g <= 3; g++) {
-      const v = pmin + ((pmax - pmin) * g) / 3
-      add('line', { x1: P.l, y1: PY(v), x2: W - P.r, y2: PY(v), stroke: 'var(--grid)', 'stroke-width': 1 })
-      add('text', { x: P.l - 8, y: PY(v) + 3, 'text-anchor': 'end', class: 'axis-label' }, fmtDollar(v))
-    }
-    add('text', { x: P.l, y: price.t - 5, class: 'regime-label' }, 'underlying + strike bought')
-    path(px, PY, { stroke: 'var(--muted)', 'stroke-width': 1.6 })
-    for (const c of cycles) {
-      const x1 = X(Date.parse(c.entry_date))
-      const x2 = X(Date.parse(c.expiry_date))
-      const y = PY(c.strike)
-      const paid = c.net > 0
-      const stroke = paid ? 'var(--gain)' : 'var(--accent)'
-      add('line', { x1, y1: y, x2, y2: y, stroke, 'stroke-width': paid ? 2.6 : 1.6, opacity: paid ? 1 : 0.7 })
-      add('line', { x1, y1: y - 3, x2: x1, y2: y + 3, stroke, 'stroke-width': 1 })
-      if (paid) add('circle', { cx: x2, cy: y, r: 3, fill: 'var(--gain)' })
-    }
+    // --- P&L pane ---------------------------------------------------------
+    const vLo = Math.min(0, ...eq.map((p) => p.v))
+    const vHi = Math.max(1, ...eq.map((p) => p.v))
+    const QY = (v: number) => 8 + (1 - (v - vLo) / (vHi - vLo)) * (PNL_H - 16)
 
-    // ---------- pane 2: cumulative $ P&L ----------
-    const vmin = Math.min(0, ...eq.map((p) => p.v))
-    const vmax = Math.max(1, ...eq.map((p) => p.v))
-    const QY = (v: number) => pnl.t + (1 - (v - vmin) / (vmax - vmin)) * pnl.h
-    add('line', { x1: P.l, y1: QY(0), x2: W - P.r, y2: QY(0), stroke: 'var(--line-strong)', 'stroke-width': 1.2 })
-    add('text', { x: P.l - 8, y: QY(vmax) + 3, 'text-anchor': 'end', class: 'axis-label' }, fmtDollar(vmax))
-    add('text', { x: P.l - 8, y: QY(vmin) + 3, 'text-anchor': 'end', class: 'axis-label' }, fmtDollar(vmin))
-    add('text', { x: P.l, y: pnl.t - 5, class: 'regime-label' }, 'cumulative P&L ($)')
-    path(eq, QY, { stroke: 'var(--accent)', 'stroke-width': 2 })
-    const lastEq = eq[eq.length - 1]!
-    add('circle', { cx: X(lastEq.t), cy: QY(lastEq.v), r: 4, fill: 'var(--accent)' })
-
-    // ---------- pane 3: annualized return so far vs the S&P hurdle ----------
-    add('text', { x: P.l, y: annp.t - 5, class: 'regime-label' }, 'annualized return so far vs S&P')
+    // --- annualized-so-far, riding the P&L pane on its own scale ----------
+    // Its own pane would be a third band for one thin line; instead it shares
+    // the P&L pane, with its scale in the LEFT gutter and dollars in the right.
+    //
+    // The domain has to be anchored rather than fitted. The earliest points
+    // annualize a sub-year ROI and routinely reach thousands of percent, so a
+    // fitted scale pins 0, the hurdle and the final rate into one pixel row.
+    // Keep those three anchors in view, cap the magnitude around them, and let
+    // the early spike clip to the edge -- it is an artefact of the horizon, not
+    // a reading.
     const ann = annualizedSoFar.map((p) => ({ t: Date.parse(p.date), v: p.annualized }))
-    if (ann.length > 0) {
-      // Robust % domain: the earliest points annualize a sub-year ROI and can hit
-      // thousands of percent; keep 0, the hurdle, and the final rate in view, cap
-      // the magnitude around those anchors, and clip early spikes to the edge.
-      const lastV = ann[ann.length - 1]!.v
-      const hurdle = benchmarkAnnualized
-      const mustShow = [0, lastV, ...(hurdle != null ? [hurdle] : [])]
-      const anchorMag = Math.max(0.3, ...mustShow.map((v) => Math.abs(v)))
-      const cap = anchorMag * 2.5
-      let amax = Math.max(...mustShow, Math.min(Math.max(...ann.map((a) => a.v)), cap))
-      let amin = Math.min(...mustShow, Math.max(Math.min(...ann.map((a) => a.v)), -cap))
-      const apad = (amax - amin) * 0.14 || 0.1
-      amin -= apad
-      amax += apad
-      const clamp = (v: number) => Math.max(amin, Math.min(amax, v))
-      const AY = (v: number) => annp.t + (1 - (clamp(v) - amin) / (amax - amin || 1)) * annp.h
+    const lastAnn = ann.length > 0 ? ann[ann.length - 1]!.v : 0
+    const anchors = [0, lastAnn, ...(benchmarkAnnualized != null ? [benchmarkAnnualized] : [])]
+    const cap = Math.max(0.3, ...anchors.map(Math.abs)) * 2.5
+    let aHi = Math.max(...anchors, Math.min(Math.max(...ann.map((a) => a.v), 0), cap))
+    let aLo = Math.min(...anchors, Math.max(Math.min(...ann.map((a) => a.v), 0), -cap))
+    const aPad = (aHi - aLo) * 0.14 || 0.1
+    aHi += aPad
+    aLo -= aPad
+    const clampAnn = (v: number) => Math.max(aLo, Math.min(aHi, v))
+    const AY = (v: number) => 8 + (1 - (clampAnn(v) - aLo) / (aHi - aLo || 1)) * (PNL_H - 16)
 
-      // left % axis extents
-      add('text', { x: P.l - 8, y: AY(amax) + 8, 'text-anchor': 'end', class: 'axis-label' }, fmtPct(amax))
-      add('text', { x: P.l - 8, y: AY(amin) - 2, 'text-anchor': 'end', class: 'axis-label' }, fmtPct(amin))
-      // 0% baseline (subtle solid)
-      add('line', { x1: P.l, y1: AY(0), x2: W - P.r, y2: AY(0), stroke: 'var(--line-strong)', 'stroke-width': 1 })
-      // S&P hurdle: a GREY DASHED reference line, labelled on the right so it can
-      // never be mistaken for the orange strike bars or the teal strategy line.
-      if (hurdle != null) {
-        add('line', {
-          x1: P.l,
-          y1: AY(hurdle),
-          x2: W - P.r,
-          y2: AY(hurdle),
-          stroke: 'var(--faint)',
-          'stroke-width': 1.4,
-          'stroke-dasharray': '6 4',
-        })
-        add(
-          'text',
-          { x: W - P.r + 6, y: AY(hurdle) + 3, class: 'axis-label', fill: 'var(--faint)' },
-          `S&P ${fmtPct(hurdle)}`,
-        )
-      }
-      // the strategy's annualized-so-far line (teal), endpoint green/red vs hurdle
-      path(ann, AY, { stroke: 'var(--cool)', 'stroke-width': 1.8 })
-      const lastAnn = ann[ann.length - 1]!
-      const beat = hurdle != null && lastAnn.v >= hurdle
-      add('circle', {
-        cx: X(lastAnn.t),
-        cy: AY(lastAnn.v),
-        r: 3.5,
-        fill: beat ? 'var(--gain)' : 'var(--loss)',
-      })
-    } else {
-      add(
-        'text',
-        { x: (P.l + W - P.r) / 2, y: annp.t + annp.h / 2, 'text-anchor': 'middle', class: 'axis-label' },
-        'not enough horizon yet',
-      )
+    const line = (pts: { t: number; v: number }[], y: (v: number) => number) =>
+      pts.map((p, i) => `${i ? 'L' : 'M'} ${X(p.t).toFixed(2)} ${y(p.v).toFixed(2)}`).join(' ')
+
+    return {
+      X,
+      PY,
+      QY,
+      AY,
+      t0,
+      t1,
+      priceTicks,
+      // Max, zero and min, minus any that would print on top of one another.
+      // A curve that never goes positive puts max and zero on the same row; one
+      // dominated by a single crisis spike puts zero and min there. Two labels
+      // stacked are unreadable and read as one number.
+      pnlTicks: thinTicks([vHi, 0, vLo], QY),
+      pricePathD: line(px, PY),
+      pnlD: line(eq, QY),
+      annD: ann.length > 1 ? line(ann, AY) : null,
+      hurdleY: benchmarkAnnualized == null ? null : AY(benchmarkAnnualized),
+      rateTicks: [aHi - aPad, aLo + aPad],
+      zeroY: QY(0),
+      firstDate: pricePath[0]!.date,
+      lastDate: pricePath[pricePath.length - 1]!.date,
     }
   }, [pricePath, mtmCurve, cycles, annualizedSoFar, benchmarkAnnualized])
 
+  if (!model) {
+    return (
+      <p className="pl-status" role="status">
+        Not enough price history to draw the tape.
+      </p>
+    )
+  }
+
+  const { X, PY, QY, AY } = model
+  const clampX = (t: number) => Math.max(PAD_L, Math.min(W - PAD_R, X(t)))
+
   return (
     <>
-      <div className="panel-head">
-        <div>
-          <h2>Strategy tape</h2>
-          <div className="hint">
-            Three views on one time axis: the <strong>underlying</strong> with each roll&rsquo;s bought{' '}
-            <strong>strike</strong>, the cumulative <strong>$ P&amp;L</strong>, and the strategy&rsquo;s{' '}
-            <strong>annualized return so far</strong> against the <strong>S&amp;P hurdle</strong> &mdash; wherever the
-            teal line sits above the grey dashed line, that holding-horizon beat just owning the market.
-          </div>
-        </div>
-        <div className="legend">
-          <span className="sw">
-            <span className="ln" style={{ background: 'var(--muted)' }} /> underlying
+      <div className="pl-pane-label">Underlying, log scale · strike bought each roll</div>
+      <div className="pl-chart pl-chart-price">
+        <svg viewBox={`0 0 ${W} ${PRICE_H}`} role="img" aria-label="Underlying price with the strike bought at each roll">
+          {/* Regime backdrop first, so every ink prints over it. */}
+          {regimes
+            .filter((s) => s.regime !== 'calm')
+            .map((s) => {
+              const x1 = clampX(Date.parse(s.start))
+              const x2 = clampX(Date.parse(s.end))
+              if (x2 <= x1) return null
+              return (
+                <rect
+                  key={`${s.regime}-${s.start}`}
+                  className={`pl-tape-regime is-${s.regime}`}
+                  x={x1}
+                  y={0}
+                  width={x2 - x1}
+                  height={PRICE_H}
+                />
+              )
+            })}
+          {model.priceTicks.map((v) => (
+            <line
+              key={`g${v}`}
+              className="pl-tape-grid"
+              x1={PAD_L}
+              x2={W - PAD_R}
+              y1={PY(v)}
+              y2={PY(v)}
+            />
+          ))}
+          <path className="pl-tape-price" d={model.pricePathD} />
+          {cycles.map((c) => {
+            const x1 = clampX(Date.parse(c.entry_date))
+            const x2 = clampX(Date.parse(c.expiry_date))
+            const y = PY(c.strike)
+            // The same basis as hit_rate and biggest_payoff_mult: the payoff has
+            // to clear the premium budget, not merely finish in the money.
+            const mult = c.payoff / notional
+            const paid = mult > 1
+            return (
+              <g key={c.entry_date}>
+                <line
+                  className={`pl-tape-strike${paid ? ' is-paid' : ''}`}
+                  x1={x1}
+                  x2={x2}
+                  y1={y}
+                  y2={y}
+                />
+                {paid && (
+                  <circle
+                    className="pl-tape-marker"
+                    cx={x2}
+                    cy={y}
+                    // Sized on payoff / budget, so a 3x roll reads bigger than a
+                    // 1.1x one instead of both being one dot.
+                    r={Math.min(9, 3 + Math.sqrt(mult))}
+                  />
+                )}
+              </g>
+            )
+          })}
+        </svg>
+        {model.priceTicks.map((v) => (
+          <span className="pl-ytick" key={`t${v}`} style={{ top: `${(PY(v) / PRICE_H) * 100}%` }}>
+            {fmtDollar(v)}
           </span>
-          <span className="sw">
-            <span className="bar" style={{ background: 'var(--accent)' }} /> strike bought
-          </span>
-          <span className="sw">
-            <span className="bar" style={{ background: 'var(--gain)' }} /> paid off
-          </span>
-          <span className="sw">
-            <span className="ln" style={{ background: 'var(--accent)' }} /> $ P&amp;L
-          </span>
-          <span className="sw">
-            <span className="ln" style={{ background: 'var(--cool)' }} /> annualized so far
-          </span>
-          <span className="sw">
-            <span className="ln-dash" /> S&amp;P hurdle
-          </span>
-        </div>
+        ))}
       </div>
-      <svg
-        ref={svgRef}
-        viewBox="0 0 1000 384"
-        role="img"
-        aria-label="Underlying price with strikes, cumulative P&L, and annualized return so far vs the S&P"
-      />
+
+      <div className="pl-pane-label" style={{ marginTop: 14 }}>
+        Cumulative P&amp;L on premium · annualized rate so far
+      </div>
+      <div className="pl-chart pl-chart-pnl pl-chart-two-gutter">
+        <svg viewBox={`0 0 ${W} ${PNL_H}`} role="img" aria-label="Cumulative profit and loss, and the annualized rate earned so far">
+          <line className="pl-tape-zero" x1={PAD_L} x2={W - PAD_R} y1={model.zeroY} y2={model.zeroY} />
+          {model.hurdleY != null && (
+            <line
+              className="pl-tape-hurdle"
+              x1={PAD_L}
+              x2={W - PAD_R}
+              y1={model.hurdleY}
+              y2={model.hurdleY}
+            />
+          )}
+          <path className="pl-tape-pnl" d={model.pnlD} />
+          {model.annD && <path className="pl-tape-ann" d={model.annD} />}
+        </svg>
+        {model.pnlTicks.map((v) => (
+          <span className="pl-ytick" key={`q${v}`} style={{ top: `${(QY(v) / PNL_H) * 100}%` }}>
+            {fmtDollar(v)}
+          </span>
+        ))}
+        {model.rateTicks.map((v) => (
+          <span className="pl-ytick pl-ytick-rate" key={`r${v}`} style={{ top: `${(AY(v) / PNL_H) * 100}%` }}>
+            {fmtPct(v)}/yr
+          </span>
+        ))}
+        {benchmarkAnnualized != null && (
+          <span
+            className="pl-ytick pl-ytick-rate pl-ytick-hurdle"
+            style={{ top: `${(AY(benchmarkAnnualized) / PNL_H) * 100}%` }}
+          >
+            {fmtPct(benchmarkAnnualized)}/yr
+          </span>
+        )}
+      </div>
+
+      <div className="pl-xticks">
+        <span>{model.firstDate}</span>
+        <span>{model.lastDate}</span>
+      </div>
     </>
   )
 }

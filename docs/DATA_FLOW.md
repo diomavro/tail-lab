@@ -42,7 +42,7 @@ flowchart LR
         ROUTES["/api/putlab/*<br/>/api/leaderboard"]
     end
     subgraph U["⑤ Pages"]
-        PAGES["Screen · Backtest · Portfolio<br/>Regime · Learn"]
+        PAGES["Workspace · Portfolio · Bake-off<br/>Regime · Glossary"]
     end
 
     CBOE --> BRONZE
@@ -70,19 +70,28 @@ number (`docs/DISCOVERIES.md` #2).
 
 ## 2. What feeds each page
 
-The app is one workspace with five tabs, plus a home dashboard. Each row lists
-what the tab answers, the endpoints it calls, and the bronze datasets those
-endpoints ultimately read.
+The app is one workspace with five tabs. Each row lists what the tab answers,
+the endpoints it calls, and the bronze datasets those endpoints ultimately read.
+
+Screen and Backtest used to be separate tabs, bridged by a fragility ranking
+pinned above both — you picked a name on one and read its result on the other.
+They are one **Workspace** now, with the ranking as a strip at its top, and the
+Screen tab's deeper "is the screen any good?" question moved to its own
+**Bake-off** tab (`docs/adr/0017`).
 
 | Page / tab | The question it answers | Endpoints | Datasets read |
 |---|---|---|---|
-| **Fragility ranking** (pinned above every tab) | Which names are most fragile versus the market? | `/api/putlab/leaderboard` | `ohlcv_*` (whole screening universe + `ohlcv_spy` as benchmark) |
-| **Screen** | Which screen actually picks winners? | `/api/putlab/metric-screen` | `ohlcv_*` |
-| **Backtest** | What would this hedge have done? | `/api/putlab/backtest`, `/sweep`, `/cadence`, `/regime-verdict`, **`/accuracy`** | `ohlcv_<asset>`, `ohlcv_spy` (hurdle), `vix`, `cboe_strategy` |
+| **Workspace** | Which name, and what would that hedge have done? | `/api/putlab/leaderboard` (the ranking strip), `/backtest`, `/sweep`, `/regime-verdict`, **`/accuracy`** | `ohlcv_*` (whole screening universe + `ohlcv_spy` as benchmark), `vix`, `cboe_strategy` |
 | **Portfolio** | What does a blend of legs do? | `/api/putlab/portfolio`, `/api/putlab/leaderboard` | `ohlcv_*` |
-| **Regime** | What market are we in? | `/api/putlab/regimes`, `/api/vix/stretch` | `vix` |
-| **Learn** | — (static explanation) | none | none |
-| **Home dashboard** | Headline VIX stretch + sensitivity leaderboard | `/api/vix/stretch`, `/api/leaderboard` | `vix`, `ohlcv_*` |
+| **Bake-off** | Which screen actually picks winners? | `/api/putlab/metric-screen` (explicit action — ~35 backtests) | `ohlcv_*` |
+| **Regime** | What market are we in? | `/api/putlab/regimes`, `/api/vix/stretch`, `/accuracy` (the per-regime residual) | `vix`, `cboe_strategy` |
+| **Glossary** | — (renders `content/concepts.ts`, no network) | none | none |
+| **Control rail** (every tab) | What position am I asking about, and where did the data come from? | `/api/putlab/universe`, `/cadence`, `/data-quality` | `ohlcv_<asset>`, the options calendar |
+
+`/api/leaderboard` — the *sensitivity* leaderboard, unrelated to
+`/api/putlab/leaderboard` — no longer has a caller: the home dashboard it fed
+was superseded by the Put Lab's own fragility ranking. `LeaderboardTile.tsx` is
+still in the tree, unused.
 
 **The accuracy panel is the densest node in the graph.** It renders under every
 backtest result and, alone in the app, reads *four* datasets at once — the

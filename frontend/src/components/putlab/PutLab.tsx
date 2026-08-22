@@ -1,41 +1,67 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import {
   ApiError,
   fetchAccuracy,
   fetchCadence,
-  fetchPutBacktest,
   fetchDataQuality,
+  fetchPutBacktest,
+  fetchPutLabLeaderboard,
+  fetchRegimes,
   fetchRegimeVerdict,
   fetchSweep,
-  type AccuracyResponse,
-  type DataQualityResponse,
   fetchUniverse,
+  fetchVixStretch,
+  type AccuracyResponse,
   type CadenceResponse,
+  type DataQualityResponse,
   type PutBacktestResponse,
+  type PutLabLeaderboardResponse,
+  type RegimeTimelineView,
   type RegimeVerdictResponse,
   type SweepResponse,
   type UniverseMember,
+  type VixStretchResponse,
 } from '../../api/client'
 import { FeedbackPanel } from '../FeedbackPanel'
-import { ConceptInfo } from './ConceptInfo'
-import { Leaderboard } from './Leaderboard'
+import { fmtPrice } from './format'
+import { ParamRail } from './ParamRail'
 import './putlab.css'
-import { QuestionBar } from './QuestionBar'
 import { TabNav } from './TabNav'
 import { PUTLAB_DEFAULT_CONTROLS, PUTLAB_OOM_PRESETS, PUTLAB_TENORS, type PutLabControls } from './types'
-import { BacktestView } from './views/BacktestView'
-import { LearnView } from './views/LearnView'
+import { BakeOffView } from './views/BakeOffView'
+import { GlossaryView } from './views/GlossaryView'
 import { PortfolioView } from './views/PortfolioView'
 import { RegimeView } from './views/RegimeView'
-import { ScreenView } from './views/ScreenView'
+import { WorkspaceView } from './views/WorkspaceView'
 
-// The five workspace tabs. Screen is the default landing view -- "what should
-// I hedge?" -- so a user sees a result without picking anything and scrolling.
-export type TabId = 'screen' | 'backtest' | 'portfolio' | 'regime' | 'learn'
+/* The workspace shell.
+ *
+ * Two structural changes from the file this replaces:
+ *
+ *  1. Screen and Backtest are one tab. The old split meant picking a name on one
+ *     tab and reading its result on another, with the ranking pinned above both
+ *     to bridge the gap. Now the ranking is a one-line strip at the top of the
+ *     Workspace that expands to the full table, and a click lands the result in
+ *     the same view.
+ *  2. One control surface. The old QuestionBar (Screen/Portfolio) and
+ *     ChartCockpit (Backtest) were two competing ways to set the same four
+ *     params, so a user had to learn where the controls lived per tab.
+ *     ParamRail is the only one, and it is present on every tab.
+ *
+ * The page scrolls normally. The old fixed 100dvh shell with an inner scroller
+ * pinned four bands above the result, which left the hero chart a few hundred
+ * pixels on a laptop.
+ */
 
-// One Backtest-tab read (backtest / sweep / cadence / verdict / data-quality).
-// Split per-resource so the tape+stats render the moment the backtest resolves
-// even while the (slower) sweep is still loading.
+export type TabId = 'workspace' | 'portfolio' | 'bakeoff' | 'regime' | 'glossary'
+
+/** Paper is the light sheet, plate the negative. Persisted, never inferred from
+ *  the OS: which sheet a trading page prints on is the reader's call. */
+export type Sheet = 'paper' | 'plate'
+
+// One resource read (backtest / sweep / accuracy / ...). Split per-resource so
+// the tape+stats render the moment the backtest resolves even while the
+// (slower) sweep is still loading.
 export type ResourceState<T> =
   | { status: 'loading' }
   | { status: 'no-data' }
@@ -60,6 +86,7 @@ const CADENCE_CACHE = new Map<string, CadenceResponse>()
 const DATA_QUALITY_CACHE = new Map<string, DataQualityResponse>()
 const REGIME_VERDICT_CACHE = new Map<string, RegimeVerdictResponse>()
 const ACCURACY_CACHE = new Map<string, AccuracyResponse>()
+const RANKING_CACHE = new Map<string, PutLabLeaderboardResponse>()
 
 function cachePut<T>(cache: Map<string, T>, key: string, value: T): void {
   // Bounded LRU-ish: evict the oldest inserted key past the cap.
@@ -73,7 +100,7 @@ function cachePut<T>(cache: Map<string, T>, key: string, value: T): void {
 // A cached fetch: keyed on ONLY its real deps (encoded in `key`), served
 // synchronously from `cache` on a hit (no loading flash, no network), else
 // fetched (debounced), cached, and stored. `key === null` disables the fetch
-// entirely (used to gate to the Backtest tab). Re-runs only when `key` changes.
+// entirely (used to gate off-tab). Re-runs only when `key` changes.
 function useCachedResource<T>(
   cache: Map<string, T>,
   key: string | null,
@@ -148,54 +175,50 @@ function prefetchCombo(
   }
 }
 
-// The Put Lab workspace shell: owns the shared controls, the screening
-// universe, the active tab, and the (lazily fetched, per-resource cached)
-// single-name Backtest reads. It renders a persistent header, a tab bar, the
-// shared question builder (on the parameterized tabs only), the active view,
-// and a footer. See docs/adr/0004 for the model-pricing caveat and
-// docs/END_STATE.md §1.2/§1.5 for the endpoint contracts.
+const SHEET_KEY = 'putlab.sheet'
+
+function readSheet(): Sheet {
+  try {
+    return localStorage.getItem(SHEET_KEY) === 'plate' ? 'plate' : 'paper'
+  } catch {
+    return 'paper' // private windows and blocked site data both throw here
+  }
+}
+
 export function PutLab() {
   const [controls, setControls] = useState<PutLabControls>(PUTLAB_DEFAULT_CONTROLS)
+  const [tab, setTab] = useState<TabId>('workspace')
   const [universe, setUniverse] = useState<UniverseMember[]>([])
-  const [activeTab, setActiveTab] = useState<TabId>('screen')
-  // The fragility ranking is pinned above the tabs (Dio, 2026-08-21): picking a
-  // ticker from a dropdown means you already knew which ticker you wanted,
-  // which defeats the point of a screen whose job is to tell you. Collapsible
-  // because 35 rows permanently on top would bury the tab it feeds.
-  const [rankingCollapsed, setRankingCollapsed] = useState(false)
+  const [regimes, setRegimes] = useState<RegimeTimelineView | null>(null)
+  const [vix, setVix] = useState<VixStretchResponse | null>(null)
+  const [sheet, setSheet] = useState<Sheet>(readSheet)
 
-  const updateControls = (patch: Partial<PutLabControls>) => setControls((c) => ({ ...c, ...patch }))
+  const update = (patch: Partial<PutLabControls>) => setControls((c) => ({ ...c, ...patch }))
 
-  // Picking a name from the ranking selects it AND jumps to the backtest --
-  // that is the whole point of the shortcut. Safe to navigate on click only
-  // because the ranking stays pinned above the tabs, so the next pick is
-  // always one click away rather than a trip back to another tab.
-  // Picking a row lands on the *cell the row advertised*: the ranking's headline
-  // number is each name's best annualized return over its whole strike x tenor
-  // grid, so opening the backtest at the previously-selected strike would show a
-  // different (usually worse) number than the row the user just clicked.
-  const selectAsset = (asset: string, best?: { moneyness_pct: number; tenor_weeks: number }) => {
-    updateControls(best ? { asset, ...best } : { asset })
-    setActiveTab('backtest')
-  }
-
-  // The screening universe drives the dropdowns; fetched once. Failure just
-  // leaves the QuestionBar on its built-in fallback list.
   useEffect(() => {
-    const controller = new AbortController()
-    fetchUniverse(controller.signal)
-      .then(setUniverse)
-      .catch(() => {})
-    return () => controller.abort()
+    try {
+      localStorage.setItem(SHEET_KEY, sheet)
+    } catch {
+      // A sheet that cannot be remembered still has to render.
+    }
+  }, [sheet])
+
+  // Market-wide reads, fetched once: they key off nothing in `controls`.
+  useEffect(() => {
+    const c = new AbortController()
+    fetchUniverse(c.signal).then(setUniverse).catch(() => {})
+    fetchRegimes(c.signal).then(setRegimes).catch(() => {})
+    fetchVixStretch(c.signal).then(setVix).catch(() => {})
+    return () => c.abort()
   }, [])
 
-  // The Backtest reads are only shown on the Backtest tab, so gate every key to
+  // The single-name reads are only shown on Workspace, so gate every key to
   // null off-tab (no fetch). Each key lists ONLY the params that resource truly
   // depends on -- so changing OOM%/tenor refetches backtest+verdict but leaves
   // the sweep (grid is identical, only the highlighted cell moves client-side),
   // cadence, and data-quality untouched.
-  const onBacktest = activeTab === 'backtest'
-  const btKey = onBacktest
+  const onWorkspace = tab === 'workspace'
+  const btKey = onWorkspace
     ? JSON.stringify([
         controls.asset,
         controls.notional,
@@ -204,53 +227,49 @@ export function PutLab() {
         controls.years,
       ])
     : null
-  const sweepKey = onBacktest
-    ? JSON.stringify([controls.asset, controls.notional, controls.years])
+  const sweepKey = onWorkspace ? JSON.stringify([controls.asset, controls.notional, controls.years]) : null
+  // The accuracy companion. Keyed on the same axes as the backtest minus
+  // notional -- the model's error is a rate, so it does not depend on how much
+  // was spent. Fetched independently so a slow residual never delays the tape,
+  // and NOT gated to Workspace: the Regime view prints the same per-regime
+  // residuals, and gating them off-tab is what made that panel read
+  // "unmeasured" for a measured window.
+  const accuracyKey = JSON.stringify([
+    controls.asset,
+    controls.moneyness_pct,
+    controls.tenor_weeks,
+    controls.years,
+  ])
+  // The rail's provenance block is on every tab, so these two are never gated.
+  const assetKey = JSON.stringify([controls.asset])
+  // The ranking is the Workspace's opening line and nothing else reads it --
+  // Portfolio's fragile-basket button screens on its own fixed axes. It is the
+  // most expensive read in the app (one backtest per name in the universe), so
+  // it is gated like the rest. Keyed on the screening axes only: which names are
+  // most fragile does not depend on how much premium you would spend.
+  const rankKey = onWorkspace
+    ? JSON.stringify([controls.moneyness_pct, controls.tenor_weeks, controls.years])
     : null
-  const assetKey = onBacktest ? JSON.stringify([controls.asset]) : null
 
-  const backtest = useCachedResource(
-    BACKTEST_CACHE,
-    btKey,
-    (signal) =>
-      fetchPutBacktest(
-        {
-          asset: controls.asset,
-          notional: controls.notional,
-          moneyness_pct: controls.moneyness_pct,
-          tenor_weeks: controls.tenor_weeks,
-          years: controls.years,
-        },
-        signal,
-      ),
-    DEBOUNCE_MS,
-  )
+  const btParams = {
+    asset: controls.asset,
+    notional: controls.notional,
+    moneyness_pct: controls.moneyness_pct,
+    tenor_weeks: controls.tenor_weeks,
+    years: controls.years,
+  }
+
+  const backtest = useCachedResource(BACKTEST_CACHE, btKey, (s) => fetchPutBacktest(btParams, s), DEBOUNCE_MS)
   const regimeVerdict = useCachedResource(
     REGIME_VERDICT_CACHE,
     btKey,
-    (signal) =>
-      fetchRegimeVerdict(
-        {
-          asset: controls.asset,
-          notional: controls.notional,
-          moneyness_pct: controls.moneyness_pct,
-          tenor_weeks: controls.tenor_weeks,
-          years: controls.years,
-        },
-        signal,
-      ),
+    (s) => fetchRegimeVerdict(btParams, s),
     DEBOUNCE_MS,
   )
-  // The accuracy companion. Keyed on the same axes as the backtest minus
-  // notional -- the model's error is a rate, so it does not depend on how much
-  // was spent. Fetched independently so a slow residual never delays the tape.
-  const accuracyKey = onBacktest
-    ? JSON.stringify([controls.asset, controls.moneyness_pct, controls.tenor_weeks, controls.years])
-    : null
   const accuracy = useCachedResource(
     ACCURACY_CACHE,
     accuracyKey,
-    (signal) =>
+    (s) =>
       fetchAccuracy(
         {
           asset: controls.asset,
@@ -258,40 +277,40 @@ export function PutLab() {
           tenor_weeks: controls.tenor_weeks,
           years: controls.years,
         },
-        signal,
+        s,
       ),
     DEBOUNCE_MS,
   )
   const sweep = useCachedResource(
     SWEEP_CACHE,
     sweepKey,
-    (signal) =>
-      fetchSweep(
-        { asset: controls.asset, notional: controls.notional, years: controls.years },
-        signal,
-      ),
+    (s) => fetchSweep({ asset: controls.asset, notional: controls.notional, years: controls.years }, s),
     DEBOUNCE_MS,
   )
-  const cadence = useCachedResource(
-    CADENCE_CACHE,
-    assetKey,
-    (signal) => fetchCadence(controls.asset, signal),
-    DEBOUNCE_MS,
-  )
+  const cadence = useCachedResource(CADENCE_CACHE, assetKey, (s) => fetchCadence(controls.asset, s), DEBOUNCE_MS)
   const dataQuality = useCachedResource(
     DATA_QUALITY_CACHE,
     assetKey,
-    (signal) => fetchDataQuality(controls.asset, signal),
+    (s) => fetchDataQuality(controls.asset, s),
+    DEBOUNCE_MS,
+  )
+  const ranking = useCachedResource(
+    RANKING_CACHE,
+    rankKey,
+    (s) =>
+      fetchPutLabLeaderboard(
+        { moneyness_pct: controls.moneyness_pct, tenor_weeks: controls.tenor_weeks, years: controls.years },
+        s,
+      ),
     DEBOUNCE_MS,
   )
 
   // Prefetch the preset rails after the primary read so a rail click is instant.
   // Bounded: the OOM presets at the current tenor + the tenor presets at the
   // current OOM (~8 combos, cache-skipping repeats), not a full grid. Sweep is
-  // deliberately not prefetched -- it doesn't vary with OOM%/tenor. Re-runs on
-  // any axis/asset/years/notional change (cancels in-flight prefetches).
+  // deliberately not prefetched -- it doesn't vary with OOM%/tenor.
   useEffect(() => {
-    if (!onBacktest) return
+    if (!onWorkspace) return
     const controller = new AbortController()
     const handle = window.setTimeout(() => {
       const combos: [number, number][] = [
@@ -308,7 +327,7 @@ export function PutLab() {
       controller.abort()
     }
   }, [
-    onBacktest,
+    onWorkspace,
     controls.asset,
     controls.notional,
     controls.years,
@@ -316,105 +335,120 @@ export function PutLab() {
     controls.tenor_weeks,
   ])
 
-  // The question builder is the single shared control surface on Screen and
-  // Portfolio. The Backtest tab replaces it with the ChartCockpit (the four
-  // params live on the edges of its hero chart), so the bar is hidden there to
-  // avoid a redundant duplicate control surface.
-  const showQuestionBar = activeTab === 'screen' || activeTab === 'portfolio'
+  /** Picking a row lands on the cell that row advertised -- the ranking's
+   *  headline is each name's best cell over its whole strike x tenor grid, so
+   *  opening at the previously selected strike would show a different (usually
+   *  worse) number than the row the reader just clicked. */
+  const selectAsset = (asset: string, best?: { moneyness_pct: number; tenor_weeks: number }) => {
+    update(best ? { asset, ...best } : { asset })
+    setTab('workspace')
+  }
+
+  const bt = backtest.status === 'ready' ? backtest.data : null
   const dq = dataQuality.status === 'ready' ? dataQuality.data : null
+  const cad = cadence.status === 'ready' ? cadence.data : null
+
+  const dateline = useMemo(() => {
+    const rows: { k: string; v: string }[] = []
+    const member = universe.find((m) => m.symbol.toLowerCase() === controls.asset.toLowerCase())
+    rows.push({ k: 'Name', v: `${controls.asset.toUpperCase()} ${member?.name ?? ''}`.trim() })
+    if (bt) {
+      rows.push({ k: 'Spot', v: fmtPrice(bt.spot) })
+      rows.push({
+        k: 'Strike',
+        v: `${fmtPrice(bt.spot * (1 - controls.moneyness_pct / 100))} (${controls.moneyness_pct}% OOM)`,
+      })
+      rows.push({ k: 'r', v: `${(bt.rate * 100).toFixed(2)}%` })
+    }
+    if (regimes) rows.push({ k: 'Regime', v: regimes.current })
+    if (vix) rows.push({ k: 'VIX', v: vix.close.toFixed(1) })
+    return rows
+  }, [universe, controls.asset, controls.moneyness_pct, bt, regimes, vix])
 
   return (
-    <div className="putlab-root putlab-shell">
-      <div className="wrap">
-        <header className="top">
-          <div className="brand">
-            <div className="glyph" aria-hidden="true">
-              <svg
-                viewBox="0 0 24 24"
-                fill="none"
-                stroke="currentColor"
-                strokeWidth={1.8}
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                style={{ color: 'var(--accent)' }}
-              >
-                <path d="M12 3v2M12 21v-3" />
-                <path d="M3 11c0-4 4-6 9-6s9 2 9 6c-2-1.5-4-2-4 0 0-2-2-2-2 0 0-2-2-2-3 0 0-2-1.4-2-3 0-2-.5-4 0-4 2Z" />
-              </svg>
-            </div>
-            <div>
-              <h2>Put Lab</h2>
-            </div>
+    <div className="putlab-root" data-theme={sheet}>
+      <div className="pl-wrap">
+        <div className="pl-rule-thick" />
+        <header className="pl-masthead">
+          <div className="pl-brand">
+            <h1>Put Lab</h1>
+            <span className="pl-brand-sub">Tail&nbsp;Risk Desk</span>
           </div>
-          <div className="top-actions">
-            {dq && (
-              <span
-                className={`pill ${dq.n_suspicious === 0 ? 'pill-ok' : 'pill-warn'}`}
-                title={
-                  dq.n_suspicious === 0
-                    ? `No bad ticks or stale runs in ${dq.n_bars} bars of ${dq.asset.toUpperCase()} data.`
-                    : dq.flags.map((f) => `${f.date}: ${f.kind} — ${f.detail}`).join('\n')
-                }
-              >
-                <span className="dot" />
-                {dq.n_suspicious === 0 ? 'Data clean' : `${dq.n_suspicious} flagged`}
-              </span>
-            )}
-            <span
-              className="pill caveat"
-              title="Option premiums are Black-Scholes model prices using trailing realized volatility as an IV proxy, not real historical quotes."
-            >
-              <span className="dot" /> Model-priced
-              <ConceptInfo id="model_priced" />
-            </span>
+          <div className="pl-masthead-right">
+            {bt && <span className="pl-micro">{bt.as_of}</span>}
+            <div className="pl-seg" role="radiogroup" aria-label="Sheet">
+              {(['paper', 'plate'] as Sheet[]).map((s) => (
+                <label className="pl-seg-opt" key={s}>
+                  <input type="radio" name="pl-sheet" checked={sheet === s} onChange={() => setSheet(s)} />
+                  {s === 'paper' ? 'Paper' : 'Plate'}
+                </label>
+              ))}
+            </div>
           </div>
         </header>
+        <div className="pl-rule-thin" />
 
-        <Leaderboard
-          controls={controls}
-          currentAsset={controls.asset}
-          autoRun
-          onSelectAsset={selectAsset}
-          collapsed={rankingCollapsed}
-          onToggleCollapse={() => setRankingCollapsed((c) => !c)}
-        />
-
-        <TabNav activeTab={activeTab} onChange={setActiveTab} />
-
-        {showQuestionBar && <QuestionBar controls={controls} onChange={updateControls} universe={universe} />}
-
-        {/* The one scrolling region: the active view and the footer. Everything
-            above it stays pinned, so the ranking never leaves the screen. */}
-        <div className="putlab-viewport">
-        <div role="tabpanel" id={`panel-${activeTab}`} aria-labelledby={`tab-${activeTab}`} tabIndex={0}>
-          {activeTab === 'screen' && <ScreenView controls={controls} />}
-          {activeTab === 'backtest' && (
-            <BacktestView
-              controls={controls}
-              backtest={backtest}
-              accuracy={accuracy}
-              sweep={sweep}
-              cadence={cadence}
-              regimeVerdict={regimeVerdict.status === 'ready' ? regimeVerdict.data : null}
-              onChange={updateControls}
-              universe={universe}
-            />
+        <dl className="pl-dateline">
+          {dateline.map((r) => (
+            <span key={r.k}>
+              <dt>{r.k}</dt>
+              <dd>{r.v}</dd>
+            </span>
+          ))}
+          {dq && (
+            <span className={`pl-tag ${dq.n_suspicious === 0 ? 'pl-tag-ok' : 'pl-tag-bad'}`}>
+              {dq.n_suspicious === 0
+                ? `Data clean · ${dq.n_bars} bars`
+                : `${dq.n_suspicious} flagged of ${dq.n_bars}`}
+            </span>
           )}
-          {activeTab === 'portfolio' && <PortfolioView universe={universe} />}
-          {activeTab === 'regime' && <RegimeView />}
-          {activeTab === 'learn' && <LearnView />}
+          <span className="pl-caveat pl-micro">Model-priced · Black&ndash;Scholes on trailing RV</span>
+        </dl>
+        <div className="pl-rule-hair" />
+
+        <TabNav activeTab={tab} onChange={setTab} />
+        <div className="pl-rule-hair" style={{ marginBottom: 24 }} />
+
+        <div className="pl-shell">
+          <ParamRail
+            controls={controls}
+            onChange={update}
+            universe={universe}
+            dataQuality={dq}
+            cadence={cad}
+            asOf={bt ? bt.as_of : null}
+          />
+
+          <main className="pl-main" role="tabpanel" id={`panel-${tab}`} aria-labelledby={`tab-${tab}`} tabIndex={0}>
+            {tab === 'workspace' && (
+              <WorkspaceView
+                controls={controls}
+                onChange={update}
+                backtest={backtest}
+                sweep={sweep}
+                accuracy={accuracy}
+                ranking={ranking}
+                regimeVerdict={regimeVerdict}
+                regimes={regimes}
+                onSelectAsset={selectAsset}
+              />
+            )}
+            {tab === 'portfolio' && <PortfolioView universe={universe} controls={controls} />}
+            {tab === 'bakeoff' && <BakeOffView controls={controls} />}
+            {tab === 'regime' && <RegimeView regimes={regimes} vix={vix} accuracy={accuracy} />}
+            {tab === 'glossary' && <GlossaryView />}
+          </main>
         </div>
 
-        <footer>
+        <footer className="pl-footer">
           <p>
-            <strong>Model-priced, not historical quotes.</strong> The underlying path is real daily OHLCV already in
-            the lake; every option premium is a Black-Scholes model price with trailing realized volatility as the IV
-            proxy (<span className="mono">docs/adr/0004</span>). tail-lab never trades &mdash; it hands you the read,
-            you place the trade by hand.
+            <strong>Model-priced, not historical quotes.</strong> The underlying path is real daily OHLCV from
+            the lake; every option premium is a Black&ndash;Scholes model price with trailing realized
+            volatility standing in for implied (see adr/0004). tail-lab never trades &mdash; it hands you the
+            read, you place the trade by hand.
           </p>
           <FeedbackPanel />
         </footer>
-        </div>
       </div>
     </div>
   )

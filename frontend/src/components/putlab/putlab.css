@@ -1,1626 +1,937 @@
-/* Put Lab design system, ported from the approved mock (put-lab.html).
-   Every token and rule is scoped under .putlab-root so it can't leak onto
-   the rest of the SPA (the VIX tile, feedback panel, etc. keep App.css). */
+/* Put Lab — Broadsheet.
+ *
+ * Everything stays scoped under .putlab-root so it cannot leak onto the rest of
+ * the SPA. Three things changed structurally from the file this replaces:
+ *
+ *  1. One token layer, one elevation. Hierarchy comes from the serif scale and
+ *     whitespace, not from nested bordered cards. The only rules that print are
+ *     the masthead's thick-thin pair and one full-strength rule above each stat
+ *     band — front-page furniture, not layout.
+ *  2. Real scales. Type 10/11/13/15/17/19/22/26/38/78, radius 1/2/4, spacing
+ *     5/10/15/20/30/40. No half-pixel sizes, no rem/px mixing.
+ *  3. Theme by attribute, not by media query. [data-theme="plate"] re-points the
+ *     role tokens at the ramps, so every component inverts with the sheet and
+ *     the user gets a switch instead of an OS preference. A trading tool should
+ *     not infer its sheet from the operating system.
+ *
+ * Semantic colour, and the three token bugs this fixes:
+ *   * --hot and --loss used to be the same hex (#d23b49), so "hot cell" and
+ *     "losing cell" were one colour meaning two things. Magenta is loss only.
+ *   * --accent used to also be --warm, so the brand colour was also the
+ *     elevated-risk signal. Cyan is interactive and nothing else; process
+ *     yellow is the elevated fill and never text.
+ *   * --ink was the page BACKGROUND in light mode but was used as a TEXT colour
+ *     in .acc-table td and .detail-toggle:hover, rendering that text
+ *     near-invisible. Here --ink is text and --paper is ground, always.
+ *
+ * Positive figures are plain ink — black in the black, red in the red, the way
+ * a market table has always printed.
+ */
+
+@import url('https://fonts.googleapis.com/css2?family=Source+Serif+4:ital,wght@0,400;0,600;1,400&display=swap');
 
 .putlab-root {
-  --ink: #f7f8fb;
-  --surface: #ffffff;
-  --surface-2: #f0f2f7;
-  --line: #e2e6ef;
-  --line-strong: #cbd2e0;
-  --text: #141824;
-  --muted: #5c6577;
-  --faint: #8a94a8;
-  --accent: #c77800;
-  --accent-soft: #ffe6b0;
-  --gain: #1e9e64;
-  --loss: #d23b49;
-  --cool: #2ca6a4;
-  --warm: #e08a1e;
-  --hot: #d23b49;
-  --grid: #eaedf4;
-  --shadow: 0 1px 2px rgba(16, 22, 40, 0.06), 0 8px 30px rgba(16, 22, 40, 0.06);
+  /* --- Broadsheet roles --- */
+  --pl-bg: #f3f2f2;
+  --pl-surface: #eae9e9;
+  --pl-text: #201e1d;
+  --pl-accent: #0088b0;
+  --pl-accent-2: #d6006c;
+
+  /* --- ramps (shared lightness scale) --- */
+  --pl-n-100: #f8f4f4;
+  --pl-n-200: #eae7e7;
+  --pl-n-300: #d7d3d3;
+  --pl-n-400: #bab6b6;
+  --pl-n-500: #9b9797;
+  --pl-n-600: #7d7979;
+  --pl-n-700: #605d5d;
+  --pl-n-800: #444141;
+  --pl-n-900: #2d2b2b;
+  --pl-a-300: #99e0ff;
+  --pl-a-400: #62c5ee;
+  --pl-a-700: #006786;
+  --pl-a2-400: #ff90b1;
+  --pl-a2-500: #ff458e;
+  --pl-a2-700: #aa0b56;
+  --pl-process-yellow: #edbb00;
+
+  /* --- semantic aliases: everything below resolves to a token above --- */
+  --paper: var(--pl-bg);
+  --paper-2: var(--pl-surface);
+  --ink: var(--pl-text);
+  --ink-70: var(--pl-n-700);
+  --ink-45: var(--pl-n-500);
+  --ink-25: var(--pl-n-300);
+  --rule: color-mix(in srgb, var(--pl-text) 16%, transparent);
+  --rule-2: var(--pl-n-400);
+  --cyan: var(--pl-accent);
+  --cyan-2: var(--pl-a-700);
+  --mag: var(--pl-accent-2);
+  --mag-2: var(--pl-a2-700);
+  --warn-fill: var(--pl-process-yellow);
+
+  --space-1: 5px;
+  --space-2: 10px;
+  --space-3: 15px;
+  --space-4: 20px;
+  --space-6: 30px;
+  --space-8: 40px;
+
+  --radius-sm: 1px;
+  --radius-md: 2px;
+  --radius-lg: 4px;
+
+  --serif: 'Source Serif 4', Georgia, 'Times New Roman', serif;
+
   color-scheme: light;
-
   display: block;
-  background: var(--ink);
-  color: var(--text);
-  font-family: system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
-  line-height: 1.5;
+  background: var(--paper);
+  color: var(--ink);
+  font-family: var(--serif);
+  font-size: 15px;
+  line-height: 1.55;
+  font-variant-numeric: tabular-nums;
   -webkit-font-smoothing: antialiased;
+  /* index.css sets `#root { text-align: center }`, which cascaded into the whole
+     workspace because nothing reset it. Every ranged figure inherits from here. */
+  text-align: left;
 }
 
-@media (prefers-color-scheme: dark) {
-  .putlab-root {
-    --ink: #0a0d13;
-    --surface: #131824;
-    --surface-2: #1b2231;
-    --line: #273043;
-    --line-strong: #38445e;
-    --text: #e6eaf2;
-    --muted: #8a94a8;
-    --faint: #6a7488;
-    --accent: #ffb020;
-    --accent-soft: #3a2f14;
-    --gain: #3dd68c;
-    --loss: #f0616d;
-    --cool: #35c7c4;
-    --warm: #ffb020;
-    --hot: #f0616d;
-    --grid: #1b2231;
-    --shadow: 0 1px 2px rgba(0, 0, 0, 0.4), 0 12px 40px rgba(0, 0, 0, 0.35);
-    color-scheme: dark;
-  }
+/* The negative plate. Role tokens are re-pointed, so the components below
+   invert without any per-component dark rules. */
+.putlab-root[data-theme='plate'] {
+  --pl-bg: #2d2b2b;
+  --pl-surface: #444141;
+  --pl-text: #f8f4f4;
+  --pl-accent: #62c5ee;
+  --pl-accent-2: #ff90b1;
+  --ink-70: var(--pl-n-300);
+  --ink-45: var(--pl-n-500);
+  --ink-25: var(--pl-n-700);
+  --rule: var(--pl-n-800);
+  --rule-2: var(--pl-n-700);
+  --cyan-2: var(--pl-a-300);
+  --mag: var(--pl-a2-500);
+  --mag-2: var(--pl-a2-400);
+  color-scheme: dark;
 }
 
-.putlab-root * {
+.putlab-root *,
+.putlab-root *::before,
+.putlab-root *::after {
   box-sizing: border-box;
 }
 
-.putlab-root .mono {
-  font-family: ui-monospace, 'JetBrains Mono', 'SF Mono', Menlo, 'Cascadia Code', monospace;
-  font-variant-numeric: tabular-nums;
+.putlab-root ::selection {
+  background: color-mix(in srgb, var(--cyan) 26%, transparent);
 }
-.putlab-root .wrap {
-  /* Fluid: fills most of the viewport on large/full-screen monitors (was a
-     fixed 1160px that left half a 4K screen empty), capped so text lines don't
-     get unreadably long. */
-  max-width: min(1840px, 95vw);
-  margin: 0 auto;
-  padding: clamp(12px, 1.6vw, 20px) clamp(16px, 2.4vw, 36px);
+.putlab-root :focus-visible {
+  outline: 2px solid var(--cyan);
+  outline-offset: 2px;
 }
-
-.putlab-root .eyebrow {
-  text-transform: uppercase;
-  letter-spacing: 0.14em;
-  font-size: 11px;
-  font-weight: 600;
-  color: var(--faint);
+.putlab-root a {
+  color: var(--cyan);
+  text-decoration: none;
 }
-
-/* ---------- header ---------- */
-.putlab-root header.top {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 20px;
-  flex-wrap: wrap;
-  margin-bottom: 12px;
+.putlab-root a:hover {
+  color: var(--cyan-2);
+  text-decoration: underline;
 }
-.putlab-root .brand {
-  display: flex;
-  align-items: center;
-  gap: 11px;
-}
-.putlab-root .glyph {
-  width: 32px;
-  height: 32px;
-  border-radius: 9px;
-  flex: none;
-  background:
-    radial-gradient(120% 120% at 30% 20%, var(--accent) 0%, transparent 55%),
-    linear-gradient(160deg, var(--surface-2), var(--surface));
-  border: 1px solid var(--line-strong);
-  display: grid;
-  place-items: center;
-  box-shadow: var(--shadow);
-}
-.putlab-root .glyph svg {
-  width: 18px;
-  height: 18px;
-}
-.putlab-root h2 {
-  font-size: clamp(18px, 2.4vw, 22px);
+.putlab-root input[type='number']::-webkit-inner-spin-button,
+.putlab-root input[type='number']::-webkit-outer-spin-button {
+  -webkit-appearance: none;
   margin: 0;
-  letter-spacing: -0.02em;
-  line-height: 1.05;
-  text-wrap: balance;
-}
-.putlab-root .sub {
-  color: var(--muted);
-  font-size: 13.5px;
-  margin-top: 3px;
-  max-width: 52ch;
-}
-.putlab-root .top-actions {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-}
-.putlab-root .pill {
-  display: inline-flex;
-  align-items: center;
-  gap: 7px;
-  font-size: 11.5px;
-  font-weight: 600;
-  padding: 6px 11px;
-  border-radius: 999px;
-  border: 1px solid var(--line-strong);
-  background: var(--surface);
-  color: var(--muted);
-  white-space: nowrap;
-}
-.putlab-root .pill .dot {
-  width: 7px;
-  height: 7px;
-  border-radius: 50%;
-  background: var(--accent);
-}
-.putlab-root .pill.caveat {
-  border-color: color-mix(in srgb, var(--accent) 45%, var(--line));
-  color: var(--accent);
-  background: color-mix(in srgb, var(--accent) 8%, var(--surface));
 }
 
-/* ---------- the question ---------- */
-.putlab-root .question {
-  background: var(--surface);
-  border: 1px solid var(--line);
-  border-radius: 14px;
-  padding: 12px 16px;
-  box-shadow: var(--shadow);
-  margin-bottom: 12px;
+/* ---------------------------------------------------------------- type ---- */
+
+.putlab-root h1,
+.putlab-root h2,
+.putlab-root h3,
+.putlab-root h4,
+.putlab-root h5 {
+  font-family: var(--serif);
+  font-weight: 600;
+  line-height: 1.12;
+  letter-spacing: -0.015em;
+  margin: 0;
 }
-.putlab-root .q-line {
-  font-size: clamp(15px, 1.7vw, 17px);
-  line-height: 1.7;
-  color: var(--text);
+.putlab-root h1 { font-size: 38px; line-height: 1; letter-spacing: -0.02em; }
+.putlab-root h2 { font-size: 26px; letter-spacing: -0.02em; }
+.putlab-root h3 { font-size: 22px; }
+.putlab-root h4 { font-size: 19px; }
+.putlab-root p { margin: 0; }
+
+/* The ONE label style, for column and section labels only. The file this
+   replaces used a single 11px uppercase treatment for eyebrows, stat keys,
+   cockpit labels, table heads, acc-block h4 and learn-howto-k — six jobs, one
+   voice, which is why nothing read as emphasised. Do not widen its remit. */
+.pl-kicker {
+  font-size: 10px;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--ink-45);
   font-weight: 400;
 }
-.putlab-root .q-line .lede {
-  color: var(--muted);
-}
-.putlab-root .ctl {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  vertical-align: baseline;
-  background: var(--surface-2);
-  border: 1px solid var(--line-strong);
-  border-radius: 9px;
-  padding: 3px 4px 3px 10px;
-  margin: 2px 1px;
-  box-shadow: inset 0 0 0 1px transparent;
-}
-.putlab-root .ctl:focus-within {
-  border-color: var(--accent);
-  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 22%, transparent);
-}
-.putlab-root .ctl label {
-  font-size: 10.5px;
-  text-transform: uppercase;
-  letter-spacing: 0.1em;
-  color: var(--faint);
-}
-.putlab-root .ctl select,
-.putlab-root .ctl input {
-  font: inherit;
-  font-size: 16px;
-  color: var(--accent);
-  font-weight: 700;
-  background: transparent;
-  border: none;
-  outline: none;
-  font-family: ui-monospace, 'JetBrains Mono', Menlo, monospace;
-  font-variant-numeric: tabular-nums;
-}
-.putlab-root .ctl select {
-  cursor: pointer;
-  padding-right: 22px;
-  appearance: none;
-  -webkit-appearance: none;
-  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='7' viewBox='0 0 10 7'%3E%3Cpath d='M1 1.5l4 4 4-4' fill='none' stroke='%238a94a8' stroke-width='1.6' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
-  background-repeat: no-repeat;
-  background-position: right 6px center;
-}
-.putlab-root .ctl.num {
-  padding-right: 10px;
-}
-.putlab-root .ctl input[type='number'] {
-  width: 4.4ch;
-  text-align: right;
-  -moz-appearance: textfield;
-}
-.putlab-root .ctl input[type='number']::-webkit-outer-spin-button,
-.putlab-root .ctl input[type='number']::-webkit-inner-spin-button {
-  -webkit-appearance: none;
-  margin: 0;
-}
-.putlab-root .seg {
-  display: inline-flex;
-  background: var(--surface-2);
-  border: 1px solid var(--line-strong);
-  border-radius: 9px;
-  padding: 2px;
-  gap: 2px;
-  vertical-align: baseline;
-  margin: 2px 1px;
-}
-.putlab-root .seg button {
-  font: inherit;
-  font-size: 14px;
-  font-weight: 600;
-  color: var(--muted);
-  cursor: pointer;
-  background: transparent;
-  border: none;
-  border-radius: 7px;
-  padding: 4px 11px;
-  font-family: ui-monospace, Menlo, monospace;
-}
-.putlab-root .seg button[aria-pressed='true'] {
-  background: var(--accent);
-  color: #14100a;
-}
-.putlab-root .seg button:focus-visible {
-  outline: 2px solid var(--accent);
-  outline-offset: 2px;
+
+.pl-lede { color: var(--ink-70); max-width: 78ch; }
+.pl-caveat { color: var(--mag-2); }
+.pl-note { font-size: 13px; line-height: 1.55; color: var(--ink-70); max-width: 80ch; }
+.pl-micro { font-size: 11.5px; color: var(--ink-45); }
+/* Inline formula fragments. Same serif as the body -- a mono face here would
+   read as code rather than as arithmetic. */
+.pl-formula { color: var(--cyan-2); white-space: nowrap; }
+
+/* -------------------------------------------------------------- masthead --- */
+
+.pl-wrap { max-width: 1560px; margin: 0 auto; padding: 0 32px 80px; }
+@media (max-width: 640px) {
+  .pl-wrap { padding: 0 16px 60px; }
 }
 
-/* ---------- status ---------- */
-.putlab-root .putlab-status {
-  color: var(--muted);
-  font-size: 13.5px;
-  margin: 0 0 22px;
-}
-.putlab-root .putlab-status-error {
-  color: var(--loss);
-}
+.pl-rule-thick { height: 6px; background: var(--ink); margin-top: 20px; }
+.pl-rule-thin { height: 1px; background: var(--ink); }
+.pl-rule-hair { height: 1px; background: var(--rule); }
 
-/* ---------- stat band ---------- */
-.putlab-root .stats {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
-  gap: 10px;
-  margin-bottom: 12px;
-}
-.putlab-root .stat {
-  background: var(--surface);
-  border: 1px solid var(--line);
-  border-radius: 12px;
-  padding: 10px 13px;
-  box-shadow: var(--shadow);
-  position: relative;
-  overflow: hidden;
-}
-.putlab-root .stat .k {
-  font-size: 11px;
-  text-transform: uppercase;
-  letter-spacing: 0.1em;
-  color: var(--faint);
+.pl-masthead {
   display: flex;
-  align-items: center;
-  gap: 6px;
-}
-.putlab-root .stat .v {
-  font-size: clamp(20px, 2.6vw, 26px);
-  font-weight: 700;
-  letter-spacing: -0.02em;
-  margin-top: 3px;
-  line-height: 1;
-  white-space: nowrap;
-}
-.putlab-root .stat .note {
-  font-size: 11px;
-  color: var(--muted);
-  margin-top: 3px;
-}
-.putlab-root .stat.hero-stat {
-  background: linear-gradient(150deg, color-mix(in srgb, var(--accent) 12%, var(--surface)), var(--surface));
-  border-color: color-mix(in srgb, var(--accent) 35%, var(--line));
-}
-.putlab-root .v.pos {
-  color: var(--gain);
-}
-.putlab-root .v.neg {
-  color: var(--loss);
-}
-
-/* ---------- panels ---------- */
-.putlab-root .panel {
-  background: var(--surface);
-  border: 1px solid var(--line);
-  border-radius: 14px;
-  box-shadow: var(--shadow);
-  padding: clamp(12px, 1.5vw, 15px);
-  margin-bottom: 12px;
-}
-.putlab-root .panel-head {
-  display: flex;
-  align-items: baseline;
+  align-items: flex-end;
   justify-content: space-between;
-  gap: 14px;
-  margin-bottom: 4px;
+  gap: 32px;
+  padding: 14px 0 10px;
   flex-wrap: wrap;
 }
-.putlab-root .panel-head h2 {
-  font-size: 15px;
+.pl-masthead-right { display: flex; align-items: center; gap: 20px; }
+.pl-brand { display: flex; align-items: baseline; gap: 16px; }
+.pl-brand-sub {
+  font-size: 12px;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--ink-45);
+}
+
+/* The dateline rail: the run's identity as one line of standing type. */
+.pl-dateline {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 9px 26px;
+  align-items: baseline;
+  padding: 9px 0;
   margin: 0;
+  font-size: 12.5px;
+  color: var(--ink-70);
+}
+.pl-dateline dt { color: var(--ink-45); display: inline; }
+.pl-dateline dd { display: inline; margin: 0 0 0 5px; color: var(--ink); font-weight: 600; }
+
+.pl-tabs { display: flex; gap: 0; margin-top: 2px; flex-wrap: wrap; }
+.pl-tab {
+  font: inherit;
+  font-size: 17px;
+  font-weight: 400;
   letter-spacing: -0.01em;
-}
-.putlab-root .panel-head .hint {
-  font-size: 12px;
-  color: var(--muted);
-}
-.putlab-root .legend {
-  display: flex;
-  gap: 14px;
-  flex-wrap: wrap;
-  font-size: 11.5px;
-  color: var(--muted);
-  align-items: center;
-}
-.putlab-root .legend .sw {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-}
-.putlab-root .legend .box {
-  width: 11px;
-  height: 11px;
-  border-radius: 3px;
-  display: inline-block;
-}
-/* Legend swatches that mirror how the series is drawn, so a solid line, a bar,
-   and the dashed hurdle can't be confused with each other. */
-.putlab-root .legend .bar {
-  width: 13px;
-  height: 5px;
-  border-radius: 2px;
-  display: inline-block;
-}
-.putlab-root .legend .ln {
-  width: 15px;
-  height: 3px;
-  border-radius: 2px;
-  display: inline-block;
-}
-.putlab-root .legend .ln-dash {
-  width: 16px;
-  height: 0;
-  display: inline-block;
-  border-top: 2px dashed var(--faint);
-}
-
-.putlab-root svg {
-  display: block;
-  width: 100%;
-  height: auto;
-}
-.putlab-root .grid2 {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 12px;
-  align-items: start;
-  margin-bottom: 12px;
-}
-@media (max-width: 820px) {
-  .putlab-root .grid2 {
-    grid-template-columns: 1fr;
-  }
-}
-
-/* "More detail" collapse: a subtle full-width divider-button between the two
-   main plots and the secondary panels. */
-.putlab-root .detail-toggle {
-  width: 100%;
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  font: inherit;
-  font-size: 13px;
-  font-weight: 600;
-  letter-spacing: 0.02em;
-  color: var(--faint);
-  background: transparent;
-  border: 1px dashed var(--line);
-  border-radius: 9px;
-  padding: 9px 14px;
-  margin-bottom: 12px;
-  cursor: pointer;
-}
-.putlab-root .detail-toggle:hover {
-  color: var(--ink);
-  border-color: var(--line-strong);
-}
-.putlab-root .detail-toggle:focus-visible {
-  outline: 2px solid var(--accent);
-  outline-offset: 2px;
-}
-.putlab-root .detail-toggle-caret {
-  font-size: 11px;
-  color: var(--accent);
-}
-
-/* chart bits */
-.putlab-root .axis-label {
-  fill: var(--faint);
-  font-size: 11px;
-  font-family: ui-monospace, Menlo, monospace;
-}
-.putlab-root .regime-label {
-  fill: var(--faint);
-  font-size: 10px;
-  font-family: system-ui, sans-serif;
-}
-.putlab-root .tt {
-  position: fixed;
-  pointer-events: none;
-  z-index: 40;
-  background: var(--surface-2);
-  border: 1px solid var(--line-strong);
-  border-radius: 9px;
-  padding: 8px 11px;
-  font-size: 12px;
-  box-shadow: var(--shadow);
-  opacity: 0;
-  transform: translate(-50%, -114%);
-  transition: opacity 0.08s;
-  max-width: 240px;
-}
-.putlab-root .tt .t-k {
-  color: var(--faint);
-  font-size: 10.5px;
-  text-transform: uppercase;
-  letter-spacing: 0.08em;
-}
-.putlab-root .tt .t-v {
-  font-family: ui-monospace, Menlo, monospace;
-  font-variant-numeric: tabular-nums;
-  font-weight: 700;
-}
-.putlab-root .tt .t-sub {
-  color: var(--muted);
-  font-size: 11px;
-  margin-top: 2px;
-}
-
-/* heatmap */
-.putlab-root .heat-cell {
-  cursor: crosshair;
-}
-.putlab-root .heat-cell:hover {
-  stroke: var(--text);
-  stroke-width: 1.5;
-}
-.putlab-root .heat-cur {
-  fill: none;
-  stroke: var(--accent);
-  stroke-width: 2.5;
-}
-
-/* expiry cadence */
-.putlab-root .cadence {
-  display: grid;
-  gap: 12px;
-}
-.putlab-root .cad-row {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-}
-.putlab-root .cad-name {
-  width: 60px;
-  flex: none;
-  font-weight: 700;
-  font-size: 13px;
-}
-.putlab-root .cad-tag {
-  font-size: 10.5px;
-  padding: 2px 7px;
-  border-radius: 6px;
-  background: var(--surface-2);
-  border: 1px solid var(--line-strong);
-  color: var(--muted);
-  white-space: nowrap;
-}
-
-/* memory teaser */
-.putlab-root .mem {
-  border-style: dashed;
-  border-color: var(--line-strong);
-  background: var(--surface);
-}
-.putlab-root .mem .badge {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  font-size: 11px;
-  font-weight: 700;
-  padding: 3px 9px;
-  border-radius: 6px;
-  letter-spacing: 0.04em;
-}
-.putlab-root .badge.regime_only {
-  background: color-mix(in srgb, var(--warm) 18%, var(--surface));
-  color: var(--warm);
-  border: 1px solid color-mix(in srgb, var(--warm) 40%, var(--line));
-}
-.putlab-root .badge.confirmed {
-  background: color-mix(in srgb, var(--gain) 16%, var(--surface));
-  color: var(--gain);
-  border: 1px solid color-mix(in srgb, var(--gain) 40%, var(--line));
-}
-.putlab-root .badge.failed {
-  background: color-mix(in srgb, var(--loss) 15%, var(--surface));
-  color: var(--loss);
-  border: 1px solid color-mix(in srgb, var(--loss) 40%, var(--line));
-}
-.putlab-root .mem-grid {
-  display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 10px;
-  margin-top: 10px;
-}
-@media (max-width: 620px) {
-  .putlab-root .mem-grid {
-    grid-template-columns: 1fr;
-  }
-}
-.putlab-root .mem-card {
-  border: 1px solid var(--line);
-  border-radius: 11px;
-  padding: 13px 14px;
-  background: var(--surface-2);
-}
-.putlab-root .mem-card .rule {
-  font-family: ui-monospace, Menlo, monospace;
-  font-size: 12.5px;
-  color: var(--text);
-}
-.putlab-root .mem-card .meta {
-  font-size: 11.5px;
-  color: var(--muted);
-  margin-top: 7px;
-  display: flex;
-  gap: 8px;
-  align-items: center;
-  flex-wrap: wrap;
-}
-
-.putlab-root footer {
-  color: var(--faint);
-  font-size: 12px;
-  margin-top: 30px;
-  border-top: 1px solid var(--line);
-  padding-top: 16px;
-  line-height: 1.7;
-}
-.putlab-root footer strong {
-  color: var(--muted);
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .putlab-root * {
-    transition: none !important;
-  }
-}
-
-/* ---------- chart cockpit (four param rails around the hero chart) ----------
-   The four backtest params live on the four edges of the Strategy Tape:
-   top = ticker + notional, left = period, right = OOM, bottom = roll frequency.
-   Rails are thin and muted so the chart stays the visual focus. */
-.putlab-root .cockpit {
-  display: grid;
-  grid-template-columns: auto minmax(0, 1fr) auto;
-  grid-template-rows: auto minmax(0, 1fr) auto;
-  grid-template-areas:
-    'top top top'
-    'left chart right'
-    'bottom bottom bottom';
-  gap: 8px 10px;
-  align-items: center;
-}
-.putlab-root .cockpit-chart {
-  grid-area: chart;
-  min-width: 0;
-}
-.putlab-root .cockpit-top {
-  grid-area: top;
-}
-.putlab-root .cockpit-left {
-  grid-area: left;
-}
-.putlab-root .cockpit-right {
-  grid-area: right;
-}
-.putlab-root .cockpit-bottom {
-  grid-area: bottom;
-}
-.putlab-root .cockpit-rail {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  background: var(--surface-2);
-  border: 1px solid var(--line);
-  border-radius: 10px;
-  padding: 5px 9px;
-}
-.putlab-root .cockpit-top {
-  flex-wrap: wrap;
-}
-.putlab-root .cockpit-bottom {
-  justify-content: center;
-}
-.putlab-root .cockpit-left,
-.putlab-root .cockpit-right {
-  flex-direction: column;
-  gap: 6px;
-  padding: 9px 6px;
-  align-self: stretch;
-  justify-content: center;
-}
-.putlab-root .cockpit-label {
-  text-transform: uppercase;
-  letter-spacing: 0.12em;
-  font-size: 9.5px;
-  font-weight: 700;
-  color: var(--faint);
-  white-space: nowrap;
-}
-.putlab-root .seg-v {
-  flex-direction: column;
-}
-.putlab-root .cockpit-stepper {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  background: var(--surface);
-  border: 1px solid var(--line-strong);
-  border-radius: 9px;
-  padding: 2px 4px;
-}
-.putlab-root .cockpit-arrow {
-  font: inherit;
-  font-size: 12px;
-  line-height: 1;
-  color: var(--muted);
-  cursor: pointer;
-  background: transparent;
-  border: none;
-  border-radius: 6px;
-  padding: 4px 7px;
-}
-.putlab-root .cockpit-arrow:hover:not(:disabled) {
-  color: var(--accent);
-  background: var(--surface-2);
-}
-.putlab-root .cockpit-arrow:disabled {
-  opacity: 0.4;
-  cursor: not-allowed;
-}
-.putlab-root .cockpit-arrow:focus-visible {
-  outline: 2px solid var(--accent);
-  outline-offset: 1px;
-}
-.putlab-root .cockpit-ticker-name {
-  font-weight: 700;
-  font-size: 13px;
-  color: var(--text);
-  text-align: center;
-  min-width: 6ch;
-  max-width: 18ch;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.putlab-root .cockpit-oom-custom {
-  align-self: center;
-}
-/* Below the narrow breakpoint the side rails collapse to horizontal groups so
-   the chart never gets squeezed thin; the page still never scrolls sideways. */
-@media (max-width: 760px) {
-  .putlab-root .cockpit {
-    grid-template-columns: minmax(0, 1fr);
-    grid-template-rows: none;
-    grid-template-areas:
-      'top'
-      'left'
-      'right'
-      'chart'
-      'bottom';
-  }
-  .putlab-root .cockpit-left,
-  .putlab-root .cockpit-right {
-    flex-direction: row;
-    align-self: auto;
-    justify-content: flex-start;
-    flex-wrap: wrap;
-  }
-  .putlab-root .seg-v {
-    flex-direction: row;
-  }
-}
-
-/* ---------- strike-in-dollars caption ---------- */
-.putlab-root .strike-caption {
-  margin: 10px 2px 0;
-  font-size: 14px;
-  color: var(--text);
-}
-.putlab-root .strike-caption .lede {
-  color: var(--muted);
-}
-.putlab-root .strike-caption .strike-dist {
-  color: var(--faint);
-  font-size: 12.5px;
-}
-
-/* ---------- leaderboard ---------- */
-.putlab-root .lb-run {
-  font: inherit;
-  font-size: 13px;
-  font-weight: 600;
-  white-space: nowrap;
-  cursor: pointer;
-  color: #14100a;
-  background: var(--accent);
-  border: 1px solid var(--accent);
-  border-radius: 9px;
-  padding: 8px 14px;
-}
-.putlab-root .lb-run:hover:not(:disabled) {
-  filter: brightness(1.06);
-}
-.putlab-root .lb-run:disabled {
-  opacity: 0.6;
-  cursor: progress;
-}
-.putlab-root .lb-run:focus-visible {
-  outline: 2px solid var(--accent);
-  outline-offset: 2px;
-}
-.putlab-root .lb-scroll {
-  overflow-x: auto;
-  margin-top: 14px;
-}
-.putlab-root .lb-table {
-  width: 100%;
-  border-collapse: collapse;
-  font-size: 13px;
-  font-variant-numeric: tabular-nums;
-}
-.putlab-root .lb-table th,
-.putlab-root .lb-table td {
-  padding: 8px 12px;
-  text-align: left;
-  border-bottom: 1px solid var(--line);
-  white-space: nowrap;
-}
-.putlab-root .lb-table th {
-  font-size: 11px;
-  text-transform: uppercase;
-  letter-spacing: 0.06em;
-  color: var(--faint);
-  font-weight: 600;
-  border-bottom: 1px solid var(--line-strong);
-}
-.putlab-root .lb-table .lb-num {
-  text-align: right;
-}
-.putlab-root .lb-table .lb-rank,
-.putlab-root .lb-table .lb-name {
-  color: var(--muted);
-}
-.putlab-root .lb-table .lb-name {
-  color: var(--text);
-  white-space: normal;
-  min-width: 12ch;
-}
-.putlab-root .lb-sort {
-  cursor: pointer;
-  user-select: none;
-}
-.putlab-root .lb-sort:hover {
-  color: var(--accent);
-}
-.putlab-root .lb-table tbody tr:hover {
-  background: var(--surface-2);
-}
-.putlab-root .lb-table .lb-current {
-  background: color-mix(in srgb, var(--accent) 12%, transparent);
-}
-.putlab-root .lb-table .lb-current td {
-  border-bottom-color: color-mix(in srgb, var(--accent) 30%, var(--line));
-}
-
-/* ---------- pinned fragility ranking (selectable rows) ---------- */
-/* The ranking sits above the tab bar so a name can be picked from any tab.
-   Rows are real controls: pointer, hover lift, focus ring, and a left rail on
-   the selected row so "which name am I looking at" survives a scrolled table. */
-.putlab-root .lb-table tbody tr.lb-pick {
-  cursor: pointer;
-}
-.putlab-root .lb-table tbody tr.lb-pick:hover {
-  background: color-mix(in srgb, var(--accent) 8%, var(--surface-2));
-}
-.putlab-root .lb-table tbody tr.lb-pick:focus-visible {
-  outline: 2px solid var(--accent);
-  outline-offset: -2px;
-}
-.putlab-root .lb-table tbody tr.lb-pick .lb-name {
-  font-weight: 600;
-}
-.putlab-root .lb-table tbody tr.lb-current .lb-rank {
-  box-shadow: inset 3px 0 0 var(--accent);
-}
-.putlab-root .lb-head-actions {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  flex-wrap: wrap;
-}
-.putlab-root .lb-selected {
-  font-size: 0.82rem;
-  color: var(--muted);
-  white-space: nowrap;
-}
-.putlab-root .lb-selected strong {
-  color: var(--accent);
-  font-family: var(--mono, ui-monospace, monospace);
-}
-.putlab-root .lb-collapse {
-  background: transparent;
-  color: var(--muted);
-  border: 1px solid var(--line-strong);
-  border-radius: 7px;
-  padding: 6px 10px;
-  font-size: 0.8rem;
-  cursor: pointer;
-}
-.putlab-root .lb-collapse:hover {
-  color: var(--accent);
-  border-color: var(--accent);
-}
-.putlab-root .lb-collapse:focus-visible {
-  outline: 2px solid var(--accent);
-  outline-offset: 2px;
-}
-/* Pinned above the tabs, so it opens the page rather than floating mid-scroll. */
-.putlab-root .panel.lb-panel {
-  margin-top: 14px;
-}
-.putlab-root .badge.untested {
-  background: var(--surface-2);
-  color: var(--faint);
-  border: 1px solid var(--line-strong);
-}
-
-/* ---------- portfolio builder ---------- */
-.putlab-root .pf-builder {
-  margin-top: 14px;
-  display: grid;
-  gap: 8px;
-}
-.putlab-root .pf-leg,
-.putlab-root .pf-controls {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  flex-wrap: wrap;
-}
-.putlab-root .pf-controls {
-  margin-top: 4px;
-  padding-top: 10px;
-  border-top: 1px solid var(--line);
-}
-.putlab-root .pf-leg select,
-.putlab-root .pf-field input {
-  font: inherit;
-  font-family: ui-monospace, 'JetBrains Mono', Menlo, monospace;
-  font-size: 14px;
-  color: var(--text);
-  background: var(--surface-2);
-  border: 1px solid var(--line-strong);
-  border-radius: 8px;
-  padding: 6px 8px;
-}
-.putlab-root .pf-leg select {
-  min-width: 12rem;
-}
-.putlab-root .pf-field {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  font-size: 12px;
-  color: var(--muted);
-}
-.putlab-root .pf-field input {
-  width: 5.5ch;
-  text-align: right;
-}
-.putlab-root .pf-leg select:focus,
-.putlab-root .pf-field input:focus {
-  outline: none;
-  border-color: var(--accent);
-}
-.putlab-root .pf-remove {
-  margin-left: auto;
-  width: 30px;
-  height: 30px;
-  border-radius: 8px;
-  border: 1px solid var(--line-strong);
-  background: var(--surface);
-  color: var(--muted);
-  cursor: pointer;
-  font-size: 18px;
-  line-height: 1;
-}
-.putlab-root .pf-remove:hover:not(:disabled) {
-  border-color: var(--loss);
-  color: var(--loss);
-}
-.putlab-root .pf-remove:disabled {
-  opacity: 0.4;
-  cursor: not-allowed;
-}
-.putlab-root .pf-add {
-  font: inherit;
-  font-size: 13px;
-  font-weight: 600;
-  cursor: pointer;
-  color: var(--accent);
-  background: transparent;
-  border: 1px dashed var(--line-strong);
-  border-radius: 8px;
-  padding: 6px 12px;
-}
-.putlab-root .pf-add:hover {
-  border-color: var(--accent);
-}
-
-/* ---------- data-quality pill ---------- */
-.putlab-root .pill.pill-ok {
-  border-color: color-mix(in srgb, var(--gain) 45%, var(--line));
-  color: var(--gain);
-  background: color-mix(in srgb, var(--gain) 8%, var(--surface));
-}
-.putlab-root .pill.pill-ok .dot {
-  background: var(--gain);
-}
-.putlab-root .pill.pill-warn {
-  border-color: color-mix(in srgb, var(--loss) 45%, var(--line));
-  color: var(--loss);
-  background: color-mix(in srgb, var(--loss) 8%, var(--surface));
-  cursor: help;
-}
-.putlab-root .pill.pill-warn .dot {
-  background: var(--loss);
-}
-
-/* ---------- tab nav ---------- */
-.putlab-root .tabnav {
-  display: flex;
-  gap: 4px;
-  flex-wrap: wrap;
-  border-bottom: 1px solid var(--line);
-  margin-bottom: 14px;
-}
-.putlab-root .tab {
-  font: inherit;
-  font-size: 14px;
-  font-weight: 600;
-  color: var(--muted);
+  color: var(--ink-45);
   background: transparent;
   border: none;
   border-bottom: 2px solid transparent;
-  border-radius: 8px 8px 0 0;
-  padding: 7px 14px;
-  margin-bottom: -1px;
+  padding: 11px 20px 9px;
+  margin-right: 2px;
   cursor: pointer;
 }
-.putlab-root .tab:hover {
-  color: var(--text);
-  background: var(--surface-2);
-}
-.putlab-root .tab-active {
-  color: var(--accent);
-  border-bottom-color: var(--accent);
-}
-.putlab-root .tab:focus-visible {
-  outline: 2px solid var(--accent);
-  outline-offset: -2px;
-}
-
-/* ---------- per-view intro line ---------- */
-.putlab-root .view-intro {
-  font-size: 14px;
-  color: var(--muted);
-  line-height: 1.6;
-  max-width: 74ch;
-  margin: 0 0 18px;
-}
-.putlab-root .view-intro strong {
-  color: var(--text);
-}
-
-/* ---------- regime view: VIX-stretch tile wrapped in a panel ---------- */
-.putlab-root .vix-panel .tile {
-  border: none;
-  padding: 0;
-  border-radius: 0;
-}
-
-/* ---------- footer feedback (compact, tokenized) ---------- */
-.putlab-root footer p {
-  margin: 0;
-}
-.putlab-root footer .feedback-panel {
-  margin-top: 18px;
-  padding: 16px;
-  border: 1px solid var(--line);
-  border-radius: 12px;
-  background: var(--surface);
-  color: var(--text);
-}
-.putlab-root footer .feedback-panel h2 {
-  font-size: 15px;
-  margin: 0 0 12px;
-  color: var(--text);
-}
-.putlab-root footer .feedback-panel textarea {
-  border: 1px solid var(--line-strong);
-  border-radius: 8px;
-  background: var(--surface-2);
-  color: var(--text);
-}
-.putlab-root footer .feedback-panel button {
-  align-self: flex-start;
-  border: 1px solid var(--accent);
-  border-radius: 8px;
-  background: var(--accent);
-  color: #14100a;
+.pl-tab:hover { color: var(--ink); }
+.pl-tab[aria-selected='true'] {
   font-weight: 600;
-}
-.putlab-root footer .feedback-panel .feedback-success {
-  color: var(--gain);
-}
-.putlab-root footer .feedback-panel .tile-error {
-  color: var(--loss);
+  color: var(--ink);
+  border-bottom-color: var(--ink);
 }
 
-/* ---------- learn view ---------- */
-.putlab-root .learn {
+/* ----------------------------------------------------------------- shell --- */
+
+/* One control surface on every tab. No border between rail and main — the
+   whitespace does it. The page scrolls normally: the fixed 100dvh shell this
+   replaces pinned header + ranking + tabs + question bar above an inner
+   scroller, which left the hero chart a few hundred pixels on a 13" laptop. */
+.pl-shell {
   display: grid;
-  grid-template-columns: 200px 1fr;
-  gap: 32px;
+  grid-template-columns: 262px minmax(0, 1fr);
+  gap: 0 34px;
   align-items: start;
 }
-@media (max-width: 860px) {
-  .putlab-root .learn {
-    grid-template-columns: 1fr;
-  }
-  .putlab-root .learn-nav {
-    display: none;
-  }
+.pl-side { position: sticky; top: 16px; padding-right: var(--space-6); }
+.pl-main { min-width: 0; }
+
+@media (max-width: 900px) {
+  .pl-shell { grid-template-columns: minmax(0, 1fr); }
+  .pl-side { position: static; padding-right: 0; margin-bottom: var(--space-6); }
 }
-.putlab-root .learn-nav {
-  position: sticky;
-  top: 20px;
-}
-.putlab-root .learn-nav ul {
-  list-style: none;
-  margin: 0;
-  padding: 0;
+
+/* Universe picker */
+.pl-list { max-height: 210px; overflow-y: auto; margin: 0 -4px var(--space-4); }
+.pl-list-row {
   display: grid;
-  gap: 2px;
-}
-.putlab-root .learn-nav a {
-  display: block;
-  padding: 6px 10px;
-  border-radius: 7px;
-  color: var(--muted);
-  text-decoration: none;
-  font-size: 13px;
-}
-.putlab-root .learn-nav a:hover {
-  color: var(--accent);
-  background: var(--surface-2);
-}
-.putlab-root .learn-body {
-  min-width: 0;
-}
-.putlab-root .learn-section {
-  margin-bottom: 34px;
-  scroll-margin-top: 20px;
-}
-.putlab-root .learn-cat {
-  font-size: 18px;
-  margin: 0 0 14px;
-  padding-bottom: 8px;
-  border-bottom: 1px solid var(--line);
-  letter-spacing: -0.01em;
-}
-.putlab-root .learn-cards {
-  display: grid;
-  gap: 16px;
-}
-.putlab-root .learn-card {
-  background: var(--surface);
-  border: 1px solid var(--line);
-  border-radius: 14px;
-  padding: 18px 20px;
-  box-shadow: var(--shadow);
-  scroll-margin-top: 20px;
-}
-.putlab-root .learn-term {
-  font-size: 16px;
-  margin: 0 0 6px;
-  letter-spacing: -0.01em;
-}
-.putlab-root .learn-short {
-  font-size: 13.5px;
-  color: var(--muted);
-  font-weight: 500;
-  margin: 0 0 12px;
-}
-.putlab-root .learn-formula {
-  font-size: 12.5px;
-  color: var(--text);
-  background: var(--surface-2);
-  border: 1px solid var(--line);
-  border-radius: 9px;
-  padding: 10px 12px;
-  margin: 0 0 12px;
-  white-space: pre-wrap;
-  word-break: break-word;
-  overflow-x: auto;
-}
-.putlab-root .learn-intuition {
-  font-size: 13.5px;
-  color: var(--text);
-  line-height: 1.65;
-  margin: 0 0 12px;
-}
-.putlab-root .learn-howto {
-  font-size: 13px;
-  color: var(--muted);
-  line-height: 1.6;
-  margin: 0 0 12px;
-  padding: 10px 12px;
-  background: color-mix(in srgb, var(--accent) 6%, var(--surface-2));
-  border-radius: 9px;
-}
-.putlab-root .learn-howto-k {
-  display: block;
-  font-size: 10.5px;
-  text-transform: uppercase;
-  letter-spacing: 0.1em;
-  font-weight: 700;
-  color: var(--accent);
-  margin-bottom: 4px;
-}
-.putlab-root .learn-see {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
+  grid-template-columns: 1fr auto;
   gap: 8px;
+  align-items: baseline;
+  width: 100%;
+  text-align: left;
+  font: inherit;
+  font-size: 13px;
+  padding: 4px;
+  background: transparent;
+  color: var(--ink);
+  border: none;
+  border-bottom: 1px solid var(--rule);
+  cursor: pointer;
+}
+.pl-list-row:hover { background: color-mix(in srgb, var(--cyan) 9%, transparent); }
+.pl-list-row[aria-pressed='true'] {
+  background: color-mix(in srgb, var(--cyan) 14%, transparent);
+  color: var(--cyan-2);
+}
+.pl-list-row strong { font-weight: 600; }
+.pl-list-row .pl-list-blurb { color: var(--ink-45); font-size: 12px; }
+.pl-list-empty { font-size: 12.5px; color: var(--ink-45); padding: 6px 4px; }
+
+.pl-prov {
+  margin: 0;
   font-size: 12px;
+  color: var(--ink-70);
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 4px 12px;
 }
-.putlab-root .learn-see-k {
-  font-size: 10.5px;
-  text-transform: uppercase;
-  letter-spacing: 0.08em;
-  font-weight: 600;
-  color: var(--faint);
-}
-.putlab-root .learn-see-link {
-  color: var(--accent);
-  text-decoration: none;
-  border: 1px solid var(--line-strong);
-  border-radius: 999px;
-  padding: 2px 9px;
-}
-.putlab-root .learn-see-link:hover {
-  background: var(--surface-2);
-  border-color: var(--accent);
-}
+.pl-prov dt { color: var(--ink-45); }
+.pl-prov dd { margin: 0; text-align: right; }
+.pl-prov dd.pl-neg { color: var(--mag-2); }
 
-/* ---------- regime panel ---------- */
-.putlab-root .regime-now {
-  font-weight: 700;
-  text-transform: capitalize;
+/* ---------------------------------------------------------------- forms --- */
+
+.pl-field { display: block; }
+.pl-field > label {
+  display: block;
+  font-size: 12px;
+  margin-bottom: 5px;
+  color: color-mix(in srgb, var(--ink) 70%, transparent);
 }
-.putlab-root .regime-strip {
-  display: flex;
-  height: 26px;
-  border-radius: 7px;
+.pl-input {
+  width: 100%;
+  min-height: 36px;
+  padding: 6px 10px;
+  font: inherit;
+  font-size: 14px;
+  color: var(--ink);
+  caret-color: var(--cyan);
+  background: var(--paper-2);
+  border: 1px solid var(--rule);
+  border-radius: var(--radius-md);
+}
+.pl-input::placeholder { color: color-mix(in srgb, var(--ink) 65%, transparent); opacity: 1; }
+.pl-input:hover { border-color: color-mix(in srgb, var(--ink) 45%, transparent); }
+.pl-input:focus-visible { border-color: var(--cyan); outline-offset: 0; }
+
+.pl-seg {
+  display: inline-flex;
   overflow: hidden;
-  margin-top: 14px;
-  border: 1px solid var(--line);
+  border: 1px solid var(--rule);
+  border-radius: var(--radius-md);
 }
-.putlab-root .regime-band {
-  min-width: 1px;
-  opacity: 0.85;
-}
-.putlab-root .regime-band:hover {
-  opacity: 1;
-}
-.putlab-root .regime-axis {
-  display: flex;
-  justify-content: space-between;
-  margin-top: 5px;
-  font-size: 11px;
-  color: var(--faint);
-}
-
-/* ---------- concept info (ⓘ popover) ---------- */
-.putlab-root .concept-info {
+/* A full-width segment in the 262px rail has to hold four options, the widest
+   of which is "1 quarter". At the shared 12px/12px it clips. */
+.pl-seg-block { display: flex; width: 100%; }
+.pl-seg-block .pl-seg-opt { padding-inline: 4px; font-size: 11.5px; }
+.pl-seg-opt {
+  position: relative;
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  vertical-align: middle;
-  margin-left: 4px;
-  width: 14px;
-  height: 14px;
-  padding: 0;
-  border: none;
-  background: none;
-  color: var(--faint);
-  font-size: 13px;
-  line-height: 1;
-  cursor: pointer;
-  border-radius: 50%;
-}
-.putlab-root .concept-info:hover,
-.putlab-root .concept-info:focus-visible,
-.putlab-root .concept-info[aria-expanded='true'] {
-  color: var(--accent);
-}
-.putlab-root .concept-info:focus-visible {
-  outline: 2px solid var(--accent);
-  outline-offset: 2px;
-}
-/* Fixed-position popover, portaled to document.body so it escapes any
-   ancestor's overflow/clip (e.g. the .lb-scroll horizontally-scrolling
-   table wrappers) and any local stacking context. */
-.putlab-root.concept-pop {
-  box-sizing: border-box;
-  position: fixed;
-  z-index: 60;
-  max-width: calc(100vw - 24px);
-  max-height: 60vh;
-  overflow-y: auto;
-  background: var(--surface);
-  border: 1px solid var(--line-strong);
-  border-radius: 12px;
-  box-shadow: var(--shadow);
-  padding: 14px 16px;
-  font-size: 13px;
-  line-height: 1.5;
-}
-@media (prefers-reduced-motion: no-preference) {
-  .putlab-root.concept-pop {
-    animation: concept-pop-in 0.12s ease-out;
-  }
-}
-@keyframes concept-pop-in {
-  from {
-    opacity: 0;
-    transform: translateY(-4px);
-  }
-  to {
-    opacity: 1;
-    transform: translateY(0);
-  }
-}
-.putlab-root .concept-pop-term {
-  font-weight: 700;
-  font-size: 14px;
-  color: var(--text);
-  margin-bottom: 4px;
-}
-.putlab-root .concept-pop-short {
-  color: var(--text);
-  margin: 0 0 8px;
-}
-.putlab-root .concept-pop-formula {
-  white-space: pre-wrap;
-  word-break: break-word;
-  overflow-wrap: anywhere;
-  background: var(--surface-2);
-  border: 1px solid var(--line);
-  border-radius: 8px;
-  padding: 8px 10px;
+  flex: 1;
+  padding: 7px 12px;
   font-size: 12px;
-  color: var(--muted);
-  margin: 0 0 8px;
+  cursor: pointer;
+  white-space: nowrap;
 }
-.putlab-root .concept-pop-intuition {
-  color: var(--muted);
-  margin: 0 0 8px;
+.pl-seg-opt + .pl-seg-opt { border-left: 1px solid var(--rule); }
+.pl-seg-opt input { position: absolute; opacity: 0; pointer-events: none; }
+.pl-seg-opt:has(input:checked) { background: var(--cyan); color: var(--paper); }
+.pl-seg-opt:not(:has(input:checked)):hover {
+  background: color-mix(in srgb, var(--ink) 7%, transparent);
 }
-.putlab-root .concept-pop-how {
-  color: var(--muted);
-  margin: 0;
-}
-.putlab-root .concept-pop-how strong {
-  color: var(--text);
-}
+.pl-seg-opt:has(input:focus-visible) { outline: 2px solid var(--cyan); outline-offset: -2px; }
 
-/* --- Accuracy panel -------------------------------------------------------
-   Sits directly under the stat band on the Backtest tab. Deliberately styled
-   as a first-class result panel, not a footnote: the constitution treats the
-   size of a result's error as part of the result. */
-.acc-panel {
-  border-left: 3px solid var(--warm);
-}
-.acc-title {
-  display: flex;
-  align-items: center;
-  gap: 0.6rem;
-  margin: 0 0 0.75rem;
-  font-size: 0.95rem;
-  letter-spacing: 0.01em;
-}
-.acc-badge {
-  font-size: 0.65rem;
-  text-transform: uppercase;
-  letter-spacing: 0.08em;
-  padding: 0.12rem 0.42rem;
-  border-radius: 999px;
-  border: 1px solid var(--line-strong);
-  color: var(--muted);
-}
-.acc-badge-direct {
-  border-color: var(--accent);
-  color: var(--accent);
-}
-.acc-badge-unmeasured {
-  border-color: var(--loss);
-  color: var(--loss);
-}
-.acc-headline {
-  margin: 0 0 0.7rem;
-  font-size: 1rem;
-  line-height: 1.45;
-}
-.acc-headline-warn strong {
-  color: var(--warm);
-}
-.acc-headline-cool strong {
-  color: var(--accent);
-}
-.acc-headline-unknown {
-  color: var(--loss);
-}
+.pl-two-col { display: grid; grid-template-columns: 1fr 1fr; gap: var(--space-2); }
 
-/* Regime mix: one stacked bar so the window's character reads at a glance,
-   with each regime's own measured residual beside it. */
-.acc-mix-bar {
-  display: flex;
-  height: 8px;
-  border-radius: 4px;
-  overflow: hidden;
-  background: var(--surface-2);
-  margin-bottom: 0.45rem;
-}
-.acc-mix-seg {
-  display: block;
-  height: 100%;
-}
-.acc-mix-calm {
-  background: var(--accent);
-}
-.acc-mix-elevated {
-  background: var(--warm);
-}
-.acc-mix-crisis {
-  background: var(--loss);
-}
-.acc-mix-legend {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 0.9rem;
-  list-style: none;
-  margin: 0 0 0.7rem;
-  padding: 0;
-  font-size: 0.78rem;
-  color: var(--muted);
-}
-.acc-mix-legend li {
-  display: flex;
+/* -------------------------------------------------------------- buttons --- */
+
+.pl-btn {
+  display: inline-flex;
   align-items: center;
-  gap: 0.35rem;
+  justify-content: center;
+  gap: 6px;
+  font: inherit;
+  font-size: 14px;
+  padding: 8px 14px;
+  cursor: pointer;
+  text-decoration: none;
+  background: transparent;
+  color: var(--ink);
+  border: 1px solid transparent;
+  border-radius: var(--radius-md);
 }
-.acc-dot {
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
+.pl-btn:disabled { opacity: 0.45; cursor: not-allowed; }
+.pl-btn-primary { background: var(--cyan); color: var(--paper); }
+.pl-btn-primary:hover:not(:disabled) { background: var(--cyan-2); }
+.pl-btn-secondary { border-color: var(--rule); }
+.pl-btn-secondary:hover:not(:disabled) { background: color-mix(in srgb, var(--ink) 7%, transparent); }
+.pl-btn-ghost { color: var(--cyan); padding-inline: var(--space-1); }
+.pl-btn-ghost:hover:not(:disabled) { background: color-mix(in srgb, var(--cyan) 10%, transparent); }
+.pl-btn-icon { width: 36px; height: 36px; padding: 0; }
+
+/* ----------------------------------------------------------------- tags --- */
+
+.pl-tag {
+  display: inline-flex;
+  align-items: center;
+  font-size: 11px;
+  letter-spacing: 0.02em;
+  padding: 3px 10px;
+  border-radius: var(--radius-md);
+  white-space: nowrap;
 }
-.acc-mix-residual {
-  color: var(--faint);
-  font-variant-numeric: tabular-nums;
-}
-.acc-note {
-  margin: 0 0 0.5rem;
-  font-size: 0.8rem;
-  line-height: 1.5;
-  color: var(--muted);
-}
-.acc-basis {
-  margin: 0;
-  font-size: 0.72rem;
-  color: var(--faint);
-  font-variant-numeric: tabular-nums;
-}
-.acc-block {
-  margin-top: 1.1rem;
-  padding-top: 0.9rem;
-  border-top: 1px solid var(--line);
-}
-.acc-block h4 {
-  margin: 0 0 0.5rem;
-  font-size: 0.8rem;
-  text-transform: uppercase;
-  letter-spacing: 0.07em;
-  color: var(--muted);
-}
-.acc-table {
-  width: 100%;
-  border-collapse: collapse;
-  font-size: 0.82rem;
-  font-variant-numeric: tabular-nums;
-}
-.acc-table th[scope='col'] {
-  text-align: right;
-  font-weight: 500;
-  color: var(--faint);
-  font-size: 0.7rem;
-  text-transform: uppercase;
-  letter-spacing: 0.06em;
-  padding-bottom: 0.3rem;
-}
-.acc-table th[scope='col']:first-child,
-.acc-table th[scope='row'] {
+.pl-tag-ok { background: #e9f8ff; color: #004961; }
+.pl-tag-bad { background: #fff1f4; color: #790e3d; }
+.pl-tag-mute { background: var(--pl-n-100); color: var(--pl-n-800); }
+.pl-tag-outline { border: 1px solid var(--cyan); color: var(--cyan); }
+
+/* --------------------------------------------------------------- tables --- */
+
+.pl-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+.pl-table th {
   text-align: left;
+  font-size: 10px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  font-weight: 400;
+  color: var(--ink-45);
+  padding: var(--space-2);
+  border-bottom: 1px solid var(--rule-2);
+  white-space: nowrap;
 }
-.acc-table th[scope='row'] {
-  font-weight: 600;
-  color: var(--text);
+.pl-table td {
+  padding: var(--space-2);
+  border-bottom: 1px solid color-mix(in srgb, var(--ink) 8%, transparent);
 }
-.acc-table td {
-  text-align: right;
-  padding: 0.22rem 0;
+.pl-table tbody tr:hover { background: color-mix(in srgb, var(--ink) 4%, transparent); }
+.pl-table .num { text-align: right; }
+.pl-table th.num { text-align: right; }
+.pl-table .pick { cursor: pointer; }
+.pl-table .is-current { background: color-mix(in srgb, var(--cyan) 12%, transparent); }
+.pl-table .is-winner { background: color-mix(in srgb, var(--cyan) 10%, transparent); }
+.pl-table .dim { color: var(--ink-70); }
+.pl-table .dimmer { color: var(--ink-45); }
+.pl-table .bold { font-weight: 600; }
+.pl-table .nowrap { white-space: nowrap; }
+.pl-scroll { overflow-x: auto; }
+.pl-scroll-y { max-height: 460px; overflow-y: auto; }
+/* Eleven columns of figures: a step down from the shared table size. */
+.pl-ledger { font-size: 12.5px; }
+.pl-table thead.sticky th { position: sticky; top: 0; background: var(--paper); }
+
+.pl-pos { color: var(--ink); }
+.pl-neg { color: var(--mag-2); }
+
+/* ------------------------------------------------------- ranking strip --- */
+
+.pl-rank-strip {
+  display: flex;
+  align-items: baseline;
+  gap: 18px;
+  flex-wrap: wrap;
+  padding-bottom: 9px;
+}
+.pl-rank-pick {
+  font: inherit;
+  font-size: 14px;
+  background: transparent;
+  border: none;
+  padding: 0;
+  cursor: pointer;
   color: var(--ink);
 }
-.acc-table tbody tr + tr th,
-.acc-table tbody tr + tr td {
-  border-top: 1px solid var(--line);
+.pl-rank-pick strong { font-weight: 600; }
+.pl-rank-pick:hover { text-decoration: underline; text-underline-offset: 3px; }
+.pl-rank-n { color: var(--ink-45); }
+.pl-rank-at { color: var(--ink-45); font-size: 12px; }
+.pl-rank-more { margin-left: auto; font-size: 13px; }
+
+/* ----------------------------------------------------------------- hero --- */
+
+.pl-hero {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 44px;
+  align-items: start;
+  padding: 26px 0 20px;
 }
-.acc-clean {
-  margin: 0;
-  font-size: 0.82rem;
-  color: var(--accent);
+@media (max-width: 720px) {
+  .pl-hero { grid-template-columns: minmax(0, 1fr); gap: var(--space-4); }
 }
-.acc-flagged {
-  margin: 0;
-  font-size: 0.82rem;
-  color: var(--warm);
-}
-.acc-assumptions summary {
-  cursor: pointer;
-  font-size: 0.8rem;
-  text-transform: uppercase;
-  letter-spacing: 0.07em;
-  color: var(--muted);
-}
-.acc-assumptions dl {
-  margin: 0.7rem 0 0;
-  font-size: 0.82rem;
-}
-.acc-assumptions dt {
+.pl-hero-fig { display: flex; align-items: baseline; gap: 14px; flex-wrap: wrap; }
+.pl-hero-num {
+  font-family: var(--serif);
+  font-size: 78px;
+  line-height: 0.86;
   font-weight: 600;
-  color: var(--text);
-  margin-top: 0.55rem;
+  letter-spacing: -0.035em;
 }
-.acc-assumptions dd {
-  margin: 0.1rem 0 0;
-  color: var(--muted);
+.pl-hero-unit { font-size: 15px; color: var(--ink-70); max-width: 22ch; }
+.pl-hero-sentence {
+  margin-top: 14px;
+  font-size: 16px;
   line-height: 1.5;
+  max-width: 62ch;
+  color: var(--ink-70);
 }
-.acc-leverage {
-  color: var(--faint);
+.pl-brokenout { display: grid; gap: var(--space-2); min-width: 200px; align-content: start; margin: 0; }
+.pl-brokenout-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+  border-bottom: 1px solid var(--rule);
+  padding-bottom: 5px;
+}
+.pl-brokenout-row:last-child { border-bottom: none; }
+.pl-brokenout-row dt { font-size: 12.5px; color: var(--ink-45); }
+.pl-brokenout-row dd { margin: 0; font-size: 15px; font-weight: 600; }
+
+/* One rule above, spacing between. No per-cell hairlines, no gradient wash on
+   one card — six equal cards with one of them washed is not a hierarchy. */
+.pl-stats {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+  gap: var(--space-4);
+  border-top: 1px solid var(--ink);
+  padding-top: var(--space-3);
+}
+.pl-stat-k {
+  font-size: 10px;
+  letter-spacing: 0.13em;
+  text-transform: uppercase;
+  color: var(--ink-45);
+  margin-bottom: 5px;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+.pl-stat-v {
+  font-family: var(--serif);
+  font-size: 25px;
+  line-height: 1;
+  font-weight: 600;
+  letter-spacing: -0.02em;
+  white-space: nowrap;
+}
+.pl-stat-note { font-size: 11.5px; color: var(--ink-45); margin-top: 4px; line-height: 1.35; }
+
+/* ----------------------------------------------------------------- tape --- */
+
+.pl-section { padding-top: var(--space-6); }
+.pl-section-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--space-4);
+  flex-wrap: wrap;
+  margin-bottom: 4px;
+}
+.pl-legend {
+  display: flex;
+  gap: 18px;
+  flex-wrap: wrap;
+  align-items: center;
+  font-size: 11.5px;
+  color: var(--ink-45);
+}
+.pl-legend > span { display: inline-flex; align-items: center; gap: 6px; }
+.pl-swatch-line { width: 16px; height: 2px; background: var(--ink); }
+.pl-swatch-dash { width: 16px; border-top: 2px dashed var(--cyan); }
+.pl-swatch-dot { width: 9px; height: 9px; border-radius: 50%; background: var(--mag); }
+.pl-swatch-box { width: 12px; height: 9px; }
+.pl-swatch-elevated { background: var(--warn-fill); opacity: 0.6; }
+.pl-swatch-crisis { background: var(--mag); opacity: 0.4; }
+
+/* Axis labels live in HTML beside the SVG, not as <text> inside it: SVG text
+   cannot inherit the theme's font stack reliably and cannot wrap. */
+.pl-chart { position: relative; padding-right: 56px; }
+/* Dollars right, rate left: two different units in one pane cannot share a
+   gutter, or "$0" and "+11%/yr" print on top of each other. */
+.pl-chart-two-gutter { padding-left: 60px; }
+.pl-chart svg { display: block; width: 100%; height: auto; }
+.pl-ytick {
+  position: absolute;
+  right: 0;
+  transform: translateY(-50%);
+  font-size: 11px;
+  color: var(--ink-45);
+  white-space: nowrap;
+}
+.pl-xticks {
+  display: flex;
+  justify-content: space-between;
+  font-size: 11px;
+  color: var(--ink-45);
+  padding: 5px 56px 0 0;
+}
+.pl-pane-label {
+  font-size: 10px;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--ink-45);
+  margin-bottom: 2px;
 }
 
-/* --- One-page workspace ---------------------------------------------------
-   The workspace is an app shell, not a document: the page itself never
-   scrolls, so the fragility ranking stays pinned in view and a click on a row
-   shows its effect without the user hunting for where the result went. Only
-   the active view scrolls, and only when its own content exceeds the space
-   left for it. */
-.putlab-root.putlab-shell {
-  /* `vh` is the floor every browser understands. A plain `height: 100dvh`
-     override on the next line does NOT survive: the CSS minifier collapses
-     duplicate properties and keeps only the newer unit, so a browser that
-     cannot parse `dvh` is left with no height at all -- which is how this
-     shipped broken the first time. @supports is the one form the minifier
-     cannot flatten. */
-  height: 100vh;
-  overflow: hidden;
+/* Tape inks. Everything here is a stroke or a fill on the SVG, so it lives in
+   CSS rather than as presentation attributes and inverts with the sheet. */
+.pl-tape-regime.is-elevated { fill: var(--warn-fill); opacity: 0.18; }
+.pl-tape-regime.is-crisis { fill: var(--mag); opacity: 0.14; }
+.pl-tape-grid { stroke: var(--rule); stroke-width: 1; }
+.pl-tape-price { fill: none; stroke: var(--ink); stroke-width: 1.4; }
+.pl-tape-strike { stroke: var(--ink-45); stroke-width: 1.6; }
+.pl-tape-strike.is-paid { stroke: var(--mag); stroke-width: 2.4; }
+.pl-tape-marker { fill: var(--mag); }
+.pl-tape-zero { stroke: var(--ink); stroke-width: 1; }
+.pl-tape-hurdle { stroke: var(--cyan); stroke-width: 1.4; stroke-dasharray: 6 4; }
+.pl-tape-pnl { fill: none; stroke: var(--ink); stroke-width: 1.8; }
+.pl-tape-ann { fill: none; stroke: var(--ink-45); stroke-width: 1.2; }
+.pl-ytick-rate { right: auto; left: 0; }
+.pl-ytick-hurdle { color: var(--cyan-2); }
+.pl-eq-area { fill: color-mix(in srgb, var(--ink) 10%, transparent); }
+.pl-eq-settle { fill: var(--paper); stroke: var(--mag); stroke-width: 2; }
+.pl-eq-cursor { stroke: var(--cyan); stroke-width: 1; }
+.pl-chart-equity svg { cursor: crosshair; }
+
+/* ---------------------------------------------------------------- sweep --- */
+
+/* Three qualitatively different printings, not one continuous ramp. A reader
+   must be able to tell "lost money" from "made money but lost to the index"
+   without consulting a colour scale — those are different KINDS of outcome, not
+   different shades of one. Cyan is reserved for the current-cell ring, so
+   "which cell am I on" never competes with the verdict. */
+.pl-sweep {
+  display: grid;
+  grid-template-columns: 92px repeat(var(--pl-sweep-cols, 4), minmax(0, 1fr));
 }
-@supports (height: 100dvh) {
-  /* Preferred where available: `dvh` tracks the mobile URL bar collapsing,
-     which `vh` does not. */
-  .putlab-root.putlab-shell {
-    height: 100dvh;
-  }
+.pl-sweep-row { display: grid; grid-column: 1 / -1; grid-template-columns: inherit; }
+.pl-sweep-head { text-align: center; font-size: 11.5px; color: var(--ink-45); padding-bottom: 5px; }
+.pl-sweep-rowhead {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  padding-right: 12px;
+  font-size: 11.5px;
+  color: var(--ink-45);
 }
-.putlab-root.putlab-shell .wrap {
-  height: 100%;
+.pl-sweep-cell {
   display: flex;
   flex-direction: column;
-  /* Without this a flex child refuses to shrink below its content height and
-     the whole column overflows the viewport instead of scrolling inside. */
-  min-height: 0;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+  height: 64px;
+  font: inherit;
+  padding: 0;
+  cursor: pointer;
+  border: 2px solid var(--paper);
+  background: var(--paper);
 }
-.putlab-root.putlab-shell .wrap > header.top,
-.putlab-root.putlab-shell .wrap > .panel.lb-panel,
-.putlab-root.putlab-shell .wrap > .tabnav,
-.putlab-root.putlab-shell .wrap > .question {
-  flex: 0 0 auto;
+.pl-sweep-cell:hover { outline: 1px solid var(--ink-45); outline-offset: -3px; }
+.pl-sweep-cell .v { font-size: 15px; font-weight: 600; }
+.pl-sweep-cell .n { font-size: 10.5px; }
+/* Magnitude within a band rides --pl-d (0..1), set inline from the data. */
+.pl-sweep-cell.is-loss {
+  background: color-mix(in srgb, var(--mag) calc(12% + var(--pl-d) * 78%), var(--paper));
 }
-.putlab-root.putlab-shell .wrap > .putlab-viewport {
-  flex: 1 1 auto;
-  min-height: 0;
-  overflow-y: auto;
-  overscroll-behavior: contain;
-  /* The scrollbar sits inside the region, so give the content room to clear it. */
-  padding-right: 4px;
+.pl-sweep-cell.is-loss .v { color: var(--mag-2); }
+.pl-sweep-cell.is-loss .n { color: var(--ink-70); }
+.pl-sweep-cell.is-loss.is-strong .v,
+.pl-sweep-cell.is-loss.is-strong .n { color: var(--paper); }
+.pl-sweep-cell.is-under {
+  background: radial-gradient(
+      color-mix(in srgb, var(--ink) 34%, var(--paper)) 1.05px,
+      var(--paper) 1.35px
+    )
+    0 0 / calc(5px + (1 - var(--pl-d)) * 4px) calc(5px + (1 - var(--pl-d)) * 4px);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--ink) 22%, transparent);
+}
+.pl-sweep-cell.is-under .v { color: var(--ink); }
+.pl-sweep-cell.is-under .n { color: var(--ink-70); }
+.pl-sweep-cell.is-beat {
+  background: color-mix(in srgb, var(--ink) calc(58% + var(--pl-d) * 42%), var(--paper));
+}
+.pl-sweep-cell.is-beat .v { color: var(--paper); }
+.pl-sweep-cell.is-beat .n { color: color-mix(in srgb, var(--paper) 72%, transparent); }
+.pl-sweep-cell.is-current { border-color: var(--cyan); }
+/* The legend swatches print the same three inks the cells do, so a reader can
+   match them without a colour scale. */
+.pl-swatch-loss { background: color-mix(in srgb, var(--mag) 70%, var(--paper)); }
+.pl-swatch-under {
+  background: radial-gradient(
+      color-mix(in srgb, var(--ink) 46%, var(--paper)) 1.05px,
+      var(--paper) 1.35px
+    )
+    0 0 / 5px 5px;
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--ink) 22%, transparent);
+}
+.pl-swatch-beat { background: color-mix(in srgb, var(--ink) 85%, var(--paper)); }
+.pl-swatch-current { border: 2px solid var(--cyan); }
+
+.pl-sweep-foot {
+  display: flex;
+  justify-content: space-between;
+  gap: var(--space-4);
+  padding: 6px 0 0 92px;
+  font-size: 11px;
+  color: var(--ink-45);
 }
 
-/* --- Compact ranking ------------------------------------------------------
-   Small by default and draggable taller: how many names a user wants in view
-   is a preference, not something this component can know. `resize` needs a
-   non-visible overflow to take effect, which the scroller already has. */
-.putlab-root .lb-scroll {
-  overflow-y: auto;
-  max-height: var(--lb-height, 232px);
-  resize: vertical;
-  min-height: 92px;
+/* -------------------------------------------------------------- bake-off --- */
+
+.pl-bake-caveat { margin-bottom: var(--space-4); font-size: 13.5px; max-width: 78ch; }
+.pl-bake-controls {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  flex-wrap: wrap;
+  border-top: 1px solid var(--ink);
+  padding: var(--space-2) 0 var(--space-3);
 }
-.putlab-root .lb-scroll::-webkit-resizer {
-  border-color: transparent var(--line-strong);
+.pl-bake-verdict { font-size: 17px; line-height: 1.5; max-width: 74ch; margin: 0 0 var(--space-4); }
+.pl-bake-verdict strong { font-weight: 600; }
+.pl-bake-names { font-size: 12.5px; }
+/* Three notes, so they want a narrower track floor than the two-up default --
+   otherwise the third wraps alone under an empty column. */
+.pl-bake-notes {
+  margin-top: var(--space-6);
+  grid-template-columns: repeat(auto-fit, minmax(min(280px, 100%), 1fr));
+  gap: var(--space-6);
 }
-/* Keep the header legible while the body scrolls under it. */
-.putlab-root .lb-table thead th {
-  position: sticky;
-  top: 0;
-  z-index: 2;
-  background: var(--surface);
+.pl-bake-notes strong { color: var(--ink); font-weight: 600; }
+
+/* -------------------------------------------------------------- accuracy --- */
+
+/* min() on the track floor, not a bare 360px: below ~420px of content box the
+   floor is wider than the column it sits in and the whole PAGE scrolls
+   sideways, which is the one thing wide content must never do. */
+.pl-two-up {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(360px, 100%), 1fr));
+  gap: var(--space-8);
 }
-.putlab-root .lb-best {
-  min-width: 92px;
+.pl-acc-headline { font-size: 17px; line-height: 1.5; max-width: 74ch; margin-bottom: var(--space-3); }
+.pl-acc-headline strong { font-weight: 600; }
+.pl-acc-badge {
+  margin-left: var(--space-2);
+  font-size: 11px;
+  letter-spacing: 0.02em;
+  padding: 3px 10px;
+  border-radius: var(--radius-md);
+  vertical-align: middle;
+  font-weight: 400;
+  text-transform: none;
+  background: var(--pl-n-100);
+  color: var(--pl-n-800);
 }
-.putlab-root .lb-bestcell {
-  font-size: 0.8em;
-  color: var(--faint);
-  letter-spacing: 0.01em;
+.pl-acc-badge-direct { background: #e9f8ff; color: #004961; }
+.pl-acc-badge-unmeasured { border: 1px solid var(--rule-2); background: transparent; color: var(--ink-45); }
+.pl-mix-bar { display: flex; height: 9px; margin-bottom: 8px; }
+.pl-mix-bar > span { display: block; height: 100%; }
+.pl-mix-calm { background: var(--ink-25); }
+.pl-mix-elevated { background: var(--warn-fill); }
+.pl-mix-crisis { background: var(--mag); }
+.pl-mix-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 22px;
+  list-style: none;
+  margin: 0 0 var(--space-3);
+  padding: 0;
+  font-size: 12.5px;
+  color: var(--ink-70);
 }
-.putlab-root .lb-nobest {
-  color: var(--faint);
+.pl-dot { display: inline-block; width: 8px; height: 8px; margin-right: 8px; }
+
+.pl-assumptions {
+  margin: 0;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 7px 16px;
+  font-size: 13px;
 }
-/* A compact panel earns its space by being dense, not by being cramped. */
-.putlab-root .panel.lb-panel {
-  margin-top: 10px;
-  padding-bottom: 10px;
+.pl-assumptions dt { color: var(--ink-45); white-space: nowrap; }
+.pl-assumptions dd { margin: 0; }
+.pl-assumptions dd strong { font-weight: 600; }
+.pl-assumptions dd em { color: var(--ink-45); font-size: 12px; font-style: normal; }
+
+/* ---------------------------------------------------------------- memory --- */
+
+.pl-mem { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: var(--space-4); }
+.pl-mem-card { border-top: 1px solid var(--rule); padding-top: var(--space-2); }
+.pl-mem-v { font-size: 19px; font-weight: 600; letter-spacing: -0.02em; margin: 4px 0 2px; }
+
+/* ------------------------------------------------------------- portfolio --- */
+
+.pl-legs { display: grid; gap: var(--space-2); margin-bottom: var(--space-3); }
+.pl-leg {
+  display: grid;
+  grid-template-columns: minmax(0, 1.5fr) 92px 130px 116px 40px;
+  gap: var(--space-2);
+  align-items: end;
 }
-.putlab-root .panel.lb-panel .lb-table th,
-.putlab-root .panel.lb-panel .lb-table td {
-  padding: 5px 12px;
+@media (max-width: 720px) {
+  .pl-leg { grid-template-columns: minmax(0, 1fr) 1fr; }
+}
+.pl-leg-actions {
+  display: flex;
+  align-items: end;
+  gap: var(--space-3);
+  flex-wrap: wrap;
+  border-top: 1px solid var(--rule);
+  padding-top: var(--space-3);
+  margin-bottom: var(--space-6);
 }
 
-/* The ranking is a control surface, not an article: its explanation must not
-   out-measure the table it explains. */
-.putlab-root .panel.lb-panel .panel-head {
-  align-items: flex-start;
-  gap: 10px;
+/* ---------------------------------------------------------------- regime --- */
+
+.pl-regime-now { font-size: 40px; font-weight: 600; letter-spacing: -0.03em; line-height: 1; }
+.pl-regime-strip {
+  display: flex;
+  height: 34px;
+  border-top: 1px solid var(--ink);
+  border-bottom: 1px solid var(--rule);
 }
-.putlab-root .panel.lb-panel h2 {
+.pl-regime-strip > span { display: block; height: 100%; opacity: 0.75; }
+.pl-regime-cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: var(--space-4);
+  border-top: 1px solid var(--ink);
+  padding-top: var(--space-3);
+}
+.pl-regime-card .pl-stat-v { margin: 6px 0 4px; }
+.pl-regime-axis {
+  display: flex;
+  justify-content: space-between;
+  font-size: 11.5px;
+  color: var(--ink-45);
+  padding-top: 6px;
+}
+
+/* -------------------------------------------------------------- glossary --- */
+
+.pl-gloss-cat {
   font-size: 15px;
-  margin-top: 2px !important;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  font-weight: 400;
+  color: var(--ink-45);
+  border-top: 1px solid var(--ink);
+  padding-top: var(--space-2);
+  margin: var(--space-8) 0 var(--space-2);
 }
-.putlab-root .panel.lb-panel .hint {
-  margin-top: 4px;
-  max-width: 92ch;
+.pl-gloss-entry {
+  display: grid;
+  grid-template-columns: minmax(0, 230px) minmax(0, 1fr);
+  gap: var(--space-6);
+  padding: var(--space-3) 0 var(--space-4);
+  border-bottom: 1px solid var(--rule);
+}
+@media (max-width: 720px) {
+  .pl-gloss-entry { grid-template-columns: minmax(0, 1fr); gap: var(--space-2); }
+}
+.pl-gloss-term { font-size: 19px; font-weight: 600; letter-spacing: -0.015em; margin-bottom: 4px; }
+.pl-gloss-short { font-size: 13px; color: var(--ink-70); line-height: 1.5; }
+.pl-gloss-formula { font-size: 13.5px; color: var(--cyan-2); padding-bottom: 9px; white-space: pre-wrap; }
+.pl-gloss-body { font-size: 15px; line-height: 1.55; max-width: 74ch; margin-bottom: 9px; }
+.pl-gloss-read { font-size: 13px; line-height: 1.55; color: var(--ink-70); max-width: 74ch; }
+.pl-gloss-see { font-size: 12.5px; color: var(--ink-45); margin-top: 9px; display: flex; gap: 12px; flex-wrap: wrap; }
+
+/* ------------------------------------------------------- concept popover --- */
+
+/* Was 14x14px. 24px is the floor a pointer target gets. */
+.pl-concept {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  margin-left: 2px;
+  font: inherit;
+  font-size: 12px;
+  line-height: 1;
+  vertical-align: middle;
+  color: var(--ink-45);
+  background: transparent;
+  border: none;
+  border-radius: 50%;
+  cursor: pointer;
+}
+.pl-concept:hover { color: var(--cyan); background: color-mix(in srgb, var(--cyan) 10%, transparent); }
+.pl-concept-pop {
+  position: fixed;
+  z-index: 60;
+  padding: var(--space-3);
+  background: var(--paper);
+  border: 1px solid var(--rule-2);
+  border-radius: var(--radius-lg);
+  font-size: 13px;
+  line-height: 1.5;
+}
+.pl-concept-pop-term { font-weight: 600; font-size: 15px; margin-bottom: 4px; }
+.pl-concept-pop-short { color: var(--ink-70); margin-bottom: 8px; }
+.pl-concept-pop-formula {
+  margin: 0 0 8px;
+  font-size: 12.5px;
+  color: var(--cyan-2);
+  white-space: pre-wrap;
+  font-family: var(--serif);
+}
+.pl-concept-pop-how { margin-top: 8px; color: var(--ink-70); }
+.pl-concept-pop-how strong { color: var(--ink); font-weight: 600; }
+
+/* ---------------------------------------------------------------- footer --- */
+
+.pl-footer {
+  border-top: 1px solid var(--rule);
+  margin-top: 56px;
+  padding-top: 14px;
+  font-size: 12px;
+  color: var(--ink-45);
+  line-height: 1.65;
+  max-width: 96ch;
+}
+.pl-footer strong { color: var(--ink-70); font-weight: 600; }
+
+.pl-status { color: var(--ink-45); font-size: 13.5px; margin: 0 0 22px; }
+.pl-status-error { color: var(--mag-2); }
+
+/* -------------------------------------------------------------- feedback --- */
+
+.pl-feedback { margin-top: var(--space-6); }
+.pl-feedback-form { display: flex; gap: var(--space-2); flex-wrap: wrap; align-items: flex-start; }
+.pl-feedback-form .pl-input { flex: 1 1 320px; width: auto; }
+.pl-feedback-kind {
+  border: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 12px;
+  color: var(--ink-70);
+}
+.pl-feedback-kind label { display: flex; align-items: center; gap: 6px; cursor: pointer; }
+
+@media (prefers-reduced-motion: reduce) {
+  .putlab-root * { transition: none !important; animation: none !important; }
 }

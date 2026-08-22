@@ -1,0 +1,98 @@
+import { expect, test, type Page } from '@playwright/test'
+import { mockPutLabApi } from './fixtures/mock-api'
+
+// The strike x tenor grid, printed in three bands instead of one continuous
+// cool -> amber -> hot ramp.
+//
+// The ramp had two problems. It reused --hot, which was the same hex as
+// --loss, so "hot cell" and "losing cell" were the same colour meaning
+// different things. And a continuous ramp cannot express the distinction that
+// actually matters: a cell that made money but lost to the index is a different
+// KIND of outcome from one that lost money, not a slightly darker shade of it.
+
+// Computed colours come back as `color(srgb ...)` here and `rgb(...)` there
+// depending on how the value was authored, so paint it and read the pixel.
+async function paintedRgb(page: Page, selector: string): Promise<[number, number, number]> {
+  return page.locator(selector).first().evaluate((el) => {
+    const canvas = document.createElement('canvas')
+    canvas.width = canvas.height = 1
+    const ctx = canvas.getContext('2d')!
+    ctx.fillStyle = '#ffffff'
+    ctx.fillRect(0, 0, 1, 1)
+    ctx.fillStyle = getComputedStyle(el).backgroundColor
+    ctx.fillRect(0, 0, 1, 1)
+    const d = ctx.getImageData(0, 0, 1, 1).data
+    return [d[0]!, d[1]!, d[2]!] as [number, number, number]
+  })
+}
+
+test.beforeEach(async ({ page }) => {
+  await mockPutLabApi(page)
+  await page.goto('/')
+})
+
+test('sorts every cell into loss, under-benchmark, or beat', async ({ page }) => {
+  const sweep = page.locator('.pl-sweep')
+  await expect(sweep).toBeVisible()
+
+  // Benchmark is +11.32%/yr. -21.2% lost money; +4.2% made money but lost to
+  // the index; +18.7% beat it. Three cells, three different bands.
+  await expect(sweep.getByRole('button', { name: /^5% OOM · 1 week/ })).toHaveClass(/is-loss/)
+  await expect(sweep.getByRole('button', { name: /^10% OOM · 1 month/ })).toHaveClass(/is-under/)
+  await expect(sweep.getByRole('button', { name: /^15% OOM · 1 month/ })).toHaveClass(/is-beat/)
+  await expect(sweep.locator('.pl-sweep-cell')).toHaveCount(12)
+})
+
+test('keeps loss, interactive and elevated on three separate inks', async ({ page }) => {
+  const tokens = await page.locator('.putlab-root').first().evaluate((el) => {
+    const cs = getComputedStyle(el)
+    const g = (n: string) => cs.getPropertyValue(n).trim().toLowerCase()
+    return { mag: g('--mag'), ink: g('--ink'), cyan: g('--cyan'), warn: g('--warn-fill') }
+  })
+  // --hot and --loss used to be the same hex, and --accent was also --warm.
+  // Loss, the beat band's ink, the interactive colour and the elevated fill are
+  // four distinct jobs and must be four distinct values.
+  expect(new Set(Object.values(tokens)).size).toBe(4)
+})
+
+test('prints losses in magenta and beats in ink, never the same colour', async ({ page }) => {
+  const [lr, lg, lb] = await paintedRgb(page, '.pl-sweep-cell.is-loss')
+  const [br, bg, bb] = await paintedRgb(page, '.pl-sweep-cell.is-beat')
+
+  // Magenta reads red-dominant with a blue lift; the beat band is near-black
+  // ink. If the two tokens collapsed back into one, so would these.
+  expect(lr).toBeGreaterThan(lg + 40)
+  expect(lb).toBeGreaterThan(lg + 20)
+  expect(Math.max(br, bg, bb)).toBeLessThan(120)
+})
+
+test('rings the current cell in cyan and moves the position on click', async ({ page }) => {
+  const sweep = page.locator('.pl-sweep')
+  // The workspace opened on 5% / 4wk, so that is the ringed cell.
+  await expect(sweep.locator('.pl-sweep-cell.is-current')).toHaveCount(1)
+  await expect(sweep.getByRole('button', { name: /^5% OOM · 1 month/ })).toHaveClass(/is-current/)
+
+  await sweep.getByRole('button', { name: /^15% OOM · 1 quarter/ }).click()
+
+  await expect(page.getByLabel('Out of the money, %')).toHaveValue('15')
+  await expect(page.getByRole('radio', { name: '1 quarter' })).toBeChecked()
+  await expect(sweep.getByRole('button', { name: /^15% OOM · 1 quarter/ })).toHaveClass(/is-current/)
+})
+
+test('names the benchmark in the legend rather than leaving a colour scale', async ({ page }) => {
+  const legend = page.locator('.pl-sweep-legend')
+  await expect(legend).toContainText('Lost money')
+  await expect(legend).toContainText('under SPY')
+  await expect(legend).toContainText('Beat SPY')
+})
+
+test('renders the result without the sweep when the sweep alone fails', async ({ page }) => {
+  await page.unrouteAll()
+  await mockPutLabApi(page, { fail: ['/api/putlab/sweep'] })
+  await page.reload()
+  // Per-resource states: the headline still prints while the grid reports why
+  // it is missing.
+  await expect(page.locator('.pl-hero-num')).toBeVisible()
+  await expect(page.locator('.pl-sweep')).toHaveCount(0)
+  await expect(page.getByRole('alert')).toContainText(/sweep failed: 500/)
+})
