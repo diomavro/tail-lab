@@ -87,6 +87,7 @@ Screen tab's deeper "is the screen any good?" question moved to its own
 | **Bake-off** | Which screen actually picks winners? | `/api/putlab/metric-screen` (explicit action — one backtest per screened name) | `ohlcv_*` |
 | **Regime** | What market are we in? | `/api/putlab/regimes`, `/api/vix/stretch`, `/accuracy` (the per-regime residual) | `vix`, `cboe_strategy` |
 | **Glossary** | — (renders `content/concepts.ts`, no network) | none | none |
+| **Roll schedule** (export, not a tab) | What would I actually place? | `/api/putlab/roll-schedule` (the ranking's read, reused from cache) | `ohlcv_*`, `vix` |
 | **Control rail** (every tab) | What position am I asking about, and where did the data come from? | `/api/putlab/universe`, `/cadence`, `/data-quality` | `ohlcv_<asset>`, the options calendar |
 
 `/api/leaderboard` — the *sensitivity* leaderboard, unrelated to
