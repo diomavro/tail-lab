@@ -453,3 +453,46 @@ def test_a_lake_with_no_cboe_snapshot_caches_the_absent_residual(client: TestCli
     )
     assert putlab_routes._REPLICATION_CACHE
     assert all(cached[1] == [] for cached in putlab_routes._REPLICATION_CACHE.values())
+
+
+def test_sweep_tells_the_client_where_the_pricer_stops_being_trustworthy(
+    client: TestClient,
+) -> None:
+    """The grid deliberately shows strikes deeper than the flat-vol model can
+    price, so the client has to be able to mark them. It reads the threshold
+    from the server rather than hard-coding a second copy of the number that
+    would drift from `research/backtest/sweep.py` (docs/adr/0018)."""
+    from tail_lab.research.backtest.sweep import MODEL_PRICED_MAX_MONEYNESS_PCT
+
+    resp = client.get("/api/putlab/sweep", params={"asset": "spy", "notional": 1000, "years": 1})
+    assert resp.status_code == 200
+    body = resp.json()
+
+    assert body["model_priced_max_moneyness_pct"] == MODEL_PRICED_MAX_MONEYNESS_PCT
+    # ...and there is something for the client to mark.
+    assert any(c["moneyness_pct"] > MODEL_PRICED_MAX_MONEYNESS_PCT for c in body["cells"])
+
+
+def test_leaderboards_best_cell_carries_its_own_stats(client: TestClient) -> None:
+    """Every ``best_*`` field describes the same run, so the recommendations
+    view can print a whole strategy per row without mixing two of them."""
+    resp = client.get(
+        "/api/putlab/leaderboard", params={"moneyness_pct": 5, "tenor_weeks": 4, "years": 1}
+    )
+    assert resp.status_code == 200
+    ranked = resp.json()["ranked"]
+    assert ranked
+    scored = [r for r in ranked if r["best_annualized"] is not None]
+    assert scored, "no name scored a best cell"
+    for row in scored:
+        for field in (
+            "best_moneyness_pct",
+            "best_tenor_weeks",
+            "best_roi_on_premium",
+            "best_hit_rate",
+            "best_n_cycles",
+            "best_verdict",
+        ):
+            assert row[field] is not None, field
+        # The headline never advertises a strike the model cannot price.
+        assert row["best_moneyness_pct"] <= 10.0

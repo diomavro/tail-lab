@@ -5,7 +5,7 @@ import { apiRequests, mockPutLabApi } from './fixtures/mock-api'
 // full walk of every tab must not throw, log an error, or make the page scroll
 // sideways.
 
-const TABS = ['Workspace', 'Portfolio', 'Bake-off', 'Regime', 'Glossary']
+const TABS = ['Workspace', 'Recommendations', 'Portfolio', 'Bake-off', 'Regime', 'Glossary']
 
 function collectErrors(page: Page): string[] {
   const errors: string[] = []

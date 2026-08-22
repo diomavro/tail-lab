@@ -21,8 +21,8 @@ import type { PutLabControls } from './types'
  * winner as a forward signal is the exact overreach the caveat exists to block,
  * and a caveat placed after the number it qualifies has already lost.
  *
- * ~35 backtests run server-side, so it stays an explicit action rather than
- * firing on every control change.
+ * One backtest per screened name runs server-side, so it stays an explicit
+ * action rather than firing on every control change.
  */
 
 type State =
@@ -126,8 +126,8 @@ export function BakeOff({ controls }: { controls: PutLabControls }) {
       )}
       {state.status === 'idle' && (
         <p className="pl-status">
-          Roughly 35 backtests run server-side, so this is an explicit action rather than a live
-          recompute.
+          One backtest per screened name runs server-side, so this is an explicit action rather
+          than a live recompute.
         </p>
       )}
 

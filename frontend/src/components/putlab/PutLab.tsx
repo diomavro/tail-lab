@@ -31,6 +31,7 @@ import { PUTLAB_DEFAULT_CONTROLS, PUTLAB_OOM_PRESETS, PUTLAB_TENORS, type PutLab
 import { BakeOffView } from './views/BakeOffView'
 import { GlossaryView } from './views/GlossaryView'
 import { PortfolioView } from './views/PortfolioView'
+import { RecommendationsView } from './views/RecommendationsView'
 import { RegimeView } from './views/RegimeView'
 import { WorkspaceView } from './views/WorkspaceView'
 
@@ -53,7 +54,13 @@ import { WorkspaceView } from './views/WorkspaceView'
  * pixels on a laptop.
  */
 
-export type TabId = 'workspace' | 'portfolio' | 'bakeoff' | 'regime' | 'glossary'
+export type TabId =
+  | 'workspace'
+  | 'recommendations'
+  | 'portfolio'
+  | 'bakeoff'
+  | 'regime'
+  | 'glossary'
 
 /** Paper is the light sheet, plate the negative. Persisted, never inferred from
  *  the OS: which sheet a trading page prints on is the reader's call. */
@@ -242,12 +249,14 @@ export function PutLab() {
   ])
   // The rail's provenance block is on every tab, so these two are never gated.
   const assetKey = JSON.stringify([controls.asset])
-  // The ranking is the Workspace's opening line and nothing else reads it --
-  // Portfolio's fragile-basket button screens on its own fixed axes. It is the
-  // most expensive read in the app (one backtest per name in the universe), so
-  // it is gated like the rest. Keyed on the screening axes only: which names are
-  // most fragile does not depend on how much premium you would spend.
-  const rankKey = onWorkspace
+  // The ranking feeds the Workspace's opening line and the whole
+  // Recommendations table -- Portfolio's fragile-basket button screens on its
+  // own fixed axes. It is by far the most expensive read in the app (a strike x
+  // tenor sweep per name across the universe), so it is gated to the two tabs
+  // that show it. Keyed on the screening axes only: which names are most
+  // fragile does not depend on how much premium you would spend.
+  const showsRanking = onWorkspace || tab === 'recommendations'
+  const rankKey = showsRanking
     ? JSON.stringify([controls.moneyness_pct, controls.tenor_weeks, controls.years])
     : null
 
@@ -430,6 +439,13 @@ export function PutLab() {
                 ranking={ranking}
                 regimeVerdict={regimeVerdict}
                 regimes={regimes}
+                onSelectAsset={selectAsset}
+              />
+            )}
+            {tab === 'recommendations' && (
+              <RecommendationsView
+                ranking={ranking}
+                controls={controls}
                 onSelectAsset={selectAsset}
               />
             )}

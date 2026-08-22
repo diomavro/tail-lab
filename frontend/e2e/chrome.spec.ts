@@ -78,9 +78,15 @@ test('moves between tabs with the arrow keys', async ({ page }) => {
   const workspace = page.getByRole('tab', { name: 'Workspace' })
   await workspace.focus()
   await page.keyboard.press('ArrowRight')
-  await expect(page.getByRole('tab', { name: 'Portfolio' })).toHaveAttribute('aria-selected', 'true')
+  await expect(page.getByRole('tab', { name: 'Recommendations' })).toHaveAttribute(
+    'aria-selected',
+    'true',
+  )
   await page.keyboard.press('ArrowLeft')
   await expect(workspace).toHaveAttribute('aria-selected', 'true')
+  // ...and it wraps, rather than dead-ending at the first tab.
+  await page.keyboard.press('ArrowLeft')
+  await expect(page.getByRole('tab', { name: 'Glossary' })).toHaveAttribute('aria-selected', 'true')
 })
 
 test('keeps the feedback route reachable from the footer', async ({ page }) => {

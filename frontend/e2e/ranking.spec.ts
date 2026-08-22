@@ -27,13 +27,18 @@ test('opens as one line carrying the top three names', async ({ page }) => {
 })
 
 test('clicking a name lands on the cell that row advertised', async ({ page }) => {
-  // TSLA's best cell is 15% OOM at 12 weeks, and neither matches the 5% / 4wk
-  // the workspace opened on -- so a patch that only set the asset would leave
-  // both controls untouched and this would fail.
+  // TSLA's best cell matches neither the 5% nor the 4wk the workspace opened
+  // on, so a patch that only set the asset would leave both controls untouched
+  // and this would fail. Read from the fixture rather than hard-coded: the
+  // argmax is bounded to the priced band, so the exact strike can move.
+  const tsla = LEADERBOARD.ranked.find((r) => r.asset === 'tsla')!
+  expect(tsla.best_moneyness_pct).not.toBe(5)
+  expect(tsla.best_tenor_weeks).not.toBe(4)
+
   const strip = page.getByRole('group', { name: 'Fragility ranking' })
   await strip.getByRole('button', { name: /TSLA/ }).click()
 
-  await expect(page.getByLabel('Out of the money, %')).toHaveValue('15')
+  await expect(page.getByLabel('Out of the money, %')).toHaveValue(String(tsla.best_moneyness_pct))
   await expect(page.getByRole('radio', { name: '1 quarter' })).toBeChecked()
   await expect(page.getByRole('term').filter({ hasText: 'Name' }).locator('..')).toContainText('TSLA')
 })
@@ -51,4 +56,12 @@ test('expands to the full table with every metric the API returned', async ({ pa
 
   // The currently-selected name is marked in the table, not merely sorted into it.
   await expect(table.locator('tbody tr.is-current')).toContainText('SPY')
+})
+
+test('prints fragility on a readable scale in the full table too', async ({ page }) => {
+  await page.getByRole('button', { name: /All 7 names/ }).click()
+  const cells = page.getByRole('table', { name: /fragility ranking/i }).locator('td.pl-rank-frag')
+  await expect(cells).toHaveCount(LEADERBOARD.ranked.length)
+  const shown = await cells.allTextContents()
+  expect(new Set(shown).size).toBeGreaterThan(2)
 })

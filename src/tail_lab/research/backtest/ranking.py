@@ -36,7 +36,11 @@ from tail_lab.research.backtest.put_roll import (
     run_put_roll,
 )
 from tail_lab.research.backtest.regime_verdict import regime_breakdown
-from tail_lab.research.backtest.sweep import best_point, run_sweep
+from tail_lab.research.backtest.sweep import (
+    MODEL_PRICED_SWEEP_MONEYNESS,
+    best_point,
+    run_sweep,
+)
 from tail_lab.research.metrics.co_kurtosis import co_kurtosis
 from tail_lab.research.metrics.co_skewness import co_skewness
 from tail_lab.research.metrics.downside_beta import downside_beta
@@ -46,6 +50,19 @@ from tail_lab.research.regimes.timeline import compute_regime_timeline
 
 #: The market benchmark the fragility metrics are measured against.
 BENCHMARK = "spy"
+
+#: How much of the asked-for window a name must actually cover to be ranked.
+#:
+#: ``annualized_return`` divides a total ROI by the *requested* lookback, not by
+#: the window really traded (see put_roll.annualized_return). So a name listed
+#: two years ago gets its two-year loss annualized as if over four, which
+#: shrinks it toward zero and floats it up a ranking sorted on that number. A
+#: recently-listed name would arrive looking like the best hedge on the board
+#: purely because it has not been around long enough to bleed.
+#:
+#: 0.9 rather than 1.0 because a real listing's first bars are ragged and the
+#: IV proxy needs a warm-up, so an exact match never happens.
+MIN_WINDOW_COVERAGE = 0.9
 
 #: Metrics that feed the composite fragility score. Co-kurtosis is computed and
 #: shown on the screen but DELIBERATELY EXCLUDED here: co-kurtosis *with the
@@ -85,13 +102,25 @@ class RankedAsset(BaseModel):
     biggest_payoff_mult: float
     n_cycles: int
     # The best this name gets when its parameters are chosen well: the argmax
-    # of its own strike x tenor sweep. This is the headline the ranking leads
+    # of its own strike x tenor sweep, bounded to the strikes the model can
+    # actually price (docs/adr/0018). This is the headline the ranking leads
     # with, and the parameters a click on the row lands on -- so the number the
     # user reads in the table is the number the backtest then shows them.
     # ``None`` when the window was too short to score any cell.
+    #
+    # EVERY ``best_*`` field below is measured at the SAME cell. That is the
+    # point of the prefix: a recommendation is a whole strategy, and quoting an
+    # argmax return beside a hit rate from the screened cell would describe two
+    # different strategies on one line. Do not add a ``best_*`` field sourced
+    # from anywhere but the run at (best_moneyness_pct, best_tenor_weeks).
     best_annualized: float | None = None
     best_moneyness_pct: float | None = None
     best_tenor_weeks: float | None = None
+    best_roi_on_premium: float | None = None
+    best_hit_rate: float | None = None
+    best_biggest_payoff_mult: float | None = None
+    best_n_cycles: int | None = None
+    best_verdict: Verdict | None = None
 
 
 class UniverseRanking(BaseModel):
@@ -182,13 +211,50 @@ def rank_universe(
             )
         except LookupError:
             return None  # no data / too short a window for this name -> skip
-        # The same grid the heatmap shows, over the price path already in hand.
-        # Cheap now that scoring skips the per-day curves (see run_put_roll).
+        # Drop a name whose history does not cover the window being asked
+        # about, rather than comparing an annualized-over-four-years figure
+        # that only saw two (see MIN_WINDOW_COVERAGE).
+        covered_days = (result.cycles[-1].expiry_date - result.cycles[0].entry_date).days
+        if covered_days / 365.25 < years * MIN_WINDOW_COVERAGE:
+            return None
+        # The heatmap's grid, over the price path already in hand, but only the
+        # strikes the model can actually price: `best_point` is bounded to them
+        # (the raw argmax is drawn to the deepest cell, where the premium rounds
+        # to nothing -- docs/adr/0018), so sweeping deeper here would compute
+        # numbers this function is required to discard.
         best = best_point(
-            run_sweep(prices, iv_proxy, asset=symbol, as_of=as_of, notional=notional, years=years)
+            run_sweep(
+                prices,
+                iv_proxy,
+                asset=symbol,
+                as_of=as_of,
+                notional=notional,
+                years=years,
+                moneyness_grid=MODEL_PRICED_SWEEP_MONEYNESS,
+            )
         )
         db, cs, ck, tb, dc = _fragility(prices)
         _, verdict = regime_breakdown(result.cycles, timeline)
+        # One more roll, at the winning cell, so every ``best_*`` figure comes
+        # from the same strategy. ~2% on top of the 55-cell sweep already run.
+        best_run = None
+        best_verdict: Verdict | None = None
+        if best is not None:
+            try:
+                best_run = run_put_roll(
+                    prices,
+                    iv_proxy,
+                    asset=symbol,
+                    as_of=as_of,
+                    notional=notional,
+                    moneyness_pct=best.moneyness_pct,
+                    tenor_weeks=best.tenor_weeks,
+                    lookback_years=years,
+                    include_curves=False,
+                )
+                _, best_verdict = regime_breakdown(best_run.cycles, timeline)
+            except LookupError:  # pragma: no cover - the sweep already scored it
+                best_run = None
         return RankedAsset(
             asset=symbol,
             name=cadence_for(symbol).name,
@@ -208,6 +274,11 @@ def rank_universe(
             best_annualized=best.annualized_return if best else None,
             best_moneyness_pct=best.moneyness_pct if best else None,
             best_tenor_weeks=best.tenor_weeks if best else None,
+            best_roi_on_premium=best_run.roi_on_premium if best_run else None,
+            best_hit_rate=best_run.hit_rate if best_run else None,
+            best_biggest_payoff_mult=best_run.biggest_payoff_mult if best_run else None,
+            best_n_cycles=best_run.n_cycles if best_run else None,
+            best_verdict=best_verdict,
         )
 
     # Each name is an independent lake read + roll; the S3 read releases the

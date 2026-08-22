@@ -107,3 +107,138 @@ def test_rank_universe_missing_vix_raises(tmp_path: Path) -> None:
             tenor_weeks=4.0,
             years=1.0,
         )
+
+
+def test_a_short_history_name_is_dropped_rather_than_flattered(tmp_path: Path) -> None:
+    """`annualized_return` divides the total ROI by the *requested* lookback,
+    not by the window actually traded. A name listed two years ago therefore
+    has a two-year loss annualized as if over four — which shrinks it toward
+    zero and floats the name up a ranking sorted on that number.
+
+    Silently comparing it against names with the full window is the bug; the
+    honest move is to leave it out until it has the history.
+    """
+    store = DeltaLakeStore(tmp_path)
+    ingest = dt.date(2026, 3, 2)
+    _seed_vix(store, ingest)
+    _seed_symbol(store, "spy", ingest, drift=0.1, vol=1.0)
+    # 320 business days covers ~1.07y of rolls; 260 covers ~0.84y. Against a
+    # 1-year ask that is the same ratio the real case has against a 4-year one,
+    # and it keeps the fixture small.
+    _seed_symbol(store, "full", ingest, drift=-0.1, vol=3.0)
+    _seed_symbol(store, "young", ingest, drift=-0.1, vol=3.0, n=260)
+
+    ranking = rank_universe(
+        store,
+        symbols=("full", "young"),
+        as_of=ingest,
+        moneyness_pct=5.0,
+        tenor_weeks=4.0,
+        years=1.0,
+    )
+
+    assert [r.asset for r in ranking.ranked] == ["full"]
+
+
+def test_a_name_with_the_full_window_is_kept(tmp_path: Path) -> None:
+    """The guard must not quietly empty the universe: a name whose history
+    covers the asked-for window still ranks."""
+    store = DeltaLakeStore(tmp_path)
+    ingest = dt.date(2026, 3, 2)
+    _seed_vix(store, ingest)
+    _seed_symbol(store, "spy", ingest, drift=0.1, vol=1.0)
+    _seed_symbol(store, "full", ingest, drift=-0.1, vol=3.0)
+
+    ranking = rank_universe(
+        store,
+        symbols=("full",),
+        as_of=ingest,
+        moneyness_pct=5.0,
+        tenor_weeks=4.0,
+        years=1.0,
+    )
+
+    assert [r.asset for r in ranking.ranked] == ["full"]
+
+
+def test_the_best_cells_stats_all_describe_the_best_cell(tmp_path: Path) -> None:
+    """A recommendation is a whole strategy, so every figure on its row has to
+    come from the same (strike, tenor) run. Reporting `best_annualized` from
+    the argmax next to a `hit_rate` from the screened cell describes two
+    different strategies in one line -- and the recommendations page ranks on
+    exactly that row.
+    """
+    from tail_lab.research.backtest.put_roll import load_asof_series, run_put_roll
+
+    store = DeltaLakeStore(tmp_path)
+    ingest = dt.date(2026, 3, 2)
+    _seed_vix(store, ingest)
+    _seed_symbol(store, "spy", ingest, drift=0.1, vol=1.0)
+    _seed_symbol(store, "wild", ingest, drift=-0.1, vol=4.0)
+
+    ranking = rank_universe(
+        store,
+        symbols=("wild",),
+        as_of=ingest,
+        moneyness_pct=2.0,  # deliberately NOT where the argmax lands
+        tenor_weeks=1.0,
+        years=1.0,
+    )
+    row = ranking.ranked[0]
+    assert row.best_moneyness_pct is not None and row.best_tenor_weeks is not None
+
+    prices, iv = load_asof_series(store, "wild", ingest)
+    at_best = run_put_roll(
+        prices,
+        iv,
+        asset="wild",
+        as_of=ingest,
+        notional=1000.0,
+        moneyness_pct=row.best_moneyness_pct,
+        tenor_weeks=row.best_tenor_weeks,
+        lookback_years=1.0,
+        include_curves=False,
+    )
+
+    assert row.best_roi_on_premium == pytest.approx(at_best.roi_on_premium)
+    assert row.best_hit_rate == pytest.approx(at_best.hit_rate)
+    assert row.best_n_cycles == at_best.n_cycles
+    assert row.best_annualized == pytest.approx(annualized_return(at_best.roi_on_premium, 1.0))
+    # ...and the screened-cell figures are still their own, unmixed.
+    assert row.n_cycles != row.best_n_cycles or row.roi_on_premium != row.best_roi_on_premium
+
+
+def test_the_ranking_does_not_sweep_cells_it_could_never_pick(tmp_path: Path) -> None:
+    """`best_point` is bounded to the priced band, so the deep half of the grid
+    can only ever be discarded. At 70 names that is most of the ranking's
+    runtime spent computing numbers it is required to ignore."""
+    from tail_lab.research.backtest import ranking as ranking_mod
+    from tail_lab.research.backtest.sweep import MODEL_PRICED_SWEEP_MONEYNESS, run_sweep
+
+    store = DeltaLakeStore(tmp_path)
+    ingest = dt.date(2026, 3, 2)
+    _seed_vix(store, ingest)
+    _seed_symbol(store, "spy", ingest, drift=0.1, vol=1.0)
+    _seed_symbol(store, "wild", ingest, drift=-0.1, vol=4.0)
+
+    swept: list[tuple[float, ...]] = []
+
+    def _spy_on_sweep(*args: object, **kwargs: object) -> object:
+        swept.append(tuple(kwargs.get("moneyness_grid", ())))
+        return run_sweep(*args, **kwargs)  # type: ignore[arg-type]
+
+    original = ranking_mod.run_sweep
+    ranking_mod.run_sweep = _spy_on_sweep  # type: ignore[assignment]
+    try:
+        rank_universe(
+            store,
+            symbols=("wild",),
+            as_of=ingest,
+            moneyness_pct=5.0,
+            tenor_weeks=4.0,
+            years=1.0,
+        )
+    finally:
+        ranking_mod.run_sweep = original  # type: ignore[assignment]
+
+    assert swept == [MODEL_PRICED_SWEEP_MONEYNESS]

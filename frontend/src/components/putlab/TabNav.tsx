@@ -7,6 +7,9 @@ import type { TabId } from './PutLab'
 // now live in Workspace, with the ranking as a one-line strip at its top.
 const TABS: { id: TabId; label: string }[] = [
   { id: 'workspace', label: 'Workspace' },
+  // Directly after Workspace: it answers the question a reader has once they
+  // have seen one name's result -- "so which of these is actually best?"
+  { id: 'recommendations', label: 'Recommendations' },
   { id: 'portfolio', label: 'Portfolio' },
   { id: 'bakeoff', label: 'Bake-off' },
   { id: 'regime', label: 'Regime' },

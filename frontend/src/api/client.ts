@@ -214,6 +214,10 @@ export interface SweepResponse {
   benchmark_symbol: string
   benchmark_annualized: number | null
   benchmark_total: number | null
+  /** Strike depth past which the flat-vol model's premium stops being a price.
+   *  Served rather than hard-coded here so the client and
+   *  research/backtest/sweep.py cannot drift. See docs/adr/0018. */
+  model_priced_max_moneyness_pct: number
 }
 
 export interface SweepParams {
@@ -255,7 +259,7 @@ export async function fetchCadence(asset: string, signal?: AbortSignal): Promise
 }
 
 // The Put Lab screening universe (contracts/options_calendar.py) -- the
-// dropdown's source of truth, 35 names deep. Shares the CadenceResponse shape
+// dropdown's source of truth. Shares the CadenceResponse shape
 // plus the ticker.
 export interface UniverseMember {
   symbol: string
@@ -384,12 +388,22 @@ export interface RankedAsset {
   biggest_payoff_mult: number
   n_cycles: number
   /** The best this name gets when its parameters are chosen well: the argmax
-   *  of its own strike x tenor sweep. This is the headline the compact ranking
-   *  shows, and the parameters a click on the row lands on — so the number in
-   *  the table is the number the backtest then displays. */
+   *  of its own strike x tenor sweep, bounded to the strikes the model can
+   *  actually price. This is the headline the compact ranking shows, and the
+   *  parameters a click on the row lands on — so the number in the table is
+   *  the number the backtest then displays.
+   *
+   *  EVERY `best_*` field is measured at the SAME cell. Never pair one of them
+   *  with a figure from the screened cell above: that is two strategies on one
+   *  line, and the recommendations view ranks on exactly this row. */
   best_annualized: number | null
   best_moneyness_pct: number | null
   best_tenor_weeks: number | null
+  best_roi_on_premium: number | null
+  best_hit_rate: number | null
+  best_biggest_payoff_mult: number | null
+  best_n_cycles: number | null
+  best_verdict: Verdict | null
 }
 
 export interface PutLabLeaderboardResponse {
@@ -426,7 +440,8 @@ export async function fetchPutLabLeaderboard(
 // --- Metric bake-off (research/backtest/metric_screen.py) ---
 // "which fragility metric best sorted realized put payoffs over the lookback."
 // An in-sample cross-sectional association (a screen chooser), NOT a forward
-// predictive backtest. ~35 backtests server-side, so an explicit action.
+// predictive backtest. One backtest per screened name server-side, so an
+// explicit action rather than a live recompute.
 
 export interface MetricScreenEntry {
   metric: string
