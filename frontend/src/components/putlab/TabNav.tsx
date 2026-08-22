@@ -1,12 +1,16 @@
 import type { KeyboardEvent } from 'react'
 import type { TabId } from './PutLab'
 
+// Screen and Backtest are gone as separate tabs -- picking a name and reading
+// its result were on two tabs bridged by a ranking pinned above both, so the
+// ranking had to stay on screen permanently to make the split workable. Both
+// now live in Workspace, with the ranking as a one-line strip at its top.
 const TABS: { id: TabId; label: string }[] = [
-  { id: 'screen', label: 'Screen' },
-  { id: 'backtest', label: 'Backtest' },
+  { id: 'workspace', label: 'Workspace' },
   { id: 'portfolio', label: 'Portfolio' },
+  { id: 'bakeoff', label: 'Bake-off' },
   { id: 'regime', label: 'Regime' },
-  { id: 'learn', label: 'Learn' },
+  { id: 'glossary', label: 'Glossary' },
 ]
 
 // The workspace tab bar. An ARIA tablist with roving focus: Left/Right arrows
@@ -23,7 +27,7 @@ export function TabNav({ activeTab, onChange }: { activeTab: TabId; onChange: (t
   }
 
   return (
-    <div className="tabnav" role="tablist" aria-label="Put Lab views">
+    <nav className="pl-tabs" role="tablist" aria-label="Put Lab views">
       {TABS.map((t) => {
         const selected = activeTab === t.id
         return (
@@ -35,7 +39,7 @@ export function TabNav({ activeTab, onChange }: { activeTab: TabId; onChange: (t
             aria-selected={selected}
             aria-controls={`panel-${t.id}`}
             tabIndex={selected ? 0 : -1}
-            className={`tab${selected ? ' tab-active' : ''}`}
+            className="pl-tab"
             onClick={() => onChange(t.id)}
             onKeyDown={onKeyDown}
           >
@@ -43,6 +47,6 @@ export function TabNav({ activeTab, onChange }: { activeTab: TabId; onChange: (t
           </button>
         )
       })}
-    </div>
+    </nav>
   )
 }

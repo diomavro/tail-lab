@@ -215,7 +215,7 @@ Rules, precisely. **Distinguish two different arrows:**
 | New data source | `ingestion/<source>.py` (adapter) + a schema in `contracts/datasets.py`. If the source needs an API key or account, add the setup step to `HUMAN_TODO.md`, not code that assumes it exists. |
 | New sensitivity metric | `research/metrics/<metric>.py`, registered with the backtest comparison; a test pinning a synthetic case with a known answer (`docs/STANDARDS.md`). |
 | New gold mart | `transforms/marts/<mart>.py` + a DTO in `contracts/metrics.py` (or `datasets.py`) describing its output shape. |
-| New dashboard tile | A component under `frontend/src/components/` + the `api/routes/*.py` endpoint it reads, with the response type mirrored by hand into `frontend/src/types.ts`. |
+| New Put Lab panel | A component in `frontend/src/components/putlab/` taking data as props, composed by a view in `views/`, styled with `.pl-*` classes in `putlab.css`. Its response type is mirrored by hand into `frontend/src/api/client.ts`, and its read is added to `PutLab.tsx` as a `useCachedResource` keyed on only its real deps. A spec in `frontend/e2e/`, with fixtures. |
 | New option-pricing implementation | `research/pricing/<name>.py` implementing the `OptionPricer` protocol in `research/pricing/interface.py`. Never change the interface's shape without an ADR (`docs/adr/0004`). |
 | New backtest strategy/screen | `research/backtest/` — must read exclusively through `lake/asof.py`; a test that tries to leak future data must fail (`docs/adr/0009`). |
 | New API endpoint | A module in `api/routes/`, mounted in `api/main.py`. Thin: validate, call into `research`/`transforms`/`lake`, return a `contracts/` DTO. |
@@ -224,13 +224,35 @@ Rules, precisely. **Distinguish two different arrows:**
 
 ## Frontend — `frontend/`
 
-React + TypeScript (strict), talking to `api/` over HTTP only — mirrors the
-`paper_app` pattern of a single typed HTTP client (`src/api.ts`) plus a
-hand-mirrored `src/types.ts`. Layout details (pages/components/hooks split)
-follow the same shape as `paper_app/frontend`; the cockpit's tiles
-(leaderboard, candidates, regime panel, event calendar, backtest
-comparison, conventional-strategy tab) each get their own component under
-`components/<feature>/` per the "where new code goes" table above.
+React + TypeScript (strict), talking to `api/` over HTTP only. One typed HTTP
+client, `src/api/client.ts`, hand-mirrors `api/schemas.py`; there is no separate
+`types.ts` (`src/components/putlab/types.ts` holds prop/control shapes, not
+response shapes).
+
+The app is the **Put Lab workspace** and nothing else. `PutLab.tsx` owns the
+shared controls, the active tab, the sheet, and every cached read; the five tabs
+are thin views under `components/putlab/views/`. `ParamRail` is the *only*
+control surface and renders on every tab — do not add a second one (`docs/adr/
+0017`). Panels live flat in `components/putlab/` and take data as props; the
+views compose them.
+
+Reads go through `useCachedResource` in `PutLab.tsx`: per-resource,
+module-level, keyed on **only** that resource's real dependencies, debounced,
+and gated off by a `null` key when the tab that needs it is not showing. Bronze
+is immutable for a given `as_of`, so a combo seen once in a session never
+refetches. Keying a resource on the whole control object instead of its real
+deps is the mistake to avoid — it refetches the sweep when only the strike moved.
+
+All styling is one scoped stylesheet, `components/putlab/putlab.css`, under
+`.putlab-root`. Every colour is a token defined there; nothing hard-codes a hex.
+`[data-theme="plate"]` re-points the role tokens, so a component never needs a
+dark-mode rule of its own.
+
+`frontend/e2e/` is a Playwright suite that is **hermetic by default** —
+Playwright starts the dev server and `e2e/fixtures/mock-api.ts` answers every
+`/api/**` call from `e2e/fixtures/putlab.ts`. Assert on rendered behaviour, not
+on fetch calls. `e2e/smoke-live.spec.ts` is the one spec that talks to a real
+backend and skips itself unless `PLAYWRIGHT_LIVE=1`.
 
 ## The medallion lakehouse
 

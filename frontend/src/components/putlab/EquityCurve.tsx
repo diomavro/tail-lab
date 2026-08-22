@@ -1,179 +1,112 @@
-import { useEffect, useRef } from 'react'
+import { useMemo, useState } from 'react'
 import type { EquityPoint, PutBacktestCycle } from '../../api/client'
-import { ConceptInfo } from './ConceptInfo'
-import { fmtDollar, hideTooltip, showTooltip, svgEl } from './format'
+import { fmtDollar } from './format'
 
-interface EquityCurveProps {
+/* Cumulative P&L of a basket, on one date axis.
+ *
+ * Rendered declaratively rather than by imperative DOM building in an effect
+ * (which is how the tape works too, for the same reason): the same data always
+ * produces the same markup, so what is on screen can be asserted rather than
+ * inferred. Axis labels are HTML in the gutter beside the SVG, not SVG <text>.
+ */
+
+const W = 1000
+const H = 200
+const PAD = 8
+
+interface Props {
   equityCurve: EquityPoint[]
-  // Daily mark-to-model curve for the single-name backtest. Optional because
-  // the Portfolio combined view has no per-day MTM (only a realized curve
-  // over the union of leg expiries) and falls back to equityCurve below.
+  /** Daily mark-to-model curve for a single-name backtest. Optional: the
+   *  Portfolio combined view has no per-day MTM (only a realized curve over the
+   *  union of leg expiries) and falls back to equityCurve. */
   mtmCurve?: EquityPoint[]
   cycles: PutBacktestCycle[]
 }
 
-// Cumulative P&L of the hedge -- port of the mock's renderEquity(), minus
-// the regime bands (no regime classifier exists yet; see PutLab.tsx header).
-// Plots the daily mark-to-model curve (mtmCurve) when given, rather than the
-// sparser realized equity_curve, so day-to-day fluctuation of the open put
-// shows up instead of straight lines between expiries.
-export function EquityCurve({ equityCurve, mtmCurve, cycles }: EquityCurveProps) {
-  const svgRef = useRef<SVGSVGElement | null>(null)
-  const ttRef = useRef<HTMLDivElement | null>(null)
+export function EquityCurve({ equityCurve, mtmCurve, cycles }: Props) {
+  const [hover, setHover] = useState<number | null>(null)
   const isDaily = mtmCurve !== undefined && mtmCurve.length > 0
-  const curve = mtmCurve !== undefined && mtmCurve.length > 0 ? mtmCurve : equityCurve
+  const curve = isDaily ? mtmCurve! : equityCurve
 
-  useEffect(() => {
-    const svg = svgRef.current
-    const tt = ttRef.current
-    if (!svg || !tt) return
-    svg.innerHTML = ''
-    if (curve.length === 0) return
-
-    const W = 1000
-    const H = 238
-    const P = { l: 64, r: 16, t: 20, b: 26 }
-    const eq = curve.map((p) => ({ t: Date.parse(p.date), v: p.cum_pnl }))
-    const first = eq[0]
-    const last = eq[eq.length - 1]
-    if (!first || !last) return
-    const xs = first.t
-    const xe = Math.max(last.t, xs + 1)
-    const vmin = Math.min(0, ...eq.map((p) => p.v))
-    const vmax = Math.max(1, ...eq.map((p) => p.v))
-    const X = (t: number) => P.l + ((t - xs) / (xe - xs)) * (W - P.l - P.r)
-    const Y = (v: number) => P.t + (1 - (v - vmin) / (vmax - vmin)) * (H - P.t - P.b)
-
-    // gridlines + $ labels
-    const ticks = 4
-    for (let g = 0; g <= ticks; g++) {
-      const v = vmin + ((vmax - vmin) * g) / ticks
-      const y = Y(v)
-      svg.appendChild(svgEl('line', { x1: P.l, y1: y, x2: W - P.r, y2: y, stroke: 'var(--grid)', 'stroke-width': 1 }))
-      const label = svgEl('text', { x: P.l - 8, y: y + 3, 'text-anchor': 'end', class: 'axis-label' })
-      label.textContent = fmtDollar(v)
-      svg.appendChild(label)
+  const model = useMemo(() => {
+    if (curve.length === 0) return null
+    const pts = curve.map((p) => ({ t: Date.parse(p.date), v: p.cum_pnl, date: p.date }))
+    const t0 = pts[0]!.t
+    const t1 = Math.max(pts[pts.length - 1]!.t, t0 + 1)
+    const lo = Math.min(0, ...pts.map((p) => p.v))
+    const hi = Math.max(1, ...pts.map((p) => p.v))
+    const X = (t: number) => PAD + ((t - t0) / (t1 - t0)) * (W - PAD * 2)
+    const Y = (v: number) => PAD + (1 - (v - lo) / (hi - lo)) * (H - PAD * 2)
+    const line = pts.map((p, i) => `${i ? 'L' : 'M'} ${X(p.t).toFixed(2)} ${Y(p.v).toFixed(2)}`).join(' ')
+    return {
+      pts,
+      X,
+      Y,
+      line,
+      area: `M ${X(t0).toFixed(2)} ${Y(0).toFixed(2)} ${line.slice(1)} L ${X(t1).toFixed(2)} ${Y(0).toFixed(2)} Z`,
+      ticks: [hi, (hi + lo) / 2, lo],
+      zeroY: Y(0),
+      first: pts[0]!.date,
+      last: pts[pts.length - 1]!.date,
     }
-    svg.appendChild(
-      svgEl('line', { x1: P.l, y1: Y(0), x2: W - P.r, y2: Y(0), stroke: 'var(--line-strong)', 'stroke-width': 1.5 }),
-    )
+  }, [curve])
 
-    // area + line
-    let dArea = `M ${X(first.t)} ${Y(0)}`
-    let dLine = ''
-    eq.forEach((p, k) => {
-      dArea += ` L ${X(p.t)} ${Y(p.v)}`
-      dLine += `${k ? ' L ' : 'M '}${X(p.t)} ${Y(p.v)}`
-    })
-    dArea += ` L ${X(last.t)} ${Y(0)} Z`
-    const gid = 'putlab-eqfill'
-    const defs = svgEl('defs')
-    const lg = svgEl('linearGradient', { id: gid, x1: 0, y1: 0, x2: 0, y2: 1 })
-    lg.appendChild(svgEl('stop', { offset: '0%', 'stop-color': 'var(--accent)', 'stop-opacity': 0.32 }))
-    lg.appendChild(svgEl('stop', { offset: '100%', 'stop-color': 'var(--accent)', 'stop-opacity': 0.02 }))
-    defs.appendChild(lg)
-    svg.appendChild(defs)
-    svg.appendChild(svgEl('path', { d: dArea, fill: `url(#${gid})` }))
-    svg.appendChild(
-      svgEl('path', {
-        d: dLine,
-        fill: 'none',
-        stroke: 'var(--accent)',
-        'stroke-width': 2.4,
-        'stroke-linejoin': 'round',
-      }),
-    )
-
-    // settlement markers: find the daily mtm point landing on each cycle's
-    // expiry date (mtmCurve marks to model exactly onto the realized value
-    // there, so this is where a positive-net cycle "pays off" on the curve).
-    const byDate = new Map(curve.map((p) => [p.date, p]))
-    cycles.forEach((c) => {
-      if (c.net <= 0) return
-      const p = byDate.get(c.expiry_date)
-      if (!p) return
-      svg.appendChild(
-        svgEl('circle', {
-          cx: X(Date.parse(p.date)),
-          cy: Y(p.cum_pnl),
-          r: 4,
-          fill: 'var(--surface)',
-          stroke: 'var(--gain)',
-          'stroke-width': 2,
-        }),
-      )
-    })
-
-    // end marker
-    svg.appendChild(svgEl('circle', { cx: X(last.t), cy: Y(last.v), r: 4.5, fill: 'var(--accent)' }))
-
-    // hover
-    const hit = svgEl('rect', { x: P.l, y: P.t, width: W - P.l - P.r, height: H - P.t - P.b, fill: 'transparent' })
-    svg.appendChild(hit)
-    const vline = svgEl('line', { y1: P.t, y2: H - P.b, stroke: 'var(--line-strong)', 'stroke-width': 1, opacity: 0 })
-    svg.appendChild(vline)
-    const onMove = (ev: PointerEvent) => {
-      const r = svg.getBoundingClientRect()
-      const sx = ((ev.clientX - r.left) / r.width) * W
-      const t = xs + ((sx - P.l) / (W - P.l - P.r)) * (xe - xs)
-      let best = eq[0]
-      if (!best) return
-      for (const p of eq) if (Math.abs(p.t - t) < Math.abs(best.t - t)) best = p
-      vline.setAttribute('x1', String(X(best.t)))
-      vline.setAttribute('x2', String(X(best.t)))
-      vline.setAttribute('opacity', '1')
-      const dateLabel = new Date(best.t).toISOString().slice(0, 10)
-      showTooltip(
-        tt,
-        ev.clientX,
-        r.top + Y(best.v),
-        `<div class="t-k">${dateLabel}</div><div class="t-v" style="color:${best.v >= 0 ? 'var(--gain)' : 'var(--loss)'}">${fmtDollar(best.v)}</div>`,
-      )
-    }
-    const onLeave = () => {
-      hideTooltip(tt)
-      vline.setAttribute('opacity', '0')
-    }
-    hit.addEventListener('pointermove', onMove)
-    hit.addEventListener('pointerleave', onLeave)
-    return () => {
-      hit.removeEventListener('pointermove', onMove)
-      hit.removeEventListener('pointerleave', onLeave)
-    }
-  }, [curve, cycles])
+  if (!model) return null
+  const { X, Y } = model
+  const marked = new Set(cycles.filter((c) => c.net > 0).map((c) => c.expiry_date))
+  const hovered = hover == null ? null : model.pts[hover]
 
   return (
     <>
-      <div className="panel-head">
-        <div>
-          <h2>
-            Cumulative P&L of the hedge
-            <ConceptInfo id="mark_to_market" />
-          </h2>
-          <div className="hint">
-            {isDaily
-              ? "Marked to model every day — the open put's value fluctuates daily and settles at each expiry."
-              : 'Running net profit & loss — premiums paid out, payoffs collected at each expiry.'}
-          </div>
-        </div>
-        <div className="legend">
-          <span className="sw">
-            <span className="box" style={{ background: 'var(--accent)' }} /> equity
-          </span>
-          <span className="sw">
-            <span className="box" style={{ border: '1.5px solid var(--gain)', background: 'transparent' }} /> payoff
-            cycle
-          </span>
-        </div>
+      <div className="pl-pane-label">
+        {isDaily
+          ? 'Marked to model daily — the open put fluctuates and settles at each expiry'
+          : 'Running net P&L — premium paid out, payoffs collected at each expiry'}
       </div>
-      <svg
-        ref={svgRef}
-        id="putlab-equity"
-        viewBox="0 0 1000 238"
-        role="img"
-        aria-label="Cumulative profit and loss of the put-buying strategy over time"
-      />
-      <div className="tt" ref={ttRef} role="status" aria-live="polite" />
+      <div className="pl-chart pl-chart-equity">
+        <svg
+          viewBox={`0 0 ${W} ${H}`}
+          role="img"
+          aria-label="Cumulative profit and loss over time"
+          onPointerLeave={() => setHover(null)}
+          onPointerMove={(e) => {
+            const rect = e.currentTarget.getBoundingClientRect()
+            const x = ((e.clientX - rect.left) / rect.width) * W
+            let best = 0
+            for (let i = 1; i < model.pts.length; i++) {
+              if (Math.abs(X(model.pts[i]!.t) - x) < Math.abs(X(model.pts[best]!.t) - x)) best = i
+            }
+            setHover(best)
+          }}
+        >
+          {model.ticks.map((v) => (
+            <line key={v} className="pl-tape-grid" x1={PAD} x2={W - PAD} y1={Y(v)} y2={Y(v)} />
+          ))}
+          <path className="pl-eq-area" d={model.area} />
+          <line className="pl-tape-zero" x1={PAD} x2={W - PAD} y1={model.zeroY} y2={model.zeroY} />
+          <path className="pl-tape-pnl" d={model.line} />
+          {model.pts
+            .filter((p) => marked.has(p.date))
+            .map((p) => (
+              <circle key={p.date} className="pl-eq-settle" cx={X(p.t)} cy={Y(p.v)} r={4} />
+            ))}
+          {hovered && (
+            <line className="pl-eq-cursor" x1={X(hovered.t)} x2={X(hovered.t)} y1={PAD} y2={H - PAD} />
+          )}
+        </svg>
+        {model.ticks.map((v) => (
+          <span className="pl-ytick" key={`y${v}`} style={{ top: `${(Y(v) / H) * 100}%` }}>
+            {fmtDollar(v)}
+          </span>
+        ))}
+      </div>
+      <div className="pl-xticks">
+        <span>{model.first}</span>
+        <span aria-live="polite">
+          {hovered ? `${hovered.date} · ${fmtDollar(hovered.v)}` : ''}
+        </span>
+        <span>{model.last}</span>
+      </div>
     </>
   )
 }

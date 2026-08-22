@@ -1,30 +1,28 @@
 import { defineConfig, devices } from '@playwright/test'
 
-// Minimal e2e config for the tail-lab dashboard.
+// e2e config for the tail-lab dashboard.
 //
-// Base URL resolution (first match wins):
-//   1. PLAYWRIGHT_BASE_URL env var — set this to point at a locally running
-//      full stack (backend + built SPA on one origin, same as the Fly
-//      deploy):
-//        make api    # uvicorn on :8000, TAIL_LAB_STATIC_DIR=frontend/dist
-//        PLAYWRIGHT_BASE_URL=http://localhost:8000 npm run e2e
-//      NOTE: a bare `npm run build && npm run preview` is NOT enough on its
-//      own — vite preview only serves static files, so /api/vix/stretch
-//      falls through to the SPA's index.html (200, but HTML, not JSON) and
-//      the tile lands in its error state. The backend has to be the one
-//      serving frontend/dist/ (set TAIL_LAB_STATIC_DIR, per the Dockerfile)
-//      for the API route to answer for real.
-//   2. The deployed app, https://tail-lab.fly.dev — the default, so
-//      `npm run e2e` with no setup exercises the real deployment. This
-//      makes the suite network-dependent by default, which is why it is
-//      NOT wired into CI (see .github/workflows/ci.yml) — run it manually
-//      or from a separate, opt-in workflow.
+// The default run is HERMETIC: Playwright starts the Vite dev server on :5178
+// and every /api/** call is answered from e2e/fixtures/ (see mock-api.ts). No
+// lake, no backend, no network — so the suite is CI-safe and its assertions are
+// about rendered behaviour rather than about whatever the lake happens to hold.
+// A live backtest takes seconds and the bake-off runs ~35 of them; mocking is
+// what makes it possible to assert on both branches of the bake-off verdict in
+// the same suite.
 //
-// The deployed Fly machine auto-stops when idle (fly.toml
-// `auto_stop_machines`), so the first request after a cold start can take
-// several seconds to wake the machine — the spec's expect() timeouts are
-// widened to absorb that instead of racing it.
-const baseURL = process.env.PLAYWRIGHT_BASE_URL ?? 'https://tail-lab.fly.dev'
+//   npm run e2e                                    # hermetic, starts its own dev server
+//   PLAYWRIGHT_BASE_URL=http://localhost:5173 \
+//     npm run e2e                                  # reuse a dev server you already have
+//   PLAYWRIGHT_LIVE=1 PLAYWRIGHT_BASE_URL=https://tail-lab.fly.dev \
+//     npm run e2e -- smoke-live                    # the one unmocked smoke spec
+//
+// The live smoke spec (e2e/smoke-live.spec.ts) skips itself unless
+// PLAYWRIGHT_LIVE is set, so it never makes the default run network-dependent.
+// Its timeouts are widened because the Fly machine auto-stops when idle
+// (fly.toml `auto_stop_machines`) and a cold request has to wake it first.
+
+const PORT = 5178
+const baseURL = process.env.PLAYWRIGHT_BASE_URL ?? `http://localhost:${PORT}`
 
 export default defineConfig({
   testDir: './e2e',
@@ -37,6 +35,16 @@ export default defineConfig({
     trace: 'retain-on-failure',
     screenshot: 'only-on-failure',
   },
+  // Only manage a server when we are the ones choosing the URL. An explicit
+  // PLAYWRIGHT_BASE_URL means the caller already has something running.
+  webServer: process.env.PLAYWRIGHT_BASE_URL
+    ? undefined
+    : {
+        command: `npm run dev -- --port ${PORT} --strictPort`,
+        url: `http://localhost:${PORT}`,
+        reuseExistingServer: !process.env.CI,
+        timeout: 60_000,
+      },
   projects: [
     {
       name: 'chromium',
