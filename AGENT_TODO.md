@@ -175,13 +175,29 @@ a large one strictly in order.
       (`HUMAN_TODO.md` phase 3) is made on evidence.
 - [ ] (Optional, bounded) ingest CBOE's frozen equity put/call-ratio
       history 2006–2019 (`totalpc.csv`) as a regime-panel extra.
-- [ ] Add the FRED rates adapter (`docs/DATA_CONTRACTS.md` #3) — the FRED
+- [x] Add the FRED rates adapter (`docs/DATA_CONTRACTS.md` #3) — the FRED
       API key now exists as the `FRED_API_KEY` repo secret (`HUMAN_TODO.md`,
       done 2026-08-17), so this is unblocked. Must request the
       vintage/ALFRED-style `realtime_start`/`realtime_end` parameters and
       validate a required `vintage_date` column, per the point-in-time rule
       in `docs/DATA_CONTRACTS.md` #3 — a latest-value-only pull is a
       look-ahead bug, not a simplification.
+      **Done 2026-08-22**: `contracts/rates.py` + `ingestion/rates.py` +
+      `make ingest-rates` (`SERIES=` override), `Settings.fred_api_key`
+      (plain `FRED_API_KEY` env, mirrors the `AWS_*` pattern). Requests
+      FRED's full ALFRED vintage history so `vintage_date` is a real,
+      validated per-row column, not a latest-value stand-in — confirmed the
+      free key supports this (`docs/DATA_SOURCING.md` §2). One dataset,
+      long-format, keyed by `(series_id, obs_date, vintage_date)`, following
+      `cboe_strategy`'s multi-series shape rather than `ohlcv`'s
+      one-dataset-per-symbol one, since the whole family is fetched and read
+      together. **Not yet run against prod** (no live key in this
+      workflow — `AGENT_MISSION.md`'s "data changes" rule) and **no
+      `research/` consumer wired yet** — same reasoning `downside_beta.py`
+      and `options_expiry.py` followed: ship the pure adapter, wire it into
+      the regime panel once real vintage-aware rows exist in the lake. That
+      wiring (`docs/END_STATE.md` §1.3, once credit also lands) is the next
+      step in this dataset's life, not this PR's.
 - [ ] Add the FRED credit adapter (`docs/DATA_CONTRACTS.md` #4), same key
       and same vintage requirement as rates above.
 - [ ] Widen the regime classifier (`research/regimes/timeline.py`) from
@@ -380,9 +396,13 @@ item 2 is time-sensitive in a way nothing else in this file is.
       (`docs/DISCOVERIES.md` §9, §10). Runs on free Cboe data only; needs no
       option chains.
 
-- [ ] **Surface the accuracy context on every result — now a constitutional
+- [x] **Surface the accuracy context on every result — now a constitutional
       requirement**, not a nice-to-have (README, "Accuracy is surfaced, not
-      filed"). A backtest figure shown without the known size of its error is
+      filed"). **Done 2026-08-22** (`research/accuracy.py`,
+      `GET /api/putlab/accuracy`, `AccuracyPanel.tsx`, rendered directly under
+      every backtest's headline numbers, never behind "more detail"). Found
+      unchecked while picking today's item — fixed for bookkeeping accuracy.
+      A backtest figure shown without the known size of its error is
       the one failure mode this platform cannot afford. Four things exist
       already and are all currently invisible in the UI:
       1. **The model-vs-market residual.** `make residual` /
