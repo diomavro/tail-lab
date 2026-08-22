@@ -24,7 +24,7 @@ from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 
-from tail_lab.api.schemas import PortfolioRequest, SweepCell, SweepResponse
+from tail_lab.api.schemas import PortfolioRequest, SweepResponse
 from tail_lab.config import get_lake_store as _get_configured_lake_store
 from tail_lab.config import get_settings
 from tail_lab.contracts.ohlcv import dataset_id
@@ -55,20 +55,15 @@ from tail_lab.research.backtest.put_roll import (
     annualized_return,
     compute_put_backtest,
     load_asof_series,
-    run_put_roll,
 )
 from tail_lab.research.backtest.ranking import BENCHMARK, UniverseRanking, rank_universe
 from tail_lab.research.backtest.regime_verdict import RegimeVerdict, compute_regime_verdict
+from tail_lab.research.backtest.sweep import run_sweep
 from tail_lab.research.data_quality import DataQualityReport, assess_asset_quality
 from tail_lab.research.regimes.timeline import RegimeTimelineView, compute_regime_view
 
 router = APIRouter()
 logger = logging.getLogger("tail_lab.api.putlab")
-
-#: The heatmap axes — kept in one place so the sweep endpoint and (later) the
-#: frontend agree on the grid. Moneyness in % OOM, tenor in weeks.
-SWEEP_MONEYNESS: tuple[float, ...] = (2, 4, 6, 8, 10, 12, 15, 18, 22)
-SWEEP_TENORS_WEEKS: tuple[float, ...] = (1, 2, 4, 8, 12)
 
 #: Short-TTL memo of the (35-backtest) leaderboard, keyed by
 #: (moneyness, tenor, years, as_of); the read cache keeps it fresh underneath.
@@ -255,33 +250,7 @@ def putlab_sweep(
     except LookupError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
 
-    cells: list[SweepCell] = []
-    for tenor in SWEEP_TENORS_WEEKS:
-        for moneyness in SWEEP_MONEYNESS:
-            try:
-                res = run_put_roll(
-                    prices,
-                    iv_proxy,
-                    asset=asset,
-                    as_of=resolved,
-                    notional=notional,
-                    moneyness_pct=moneyness,
-                    tenor_weeks=tenor,
-                    lookback_years=years,
-                )
-            except LookupError:
-                # A tenor too long for the available window yields no cell,
-                # rather than failing the whole grid.
-                continue
-            cells.append(
-                SweepCell(
-                    moneyness_pct=moneyness,
-                    tenor_weeks=tenor,
-                    roi_on_premium=res.roi_on_premium,
-                    annualized_return=annualized_return(res.roi_on_premium, years),
-                    n_cycles=res.n_cycles,
-                )
-            )
+    cells = run_sweep(prices, iv_proxy, asset=asset, as_of=resolved, notional=notional, years=years)
     if not cells:
         raise HTTPException(status_code=404, detail=f"no scorable window for {asset}")
     # The S&P 500 hurdle the heatmap colours against: buy-and-hold over the same

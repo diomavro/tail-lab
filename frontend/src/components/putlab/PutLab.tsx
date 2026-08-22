@@ -170,8 +170,12 @@ export function PutLab() {
   // that is the whole point of the shortcut. Safe to navigate on click only
   // because the ranking stays pinned above the tabs, so the next pick is
   // always one click away rather than a trip back to another tab.
-  const selectAsset = (asset: string) => {
-    updateControls({ asset })
+  // Picking a row lands on the *cell the row advertised*: the ranking's headline
+  // number is each name's best annualized return over its whole strike x tenor
+  // grid, so opening the backtest at the previously-selected strike would show a
+  // different (usually worse) number than the row the user just clicked.
+  const selectAsset = (asset: string, best?: { moneyness_pct: number; tenor_weeks: number }) => {
+    updateControls(best ? { asset, ...best } : { asset })
     setActiveTab('backtest')
   }
 
@@ -320,7 +324,7 @@ export function PutLab() {
   const dq = dataQuality.status === 'ready' ? dataQuality.data : null
 
   return (
-    <div className="putlab-root">
+    <div className="putlab-root putlab-shell">
       <div className="wrap">
         <header className="top">
           <div className="brand">
@@ -379,6 +383,9 @@ export function PutLab() {
 
         {showQuestionBar && <QuestionBar controls={controls} onChange={updateControls} universe={universe} />}
 
+        {/* The one scrolling region: the active view and the footer. Everything
+            above it stays pinned, so the ranking never leaves the screen. */}
+        <div className="putlab-viewport">
         <div role="tabpanel" id={`panel-${activeTab}`} aria-labelledby={`tab-${activeTab}`} tabIndex={0}>
           {activeTab === 'screen' && <ScreenView controls={controls} />}
           {activeTab === 'backtest' && (
@@ -407,6 +414,7 @@ export function PutLab() {
           </p>
           <FeedbackPanel />
         </footer>
+        </div>
       </div>
     </div>
   )

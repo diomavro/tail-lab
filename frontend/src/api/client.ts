@@ -383,6 +383,13 @@ export interface RankedAsset {
   hit_rate: number
   biggest_payoff_mult: number
   n_cycles: number
+  /** The best this name gets when its parameters are chosen well: the argmax
+   *  of its own strike x tenor sweep. This is the headline the compact ranking
+   *  shows, and the parameters a click on the row lands on — so the number in
+   *  the table is the number the backtest then displays. */
+  best_annualized: number | null
+  best_moneyness_pct: number | null
+  best_tenor_weeks: number | null
 }
 
 export interface PutLabLeaderboardResponse {

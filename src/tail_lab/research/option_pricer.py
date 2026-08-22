@@ -10,7 +10,23 @@ from __future__ import annotations
 import math
 from abc import ABC, abstractmethod
 
-from scipy.stats import norm
+
+def _norm_cdf(x: float) -> float:
+    """Standard normal CDF.
+
+    ``0.5 * erfc(-x / sqrt(2))`` is the identity, and ``erfc`` rather than
+    ``1 + erf`` because it stays accurate in the far tails, which is exactly
+    where deep out-of-the-money puts live.
+
+    This replaced ``scipy.stats.norm.cdf``, which is correct but routes every
+    *scalar* call through the generic distribution machinery (argument
+    reduction, broadcasting, support masks). Profiling the strike x tenor
+    sweep put **72% of its total runtime** in that one function; the universe
+    ranking runs ~1,600 of those sweeps. The pricer's property tests --
+    put-call parity against an independently-implemented call, across the whole
+    valid input space -- are what make this substitution safe to make.
+    """
+    return 0.5 * math.erfc(-x / math.sqrt(2.0))
 
 
 class OptionPricer(ABC):
@@ -72,4 +88,4 @@ class BlackScholesPricer(OptionPricer):
 
         discounted_strike = strike * math.exp(-r * t_years)
         discounted_spot = spot * math.exp(-q * t_years)
-        return float(discounted_strike * norm.cdf(-d2) - discounted_spot * norm.cdf(-d1))
+        return float(discounted_strike * _norm_cdf(-d2) - discounted_spot * _norm_cdf(-d1))

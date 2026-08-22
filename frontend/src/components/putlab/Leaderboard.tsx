@@ -22,6 +22,7 @@ type SortKey = keyof Pick<
   | 'roi_on_premium'
   | 'hit_rate'
   | 'name'
+  | 'best_annualized'
 >
 
 type State =
@@ -53,13 +54,20 @@ export function Leaderboard({
   // Picking a row is the primary way to choose what to backtest -- the old
   // dropdown made you already know the ticker you wanted, which defeats the
   // point of a screen whose whole job is telling you which ticker to want.
-  onSelectAsset?: (asset: string) => void
+  // Picking carries the row's *best* parameters, not just its ticker, so the
+  // backtest opens on exactly the cell whose number the row advertised.
+  onSelectAsset?: (asset: string, best?: { moneyness_pct: number; tenor_weeks: number }) => void
   collapsed?: boolean
   onToggleCollapse?: () => void
 }) {
   const [state, setState] = useState<State>({ status: 'idle' })
   const [sortKey, setSortKey] = useState<SortKey>('fragility_score')
   const [asc, setAsc] = useState(false)
+  // Compact by default: rank, name, and the one number that decides anything.
+  // The other eight columns are the evidence behind the ranking, not the
+  // ranking, and having them all on screen pushed the actual result below the
+  // fold -- which is what the workspace exists to keep in view.
+  const [showAllMetrics, setShowAllMetrics] = useState(false)
   const didAutoRun = useRef(false)
 
   const run = () => {
@@ -126,22 +134,28 @@ export function Leaderboard({
           </span>
           <h2 style={{ marginTop: 6 }}>Which names are most fragile?</h2>
           {!collapsed && (
-          <div className="hint">
-            Rank the universe by <strong>fragility</strong> vs the market &mdash; downside beta, co-skewness,
-            co-kurtosis, tail beta and downside capture combined &mdash; then hold puts on the most fragile names.
-            The edge is timing-free: the payoff
-            comes from the fragility, not a forecast of <em>when</em>. The put columns show the model-priced result of{' '}
-            <span className="mono">
-              {controls.moneyness_pct}% OOM &middot; {controls.tenor_weeks}-week
-            </span>{' '}
-            puts, so you can spot <em>cheap fragility</em>: fragile names whose puts still paid.
-            {onSelectAsset && (
-              <>
-                {' '}
-                <strong>Click any row</strong> to load that name into the backtest.
-              </>
-            )}
-          </div>
+            <div className="hint">
+              Most fragile first. <strong>Best/yr</strong> is the highest annualized return each
+              name reached anywhere on its strike &times; tenor grid;{' '}
+              {onSelectAsset && (
+                <>
+                  <strong>click any row</strong> to open the backtest on exactly that cell.{' '}
+                </>
+              )}
+              {showAllMetrics && (
+                <>
+                  Fragility is downside beta, co-skewness, co-kurtosis, tail beta and downside
+                  capture combined &mdash; the edge is timing-free, so the payoff comes from the
+                  fragility, not a forecast of <em>when</em>. <span className="mono">Put P&amp;L</span>{' '}
+                  is the model-priced result at the{' '}
+                  <span className="mono">
+                    {controls.moneyness_pct}% OOM &middot; {controls.tenor_weeks}-week
+                  </span>{' '}
+                  parameters set below, so you can spot <em>cheap fragility</em>: fragile names
+                  whose puts still paid.
+                </>
+              )}
+            </div>
           )}
         </div>
         <div className="lb-head-actions">
@@ -149,6 +163,20 @@ export function Leaderboard({
             <span className="lb-selected" title="The name every tab is currently showing">
               showing <strong>{currentAsset.toUpperCase()}</strong>
             </span>
+          )}
+          {state.status === 'ready' && !collapsed && (
+            <button
+              className="lb-collapse"
+              onClick={() => setShowAllMetrics((v) => !v)}
+              aria-expanded={showAllMetrics}
+              title={
+                showAllMetrics
+                  ? 'Show only the best annualized return'
+                  : 'Show the fragility metrics behind the ranking'
+              }
+            >
+              {showAllMetrics ? 'Fewer columns' : 'All metrics'}
+            </button>
           )}
           <button className="lb-run" onClick={run} disabled={state.status === 'loading'}>
             {state.status === 'loading' ? 'Screening 35 names…' : 'Screen the universe'}
@@ -184,63 +212,50 @@ export function Leaderboard({
               <tr>
                 <th className="lb-num">#</th>
                 <th className="lb-sort" onClick={() => sortBy('name')}>
-                  Asset{arrow('name')}
-                </th>
-                <th className="lb-sort lb-num" onClick={() => sortBy('fragility_score')} title="Composite fragility (0–100): equal-weight blend of downside beta, co-skewness, tail beta & downside capture, most fragile first. Co-kurtosis is shown but excluded — it rewards co-movement with the market's own tails, so it flags broad indices.">
-                  Fragility{arrow('fragility_score')}
-                  <ConceptInfo id="fragility_score" />
-                </th>
-                <th className="lb-sort lb-num" onClick={() => sortBy('downside_beta')} title="Downside beta vs SPY">
-                  β&minus;{arrow('downside_beta')}
-                  <ConceptInfo id="downside_beta" />
-                </th>
-                <th className="lb-sort lb-num" onClick={() => sortBy('co_skewness')} title="Co-skewness (more negative = more crash-prone)">
-                  Skew{arrow('co_skewness')}
-                  <ConceptInfo id="co_skewness" />
-                </th>
-                <th className="lb-sort lb-num" onClick={() => sortBy('co_kurtosis')} title="Co-kurtosis (tail amplification) — shown for reference but EXCLUDED from the composite: it rewards co-movement with the market's own tails, so it flags broad indices, not fragile single names.">
-                  Kurt{arrow('co_kurtosis')}
-                  <ConceptInfo id="co_kurtosis" />
+                  Name{arrow('name')}
                 </th>
                 <th
-                  className="lb-sort lb-num"
-                  onClick={() => sortBy('tail_beta')}
-                  title="Extreme-tail beta vs SPY, worst 10% of market days"
+                  className="lb-sort lb-num lb-best"
+                  onClick={() => sortBy('best_annualized')}
+                  title="The best annualized return this name reached anywhere on its strike x tenor grid, and the cell that got there. Clicking the row opens the backtest on exactly that cell."
                 >
-                  Tail &beta;{arrow('tail_beta')}
-                  <ConceptInfo id="tail_beta" />
+                  Best/yr{arrow('best_annualized')}
                 </th>
-                <th
-                  className="lb-sort lb-num"
-                  onClick={() => sortBy('downside_capture')}
-                  title="Downside capture ratio vs SPY (>1 = amplifies losses)"
-                >
-                  Capt{arrow('downside_capture')}
-                  <ConceptInfo id="downside_capture" />
-                </th>
-                <th
-                  className="lb-sort lb-num"
-                  onClick={() => sortBy('roi_on_premium')}
-                  title="Model-priced put return on premium (total, with annualized beneath)"
-                >
-                  Put ret{arrow('roi_on_premium')}
-                  <ConceptInfo id="roi_on_premium" />
-                  <ConceptInfo id="annualized_return" />
-                </th>
-                <th>
-                  Verdict
-                  <ConceptInfo id="verdict" />
-                </th>
-                <th className="lb-sort lb-num" onClick={() => sortBy('hit_rate')}>
-                  Hit{arrow('hit_rate')}
-                  <ConceptInfo id="hit_rate" />
-                </th>
+                {showAllMetrics && (
+                  <>
+                    <th className="lb-sort lb-num" onClick={() => sortBy('fragility_score')} title="Composite fragility (0–100): equal-weight blend of downside beta, co-skewness, tail beta & downside capture, most fragile first. Co-kurtosis is shown but excluded — it rewards co-movement with the market's own tails, so it flags broad indices.">
+                      Frag{arrow('fragility_score')}
+                    </th>
+                    <th className="lb-sort lb-num" onClick={() => sortBy('downside_beta')} title="Downside beta vs SPY">
+                      Dβ⁻{arrow('downside_beta')}
+                    </th>
+                    <th className="lb-sort lb-num" onClick={() => sortBy('co_skewness')} title="Co-skewness (more negative = more crash-prone)">
+                      CoSkew{arrow('co_skewness')}
+                    </th>
+                    <th className="lb-sort lb-num" onClick={() => sortBy('co_kurtosis')} title="Co-kurtosis (tail amplification) — shown for reference but EXCLUDED from the composite: it rewards co-movement with the market's own tails, so it flags broad indices, not fragile single names.">
+                      CoKurt{arrow('co_kurtosis')}
+                    </th>
+                    <th className="lb-sort lb-num" onClick={() => sortBy('roi_on_premium')} title="Return on premium at the screened strike/tenor">
+                      Put P&L{arrow('roi_on_premium')}
+                    </th>
+                    <th>Verdict</th>
+                    <th className="lb-sort lb-num" onClick={() => sortBy('hit_rate')}>
+                      Hit{arrow('hit_rate')}
+                    </th>
+                  </>
+                )}
               </tr>
             </thead>
             <tbody>
               {rows.map((r, i) => {
                 const selected = r.asset === currentAsset
-                const pick = () => onSelectAsset?.(r.asset)
+                const pick = () =>
+                  onSelectAsset?.(
+                    r.asset,
+                    r.best_moneyness_pct !== null && r.best_tenor_weeks !== null
+                      ? { moneyness_pct: r.best_moneyness_pct, tenor_weeks: r.best_tenor_weeks }
+                      : undefined,
+                  )
                 return (
                 <tr
                   key={r.asset}
@@ -253,7 +268,13 @@ export function Leaderboard({
                   tabIndex={onSelectAsset ? 0 : undefined}
                   role={onSelectAsset ? 'button' : undefined}
                   aria-pressed={onSelectAsset ? selected : undefined}
-                  title={onSelectAsset ? `Backtest ${r.name}` : undefined}
+                  title={
+                    onSelectAsset
+                      ? r.best_annualized === null
+                        ? `Backtest ${r.name}`
+                        : `Backtest ${r.name} at its best cell: ${r.best_moneyness_pct}% OOM, ${r.best_tenor_weeks}-week`
+                      : undefined
+                  }
                   onKeyDown={
                     onSelectAsset
                       ? (e) => {
@@ -267,24 +288,47 @@ export function Leaderboard({
                 >
                   <td className="lb-num lb-rank">{i + 1}</td>
                   <td className="lb-name">{r.name}</td>
-                  <td className="lb-num" style={{ fontWeight: 700 }}>
-                    {r.fragility_score === null ? '—' : Math.round(r.fragility_score * 100)}
+                  <td className="lb-num lb-best">
+                    {r.best_annualized === null ? (
+                      <span className="lb-nobest" title="Too little history to score any cell">
+                        &mdash;
+                      </span>
+                    ) : (
+                      <>
+                        <div
+                          style={{
+                            color: r.best_annualized >= 0 ? 'var(--gain)' : 'var(--loss)',
+                            fontWeight: 700,
+                          }}
+                        >
+                          {fmtPct(r.best_annualized)}
+                        </div>
+                        <div className="lb-bestcell">
+                          {r.best_moneyness_pct}% &middot; {r.best_tenor_weeks}w
+                        </div>
+                      </>
+                    )}
                   </td>
-                  <td className="lb-num">{num(r.downside_beta, 2)}</td>
-                  <td className="lb-num">{num(r.co_skewness, 2)}</td>
-                  <td className="lb-num">{num(r.co_kurtosis, 1)}</td>
-                  <td className="lb-num">{num(r.tail_beta, 2)}</td>
-                  <td className="lb-num">{num(r.downside_capture, 2)}</td>
-                  <td className="lb-num">
-                    <div style={{ color: r.roi_on_premium >= 0 ? 'var(--gain)' : 'var(--loss)', fontWeight: 700 }}>
-                      {fmtPct(r.roi_on_premium)}
-                    </div>
-                    <div style={{ opacity: 0.6, fontSize: '0.85em' }}>{fmtPct(r.annualized_return)}/yr</div>
-                  </td>
-                  <td>
-                    <span className={`badge ${r.verdict}`}>{VERDICT_LABEL[r.verdict]}</span>
-                  </td>
-                  <td className="lb-num">{Math.round(r.hit_rate * 100)}%</td>
+                  {showAllMetrics && (
+                    <>
+                      <td className="lb-num" style={{ fontWeight: 700 }}>
+                        {r.fragility_score === null ? '—' : Math.round(r.fragility_score * 100)}
+                      </td>
+                      <td className="lb-num">{num(r.downside_beta, 2)}</td>
+                      <td className="lb-num">{num(r.co_skewness, 2)}</td>
+                      <td className="lb-num">{num(r.co_kurtosis, 1)}</td>
+                      <td className="lb-num">
+                        <div style={{ color: r.roi_on_premium >= 0 ? 'var(--gain)' : 'var(--loss)', fontWeight: 700 }}>
+                          {fmtPct(r.roi_on_premium)}
+                        </div>
+                        <div style={{ opacity: 0.6, fontSize: '0.85em' }}>{fmtPct(r.annualized_return)}/yr</div>
+                      </td>
+                      <td>
+                        <span className={`badge ${r.verdict}`}>{VERDICT_LABEL[r.verdict]}</span>
+                      </td>
+                      <td className="lb-num">{Math.round(r.hit_rate * 100)}%</td>
+                    </>
+                  )}
                 </tr>
                 )
               })}

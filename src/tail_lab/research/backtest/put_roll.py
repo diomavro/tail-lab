@@ -239,6 +239,7 @@ def run_put_roll(
     pricer: OptionPricer | None = None,
     commission_per_contract: float = COMMISSION_PER_CONTRACT,
     spread_scale: float = 1.0,
+    include_curves: bool = True,
 ) -> PutBacktestResult:
     """Roll a fixed-``notional`` OOM-put strategy through ``prices``.
 
@@ -259,6 +260,16 @@ def run_put_roll(
     entry. ``commission_per_contract`` and ``spread_scale`` are exposed only so
     a test can run the identical strategy cost-free (both ``0``) to isolate the
     cost drag; production callers use the defaults.
+
+    ``include_curves=False`` skips the two **per-day** outputs — the
+    mark-to-model curve and the price path — and returns them empty. Every
+    scalar, the cycle list, and the per-roll curves are unchanged, so a caller
+    that only scores a run gets an identical verdict. This is not a
+    micro-optimization: the mark-to-model curve is O(days x cycles) with a
+    pricer call per day, and it dominates the cost of a run by an order of
+    magnitude. A 45-cell sweep computes it 45 times and displays it zero times
+    (:mod:`tail_lab.research.backtest.sweep`), and the universe ranking would
+    compute it ~1,600 times. Charts pass ``True``; scoring passes ``False``.
     """
     if not prices.index.equals(iv_proxy.index):
         raise ValueError("prices and iv_proxy must share the same date index")
@@ -359,23 +370,25 @@ def run_put_roll(
     # The underlying over exactly the traded window (first entry -> last expiry),
     # aligned with equity_curve, for the strategy tape. The head before
     # first_traded_idx only exists for IV warm-up and isn't shown.
-    price_path = [
-        PricePoint(date=dates[k], price=float(px[k]))
-        for k in range(first_traded_idx, last_expiry_idx + 1)
-    ]
-
-    mtm_curve = _mark_to_market_curve(
-        cycles,
-        spans,
-        px=px,
-        iv=iv,
-        dates=dates,
-        pricer=pricer,
-        rate=rate,
-        notional=notional,
-        first_traded_idx=first_traded_idx,
-        last_expiry_idx=last_expiry_idx,
-    )
+    price_path: list[PricePoint] = []
+    mtm_curve: list[EquityPoint] = []
+    if include_curves:
+        price_path = [
+            PricePoint(date=dates[k], price=float(px[k]))
+            for k in range(first_traded_idx, last_expiry_idx + 1)
+        ]
+        mtm_curve = _mark_to_market_curve(
+            cycles,
+            spans,
+            px=px,
+            iv=iv,
+            dates=dates,
+            pricer=pricer,
+            rate=rate,
+            notional=notional,
+            first_traded_idx=first_traded_idx,
+            last_expiry_idx=last_expiry_idx,
+        )
 
     total_premium = len(cycles) * notional
     # Net of brokerage everywhere: roi_on_premium == sum(net)/total_premium ==

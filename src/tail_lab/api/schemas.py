@@ -9,6 +9,7 @@ from pydantic import BaseModel, Field
 from tail_lab.feedback.store import FeedbackKind, FeedbackRecord
 from tail_lab.memory.store import RegimeOutcome
 from tail_lab.research.backtest.portfolio import PortfolioLeg
+from tail_lab.research.backtest.sweep import SweepPoint
 
 
 class HealthResponse(BaseModel):
@@ -23,19 +24,6 @@ class VixStretchResponse(BaseModel):
     z_score: float
 
 
-class SweepCell(BaseModel):
-    """One (moneyness, tenor) combination's return on premium — a cell of the
-    Put Lab strike x tenor heatmap. ``roi_on_premium`` is the total over the
-    window; ``annualized_return`` geometrically annualizes it (the value the
-    heatmap colours and labels by)."""
-
-    moneyness_pct: float
-    tenor_weeks: float
-    roi_on_premium: float
-    annualized_return: float
-    n_cycles: int
-
-
 class SweepResponse(BaseModel):
     """The strike x tenor sweep plus the S&P 500 hurdle it's judged against.
 
@@ -48,7 +36,7 @@ class SweepResponse(BaseModel):
     as_of: dt.date
     notional: float
     lookback_years: float
-    cells: list[SweepCell]
+    cells: list[SweepPoint]
     benchmark_symbol: str
     benchmark_annualized: float | None
     benchmark_total: float | None

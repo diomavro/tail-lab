@@ -36,6 +36,7 @@ from tail_lab.research.backtest.put_roll import (
     run_put_roll,
 )
 from tail_lab.research.backtest.regime_verdict import regime_breakdown
+from tail_lab.research.backtest.sweep import best_point, run_sweep
 from tail_lab.research.metrics.co_kurtosis import co_kurtosis
 from tail_lab.research.metrics.co_skewness import co_skewness
 from tail_lab.research.metrics.downside_beta import downside_beta
@@ -83,6 +84,14 @@ class RankedAsset(BaseModel):
     hit_rate: float
     biggest_payoff_mult: float
     n_cycles: int
+    # The best this name gets when its parameters are chosen well: the argmax
+    # of its own strike x tenor sweep. This is the headline the ranking leads
+    # with, and the parameters a click on the row lands on -- so the number the
+    # user reads in the table is the number the backtest then shows them.
+    # ``None`` when the window was too short to score any cell.
+    best_annualized: float | None = None
+    best_moneyness_pct: float | None = None
+    best_tenor_weeks: float | None = None
 
 
 class UniverseRanking(BaseModel):
@@ -173,6 +182,11 @@ def rank_universe(
             )
         except LookupError:
             return None  # no data / too short a window for this name -> skip
+        # The same grid the heatmap shows, over the price path already in hand.
+        # Cheap now that scoring skips the per-day curves (see run_put_roll).
+        best = best_point(
+            run_sweep(prices, iv_proxy, asset=symbol, as_of=as_of, notional=notional, years=years)
+        )
         db, cs, ck, tb, dc = _fragility(prices)
         _, verdict = regime_breakdown(result.cycles, timeline)
         return RankedAsset(
@@ -191,6 +205,9 @@ def rank_universe(
             hit_rate=result.hit_rate,
             biggest_payoff_mult=result.biggest_payoff_mult,
             n_cycles=result.n_cycles,
+            best_annualized=best.annualized_return if best else None,
+            best_moneyness_pct=best.moneyness_pct if best else None,
+            best_tenor_weeks=best.tenor_weeks if best else None,
         )
 
     # Each name is an independent lake read + roll; the S3 read releases the

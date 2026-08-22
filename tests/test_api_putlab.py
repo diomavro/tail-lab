@@ -127,9 +127,9 @@ def test_sweep_second_call_served_from_cache(
     assert first.status_code == 200
 
     def _boom(*_args: object, **_kwargs: object) -> None:
-        raise AssertionError("run_put_roll called on a cache hit")
+        raise AssertionError("the grid was re-swept on a cache hit")
 
-    monkeypatch.setattr(putlab_routes, "run_put_roll", _boom)
+    monkeypatch.setattr(putlab_routes, "run_sweep", _boom)
     second = client.get("/api/putlab/sweep", params=params)
     assert second.status_code == 200
     assert second.json() == first.json()

@@ -1522,3 +1522,105 @@
 .acc-leverage {
   color: var(--faint);
 }
+
+/* --- One-page workspace ---------------------------------------------------
+   The workspace is an app shell, not a document: the page itself never
+   scrolls, so the fragility ranking stays pinned in view and a click on a row
+   shows its effect without the user hunting for where the result went. Only
+   the active view scrolls, and only when its own content exceeds the space
+   left for it. */
+.putlab-root.putlab-shell {
+  /* `vh` is the floor every browser understands. A plain `height: 100dvh`
+     override on the next line does NOT survive: the CSS minifier collapses
+     duplicate properties and keeps only the newer unit, so a browser that
+     cannot parse `dvh` is left with no height at all -- which is how this
+     shipped broken the first time. @supports is the one form the minifier
+     cannot flatten. */
+  height: 100vh;
+  overflow: hidden;
+}
+@supports (height: 100dvh) {
+  /* Preferred where available: `dvh` tracks the mobile URL bar collapsing,
+     which `vh` does not. */
+  .putlab-root.putlab-shell {
+    height: 100dvh;
+  }
+}
+.putlab-root.putlab-shell .wrap {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  /* Without this a flex child refuses to shrink below its content height and
+     the whole column overflows the viewport instead of scrolling inside. */
+  min-height: 0;
+}
+.putlab-root.putlab-shell .wrap > header.top,
+.putlab-root.putlab-shell .wrap > .panel.lb-panel,
+.putlab-root.putlab-shell .wrap > .tabnav,
+.putlab-root.putlab-shell .wrap > .question {
+  flex: 0 0 auto;
+}
+.putlab-root.putlab-shell .wrap > .putlab-viewport {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  /* The scrollbar sits inside the region, so give the content room to clear it. */
+  padding-right: 4px;
+}
+
+/* --- Compact ranking ------------------------------------------------------
+   Small by default and draggable taller: how many names a user wants in view
+   is a preference, not something this component can know. `resize` needs a
+   non-visible overflow to take effect, which the scroller already has. */
+.putlab-root .lb-scroll {
+  overflow-y: auto;
+  max-height: var(--lb-height, 232px);
+  resize: vertical;
+  min-height: 92px;
+}
+.putlab-root .lb-scroll::-webkit-resizer {
+  border-color: transparent var(--line-strong);
+}
+/* Keep the header legible while the body scrolls under it. */
+.putlab-root .lb-table thead th {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  background: var(--surface);
+}
+.putlab-root .lb-best {
+  min-width: 92px;
+}
+.putlab-root .lb-bestcell {
+  font-size: 0.8em;
+  color: var(--faint);
+  letter-spacing: 0.01em;
+}
+.putlab-root .lb-nobest {
+  color: var(--faint);
+}
+/* A compact panel earns its space by being dense, not by being cramped. */
+.putlab-root .panel.lb-panel {
+  margin-top: 10px;
+  padding-bottom: 10px;
+}
+.putlab-root .panel.lb-panel .lb-table th,
+.putlab-root .panel.lb-panel .lb-table td {
+  padding: 5px 12px;
+}
+
+/* The ranking is a control surface, not an article: its explanation must not
+   out-measure the table it explains. */
+.putlab-root .panel.lb-panel .panel-head {
+  align-items: flex-start;
+  gap: 10px;
+}
+.putlab-root .panel.lb-panel h2 {
+  font-size: 15px;
+  margin-top: 2px !important;
+}
+.putlab-root .panel.lb-panel .hint {
+  margin-top: 4px;
+  max-width: 92ch;
+}
