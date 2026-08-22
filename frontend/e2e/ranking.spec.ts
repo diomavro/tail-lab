@@ -60,10 +60,8 @@ test('expands to the full table with every metric the API returned', async ({ pa
 
 test('prints fragility on a readable scale in the full table too', async ({ page }) => {
   await page.getByRole('button', { name: /All 7 names/ }).click()
-  const shown = await page
-    .getByRole('table', { name: /fragility ranking/i })
-    .locator('td.pl-rank-frag')
-    .allTextContents()
-  expect(shown.length).toBe(LEADERBOARD.ranked.length)
+  const cells = page.getByRole('table', { name: /fragility ranking/i }).locator('td.pl-rank-frag')
+  await expect(cells).toHaveCount(LEADERBOARD.ranked.length)
+  const shown = await cells.allTextContents()
   expect(new Set(shown).size).toBeGreaterThan(2)
 })

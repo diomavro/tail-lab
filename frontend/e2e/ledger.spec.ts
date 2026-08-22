@@ -58,10 +58,9 @@ test('shows a fill on either side of the budget', async ({ page }) => {
   // `max(1, floor(notional / (premium * 100)))` forces at least one contract, so
   // an expensive roll fills ABOVE the budget and a cheap one below.
   await page.getByRole('button', { name: /^Show all/ }).click()
-  const fills = await page
-    .getByRole('table', { name: 'Roll ledger' })
-    .locator('tbody tr td:nth-child(8)')
-    .allTextContents()
+  const cells = page.getByRole('table', { name: 'Roll ledger' }).locator('tbody tr td:nth-child(8)')
+  await expect(cells).toHaveCount(CYCLES.length)
+  const fills = await cells.allTextContents()
   const values = fills.map(money)
   expect(Math.min(...values)).toBeLessThan(NOTIONAL)
   expect(Math.max(...values)).toBeGreaterThan(NOTIONAL)

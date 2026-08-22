@@ -62,11 +62,11 @@ test('takes every figure on a row from that same cell', async ({ page }) => {
 })
 
 test('never recommends a strike the model cannot price', async ({ page }) => {
-  const strikes = await page
-    .getByRole('table', { name: 'Ranked strategies' })
-    .locator('.pl-rec-strike')
-    .allTextContents()
-  expect(strikes.length).toBeGreaterThan(0)
+  const cells = page.getByRole('table', { name: 'Ranked strategies' }).locator('.pl-rec-strike')
+  // allTextContents() does not auto-wait -- assert the count first or this
+  // reads an empty list on a slow machine and passes vacuously.
+  await expect(cells).toHaveCount(LEADERBOARD.ranked.length)
+  const strikes = await cells.allTextContents()
   for (const s of strikes) {
     expect(Number(s.replace('%', ''))).toBeLessThanOrEqual(MODEL_PRICED_MAX)
   }
@@ -96,11 +96,9 @@ test('opens the workspace on the exact strategy a row describes', async ({ page 
 test('prints fragility on a readable scale, not rounded to 0 or 1', async ({ page }) => {
   // `fragility_score` is a fractional rank in 0..1 (research/backtest/ranking.py),
   // so `Math.round` on it collapses the whole universe onto two values.
-  const shown = await page
-    .getByRole('table', { name: 'Ranked strategies' })
-    .locator('td.pl-rec-frag')
-    .allTextContents()
-  expect(shown.length).toBe(LEADERBOARD.ranked.length)
+  const cells = page.getByRole('table', { name: 'Ranked strategies' }).locator('td.pl-rec-frag')
+  await expect(cells).toHaveCount(LEADERBOARD.ranked.length)
+  const shown = await cells.allTextContents()
   expect(new Set(shown).size).toBeGreaterThan(2)
   for (const t of shown) {
     const n = Number(t)
