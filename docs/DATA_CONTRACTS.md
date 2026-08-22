@@ -142,10 +142,15 @@ uniformly rather than special-cased.
 **Purpose.** The risk-free rate input to the option-pricing model and a
 regime-panel input (yield curve shape/level).
 
-**Source (needs a free API key → `HUMAN_TODO.md`).** FRED
-(`fred.stlouisfed.org`) — Treasury curve (`DGS1MO`...`DGS30`), SOFR
-(`SOFR`), fed funds (`DFF`). Free, but requires a registered API key —
-this adapter cannot ship until the key exists (see `HUMAN_TODO.md`).
+**Source.** FRED (`fred.stlouisfed.org`) — Treasury curve
+(`DGS1MO`...`DGS30`), SOFR (`SOFR`), fed funds (`DFF`). Free, keyed; the
+`FRED_API_KEY` repo secret exists (`HUMAN_TODO.md`, done 2026-08-17).
+`ingestion/rates.py` + `make ingest-rates` ship the adapter, requesting
+FRED's ALFRED-style full vintage history so `vintage_date` below is real,
+not a latest-value stand-in (`docs/DATA_SOURCING.md` §2 confirms the
+vintage API works on the free key). **Not yet run against prod** — no
+`rates` bronze partition exists yet; that live run, and wiring a
+`research/` consumer, are follow-ups (`AGENT_TODO.md`).
 
 **Cadence.** Daily (FRED updates most series once per business day).
 

@@ -67,6 +67,13 @@ class Settings(BaseSettings):
     #: tail_lab.api.feedback_routes.
     feedback_token: str | None = None
 
+    #: FRED API key for ingestion/rates.py (docs/DATA_CONTRACTS.md #3).
+    #: Plain env name, not TAIL_LAB_-prefixed — mirrors the AWS_* fields
+    #: above: it's the name already used for the repo secret and the local
+    #: .env entry (HUMAN_TODO.md), not a new naming convention. Unset in
+    #: CI/local dev by default; only a live `make ingest-rates` needs it.
+    fred_api_key: str | None = Field(default=None, validation_alias="FRED_API_KEY")
+
     #: The deployed code revision, stamped into structured run logs so a
     #: backtest line is traceable to an exact commit (docs/STANDARDS.md §f).
     #: Set by the deploy pipeline (env: TAIL_LAB_CODE_SHA); "unknown" locally.
