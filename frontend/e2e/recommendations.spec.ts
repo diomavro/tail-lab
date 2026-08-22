@@ -79,7 +79,9 @@ test('says plainly that it is a screen, not advice', async ({ page }) => {
   const caveat = page.getByRole('tabpanel').locator('.pl-caveat').first()
   await expect(caveat).toContainText('in sample')
   await expect(caveat).toContainText('not advice')
-  await expect(page.getByRole('tabpanel')).toContainText('you place the trade by hand')
+  // The claim, not one phrasing of it: this platform does not place the order.
+  await expect(page.getByRole('tabpanel')).toContainText('never places an order')
+  await expect(page.getByRole('tabpanel')).toContainText('lives outside this platform')
 })
 
 test('opens the workspace on the exact strategy a row describes', async ({ page }) => {
@@ -106,4 +108,25 @@ test('prints fragility on a readable scale, not rounded to 0 or 1', async ({ pag
     expect(n).toBeGreaterThanOrEqual(0)
     expect(n).toBeLessThanOrEqual(100)
   }
+})
+
+test('hands the schedule to an executor rather than placing it', async ({ page }) => {
+  // adr/0007: this platform never trades. The export is the artefact that
+  // crosses that wall -- it has to be reachable, carry the screen it came from,
+  // and say who places the orders.
+  const link = page.getByRole('link', { name: /roll schedule/i })
+  await expect(link).toBeVisible()
+
+  const href = await link.getAttribute('href')
+  const url = new URL(href!, 'http://localhost')
+  expect(url.pathname).toBe('/api/putlab/roll-schedule')
+  expect(url.searchParams.get('moneyness_pct')).toBe(String(LEADERBOARD.moneyness_pct))
+  expect(url.searchParams.get('tenor_weeks')).toBe(String(LEADERBOARD.tenor_weeks))
+  expect(url.searchParams.get('years')).toBe(String(LEADERBOARD.lookback_years))
+  expect(url.searchParams.get('notional')).toBe(String(LEADERBOARD.notional))
+  expect(Number(url.searchParams.get('top_k'))).toBeGreaterThan(0)
+
+  const panel = page.getByRole('tabpanel')
+  await expect(panel).toContainText('never places')
+  await expect(panel).toContainText(/budget/i)
 })

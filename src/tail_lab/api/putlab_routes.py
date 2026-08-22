@@ -58,6 +58,7 @@ from tail_lab.research.backtest.put_roll import (
 )
 from tail_lab.research.backtest.ranking import BENCHMARK, UniverseRanking, rank_universe
 from tail_lab.research.backtest.regime_verdict import RegimeVerdict, compute_regime_verdict
+from tail_lab.research.backtest.roll_schedule import RollSchedule, build_roll_schedule
 from tail_lab.research.backtest.sweep import MODEL_PRICED_MAX_MONEYNESS_PCT, run_sweep
 from tail_lab.research.data_quality import DataQualityReport, assess_asset_quality
 from tail_lab.research.regimes.timeline import RegimeTimelineView, compute_regime_view
@@ -486,20 +487,12 @@ def putlab_universe() -> list[OptionsCadence]:
     return screening_universe()
 
 
-@router.get("/api/putlab/leaderboard")
-def putlab_leaderboard(
-    moneyness_pct: float = Query(default=5.0, gt=0, lt=100),
-    tenor_weeks: float = Query(default=4.0, gt=0, le=52),
-    years: float = Query(default=4.0, gt=0, le=20),
-    as_of: dt.date | None = Query(default=None),
-    store: LakeStore = Depends(get_lake_store),
+def _rank_cached(
+    store: LakeStore, *, moneyness_pct: float, tenor_weeks: float, years: float, resolved: dt.date
 ) -> UniverseRanking:
-    """Rank the whole universe by return on premium at this strike/tenor —
-    "which names' OOM puts got the best results" — each tagged with its
-    cross-regime verdict."""
-    resolved = _resolve_as_of(as_of)
-    # Ranking the universe is 35 backtests; the result is deterministic given
-    # the (immutable) bronze, so a short TTL cache makes repeat clicks instant.
+    """The universe ranking, memoized. Shared by the leaderboard endpoint and
+    the roll schedule so asking for the schedule never re-screens a universe
+    the leaderboard just screened."""
     cache_key = (moneyness_pct, tenor_weeks, years, resolved.isoformat())
     hit = _LEADERBOARD_CACHE.get(cache_key)
     if hit is not None and hit[0] > time.monotonic():
@@ -516,6 +509,105 @@ def putlab_leaderboard(
     except LookupError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     _LEADERBOARD_CACHE[cache_key] = (time.monotonic() + _LEADERBOARD_TTL_S, ranking)
+    return ranking
+
+
+@router.get("/api/putlab/roll-schedule")
+def putlab_roll_schedule(
+    moneyness_pct: float = Query(default=5.0, gt=0, lt=100),
+    tenor_weeks: float = Query(default=4.0, gt=0, le=52),
+    years: float = Query(default=4.0, gt=0, le=20),
+    notional: float = Query(default=1000.0, gt=0, le=1_000_000),
+    top_k: int = Query(default=10, ge=1, le=50),
+    as_of: dt.date | None = Query(default=None),
+    store: LakeStore = Depends(get_lake_store),
+) -> RollSchedule:
+    """The top strategies as placeable order intent.
+
+    This is the artefact that crosses ``docs/adr/0007``'s wall: it states what
+    the screen concluded in units an executor can act on, and holds no
+    credential and places no order. Read-only, like every other route here.
+
+    Strikes and expiries are TARGETS -- the backtest strikes at an exact real
+    number no chain lists and counts trading days rather than resolving a listed
+    expiry -- and sizing is a premium budget rather than a contract count,
+    because the model's premium is not the market's. The response says all of
+    this in ``execution_notes`` so a consumer that never reads this docstring
+    still cannot get it wrong.
+    """
+    resolved = _resolve_as_of(as_of)
+    ranking = _rank_cached(
+        store,
+        moneyness_pct=moneyness_pct,
+        tenor_weeks=tenor_weeks,
+        years=years,
+        resolved=resolved,
+    )
+
+    # The model's own premium, for the top K only: one lake read per leg, so a
+    # schedule costs a handful of reads on top of the (cached) screen rather
+    # than one per universe member.
+    wanted = sorted(
+        (r for r in ranking.ranked if r.best_annualized is not None),
+        key=lambda r: -(r.best_annualized or 0.0),
+    )[:top_k]
+    sigma_by_asset: dict[str, float] = {}
+    for row in wanted:
+        try:
+            _, iv_proxy = load_asof_series(store, row.asset, resolved)
+        except LookupError:  # pragma: no cover - it ranked, so it has data
+            continue
+        trailing = iv_proxy.dropna()
+        if not trailing.empty:
+            sigma_by_asset[row.asset] = float(trailing.iloc[-1])
+
+    schedule = build_roll_schedule(
+        ranking.ranked,
+        as_of=resolved,
+        notional=notional,
+        top_k=top_k,
+        sigma_by_asset=sigma_by_asset,
+        screen_moneyness_pct=moneyness_pct,
+        screen_tenor_weeks=tenor_weeks,
+        lookback_years=years,
+    )
+    log_event(
+        logger,
+        "putlab.roll_schedule",
+        as_of=resolved,
+        moneyness_pct=moneyness_pct,
+        tenor_weeks=tenor_weeks,
+        years=years,
+        notional=notional,
+        code_sha=get_settings().code_sha,
+        schedule_id=schedule.schedule_id,
+        n_legs=len(schedule.legs),
+    )
+    return schedule
+
+
+@router.get("/api/putlab/leaderboard")
+def putlab_leaderboard(
+    moneyness_pct: float = Query(default=5.0, gt=0, lt=100),
+    tenor_weeks: float = Query(default=4.0, gt=0, le=52),
+    years: float = Query(default=4.0, gt=0, le=20),
+    as_of: dt.date | None = Query(default=None),
+    store: LakeStore = Depends(get_lake_store),
+) -> UniverseRanking:
+    """Rank the whole universe by return on premium at this strike/tenor —
+    "which names' OOM puts got the best results" — each tagged with its
+    cross-regime verdict."""
+    resolved = _resolve_as_of(as_of)
+    # Ranking the universe is a strike x tenor sweep per name; the result is
+    # deterministic given the (immutable) bronze, so a short TTL cache makes
+    # repeat clicks instant. Shared with the roll-schedule route.
+    ranking = _rank_cached(
+        store,
+        moneyness_pct=moneyness_pct,
+        tenor_weeks=tenor_weeks,
+        years=years,
+        resolved=resolved,
+    )
     log_event(
         logger,
         "putlab.leaderboard",

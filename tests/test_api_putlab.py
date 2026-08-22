@@ -496,3 +496,45 @@ def test_leaderboards_best_cell_carries_its_own_stats(client: TestClient) -> Non
             assert row[field] is not None, field
         # The headline never advertises a strike the model cannot price.
         assert row["best_moneyness_pct"] <= 10.0
+
+
+def test_roll_schedule_is_placeable_order_intent(client: TestClient) -> None:
+    """The one artefact that crosses adr/0007's wall. It has to be actionable by
+    something that cannot see this codebase, and honest about what it is."""
+    resp = client.get(
+        "/api/putlab/roll-schedule",
+        params={"moneyness_pct": 5, "tenor_weeks": 4, "years": 1, "notional": 1000, "top_k": 3},
+    )
+    assert resp.status_code == 200
+    body = resp.json()
+
+    assert len(body["schedule_id"]) == 16
+    assert body["premium_budget_per_leg"] == 1000
+    assert 0 < len(body["legs"]) <= 3
+    assert body["execution_notes"]
+    assert "not advice" in body["basis"].lower()
+
+    leg = body["legs"][0]
+    assert leg["action"] == "BUY_PUT"
+    assert leg["rank"] == 1
+    # A strike a broker could snap to, derived from this leg's own moneyness.
+    assert leg["target_strike"] == pytest.approx(leg["spot"] * (1 - leg["moneyness_pct"] / 100))
+    assert leg["premium_budget"] == 1000
+    # The model's own price travels with the order so the fill can be compared
+    # against it -- that gap is the open question in adr/0018.
+    assert leg["model_premium"] is not None and leg["model_premium"] > 0
+    assert leg["model_contracts"] >= 1
+    # Never a strike the pricer cannot price (adr/0018).
+    assert leg["moneyness_pct"] <= 10.0
+
+
+def test_roll_schedule_is_stable_for_the_same_screen(client: TestClient) -> None:
+    """An executor dedupes on schedule_id; re-fetching must not look like a new
+    set of orders to place."""
+    params = {"moneyness_pct": 5, "tenor_weeks": 4, "years": 1, "notional": 1000, "top_k": 3}
+    first = client.get("/api/putlab/roll-schedule", params=params).json()
+    second = client.get("/api/putlab/roll-schedule", params=params).json()
+    assert first["schedule_id"] == second["schedule_id"]
+
+    bigger = client.get("/api/putlab/roll-schedule", params={**params, "notional": 5000}).json()
+    assert bigger["schedule_id"] != first["schedule_id"]

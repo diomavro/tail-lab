@@ -39,6 +39,10 @@ function cadenceGloss(weeks: number): string {
   return ''
 }
 
+/** How many strategies the exported schedule carries. Ten is a basket a person
+ *  can actually hold and review, not the whole 70-name screen. */
+const SCHEDULE_TOP_K = 10
+
 interface Props {
   ranking: ResourceState<PutLabLeaderboardResponse>
   controls: PutLabControls
@@ -57,6 +61,18 @@ export function RecommendationsView({ ranking, controls, onSelectAsset }: Props)
       </p>
     )
   }
+
+  // Built from the screen that produced this table, so the export and the page
+  // can never describe different runs.
+  const scheduleHref =
+    '/api/putlab/roll-schedule?' +
+    new URLSearchParams({
+      moneyness_pct: String(ranking.data.moneyness_pct),
+      tenor_weeks: String(ranking.data.tenor_weeks),
+      years: String(ranking.data.lookback_years),
+      notional: String(ranking.data.notional),
+      top_k: String(SCHEDULE_TOP_K),
+    }).toString()
 
   const scored = ranking.data.ranked
     .filter((r): r is RankedAsset & { best_annualized: number } => r.best_annualized != null)
@@ -182,10 +198,26 @@ export function RecommendationsView({ ranking, controls, onSelectAsset }: Props)
         </div>
       </div>
 
-      <p className="pl-note" style={{ marginTop: 24 }}>
-        Click any row to open it in the Workspace at exactly these parameters. tail-lab never trades
-        &mdash; it hands you the read, <strong>you place the trade by hand</strong>.
-      </p>
+      <section className="pl-section">
+        <div className="pl-section-head">
+          <h3>Take it away</h3>
+        </div>
+        <p className="pl-note" style={{ marginBottom: 12 }}>
+          Click any row to open it in the Workspace at exactly these parameters. Or export the
+          whole set as order intent: ticker, target strike, target expiry, and the premium{' '}
+          <strong>budget</strong> per roll &mdash; sized in budget rather than contracts, because
+          the model&rsquo;s premium is not the market&rsquo;s and the executor is the only thing
+          that can see the real quote.
+        </p>
+        <p className="pl-note" style={{ marginBottom: 12 }}>
+          tail-lab <strong>never places an order</strong> and holds no brokerage credential
+          (adr/0007). The schedule is the artefact that crosses that line; whatever executes it
+          &mdash; your own hand, or a process you control &mdash; lives outside this platform.
+        </p>
+        <a className="pl-btn pl-btn-secondary" href={scheduleHref} target="_blank" rel="noreferrer">
+          Export the roll schedule
+        </a>
+      </section>
     </div>
   )
 }
