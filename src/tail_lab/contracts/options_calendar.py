@@ -36,6 +36,21 @@ class OptionsCadence(BaseModel):
 # (symbol, display name, cadence, avg gap days). Weeklies dominate the liquid
 # US single-name/ETF chains; the gap is the effective spacing a retail chain
 # shows. Grouped by kind for legibility.
+#
+# Breadth is the point (docs/adr/0008, "screen broad, trade narrow"): the thesis
+# is timing-free, so the screen has to see every corner of the market a
+# dislocation could start in — the commodity complex and the producers that
+# lever it, energy, the AI build-out down to the power that feeds it,
+# crypto-adjacent equity, developed and emerging international, every GICS
+# sector, and the cyclicals that break first.
+#
+# Two things gate what can go in this table. Every name needs OHLCV in bronze
+# (`make ingest-ohlcv SYMBOL=...`) or the ranking silently skips it; and it
+# needs enough history to cover the lookback being asked about, or the ranking
+# drops it — see ranking.MIN_WINDOW_COVERAGE for why a short history is
+# actively misleading rather than merely thin. Deliberately excluded for that
+# reason: IBIT (listed 2024) and ARM (2023). No leveraged or inverse ETFs
+# either — their path dependence makes a rolled-put backtest meaningless.
 _UNIVERSE: tuple[tuple[str, str, Cadence, float], ...] = (
     # broad indices / market ETFs
     ("SPY", "S&P 500 (SPY)", "weekly", 2.5),
@@ -51,15 +66,39 @@ _UNIVERSE: tuple[tuple[str, str, Cadence, float], ...] = (
     ("KRE", "Regional Banks (KRE)", "weekly", 3.5),
     ("XBI", "Biotech (XBI)", "weekly", 3.5),
     ("XRT", "Retail (XRT)", "monthly", 7.0),
-    # rates / credit / commodities
+    ("XLP", "Staples (XLP)", "weekly", 3.5),
+    ("XLV", "Health Care (XLV)", "weekly", 3.5),
+    ("XLI", "Industrials (XLI)", "weekly", 3.5),
+    ("XLY", "Consumer Discr. (XLY)", "weekly", 3.5),
+    ("XLB", "Materials (XLB)", "monthly", 7.0),
+    ("IYR", "Real Estate (IYR)", "monthly", 7.0),
+    ("XHB", "Homebuilders (XHB)", "monthly", 7.0),
+    ("IYT", "Transports (IYT)", "monthly", 7.0),
+    # rates / credit
     ("TLT", "20y Treasuries (TLT)", "weekly", 3.5),
     ("HYG", "High-Yield Credit (HYG)", "monthly", 7.0),
     ("LQD", "IG Credit (LQD)", "monthly", 7.0),
+    # commodities — the complex itself, plus the miners/producers that lever it
     ("GLD", "Gold (GLD)", "weekly", 3.5),
     ("SLV", "Silver (SLV)", "weekly", 3.5),
     ("USO", "Crude Oil (USO)", "weekly", 3.5),
+    ("UNG", "Natural Gas (UNG)", "weekly", 3.5),
+    ("DBC", "Broad Commodities (DBC)", "monthly", 7.0),
+    ("DBA", "Agriculture (DBA)", "monthly", 7.0),
+    ("GDX", "Gold Miners (GDX)", "weekly", 3.5),
+    ("FCX", "Freeport / Copper (FCX)", "weekly", 3.5),
+    ("CCJ", "Cameco / Uranium (CCJ)", "weekly", 3.5),
+    # energy producers + services
+    ("CVX", "Chevron (CVX)", "weekly", 3.5),
+    ("OXY", "Occidental (OXY)", "weekly", 3.5),
+    ("SLB", "Schlumberger (SLB)", "weekly", 3.5),
+    ("VLO", "Valero (VLO)", "weekly", 3.5),
+    # international
     ("EEM", "Emerging Mkts (EEM)", "monthly", 7.0),
     ("FXI", "China Large-Cap (FXI)", "weekly", 3.5),
+    ("EFA", "Developed ex-US (EFA)", "weekly", 3.5),
+    ("EWZ", "Brazil (EWZ)", "weekly", 3.5),
+    ("EWJ", "Japan (EWJ)", "monthly", 7.0),
     ("ARKK", "ARK Innovation (ARKK)", "weekly", 3.5),
     # mega-cap tech
     ("AAPL", "Apple (AAPL)", "weekly", 3.5),
@@ -71,12 +110,28 @@ _UNIVERSE: tuple[tuple[str, str, Cadence, float], ...] = (
     ("TSLA", "Tesla (TSLA)", "weekly", 3.5),
     ("AMD", "AMD (AMD)", "weekly", 3.5),
     ("NFLX", "Netflix (NFLX)", "weekly", 3.5),
+    # AI build-out: silicon, the tools that make it, and the power it needs
+    ("AVGO", "Broadcom (AVGO)", "weekly", 3.5),
+    ("MU", "Micron (MU)", "weekly", 3.5),
+    ("TSM", "TSMC (TSM)", "weekly", 3.5),
+    ("MRVL", "Marvell (MRVL)", "weekly", 3.5),
+    ("ASML", "ASML (ASML)", "weekly", 3.5),
+    ("SMCI", "Super Micro (SMCI)", "weekly", 3.5),
+    ("VRT", "Vertiv (VRT)", "weekly", 3.5),
+    ("VST", "Vistra (VST)", "weekly", 3.5),
     # high-vol / cyclical single names
     ("JPM", "JPMorgan (JPM)", "weekly", 3.5),
     ("BA", "Boeing (BA)", "weekly", 3.5),
     ("XOM", "Exxon (XOM)", "weekly", 3.5),
     ("COIN", "Coinbase (COIN)", "weekly", 3.5),
     ("PLTR", "Palantir (PLTR)", "weekly", 3.5),
+    ("DAL", "Delta Air Lines (DAL)", "weekly", 3.5),
+    ("CCL", "Carnival (CCL)", "weekly", 3.5),
+    ("F", "Ford (F)", "weekly", 3.5),
+    ("RIVN", "Rivian (RIVN)", "weekly", 3.5),
+    # crypto-adjacent equity — the highest-beta liquid chains on the board
+    ("MSTR", "MicroStrategy (MSTR)", "weekly", 3.5),
+    ("MARA", "Marathon Digital (MARA)", "weekly", 3.5),
 )
 
 

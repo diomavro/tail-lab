@@ -126,6 +126,8 @@ export const BACKTEST: PutBacktestResponse = {
 //   0 <= ann < 0.1132   -> under band
 //   ann >= 0.1132       -> beat band
 // At least one cell of each, and the default cell (5% / 4wk) is a loss.
+// 15% and 20% sit past MODEL_PRICED_MAX_MONEYNESS_PCT on purpose: those are
+// the cells the grid must show and the argmax must refuse.
 const SWEEP_GRID: [number, number, number][] = [
   [5, 1, -0.212],
   [5, 4, -0.1554],
@@ -140,6 +142,9 @@ const SWEEP_GRID: [number, number, number][] = [
   [20, 4, 0.126],
   [20, 12, 0.309],
 ]
+
+/** Mirrors research/backtest/sweep.py's MODEL_PRICED_MAX_MONEYNESS_PCT. */
+export const MODEL_PRICED_MAX = 10
 
 export const SWEEP: SweepResponse = {
   asset: 'spy',
@@ -156,6 +161,7 @@ export const SWEEP: SweepResponse = {
   benchmark_symbol: 'SPY',
   benchmark_annualized: 0.1132,
   benchmark_total: 0.537,
+  model_priced_max_moneyness_pct: MODEL_PRICED_MAX,
 }
 
 export const ACCURACY: AccuracyResponse = {
@@ -224,7 +230,9 @@ export const UNIVERSE: UniverseMember[] = [
   detail: `${symbol} lists weekly expiries.`,
 }))
 
-// Ranked so the strip's top three are TSLA / IWM / XLF, and each advertises a
+// `fragility_score` is a fractional rank in 0..1, exactly as
+// research/backtest/ranking.py serves it -- NOT a 0-100 score. Ranked so the
+// strip's top three are TSLA / IWM / XLF, and each advertises a
 // DIFFERENT best cell from the currently-selected 5% / 4wk -- which is what
 // makes "clicking a row lands on the cell it advertised" testable.
 export const LEADERBOARD: PutLabLeaderboardResponse = {
@@ -234,13 +242,13 @@ export const LEADERBOARD: PutLabLeaderboardResponse = {
   lookback_years: 4,
   notional: NOTIONAL,
   ranked: [
-    ['tsla', 'Tesla', 88.4, 412.6, 1.62, -0.94, 4.1, 1.44, 1.31, 0.244, 15, 12, 'confirmed'],
-    ['iwm', 'Russell 2000', 71.2, 214.8, 1.28, -0.61, 3.2, 1.19, 1.12, 0.118, 10, 4, 'regime_only'],
-    ['xlf', 'Financials', 63.9, 48.2, 1.14, -0.44, 2.9, 1.06, 1.03, 0.061, 10, 12, 'regime_only'],
-    ['eem', 'Emerging Markets', 55.1, 41.9, 0.98, -0.29, 2.6, 0.94, 0.97, -0.022, 5, 4, 'failed'],
-    ['qqq', 'Nasdaq-100', 48.7, 468.1, 1.09, -0.18, 3.4, 1.02, 1.05, -0.048, 5, 12, 'failed'],
-    ['spy', 'S&P 500', 40.2, 512.4, 1.0, -0.12, 3.6, 1.0, 1.0, -0.081, 5, 12, 'failed'],
-    ['gld', 'Gold', 12.5, 198.3, -0.21, 0.34, 2.1, -0.18, 0.31, -0.164, 5, 1, 'failed'],
+    ['tsla', 'Tesla', 0.884, 412.6, 1.62, -0.94, 4.1, 1.44, 1.31, 0.244, 10, 12, 'confirmed'],
+    ['iwm', 'Russell 2000', 0.712, 214.8, 1.28, -0.61, 3.2, 1.19, 1.12, 0.118, 10, 4, 'regime_only'],
+    ['xlf', 'Financials', 0.639, 48.2, 1.14, -0.44, 2.9, 1.06, 1.03, 0.061, 8, 12, 'regime_only'],
+    ['eem', 'Emerging Markets', 0.551, 41.9, 0.98, -0.29, 2.6, 0.94, 0.97, -0.022, 5, 4, 'failed'],
+    ['qqq', 'Nasdaq-100', 0.487, 468.1, 1.09, -0.18, 3.4, 1.02, 1.05, -0.048, 6, 12, 'failed'],
+    ['spy', 'S&P 500', 0.402, 512.4, 1.0, -0.12, 3.6, 1.0, 1.0, -0.081, 5, 12, 'failed'],
+    ['gld', 'Gold', 0.125, 198.3, -0.21, 0.34, 2.1, -0.18, 0.31, 0.312, 5, 1, 'confirmed'],
   ].map((r) => {
     const [asset, name, frag, spot, dnBeta, coSkew, coKurt, tailBeta, dnCap, bestAnn, bestM, bestT, verdict] =
       r as [string, string, number, number, number, number, number, number, number, number, number, number, string]
@@ -257,12 +265,19 @@ export const LEADERBOARD: PutLabLeaderboardResponse = {
       roi_on_premium: bestAnn * 2.8,
       annualized_return: bestAnn - 0.03,
       verdict: verdict as RegimeVerdictResponse['verdict'],
-      hit_rate: 0.08 + frag / 900,
-      biggest_payoff_mult: 1 + frag / 24,
+      hit_rate: 0.08 + frag / 9,
+      biggest_payoff_mult: 1 + frag * 4,
       n_cycles: 52,
       best_annualized: bestAnn,
       best_moneyness_pct: bestM,
       best_tenor_weeks: bestT,
+      // All five below are measured at (bestM, bestT) -- the same cell -- which
+      // is what the recommendations view ranks on.
+      best_roi_on_premium: Number((bestAnn * 3.4).toFixed(4)),
+      best_hit_rate: Number((0.06 + frag / 7).toFixed(4)),
+      best_biggest_payoff_mult: Number((1.4 + frag * 5).toFixed(2)),
+      best_n_cycles: Math.round((52 * 4) / bestT),
+      best_verdict: verdict as RegimeVerdictResponse['verdict'],
     }
   }),
 }

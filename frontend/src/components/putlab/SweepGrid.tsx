@@ -34,6 +34,9 @@ interface Props {
   tenorWeeks: number
   benchmarkSymbol: string
   benchmarkAnnualized: number | null
+  /** Strike depth past which the flat-vol model's premium stops being a price.
+   *  From the server (see SweepResponse) so this file holds no second copy. */
+  modelPricedMaxMoneynessPct: number
   onSelect: (moneynessPct: number, tenorWeeks: number) => void
 }
 
@@ -46,6 +49,7 @@ export function SweepGrid({
   tenorWeeks,
   benchmarkSymbol: rawSymbol,
   benchmarkAnnualized,
+  modelPricedMaxMoneynessPct,
   onSelect,
 }: Props) {
   if (cells.length === 0) return null
@@ -79,7 +83,20 @@ export function SweepGrid({
           <span className="pl-swatch-box pl-swatch-current" />
           Current
         </span>
+        <span>
+          <span className="pl-swatch-box pl-swatch-unpriced" />
+          Beyond the pricer
+        </span>
       </div>
+      <p className="pl-note pl-sweep-caveat">
+        Past <strong>{modelPricedMaxMoneynessPct}% out of the money</strong> the flat-volatility
+        model prices these puts at almost nothing &mdash; measured against real quotes, the market
+        charged {modelPricedMaxMoneynessPct >= 20 ? '' : 'up to '}21,663&times; the model&rsquo;s
+        premium at 20% OOM. Since every backtest here fixes the premium <em>budget</em>, a premium
+        rounded to nothing buys an absurd number of contracts and inflates any payoff by the same
+        factor. Hatched cells are shown because the deep tail is the point &mdash; not because
+        their returns are real.
+      </p>
 
       <div
         className="pl-sweep"
@@ -114,7 +131,10 @@ export function SweepGrid({
               // aria-label, not just title: the cell already has text content
               // ("−21%" / "208 rolls"), so a title alone never becomes the
               // accessible name and the cell reads as a bare number.
-              const label = `${s}% OOM · ${tenorLabel(t)} · ${fmtPct(cell.annualized_return)}/yr · ${cell.n_cycles} rolls`
+              const unpriced = s > modelPricedMaxMoneynessPct
+              const label =
+                `${s}% OOM · ${tenorLabel(t)} · ${fmtPct(cell.annualized_return)}/yr · ${cell.n_cycles} rolls` +
+                (unpriced ? ' · beyond what the model can price' : '')
               return (
                 <button
                   type="button"
@@ -125,6 +145,7 @@ export function SweepGrid({
                     // Past this density the magenta is dark enough that ink-on-it
                     // fails contrast, so the type flips to paper.
                     band === 'loss' && d > 0.46 ? 'is-strong' : '',
+                    unpriced ? 'is-unpriced' : '',
                     isCurrent ? 'is-current' : '',
                   ]
                     .filter(Boolean)

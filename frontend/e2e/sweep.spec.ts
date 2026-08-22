@@ -96,3 +96,24 @@ test('renders the result without the sweep when the sweep alone fails', async ({
   await expect(page.locator('.pl-sweep')).toHaveCount(0)
   await expect(page.getByRole('alert')).toContainText(/sweep failed: 500/)
 })
+
+test('marks the cells the model cannot price', async ({ page }) => {
+  // The grid shows strikes past MODEL_PRICED_MAX_MONEYNESS_PCT on purpose --
+  // seeing the deep tail is the point of a tail-hedge lab. But a flat-vol model
+  // prices a 20%-OOM put at essentially nothing (measured median market/model
+  // premium ratio 21,663x), so a fixed premium budget buys an absurd number of
+  // contracts and any payoff is inflated by the same factor. Those cells are
+  // shown and marked, not shown as equals.
+  const sweep = page.locator('.pl-sweep')
+  await expect(sweep.getByRole('button', { name: /^5% OOM · 1 month/ })).not.toHaveClass(/is-unpriced/)
+  await expect(sweep.getByRole('button', { name: /^10% OOM · 1 month/ })).not.toHaveClass(/is-unpriced/)
+  await expect(sweep.getByRole('button', { name: /^15% OOM · 1 month/ })).toHaveClass(/is-unpriced/)
+  await expect(sweep.getByRole('button', { name: /^20% OOM · 1 month/ })).toHaveClass(/is-unpriced/)
+
+  // The mark has to be legible to a screen reader too, not just a hatch.
+  await expect(sweep.getByRole('button', { name: /^15% OOM · 1 month/ })).toHaveAttribute(
+    'aria-label',
+    /beyond what the model can price/i,
+  )
+  await expect(page.locator('.pl-sweep-legend')).toContainText('Beyond the pricer')
+})

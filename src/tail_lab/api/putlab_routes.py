@@ -58,7 +58,7 @@ from tail_lab.research.backtest.put_roll import (
 )
 from tail_lab.research.backtest.ranking import BENCHMARK, UniverseRanking, rank_universe
 from tail_lab.research.backtest.regime_verdict import RegimeVerdict, compute_regime_verdict
-from tail_lab.research.backtest.sweep import run_sweep
+from tail_lab.research.backtest.sweep import MODEL_PRICED_MAX_MONEYNESS_PCT, run_sweep
 from tail_lab.research.data_quality import DataQualityReport, assess_asset_quality
 from tail_lab.research.regimes.timeline import RegimeTimelineView, compute_regime_view
 
@@ -243,8 +243,8 @@ def putlab_sweep(
     hit = _SWEEP_CACHE.get(cache_key)
     if hit is not None and hit[0] > time.monotonic():
         return hit[1]
-    # Read the as-of price path ONCE, then roll every cell over it (45 model
-    # backtests, a single lake read) instead of re-reading per cell.
+    # Read the as-of price path ONCE, then roll every cell over it (one lake
+    # read for the whole grid) instead of re-reading per cell.
     try:
         prices, iv_proxy = load_asof_series(store, asset, resolved)
     except LookupError as exc:
@@ -273,6 +273,7 @@ def putlab_sweep(
         benchmark_symbol=BENCHMARK,
         benchmark_annualized=bench_annualized,
         benchmark_total=bench_total,
+        model_priced_max_moneyness_pct=MODEL_PRICED_MAX_MONEYNESS_PCT,
     )
     _SWEEP_CACHE[cache_key] = (time.monotonic() + _SWEEP_TTL_S, response)
     return response

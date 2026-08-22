@@ -40,6 +40,11 @@ class SweepResponse(BaseModel):
     benchmark_symbol: str
     benchmark_annualized: float | None
     benchmark_total: float | None
+    #: The strike depth past which this platform's premium stops being a price
+    #: (research/backtest/sweep.py). The grid deliberately runs deeper, so the
+    #: client needs the threshold to mark those cells -- served rather than
+    #: hard-coded client-side so the two copies cannot drift. See docs/adr/0018.
+    model_priced_max_moneyness_pct: float
 
 
 class PortfolioRequest(BaseModel):

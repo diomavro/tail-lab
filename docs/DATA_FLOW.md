@@ -70,7 +70,7 @@ number (`docs/DISCOVERIES.md` #2).
 
 ## 2. What feeds each page
 
-The app is one workspace with five tabs. Each row lists what the tab answers,
+The app is one workspace with six tabs. Each row lists what the tab answers,
 the endpoints it calls, and the bronze datasets those endpoints ultimately read.
 
 Screen and Backtest used to be separate tabs, bridged by a fragility ranking
@@ -82,8 +82,9 @@ Screen tab's deeper "is the screen any good?" question moved to its own
 | Page / tab | The question it answers | Endpoints | Datasets read |
 |---|---|---|---|
 | **Workspace** | Which name, and what would that hedge have done? | `/api/putlab/leaderboard` (the ranking strip), `/backtest`, `/sweep`, `/regime-verdict`, **`/accuracy`** | `ohlcv_*` (whole screening universe + `ohlcv_spy` as benchmark), `vix`, `cboe_strategy` |
+| **Recommendations** | Of every name's *best* strategy, which are the best? | `/api/putlab/leaderboard` (same read as the ranking strip — one strike x tenor sweep per name, bounded to the priced band per `docs/adr/0018`) | `ohlcv_*`, `vix` |
 | **Portfolio** | What does a blend of legs do? | `/api/putlab/portfolio`, `/api/putlab/leaderboard` | `ohlcv_*` |
-| **Bake-off** | Which screen actually picks winners? | `/api/putlab/metric-screen` (explicit action — ~35 backtests) | `ohlcv_*` |
+| **Bake-off** | Which screen actually picks winners? | `/api/putlab/metric-screen` (explicit action — one backtest per screened name) | `ohlcv_*` |
 | **Regime** | What market are we in? | `/api/putlab/regimes`, `/api/vix/stretch`, `/accuracy` (the per-regime residual) | `vix`, `cboe_strategy` |
 | **Glossary** | — (renders `content/concepts.ts`, no network) | none | none |
 | **Control rail** (every tab) | What position am I asking about, and where did the data come from? | `/api/putlab/universe`, `/cadence`, `/data-quality` | `ohlcv_<asset>`, the options calendar |

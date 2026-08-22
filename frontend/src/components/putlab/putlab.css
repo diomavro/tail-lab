@@ -671,6 +671,26 @@
 .pl-sweep-cell.is-beat .v { color: var(--paper); }
 .pl-sweep-cell.is-beat .n { color: color-mix(in srgb, var(--paper) 72%, transparent); }
 .pl-sweep-cell.is-current { border-color: var(--cyan); }
+/* Beyond the pricer. A hatch rather than a colour: the three bands already own
+   colour, and this is a different KIND of statement -- not "how did it do" but
+   "this number is not a measurement". It has to compose with all three. */
+.pl-sweep-cell.is-unpriced {
+  background-image: repeating-linear-gradient(
+    -45deg,
+    color-mix(in srgb, var(--paper) 62%, transparent) 0 1.5px,
+    transparent 1.5px 5px
+  );
+  opacity: 0.66;
+}
+.pl-swatch-unpriced {
+  background-image: repeating-linear-gradient(
+    -45deg,
+    color-mix(in srgb, var(--ink) 40%, transparent) 0 1px,
+    transparent 1px 5px
+  );
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--ink) 22%, transparent);
+}
+.pl-sweep-caveat { margin-bottom: 14px; }
 /* The legend swatches print the same three inks the cells do, so a reader can
    match them without a colour scale. */
 .pl-swatch-loss { background: color-mix(in srgb, var(--mag) 70%, var(--paper)); }
@@ -693,6 +713,16 @@
   font-size: 11px;
   color: var(--ink-45);
 }
+
+/* ------------------------------------------------------- recommendations --- */
+
+.pl-rec-caveat { margin-bottom: var(--space-4); font-size: 13.5px; max-width: 80ch; }
+.pl-rec-table td { vertical-align: top; }
+.pl-rec-name { font-size: 13px; }
+.pl-rec-name strong { font-weight: 600; }
+/* The position stated as an instruction, under the ticker it belongs to. */
+.pl-rec-recipe { font-size: 12.5px; color: var(--ink-70); margin-top: 2px; max-width: 62ch; }
+.pl-rec-strike { font-weight: 600; color: var(--ink); }
 
 /* -------------------------------------------------------------- bake-off --- */
 

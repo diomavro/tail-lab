@@ -285,6 +285,7 @@ function Result({
             tenorWeeks={controls.tenor_weeks}
             benchmarkSymbol={sweep.data.benchmark_symbol}
             benchmarkAnnualized={sweep.data.benchmark_annualized}
+            modelPricedMaxMoneynessPct={sweep.data.model_priced_max_moneyness_pct}
             onSelect={(m, t) => onChange({ moneyness_pct: m, tenor_weeks: t })}
           />
         ) : sweep.status === 'error' ? (

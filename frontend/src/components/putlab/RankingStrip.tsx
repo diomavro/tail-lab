@@ -34,6 +34,11 @@ const VERDICT_TAG: Record<Verdict, string> = {
 }
 
 const num = (v: number | null, digits = 2) => (v == null ? '—' : fmtFixed(v, digits))
+
+/** `fragility_score` is a mean fractional rank in 0..1, so it needs scaling
+ *  before it reads as a score. Rounding it as-is collapses the whole universe
+ *  onto 0 and 1. */
+const fragility = (v: number | null) => (v == null ? '—' : String(Math.round(v * 100)))
 const at = (r: RankedAsset) =>
   r.best_moneyness_pct == null || r.best_tenor_weeks == null
     ? '—'
@@ -108,7 +113,7 @@ export function RankingStrip({ ranked, currentAsset, onSelect }: Props) {
                     <span className="dimmer">{r.name}</span>
                   </td>
                   <td className="num dim">{fmtPrice(r.spot)}</td>
-                  <td className="num bold">{r.fragility_score == null ? '—' : Math.round(r.fragility_score)}</td>
+                  <td className="num bold pl-rank-frag">{fragility(r.fragility_score)}</td>
                   <td className="num dim">{num(r.downside_beta)}</td>
                   <td className="num dim">{num(r.co_skewness)}</td>
                   <td className="num dim">{num(r.co_kurtosis, 1)}</td>
