@@ -546,3 +546,36 @@ item 2 is time-sensitive in a way nothing else in this file is.
       **Until this is decided, do not re-ingest prod OHLCV.** The existing
       Yahoo partitions are internally consistent and still readable; nothing
       is broken today.
+
+## Metric-library increments (2026-08-24)
+
+- [x] **Add a sixth sensitivity metric: vol beta.** Dio's standing directive
+      (in-app feedback, still open: "prioritize the sensitivity leaderboard
+      so I can see put candidates ranked daily") calls for growing the metric
+      library (`docs/END_STATE.md` §5 milestone 3); the five metrics already
+      wired into `research/backtest/ranking.py` (downside beta, co-skewness,
+      co-kurtosis, tail beta, downside capture) are all co-movement-with-the-
+      benchmark's-own-returns metrics. README's list also names **factor
+      sensitivities** as a category, which nothing built so far covers.
+      `research/metrics/vol_beta.py` fills that gap: beta of an asset's
+      returns against VIX pct-changes (the volatility factor) instead of the
+      benchmark's own returns -- differentiates names that share a downside
+      beta but react differently to a pure vol-of-vol shock. VIX is already a
+      live dataset (`ingestion/vix.py`), so no new source is needed. Pinned
+      by a hand-computable exact-recovery case, a case proving it provably
+      differs from ordinary beta-against-the-benchmark on the same asset
+      series, and Hypothesis properties (linearity in the asset series,
+      self-beta = 1), matching `downside_beta.py`'s test shape exactly.
+      **Shipped standalone, not yet wired into `ranking.py`'s composite** --
+      same "ship the pure function, wire it in once it has real data to run
+      against" precedent `downside_beta.py` and `options_expiry.py` followed
+      (see their entries above): wiring touches `RankedAsset`, the API
+      schema, `RankingStrip.tsx` and the e2e fixtures, which is a second,
+      separable increment. Sign convention documented in the module
+      docstring: raw vol beta is typically negative for equities (they fall
+      as VIX rises), so a composite wiring must negate it first, exactly as
+      `ranking.py` already negates co-skewness.
+- [ ] **Wire `vol_beta` into `research/backtest/ranking.py`'s composite and
+      `metric_screen.py`'s bake-off**, once ready to touch `RankedAsset` /
+      the API schema / `RankingStrip.tsx` / e2e fixtures together -- the
+      follow-up to the item above.
