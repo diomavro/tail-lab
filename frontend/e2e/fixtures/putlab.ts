@@ -261,6 +261,10 @@ export const LEADERBOARD: PutLabLeaderboardResponse = {
       co_kurtosis: coKurt,
       tail_beta: tailBeta,
       downside_capture: dnCap,
+      // Not a fixture column of its own -- derived from `frag` like the other
+      // fields below, more negative for the more-fragile names (vol_beta is
+      // fragile-when-low, same convention as co_skewness).
+      vol_beta: Number((-(0.5 + frag * 3)).toFixed(2)),
       fragility_score: frag,
       roi_on_premium: bestAnn * 2.8,
       annualized_return: bestAnn - 0.03,
@@ -322,6 +326,7 @@ export const METRIC_SCREEN_WINNER: MetricScreenComparison = {
     screenEntry('co_skewness', 'Co-skewness', ['tsla', 'eem', 'iwm', 'xlf', 'gld'], -0.262, -0.021, 0.09, 'regime_only'),
     screenEntry('tail_beta', 'Tail beta', ['tsla', 'iwm', 'eem', 'qqq', 'xlf'], -0.271, -0.03, -0.04, 'failed'),
     screenEntry('downside_capture', 'Downside capture', ['tsla', 'xlf', 'iwm', 'eem', 'spy'], -0.289, -0.048, -0.12, 'failed'),
+    screenEntry('vol_beta', 'Vol beta', ['tsla', 'iwm', 'xlf', 'qqq', 'eem'], -0.301, -0.06, 0.14, 'regime_only'),
     // Co-kurtosis picks the broad indices -- the index-flattering behaviour
     // MODEL_RESIDUAL.md describes, and why it is excluded from the composite.
     screenEntry('co_kurtosis', 'Co-kurtosis', ['spy', 'iwm', 'qqq', 'eem', 'xlf'], -0.316, -0.075, -0.28, 'failed'),

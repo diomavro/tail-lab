@@ -327,9 +327,9 @@ def test_metric_screen_returns_bakeoff(client: TestClient) -> None:
         "baseline_roi",
         "entries",
     }
-    # Only spy has data in the fixture, so one name is scored across six screens.
+    # Only spy has data in the fixture, so one name is scored across seven screens.
     assert body["universe_size"] == 1
-    assert len(body["entries"]) == 6
+    assert len(body["entries"]) == 7
     entry = body["entries"][0]
     assert set(entry) >= {
         "metric",

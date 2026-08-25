@@ -5,11 +5,13 @@ convexity continuously on the **most fragile** names, and the fragility itself
 produces the payoff when the (untimed) dislocation hits. So this ranks the
 universe by fragility, not by market-timing.
 
-Fragility is measured against the market (SPY) by five complementary
-sensitivity metrics — downside beta (how far it falls with the market),
+Fragility is measured by six complementary sensitivity metrics — five against
+the market (SPY): downside beta (how far it falls with the market),
 co-skewness (crash-direction co-movement), co-kurtosis (tail amplification),
 tail beta (beta restricted to the market's worst days), and downside
-capture (the ratio of mean returns on the market's down days) — combined
+capture (the ratio of mean returns on the market's down days); plus one
+against the volatility factor: vol beta (co-movement with VIX changes,
+independent of what the benchmark's own price did that day) — combined
 into a cross-sectional composite. Alongside each
 name's fragility, it runs the model-priced put backtest, so you can see whether
 fragility actually translates into put payoff (the §4 Q1 question) and spot
@@ -46,7 +48,8 @@ from tail_lab.research.metrics.co_skewness import co_skewness
 from tail_lab.research.metrics.downside_beta import downside_beta
 from tail_lab.research.metrics.downside_capture import downside_capture
 from tail_lab.research.metrics.tail_beta import tail_beta
-from tail_lab.research.regimes.timeline import compute_regime_timeline
+from tail_lab.research.metrics.vol_beta import vol_beta
+from tail_lab.research.regimes.timeline import compute_regime_timeline, load_vix_close
 
 #: The market benchmark the fragility metrics are measured against.
 BENCHMARK = "spy"
@@ -70,14 +73,17 @@ MIN_WINDOW_COVERAGE = 0.9
 #: broad indices (SPY/DIA/QQQ) as most "fragile" -- backwards for a single-name
 #: OOM-put screen, which wants names that fall *harder* than the market. The
 #: metric bake-off (``metric_screen.py``, END_STATE §4 Q1) confirmed it as the
-#: worst screen in-sample, but the exclusion is structural, not curve-fit. The
-#: remaining four are equal-weighted. One place, so the screen and the bake-off
-#: composite can never diverge.
+#: worst screen in-sample, but the exclusion is structural, not curve-fit. Vol
+#: beta IS included: it measures co-movement with the volatility factor (VIX
+#: changes) rather than the benchmark's own tails, so it does not share
+#: co-kurtosis's index-flattering bias. The remaining five are equal-weighted.
+#: One place, so the screen and the bake-off composite can never diverge.
 COMPOSITE_METRICS: tuple[str, ...] = (
     "downside_beta",
     "co_skewness",
     "tail_beta",
     "downside_capture",
+    "vol_beta",
 )
 
 
@@ -93,6 +99,7 @@ class RankedAsset(BaseModel):
     co_kurtosis: float | None
     tail_beta: float | None
     downside_capture: float | None
+    vol_beta: float | None  # fragility vs the volatility factor (VIX changes), not SPY
     fragility_score: float | None  # cross-sectional composite, 0..1 (1 = most fragile)
     # put backtest at the screened strike/tenor
     roi_on_premium: float
@@ -166,6 +173,9 @@ def rank_universe(
     """
     timeline = compute_regime_timeline(store, as_of=as_of)
     lookback_days = round(years * 252)
+    # compute_regime_timeline above already proved a VIX snapshot exists as of
+    # `as_of`, so this cannot raise LookupError here.
+    vol_changes = load_vix_close(store, as_of=as_of).pct_change().dropna()
 
     try:
         bench_prices, _ = load_asof_series(store, BENCHMARK, as_of)
@@ -195,6 +205,16 @@ def rank_universe(
             _safe(tail_beta),
             _safe(downside_capture),
         )
+
+    def _vol_beta_for(asset_prices: pd.Series) -> float | None:
+        """Unlike ``_fragility``, this needs no SPY benchmark -- the
+        regressor is the VIX change series, always present here."""
+        aligned = pd.concat({"a": _returns(asset_prices), "v": vol_changes}, axis=1).dropna()
+        window = aligned.iloc[-lookback_days:]
+        try:
+            return vol_beta(window["a"], window["v"])
+        except ValueError:
+            return None
 
     def _rank_one(symbol: str) -> RankedAsset | None:
         try:
@@ -234,6 +254,7 @@ def rank_universe(
             )
         )
         db, cs, ck, tb, dc = _fragility(prices)
+        vb = _vol_beta_for(prices)
         _, verdict = regime_breakdown(result.cycles, timeline)
         # One more roll, at the winning cell, so every ``best_*`` figure comes
         # from the same strategy. ~2% on top of the 55-cell sweep already run.
@@ -264,6 +285,7 @@ def rank_universe(
             co_kurtosis=ck,
             tail_beta=tb,
             downside_capture=dc,
+            vol_beta=vb,
             fragility_score=None,  # filled in cross-sectionally below
             roi_on_premium=result.roi_on_premium,
             annualized_return=result.annualized_return,
@@ -287,14 +309,16 @@ def rank_universe(
         rows = [r for r in pool.map(_rank_one, symbols) if r is not None]
 
     # Composite fragility: higher downside beta / tail beta / downside capture,
-    # and *lower* (more negative) co-skewness, all mean more fragile. Average
-    # the cross-sectional ranks of the COMPOSITE_METRICS present (co-kurtosis is
-    # ranked for display but excluded from the blend -- see COMPOSITE_METRICS).
+    # and *lower* (more negative) co-skewness / vol beta, all mean more fragile.
+    # Average the cross-sectional ranks of the COMPOSITE_METRICS present
+    # (co-kurtosis is ranked for display but excluded from the blend -- see
+    # COMPOSITE_METRICS).
     ranks = {
         "downside_beta": _frac_rank([r.downside_beta for r in rows], fragile_high=True),
         "co_skewness": _frac_rank([r.co_skewness for r in rows], fragile_high=False),
         "tail_beta": _frac_rank([r.tail_beta for r in rows], fragile_high=True),
         "downside_capture": _frac_rank([r.downside_capture for r in rows], fragile_high=True),
+        "vol_beta": _frac_rank([r.vol_beta for r in rows], fragile_high=False),
     }
     for i, r in enumerate(rows):
         parts = [ranks[m][i] for m in COMPOSITE_METRICS if i in ranks[m]]

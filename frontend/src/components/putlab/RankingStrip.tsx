@@ -11,9 +11,9 @@ import { fmtFixed, fmtPct, fmtPrice } from './format'
  * can open as a single line — the top three, clickable — and expand to the full
  * table with every metric on demand.
  *
- * The expanded table surfaces the five RankedAsset fields the old table dropped:
- * downside_beta, co_skewness, co_kurtosis, tail_beta and downside_capture were
- * all fetched and only fragility_score was shown.
+ * The expanded table surfaces the six RankedAsset fields the old table dropped:
+ * downside_beta, co_skewness, co_kurtosis, tail_beta, downside_capture and
+ * vol_beta were all fetched and only fragility_score was shown.
  *
  * `best_annualized` is the headline, so a click lands on the cell the row
  * advertised rather than on the currently selected strike — see the note in
@@ -75,7 +75,7 @@ export function RankingStrip({ ranked, currentAsset, onSelect }: Props) {
           aria-expanded={open}
           onClick={() => setOpen((v) => !v)}
         >
-          {open ? 'Collapse ranking' : `All ${ranked.length} names, nine metrics`}
+          {open ? 'Collapse ranking' : `All ${ranked.length} names, ten metrics`}
         </button>
       </div>
       <div className="pl-rule-hair" />
@@ -94,6 +94,7 @@ export function RankingStrip({ ranked, currentAsset, onSelect }: Props) {
                 <th className="num">Co-kurt</th>
                 <th className="num">Tail &beta;</th>
                 <th className="num">Dn cap</th>
+                <th className="num">Vol &beta;</th>
                 <th className="num">Best /yr</th>
                 <th>At</th>
                 <th className="num">Hit</th>
@@ -119,6 +120,7 @@ export function RankingStrip({ ranked, currentAsset, onSelect }: Props) {
                   <td className="num dim">{num(r.co_kurtosis, 1)}</td>
                   <td className="num dim">{num(r.tail_beta)}</td>
                   <td className="num dim">{num(r.downside_capture)}</td>
+                  <td className="num dim">{num(r.vol_beta)}</td>
                   <td
                     className={`num bold ${
                       r.best_annualized != null && r.best_annualized >= 0 ? 'pl-pos' : 'pl-neg'

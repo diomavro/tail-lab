@@ -25,13 +25,15 @@ def label_vix_series(vix_close: pd.Series) -> pd.Series:
     return pd.Series(labels, index=vix_close.index, name="regime")
 
 
-def compute_regime_timeline(store: LakeStore, *, as_of: dt.date) -> pd.Series:
-    """Date-indexed regime labels from the VIX snapshot known as of ``as_of``.
+def load_vix_close(store: LakeStore, *, as_of: dt.date) -> pd.Series:
+    """Date-indexed VIX close series known as of ``as_of``.
 
     Reads only the bronze VIX known on or before ``as_of``
     (:meth:`LakeStore.read_bronze_as_of` enforces no-look-ahead), sorted and
     de-duplicated by date. Raises ``LookupError`` if no VIX snapshot exists as
-    of that date.
+    of that date. The raw series behind :func:`compute_regime_timeline`'s
+    labels, for callers (e.g. the vol-beta fragility metric) that need the
+    level itself rather than the classified regime.
     """
     try:
         bronze = store.read_bronze_as_of(VIX_DATASET, as_of)
@@ -41,12 +43,22 @@ def compute_regime_timeline(store: LakeStore, *, as_of: dt.date) -> pd.Series:
         raise LookupError(f"no VIX known as of {as_of.isoformat()}")
 
     ordered = bronze.sort_values("date").drop_duplicates(subset="date", keep="last")
-    close = pd.Series(
+    return pd.Series(
         ordered["close"].to_numpy(dtype=float),
         index=pd.DatetimeIndex(ordered["date"]),
         name="close",
     )
-    return label_vix_series(close)
+
+
+def compute_regime_timeline(store: LakeStore, *, as_of: dt.date) -> pd.Series:
+    """Date-indexed regime labels from the VIX snapshot known as of ``as_of``.
+
+    Reads only the bronze VIX known on or before ``as_of``
+    (:meth:`LakeStore.read_bronze_as_of` enforces no-look-ahead), sorted and
+    de-duplicated by date. Raises ``LookupError`` if no VIX snapshot exists as
+    of that date.
+    """
+    return label_vix_series(load_vix_close(store, as_of=as_of))
 
 
 def regime_on_or_before(timeline: pd.Series, when: dt.date) -> RegimeLabel:

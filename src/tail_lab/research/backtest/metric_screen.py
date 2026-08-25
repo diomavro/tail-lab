@@ -1,11 +1,11 @@
-"""The metric bake-off (``docs/END_STATE.md`` §4 Q1): *which* of the five
+"""The metric bake-off (``docs/END_STATE.md`` §4 Q1): *which* of the six
 fragility metrics best sorted realized OOM-put payoffs over the lookback, and
 does the composite beat any single one?
 
 The fragility screen (``ranking.py``) ranks the universe by a composite of five
 sensitivity metrics. This module answers the prior question the composite
-assumes away — which metric is actually worth ranking on. For each of the six
-candidate screens (the five raw metrics plus the composite ``fragility_score``)
+assumes away — which metric is actually worth ranking on. For each of the seven
+candidate screens (the six raw metrics plus the composite ``fragility_score``)
 it holds an equal-weight basket of OOM puts on that screen's ``top_k`` most
 fragile names and reports the basket's blended put return, hit rate, bleed
 (max drawdown), per-regime breakdown/verdict, and a Spearman rank correlation
@@ -25,9 +25,9 @@ future data leaks in), but "sorted payoffs well over 2022-2026" must never be
 read as "will sort payoffs well next year". Treat the winner as a screen
 chooser, not a signal.
 
-Efficiency: each name is loaded and backtested **once**; the six screens differ
+Efficiency: each name is loaded and backtested **once**; the seven screens differ
 only in how they *rank and select* from that shared pass, so 35 names cost 35
-backtests, not 35x6.
+backtests, not 35x7.
 """
 
 from __future__ import annotations
@@ -61,9 +61,13 @@ from tail_lab.research.metrics.co_skewness import co_skewness
 from tail_lab.research.metrics.downside_beta import downside_beta
 from tail_lab.research.metrics.downside_capture import downside_capture
 from tail_lab.research.metrics.tail_beta import tail_beta
-from tail_lab.research.regimes.timeline import compute_regime_timeline
+from tail_lab.research.metrics.vol_beta import vol_beta
+from tail_lab.research.regimes.timeline import compute_regime_timeline, load_vix_close
 
-#: The five raw sensitivity metrics, in stable display order.
+#: The five benchmark-regressed raw sensitivity metrics, in stable display
+#: order. Vol beta is NOT here: it regresses against VIX changes, not the SPY
+#: benchmark, so it needs a different aligned pair -- see ``_fragility``'s
+#: separate handling below and ``_ALL_METRIC_NAMES`` for the full screen set.
 _METRIC_FUNCS: dict[str, Callable[[pd.Series, pd.Series], float]] = {
     "downside_beta": downside_beta,
     "co_skewness": co_skewness,
@@ -71,14 +75,18 @@ _METRIC_FUNCS: dict[str, Callable[[pd.Series, pd.Series], float]] = {
     "tail_beta": tail_beta,
     "downside_capture": downside_capture,
 }
+#: Every raw metric screened in the bake-off, including vol beta.
+_ALL_METRIC_NAMES: tuple[str, ...] = (*_METRIC_FUNCS, "vol_beta")
 #: A higher raw value means more fragile (matches ``ranking.py``'s directions):
-#: only co-skewness is fragile-when-*low* (more negative = more crash-prone).
+#: co-skewness and vol beta are fragile-when-*low* (more negative = more
+#: crash-prone / more reactive to a fear spike).
 _FRAGILE_HIGH: dict[str, bool] = {
     "downside_beta": True,
     "co_skewness": False,
     "co_kurtosis": True,
     "tail_beta": True,
     "downside_capture": True,
+    "vol_beta": False,
 }
 _COMPOSITE = "fragility_score"
 #: Human labels for the cockpit table.
@@ -88,6 +96,7 @@ _LABELS: dict[str, str] = {
     "co_kurtosis": "Co-kurtosis",
     "tail_beta": "Tail beta",
     "downside_capture": "Downside capture",
+    "vol_beta": "Vol beta",
     _COMPOSITE: "Composite fragility",
 }
 
@@ -115,7 +124,7 @@ class MetricScreenEntry(BaseModel):
 
 
 class MetricScreenComparison(BaseModel):
-    """The full bake-off across all six screens, best blended ROI first.
+    """The full bake-off across all seven screens, best blended ROI first.
 
     In-sample cross-sectional association over the historical lookback (see the
     module docstring): a chooser for which screen to rank on, not a forward
@@ -137,7 +146,7 @@ class _Scored:
     """One universe name after its single backtest + fragility estimate."""
 
     symbol: str
-    metrics: dict[str, float | None]  # the five raw metric values (or None)
+    metrics: dict[str, float | None]  # the six raw metric values (or None)
     fragility_score: float | None  # cross-sectional composite, filled below
     result: PutBacktestResult
 
@@ -246,7 +255,7 @@ def compare_metric_screens(
     top_k: int = 5,
     notional: float = 1000.0,
 ) -> MetricScreenComparison:
-    """Bake off the six fragility screens over ``symbols`` as of ``as_of``.
+    """Bake off the seven fragility screens over ``symbols`` as of ``as_of``.
 
     For each metric, hold an equal-weight OOM-put basket on its ``top_k`` most
     fragile names and report the basket's blended result, so you can pick the
@@ -263,6 +272,9 @@ def compare_metric_screens(
     """
     timeline = compute_regime_timeline(store, as_of=as_of)  # LookupError if no VIX
     lookback_days = round(years * 252)
+    # timeline above already proved a VIX snapshot exists as of `as_of`, so
+    # this cannot raise LookupError here.
+    vol_changes = load_vix_close(store, as_of=as_of).pct_change().dropna()
 
     try:
         bench_prices, _ = load_asof_series(store, BENCHMARK, as_of)
@@ -284,7 +296,18 @@ def compare_metric_screens(
             except ValueError:
                 return None
 
-        return {name: _safe(fn) for name, fn in _METRIC_FUNCS.items()}
+        values: dict[str, float | None] = {name: _safe(fn) for name, fn in _METRIC_FUNCS.items()}
+
+        # Vol beta regresses against VIX changes, not the SPY benchmark, so it
+        # aligns and windows its own pair rather than reusing (a, b) above.
+        vol_aligned = pd.concat({"a": _returns(asset_prices), "v": vol_changes}, axis=1).dropna()
+        vol_window = vol_aligned.iloc[-lookback_days:]
+        try:
+            values["vol_beta"] = vol_beta(vol_window["a"], vol_window["v"])
+        except ValueError:
+            values["vol_beta"] = None
+
+        return values
 
     scored: list[_Scored] = []
     for symbol in symbols:
@@ -309,14 +332,14 @@ def compare_metric_screens(
     if not scored:
         raise LookupError(f"no universe name could be scored as of {as_of.isoformat()}")
 
-    # Cross-sectional fragility rank of every metric (all five are ranked so
+    # Cross-sectional fragility rank of every metric (all six are ranked so
     # each gets a bake-off row), but the composite averages only the
     # COMPOSITE_METRICS -- identical to how rank_universe builds fragility_score,
     # so the "Composite fragility" row here matches the shipped screen exactly
     # (co-kurtosis excluded; see ranking.COMPOSITE_METRICS).
     per_metric_rank = {
         name: _frac_rank([s.metrics[name] for s in scored], fragile_high=_FRAGILE_HIGH[name])
-        for name in _METRIC_FUNCS
+        for name in _ALL_METRIC_NAMES
     }
     for i, s in enumerate(scored):
         parts = [
@@ -327,7 +350,7 @@ def compare_metric_screens(
     baseline_roi = sum(s.result.roi_on_premium for s in scored) / len(scored)
 
     entries: list[MetricScreenEntry] = []
-    for name in _METRIC_FUNCS:
+    for name in _ALL_METRIC_NAMES:
         entries.append(
             _run_screen(
                 name,

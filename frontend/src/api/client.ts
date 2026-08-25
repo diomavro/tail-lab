@@ -380,6 +380,7 @@ export interface RankedAsset {
   co_kurtosis: number | null
   tail_beta: number | null
   downside_capture: number | null
+  vol_beta: number | null
   fragility_score: number | null
   roi_on_premium: number
   annualized_return: number
