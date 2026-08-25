@@ -17,7 +17,7 @@ from tail_lab.research.backtest.metric_screen import (
 )
 from tail_lab.research.backtest.put_roll import annualized_return
 
-_ALL_SCREENS = {*_METRIC_FUNCS, "fragility_score"}
+_ALL_SCREENS = {*_METRIC_FUNCS, "vol_beta", "fragility_score"}
 
 
 def _write_closes(store: DeltaLakeStore, symbol: str, ingest: dt.date, closes: np.ndarray) -> None:
@@ -94,7 +94,7 @@ def test_bakeoff_covers_all_screens_and_is_sorted(tmp_path: Path) -> None:
         top_k=2,
     )
 
-    # Every one of the six screens appears exactly once.
+    # Every one of the seven screens appears exactly once.
     assert {e.metric for e in cmp.entries} == _ALL_SCREENS
     # 'missing' has no data -> skipped; the other four scored.
     assert cmp.universe_size == 4

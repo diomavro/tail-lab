@@ -61,14 +61,14 @@ export const CONCEPTS: Record<string, Concept> = {
     term: 'Fragility score (composite)',
     category: 'metric',
     short:
-      'A 0-100 blend of four sensitivity metrics -- each name ranked cross-sectionally against the rest of the universe, most fragile first.',
+      'A 0-100 blend of five sensitivity metrics -- each name ranked cross-sectionally against the rest of the universe, most fragile first.',
     formula:
-      'fragility_score = mean over {downside_beta, co_skewness, tail_beta, downside_capture} of frac_rank(metric); frac_rank = 1 − pos/(N−1), pos = 0 for most fragile',
+      'fragility_score = mean over {downside_beta, co_skewness, tail_beta, downside_capture, vol_beta} of frac_rank(metric); frac_rank = 1 − pos/(N−1), pos = 0 for most fragile',
     intuition:
-      'No single sensitivity metric is trusted on its own, so the composite averages four of them. Each metric is turned into a cross-sectional fractional rank -- a 0..1 position of this name against every other name in the universe, where 1 is the most fragile -- and the four ranks are averaged equally. Ranking (rather than averaging raw values) puts metrics on different scales onto common footing and makes the score robust to a single metric blowing up. Co-kurtosis is computed and displayed but deliberately left OUT of the blend (see its own entry).',
+      'No single sensitivity metric is trusted on its own, so the composite averages five of them. Each metric is turned into a cross-sectional fractional rank -- a 0..1 position of this name against every other name in the universe, where 1 is the most fragile -- and the five ranks are averaged equally. Ranking (rather than averaging raw values) puts metrics on different scales onto common footing and makes the score robust to a single metric blowing up. Co-kurtosis is computed and displayed but deliberately left OUT of the blend (see its own entry).',
     howToRead:
       'Higher means more fragile relative to the universe: a score near 100 is among the most crash-sensitive names screened, near 0 among the most cushioned. A name with too little overlapping history to estimate the metrics shows no score and sorts last.',
-    seeAlso: ['downside_beta', 'co_skewness', 'tail_beta', 'downside_capture', 'co_kurtosis'],
+    seeAlso: ['downside_beta', 'co_skewness', 'tail_beta', 'downside_capture', 'vol_beta', 'co_kurtosis'],
   },
   downside_beta: {
     id: 'downside_beta',
@@ -136,6 +136,19 @@ export const CONCEPTS: Record<string, Concept> = {
       'The downside capture ratio is a standard fund-management statistic: on the days the benchmark fell, how much of that decline did the name "capture," as a ratio of the two mean returns. Because both means are negative on down days, a ratio above 1 means the name fell MORE than the market -- fragile in exactly the sense this screen wants -- while below 1 means it cushioned the declines. It is the most intuitive of the five and reads directly as a percentage of the market drop.',
     howToRead:
       'Higher is more fragile: above 1 = amplifies the market losses, below 1 = dampens them, near 1 = moves with it. Undefined (blank) with fewer than two market down-days.',
+    seeAlso: ['downside_beta', 'fragility_score'],
+  },
+  vol_beta: {
+    id: 'vol_beta',
+    term: 'Vol beta',
+    category: 'metric',
+    short:
+      'Beta against day-over-day VIX changes rather than the benchmark own returns -- how hard the name reacts to a pure fear spike.',
+    formula: 'vol_beta = cov(rₐ, Δvix) / var(Δvix)   (sample moments, ddof=1)',
+    intuition:
+      'Every other metric here measures co-movement with the benchmark OWN returns or their shape. Vol beta measures something different: co-movement with the volatility factor itself -- day-over-day percentage changes in VIX -- independent of what SPY did that day. Two names can share an identical downside beta yet react very differently to a VIX spike with no accompanying SPY move; vol beta is what tells them apart. It needs no SPY history to compute (VIX is the only regressor), so it can be estimated even when the benchmark comparison cannot.',
+    howToRead:
+      'Unlike downside beta, MORE NEGATIVE is more fragile here (equities fall as VIX rises, so a more negative vol beta means a harder reaction to a fear spike -- the composite flips its sign so it ranks fragile-when-low, the same convention as co-skewness). Undefined (blank) when fewer than two paired observations are available or VIX was flat over the window.',
     seeAlso: ['downside_beta', 'fragility_score'],
   },
 

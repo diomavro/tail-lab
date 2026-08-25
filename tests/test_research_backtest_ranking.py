@@ -73,6 +73,7 @@ def test_rank_universe_sorts_by_fragility_and_skips_missing(tmp_path: Path) -> N
     row = ranking.ranked[0]
     assert row.spot > 0
     assert row.downside_beta is not None and row.co_kurtosis is not None
+    assert row.vol_beta is not None
     assert row.verdict in {"confirmed", "regime_only", "failed", "untested"}
     assert row.n_cycles >= 1
     for r in ranking.ranked:
@@ -80,8 +81,10 @@ def test_rank_universe_sorts_by_fragility_and_skips_missing(tmp_path: Path) -> N
 
 
 def test_rank_universe_without_benchmark_leaves_fragility_none(tmp_path: Path) -> None:
-    """No SPY benchmark -> fragility can't be estimated; the put backtest still
-    ranks (fragility fields just come back None)."""
+    """No SPY benchmark -> the SPY-regressed fragility metrics can't be
+    estimated; the put backtest still ranks (those fields just come back
+    None). Vol beta is the exception: it regresses against VIX, not SPY, so
+    it is still estimable and the composite still gets one metric to rank on."""
     store = DeltaLakeStore(tmp_path)
     ingest = dt.date(2026, 3, 2)
     _seed_vix(store, ingest)
@@ -90,7 +93,8 @@ def test_rank_universe_without_benchmark_leaves_fragility_none(tmp_path: Path) -
         store, symbols=("calm",), as_of=ingest, moneyness_pct=5.0, tenor_weeks=4.0, years=1.0
     )
     assert ranking.ranked[0].downside_beta is None
-    assert ranking.ranked[0].fragility_score is None
+    assert ranking.ranked[0].vol_beta is not None
+    assert ranking.ranked[0].fragility_score is not None
     assert ranking.ranked[0].n_cycles >= 1  # backtest still ran
 
 

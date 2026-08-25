@@ -575,7 +575,27 @@ item 2 is time-sensitive in a way nothing else in this file is.
       docstring: raw vol beta is typically negative for equities (they fall
       as VIX rises), so a composite wiring must negate it first, exactly as
       `ranking.py` already negates co-skewness.
-- [ ] **Wire `vol_beta` into `research/backtest/ranking.py`'s composite and
+- [x] **Wire `vol_beta` into `research/backtest/ranking.py`'s composite and
       `metric_screen.py`'s bake-off**, once ready to touch `RankedAsset` /
       the API schema / `RankingStrip.tsx` / e2e fixtures together -- the
-      follow-up to the item above.
+      follow-up to the item above. **Done 2026-08-25.** `COMPOSITE_METRICS`
+      now has five equal-weighted members (vol beta joins downside beta,
+      co-skewness, tail beta, downside capture; co-kurtosis stays display-only
+      per its existing exclusion). `research/regimes/timeline.py` gained
+      `load_vix_close` (the raw close series `compute_regime_timeline` already
+      built internally, now reusable) so both `ranking.py` and
+      `metric_screen.py` can regress vol beta against VIX changes without a
+      second VIX read helper. One deliberate deviation from the other four
+      metrics: vol beta does NOT gate on the SPY benchmark being present in
+      `rank_universe` (`_vol_beta_for` is unconditional, unlike `_fragility`)
+      -- it regresses against VIX, not SPY, so it is estimable even when the
+      benchmark is missing, and the "no benchmark" test now pins that the
+      composite still gets one metric to average instead of coming back
+      `None`. `metric_screen.py`'s bake-off is a seventh screen now (six raw
+      metrics + composite); `_METRIC_FUNCS` intentionally still excludes vol
+      beta (it needs a different regressor than the other five, which all
+      share the SPY-aligned pair) -- `_ALL_METRIC_NAMES` is the iteration set
+      everywhere a screen list is needed. Also added the `vol_beta` glossary
+      entry (`frontend/src/content/concepts.ts`) and updated `fragility_score`'s
+      formula string to name all five composite members, since it was already
+      wrong after the vol-beta metric itself shipped standalone.

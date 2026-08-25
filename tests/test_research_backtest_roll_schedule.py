@@ -36,6 +36,7 @@ def _ranked(
         co_kurtosis=3.0,
         tail_beta=1.0,
         downside_capture=1.0,
+        vol_beta=-1.0,
         fragility_score=0.5,
         roi_on_premium=-0.4,
         annualized_return=-0.1,

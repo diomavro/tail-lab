@@ -57,12 +57,12 @@ test('puts the in-sample caveat above the table, in the loss colour', async ({ p
   expect(b).toBeGreaterThan(g + 20)
 })
 
-test('ranks the six screens by ROI and marks the winner', async ({ page }) => {
+test('ranks the seven screens by ROI and marks the winner', async ({ page }) => {
   await page.getByRole('button', { name: 'Run the bake-off' }).click()
   const rows = page.getByRole('table').locator('tbody tr')
-  await expect(rows).toHaveCount(6)
+  await expect(rows).toHaveCount(7)
 
-  // The five raw metrics plus the composite, sorted best ROI first.
+  // The six raw metrics plus the composite, sorted best ROI first.
   const rois = await rows.locator('td.pl-bake-roi').allTextContents()
   const asNumbers = rois.map((t) => Number(t.replace('−', '-').replace('%', '')))
   expect(asNumbers).toEqual([...asNumbers].sort((a, b) => b - a))
