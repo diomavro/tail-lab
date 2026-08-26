@@ -182,8 +182,14 @@ without a vintage is a look-ahead bug, not a simplification.
 **Purpose.** Credit-spread regime input; a candidate factor in
 cross-asset sensitivity metrics.
 
-**Source (needs a free API key → `HUMAN_TODO.md`, same key as #3).** FRED
-— HY OAS (`BAMLH0A0HYM2`), IG OAS (`BAMLC0A0CM`).
+**Source.** FRED (`fred.stlouisfed.org`) — HY OAS (`BAMLH0A0HYM2`), IG OAS
+(`BAMLC0A0CM`). Free, keyed; same `FRED_API_KEY` repo secret as #3.
+`ingestion/credit.py` + `make ingest-credit` (`SERIES=` override) ship the
+adapter, requesting FRED's ALFRED-style full vintage history exactly as
+`ingestion/rates.py` does. **Not yet run against prod** — no `credit`
+bronze partition exists yet; that live run, and wiring a `research/`
+consumer (starting with widening `research/regimes/timeline.py` beyond
+VIX-complex-only), are follow-ups (`AGENT_TODO.md`).
 
 **Cadence.** Daily.
 

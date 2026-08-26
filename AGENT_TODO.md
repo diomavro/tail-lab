@@ -198,8 +198,22 @@ a large one strictly in order.
       the regime panel once real vintage-aware rows exist in the lake. That
       wiring (`docs/END_STATE.md` §1.3, once credit also lands) is the next
       step in this dataset's life, not this PR's.
-- [ ] Add the FRED credit adapter (`docs/DATA_CONTRACTS.md` #4), same key
-      and same vintage requirement as rates above.
+- [x] Add the FRED credit adapter (`docs/DATA_CONTRACTS.md` #4), same key
+      and same vintage requirement as rates above. **Done 2026-08-26**:
+      `contracts/credit.py` + `ingestion/credit.py` + `make ingest-credit`
+      (`SERIES=` override), mirroring `ingestion/rates.py`'s structure
+      exactly (same ALFRED-vintage fetch, same three-function split) but
+      as its own module rather than shared code, matching this package's
+      existing one-module-per-dataset convention (`vix.py`/`cboe_strategy.py`
+      are equally close in shape and equally separate). Ingests HY OAS
+      (`BAMLH0A0HYM2`) and IG OAS (`BAMLC0A0CM`); schema floor is 0.0 (an
+      OAS is non-negative by construction, unlike a Treasury yield) with a
+      50.0 ceiling (well above the 2008 HY OAS peak of ~19.9%) to catch
+      unit errors. **Not yet run against prod** (no live key in this
+      workflow) and **no `research/` consumer wired yet** — same
+      ship-the-adapter-first precedent `rates.py` followed. The next step
+      in this dataset's life is the item below (widening the regime
+      classifier), once this adapter has a live partition to read.
 - [ ] Widen the regime classifier (`research/regimes/timeline.py`) from
       VIX-complex-only to also weigh credit spreads, once the FRED credit
       adapter above exists — closes the scope gap noted on the "regime-panel
