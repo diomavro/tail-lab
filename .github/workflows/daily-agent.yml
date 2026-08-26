@@ -97,21 +97,30 @@ jobs:
                    so it drops out of the open list. If an issue needs a human decision or a
                    constitution change, leave it open (do NOT resolve it) and say why in the PR
                    body or as a note — resolving is a claim that it's actually fixed.
-            2. Read `docs/AGENT_MISSION.md`, `README.md`, `ARCHITECTURE.md`, `docs/STANDARDS.md`,
-               and `AGENT_TODO.md`.
-            3. Choose the SINGLE highest-value item — an open `issue` from step 1 that fits this
+            2. Check the forward collection is alive, BEFORE picking any work:
+                 curl -s https://tail-lab.fly.dev/api/ingest/option-chain/status
+               This is the one dataset that cannot be backfilled — nobody sells a retroactive
+               option chain, so a session not captured is lost at any price (`docs/adr/0020`).
+               If `stale_days` is null (never collected) or larger than a long weekend, the
+               daily sweep is broken, and diagnosing it is the highest-value thing available
+               to you today — ahead of whatever is at the top of `AGENT_TODO.md`. Say so in
+               the PR. If it is fresh, note the last session and move on.
+            3. Read `docs/AGENT_MISSION.md`, `README.md`, `ARCHITECTURE.md`, `docs/STANDARDS.md`,
+               and `AGENT_TODO.md`. Note the value bar's **irreversibility override**: work
+               whose cost rises the longer it waits outranks work with a bigger payoff today.
+            4. Choose the SINGLE highest-value item — an open `issue` from step 1 that fits this
                run, or otherwise the top of `AGENT_TODO.md` — that (a) advances a documented
                research question or measurably sharpens the put-buying cockpit, AND (b) needs NO
                account, API key, or paid service. If an item needs a real-world credential, skip it
                (that is the human's queue). If nothing clears the value bar today, STOP and open
                nothing — proposing nothing is a valid, expected outcome.
-            4. Implement exactly that ONE item — minimal, faithful, extending the proven
+            5. Implement exactly that ONE item — minimal, faithful, extending the proven
                walking-skeleton patterns (do NOT invent new architecture). Add tests that pin
                behavior against a known/independent value per `docs/STANDARDS.md`. Respect the
                module dependency rule (import-linter enforces it). Check the item off in
                `AGENT_TODO.md` (or resolve the feedback issue per step 1). If you discover a
                real-world/account blocker, append it to `HUMAN_TODO.md` and stop that thread.
-            5. VALIDATE before proposing — run exactly what CI runs, and do not open a red PR:
+            6. VALIDATE before proposing — run exactly what CI runs, and do not open a red PR:
                  ruff check src tests
                  ruff format --check src tests
                  mypy src/tail_lab
@@ -121,7 +130,7 @@ jobs:
                and, only if you touched the frontend:
                  cd frontend && npm run typecheck && npm run build
                If any of these fail, fix it or reduce the change until they pass. Never open a red PR.
-            6. Open ONE pull request from a branch named `agent/<short-slug>` using `gh pr create`,
+            7. Open ONE pull request from a branch named `agent/<short-slug>` using `gh pr create`,
                ALWAYS passing `--assignee diomavro`. That assignment is the only thing that puts
                the PR in Dio's notification stream: since these PRs are authored by `claude[bot]`
                and nobody watches the repo, an unassigned agent PR opens, merges and deploys

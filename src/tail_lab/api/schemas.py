@@ -91,3 +91,60 @@ class FeedbackListResponse(BaseModel):
 
     standing: list[FeedbackRecord]
     issues: list[FeedbackRecord]
+
+
+class OptionChainSnapshotRow(BaseModel):
+    """One sliced put quote in transit from the scheduled sweep to bronze.
+
+    Mirrors ``contracts/option_chain.OptionChainSnapshotSchema`` field for
+    field. The three greek columns are optional because Cboe zero-fills what
+    it cannot compute and the adapter maps that to a typed absence — an
+    omitted ``iv`` here means "the exchange did not publish one", never zero.
+    """
+
+    underlying: str
+    quote_date: dt.date
+    expiration: dt.date
+    strike: float
+    bid: float
+    ask: float
+    volume: int
+    open_interest: int
+    spot: float
+    iv: float | None = None
+    delta: float | None = None
+    theo: float | None = None
+
+
+class OptionChainSnapshotRequest(BaseModel):
+    """One day's sweep. ``ingest_date`` is the bronze partition (defaults to
+    today on the server); ``quote_date`` on each row is the session the
+    quotes belong to, and the two differ whenever a sweep runs after
+    midnight UTC."""
+
+    rows: list[OptionChainSnapshotRow]
+    ingest_date: dt.date | None = None
+
+
+class OptionChainSnapshotResponse(BaseModel):
+    """What landed, echoed back so the workflow can assert on it rather than
+    trusting a 200."""
+
+    dataset: str
+    ingest_date: dt.date
+    rows: int
+    symbols: int
+    quote_date: dt.date
+    bronze_path: str
+
+
+class OptionChainSnapshotStatus(BaseModel):
+    """Freshness of the forward collection. ``last_quote_date`` is ``None``
+    only before the very first sweep; after that, ``stale_days`` climbing
+    past a long weekend means sessions are being lost permanently."""
+
+    dataset: str
+    last_quote_date: dt.date | None
+    rows: int
+    symbols: int
+    stale_days: int | None

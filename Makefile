@@ -27,6 +27,7 @@ help:
 	@echo "  ingest-cboe-strategy  Live Cboe strategy-index fetch -> bronze (TICKERS=... ; network; not run in CI)"
 	@echo "  ingest-rates Live FRED rates fetch -> bronze (SERIES=... ; needs FRED_API_KEY; network; not run in CI)"
 	@echo "  ingest-credit Live FRED credit-spread fetch -> bronze (SERIES=... ; needs FRED_API_KEY; network; not run in CI)"
+	@echo "  ingest-option-chain  TODAY's put wing from Cboe -> bronze (CHAIN_SYMBOLS=... ; network; UNRECOVERABLE if skipped)"
 	@echo "  api          Run FastAPI on :8000 with auto-reload"
 	@echo "  frontend     Run the Vite dev server"
 	@echo "  clean        Remove caches and build artifacts"
@@ -38,16 +39,16 @@ setup:
 	cd frontend && npm install
 
 lint:
-	env -u PYTHONPATH $(VENV)/bin/ruff check src tests
+	env -u PYTHONPATH $(VENV)/bin/ruff check src tests scripts
 # CI runs `ruff format --check` as a separate gate (.github/workflows/ci.yml).
 # It lives here so `make check` really is every CI gate: without it a file
 # appended by a script rather than an editor can pass locally and fail CI,
 # which is exactly what happened on 2026-08-21.
-	env -u PYTHONPATH $(VENV)/bin/ruff format --check src tests
+	env -u PYTHONPATH $(VENV)/bin/ruff format --check src tests scripts
 
 format:
-	env -u PYTHONPATH $(VENV)/bin/ruff format src tests
-	env -u PYTHONPATH $(VENV)/bin/ruff check --fix src tests
+	env -u PYTHONPATH $(VENV)/bin/ruff format src tests scripts
+	env -u PYTHONPATH $(VENV)/bin/ruff check --fix src tests scripts
 
 typecheck:
 	env -u PYTHONPATH $(VENV)/bin/mypy src/tail_lab
@@ -106,6 +107,14 @@ ingest-cboe-strategy:
 SERIES ?=
 ingest-rates:
 	env -u PYTHONPATH $(VENV)/bin/python -c "from tail_lab.ingestion.rates import ingest_rates; from tail_lab.config import get_lake_store, get_settings; from tail_lab.observability import configure_logging; configure_logging(); s = [x.upper() for x in '$(SERIES)'.split(',')] if '$(SERIES)' else None; r = ingest_rates(get_lake_store(), s, api_key=get_settings().fred_api_key); print(f'committed {r.valid_rows} rows for {len(r.series_ids)} series -> {r.bronze_path} ({r.quarantined_rows} quarantined)')"
+
+# Forward-collects TODAY's put wing from Cboe's public CDN. Unlike every other
+# ingest-* target this one cannot be caught up later: no free source serves a
+# retroactive chain, so a day not swept is a day lost (docs/adr/0020). The
+# scheduled workflow runs the --post half; this is the human/local path.
+CHAIN_SYMBOLS ?=
+ingest-option-chain:
+	env -u PYTHONPATH $(VENV)/bin/python scripts/chain_snapshot.py --local $(if $(CHAIN_SYMBOLS),--symbols $(CHAIN_SYMBOLS),)
 
 ingest-credit:
 	env -u PYTHONPATH $(VENV)/bin/python -c "from tail_lab.ingestion.credit import ingest_credit; from tail_lab.config import get_lake_store, get_settings; from tail_lab.observability import configure_logging; configure_logging(); s = [x.upper() for x in '$(SERIES)'.split(',')] if '$(SERIES)' else None; r = ingest_credit(get_lake_store(), s, api_key=get_settings().fred_api_key); print(f'committed {r.valid_rows} rows for {len(r.series_ids)} series -> {r.bronze_path} ({r.quarantined_rows} quarantined)')"

@@ -333,7 +333,16 @@ item 2 is time-sensitive in a way nothing else in this file is.
       result into the Put Lab as a benchmark series and, once that lands,
       as the model-vs-market residual (`docs/END_STATE.md` §4 research
       question on `docs/adr/0004`'s model-priced limitation).
-- [ ] **Daily Cboe delayed-quote chain snapshots into bronze.**
+- [x] **Daily Cboe delayed-quote chain snapshots into bronze.** **Done
+      2026-08-26** (`docs/adr/0020`) — and it is worth recording that this
+      item sat here, correctly labelled time-sensitive, for five days while
+      the daily agent shipped five other things. Nothing was malfunctioning:
+      the value bar asks what "measurably sharpens the cockpit", and an
+      increment whose entire payoff is in 2029 loses that comparison every
+      single day. `docs/AGENT_MISSION.md` now carries an irreversibility
+      clause so it cannot lose it again. Shipped narrower than described
+      here: 24 names not 70, put wing only, one write per day.
+      Original note follows.
       `https://cdn.cboe.com/api/global/delayed_quotes/options/_SPX.json`
       verified live: HTTP 200, 13.7 MB, **30,842 SPX contracts**, each
       carrying `bid`/`ask`/`bid_size`/`ask_size`/`iv`/`open_interest`/
@@ -560,6 +569,58 @@ item 2 is time-sensitive in a way nothing else in this file is.
       **Until this is decided, do not re-ingest prod OHLCV.** The existing
       Yahoo partitions are internally consistent and still readable; nothing
       is broken today.
+
+## Strategy-family increments (2026-08-26 — from Kakushadze & Serur, *151 Trading Strategies*, SSRN 3247865)
+
+Four increments from a read of the options (§2) and volatility (§7) chapters.
+Ordered by how directly each attacks a known weakness rather than by how
+interesting it is. Q6-Q8 in `docs/END_STATE.md` §4 are the questions these
+serve; `docs/adr/0021` is why the risk-shaped one comes first.
+
+- [ ] **Multiple-testing correction on the Bake-off (correctness, not a
+      feature).** `research/backtest/metric_screen.py` ranks six-plus
+      sensitivity metrics across strikes, tenors and regimes and reports a
+      winner. That is a large grid, and the conventional t > 2.0 hurdle is
+      exactly what Harvey, Liu & Zhu (2016) showed is wrong once a
+      literature has tested hundreds of factors — they argue for ~t > 3.0.
+      Report the number of comparisons alongside every ranking, apply a
+      correction (Benjamini-Hochberg is the honest default; a Bonferroni
+      bound is the conservative one), and surface both the raw and the
+      adjusted verdict. Pin it with a test that feeds pure noise through the
+      grid and asserts the corrected ranking declares no winner — the
+      uncorrected one will happily name one, which is the whole point.
+      **This changes existing published numbers**, so say so on the surface.
+- [ ] **Measure the volatility risk premium the screen pays** (§4 Q6). VRP
+      = implied minus subsequently-realized vol, per name, per roll. It is
+      the headwind every S1 roll fights and the platform has never once
+      measured it. Needs only what is already ingested (OHLCV realized vol
+      + the vol complex; per-name IV arrives with `docs/adr/0020`'s
+      collection). Then the payoff: a **VRP-adjusted sensitivity metric** —
+      rank by sensitivity *per unit of premium paid over realized* rather
+      than by raw sensitivity. That is the precise form of the README's
+      "cheapness-adjusted variants", and it is a new column in the Screen,
+      not a new page.
+- [ ] **Put ratio backspread as a second structure** (§2.37, §4 Q8). Short
+      one near-ATM put, long two further-OTM, often at zero or negative net
+      debit — convexity kept, carry financed. It is the textbook answer to
+      the single biggest practical objection to permanent put buying, and
+      the engine already prices every leg it needs
+      (`research/backtest/put_roll.py` + `option_pricer.py`). Add it behind
+      the same pluggable structure interface as the naked put so the
+      Bake-off can rank *structures* the way it ranks metrics, and report
+      its carry against the naked put's in the Carry Budget. Respect
+      `docs/adr/0018` — do not let the short leg wander past what the
+      pricer can honestly price.
+- [ ] **The dispersion test: cheap tails, or expensive beta?** (§4 Q7,
+      §6.3.) Backtest the screened single-name basket against the SPY put
+      that costs the *same premium*, like for like. Index IV carries a
+      correlation risk premium that single names do not, so the basket
+      should be cheaper per unit of tail — but correlations go to one in a
+      crash, which is precisely what the index put is paid for. If the
+      basket does not beat the equal-premium index put, S1's edge is a
+      correlation short in a sensitivity screen's clothing. Cheap to run
+      (both sides are model-priced today), and it is the single most
+      decisive test of the thesis currently available.
 
 ## Metric-library increments (2026-08-24)
 
