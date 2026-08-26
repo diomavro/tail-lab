@@ -15,6 +15,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
 from tail_lab.api.feedback_routes import router as feedback_router
+from tail_lab.api.ingest_routes import router as ingest_router
 from tail_lab.api.leaderboard_routes import router as leaderboard_router
 from tail_lab.api.putlab_memory_routes import router as putlab_memory_router
 from tail_lab.api.putlab_routes import router as putlab_router
@@ -44,6 +45,7 @@ app.include_router(feedback_router)
 app.include_router(leaderboard_router)
 app.include_router(putlab_memory_router)
 app.include_router(putlab_router)
+app.include_router(ingest_router)
 
 
 @app.middleware("http")

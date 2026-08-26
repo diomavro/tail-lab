@@ -35,7 +35,37 @@ question in `docs/END_STATE.md` §4, or make the cockpit (§1) measurably
 sharper?** If you cannot point at the specific paragraph an increment
 serves, do not build it.
 
-**It is fine, and expected, to propose nothing on a given day.** A day with
+### The exception: work that expires
+
+The bar above has a blind spot, and it cost this platform five days of real
+option chains before anyone noticed. "Measurably sharpens the cockpit" is a
+question about *today*, and it is answered every single day by whichever
+increment shows a result this week. An item whose entire payoff arrives in
+2029 loses that comparison every time it is asked — not because the value
+bar is broken, but because it is working exactly as written.
+
+So it gets an override. **Before applying the value bar, ask whether the
+item is recoverable.** Almost everything here is: a metric not built today
+is built next week at identical cost, and a FRED pull not run today is one
+`make` invocation away from being caught up. A small class of work is not.
+Forward data collection is the clear case — nobody sells a retroactive
+option chain, so a session not captured is gone at *any* price
+(`docs/adr/0020`).
+
+**Irrecoverable work outranks the value bar.** If an item's cost rises the
+longer it waits, or its window closes, take it first — even if a
+same-day-payoff increment would score higher. If you cannot take it because
+it needs a credential or an account, it goes to `HUMAN_TODO.md` **flagged
+as expiring**, with what is being lost per day of delay stated plainly. Do
+not file it quietly next to items that will keep.
+
+**Check the collection before you pick anything.** Read
+`GET /api/ingest/option-chain/status` at the start of every run. If
+`stale_days` is larger than a long weekend, the daily sweep is broken and
+diagnosing it is the highest-value thing available to you that day —
+ahead of whatever is at the top of `AGENT_TODO.md`. Say so in the PR.
+
+**It is otherwise fine, and expected, to propose nothing on a given day.** A day with
 no PR is a successful run if nothing on the backlog clears the bar or fits
 in a well-scoped increment. Do not manufacture busywork, refactor for its
 own sake, or pad a small change with unrelated cleanup to look productive.

@@ -41,15 +41,31 @@ Frontend (from `frontend/`): `npm run typecheck`, `npm run lint` (oxlint), `npm 
 - **Coverage floors differ by layer:** 80% overall, but **90% on `research/` and `transforms/`** — new code there needs near-complete tests, typically including a pinned synthetic case with a known analytic answer (`docs/STANDARDS.md`).
 - **Tests never touch the network.** Ingestion adapters are tested against committed fixtures; live fetches happen only via the human-run `make ingest-*` targets.
 - **Config lives in one place:** `src/tail_lab/config.py` (pydantic-settings, `TAIL_LAB_` prefix, `.env`). Never read `os.environ` elsewhere. `TAIL_LAB_LAKE_BACKEND=local` (default, credential-free — what CI uses, lake at `./data/`) vs `tigris` (S3 on Fly Tigris, plain `AWS_*` env names). The feedback routes 404 unless `TAIL_LAB_FEEDBACK_TOKEN` is set — that's deliberate, not a bug.
+- **The daily chain sweep is the one job that must not miss** (`docs/adr/0020`).
+  `.github/workflows/daily-chain-snapshot.yml` forward-collects the put wing from
+  Cboe's keyless CDN every weekday at 21:30 UTC. Every other source here serves
+  history on demand, so a skipped pull is a `make` invocation away from being
+  fixed; nobody sells a retroactive option chain, so a skipped session is gone at
+  any price. An empty sweep therefore **fails red on purpose** rather than
+  no-opping, and a red build here is the one that should interrupt a day. Check
+  `GET /api/ingest/option-chain/status` before assuming it is healthy. Two
+  gotchas: the sweep must write **one partition for all symbols** (bronze is
+  immutable, so a per-symbol write persists only the first), and Cboe
+  **zero-fills** `iv`/`delta`/`theo` it cannot compute — the adapter maps those to
+  null, and a 0.0 in those columns is never a measurement.
+- **Surfaces are named after desk functions** (`docs/adr/0021`): Screen, Tape,
+  Bake-off, Prior Art, Carry Budget, Regime. Code layers keep their plumbing
+  names; anything a human reads takes a desk word or argues for a new one in an
+  ADR. "Leaderboard", "dashboard" and "panel" are not desk words.
 - **Two backlogs:** the agent owns `AGENT_TODO.md`; anything needing an account/key/money goes to `HUMAN_TODO.md` and is never attempted by the agent.
 
 ## ARCHITECTURE.md's tree is partly aspirational
 
 The layer boundaries and dependency rules in `ARCHITECTURE.md` are enforced and real, but its file tree describes the end state, not the current code. As of now:
 
-- `contracts/` is one module per dataset (`vix.py`, `ohlcv.py`, `regime.py`, `options_calendar.py`), not the single `datasets.py` shown.
+- `contracts/` is one module per dataset (`vix.py`, `ohlcv.py`, `regime.py`, `options_calendar.py`, `option_quotes.py`, `option_chain.py`, `rates.py`, `credit.py`, `cboe_strategy.py`, `hypothesis.py`), not the single `datasets.py` shown.
 - `lake/` is `store.py` (`LakeStore` protocol + `DeltaLakeStore`, including as-of resolution — there is no separate `asof.py`) and `blob_store.py` (JSON blobs, used by feedback).
-- `api/` is flat (`main.py`, `putlab_routes.py`, `feedback_routes.py`, `schemas.py`), no `routes/` subpackage yet.
+- `api/` is flat (`main.py`, `putlab_routes.py`, `feedback_routes.py`, `ingest_routes.py`, `schemas.py`), no `routes/` subpackage yet.
 - `feedback/` is a real layer (peer of ingestion/transforms in the import-linter contract) not shown in the tree.
 - `research/` currently has `metrics/` (downside_beta, downside_capture, tail_beta, co_skewness, co_kurtosis), `option_pricer.py` (one module, not the `pricing/` package `ARCHITECTURE.md` shows), `vix_stretch.py`, `data_quality.py`, `leaderboard.py`, `regimes/timeline.py`, and `backtest/` (put_roll, portfolio, ranking, metric_screen, regime_verdict, brokerage, index_replication).
 

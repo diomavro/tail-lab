@@ -1,0 +1,58 @@
+name: Daily option-chain snapshot
+
+# Forward-collects the put wing across the tradable set and commits it to
+# bronze (docs/adr/0020, docs/DATA_CONTRACTS.md #6).
+#
+# THIS IS THE ONE WORKFLOW WHOSE MISSED RUNS CANNOT BE REPAIRED. Every other
+# source here serves history on demand — a skipped FRED or Yahoo pull is a
+# make target away from being fixed. Nobody sells a free retroactive option
+# chain, so a session that goes un-snapshotted is gone permanently, and the
+# only way to own five years of quotes is to have started five years ago.
+# That is why this fails loudly on an empty sweep instead of no-opping, and
+# why the daily agent checks yesterday's snapshot landed before it does
+# anything else (.github/workflows/daily-agent.yml).
+#
+# Least-privilege, and split at its natural seam exactly like the verdict
+# sweep: the credential-free half (fetch Cboe's public CDN, slice to the put
+# wing) runs here; the live app holds the object-storage keys and does the
+# write. CI therefore needs ONE bearer token and no data credentials.
+
+on:
+  schedule:
+    # 21:30 UTC on weekdays — after the 16:00 ET close in both DST regimes
+    # (90 min in summer, 30 in winter), and well past Cboe's 15-minute delay.
+    - cron: "30 21 * * 1-5"
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+concurrency:
+  group: chain-snapshot
+  cancel-in-progress: false
+
+jobs:
+  snapshot:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      # Runtime deps only — this job runs the adapter, it does not lint it.
+      - name: Install tail_lab
+        run: pip install -e .
+
+      - name: Sweep the chains and hand them to the app
+        env:
+          TOKEN: ${{ secrets.TAIL_LAB_FEEDBACK_TOKEN }}
+          BASE: https://tail-lab.fly.dev
+        run: |
+          set -uo pipefail
+          if [ -z "${TOKEN:-}" ]; then
+            echo "::error::TAIL_LAB_FEEDBACK_TOKEN not set — today's chains cannot be recovered later."
+            exit 1
+          fi
+          python scripts/chain_snapshot.py --post "$BASE" --token "$TOKEN"

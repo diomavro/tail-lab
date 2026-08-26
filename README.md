@@ -33,6 +33,17 @@ These are inviolable. Changing any requires a human-approved ADR.
 - **Everything automated is logged in detail.** Autonomous operation is only reviewable if every automated action — agent runs, merges, deploys, ingestion runs, backtests — leaves a detailed record (`docs/adr/0016`, `docs/STANDARDS.md` §f). An increment that adds automated behavior without logging it does not meet the standard.
 - **Accuracy is surfaced, not filed.** Anything that tells the reader how far a result sits from the truth — the model-vs-market residual, the benchmark the strategy should be judged against, the data-quality flags on its inputs, the assumptions a number rests on and how much they move it — must be visible **where the result is shown**, not only in a doc, a log, or a make target. A backtest figure displayed without the known size of its error is a number pretending to be a measurement, and this platform exists to measure a mispricing, so an unqualified number is the specific failure mode it cannot afford. A new result and its accuracy context ship in the same increment; if the context is not yet known, say that on the surface too.
 - **The workspace fits one screen; the page never scrolls.** The Put Lab is an app shell, not a document. The fragility ranking stays pinned in view so that clicking a name and seeing what it does are the same gesture — a result you have to scroll to find is a result you will not compare. Only the active view scrolls, and only when its own content exceeds the space left for it. Panels that grow without bound (a 35-row table, an eleven-column screen) are collapsed, capped, or made user-resizable instead of being allowed to push the answer below the fold. **This principle was violated once because it lived only in Dio's head**; it is written here so the next increment has to argue with it rather than forget it.
+- **Some work expires; that work goes first.** Almost everything here is
+  recoverable — a metric not built today costs the same next week, and a FRED
+  series not pulled today is one `make` invocation from being caught up. Forward
+  data collection is not: nobody sells a retroactive option chain, so a session
+  not captured is gone at any price. The value bar asks what sharpens the cockpit
+  *today*, and an increment whose payoff arrives in 2029 loses that comparison
+  every single day it is asked — which is exactly what happened, quietly, for
+  five days (`docs/adr/0020`). **Irrecoverable work therefore outranks the value
+  bar**, and anything blocked on a credential goes to `HUMAN_TODO.md` flagged as
+  expiring, with the daily cost of delay stated. A backlog that cannot tell the
+  difference between "not yet" and "never again" will always choose never again.
 - **The agent proposes; CI disposes; the human oversees.** Every change is a PR gated by CI. Ordinary agent increments (`agent/*` branches) auto-merge once every CI gate is green (`docs/adr/0016`); anything touching the constitution (this README, `ARCHITECTURE.md`, `docs/STANDARDS.md`, `docs/AGENT_MISSION.md`, `docs/END_STATE.md`, `docs/adr/`) is blocked from auto-merge by CI's constitution-guard and lands only through a human-reviewed PR. Green `main` auto-deploys to Fly (CD workflow, `docs/adr/0016`) — the agent itself never runs a deploy and never holds credentials. The human steers asynchronously: reviewing the deployed state and the audit trail, and leaving feedback (`docs/adr/0014`) that future runs must read. The agent may propose *nothing* on a given day.
 
 ## Strategy & data at a glance
@@ -41,7 +52,7 @@ These are inviolable. Changing any requires a human-approved ADR.
 - **Backtest is model-priced (v1).** OOM puts are priced with a model (Black-Scholes + a vol-surface proxy from the VIX/SKEW complex + FRED rates) on historical underlying paths, behind a **pluggable option-pricing interface**. Real historical option quotes become a second implementation later — an upgrade, not a prerequisite. (`docs/adr/0004`)
   - **Caveat, stated loudly:** the S1 thesis is that the market *misprices* tails; a model-priced backtest cannot see that mispricing from the inside. Treat model-priced results as a **relative ranking of sensitivity metrics**, not as P&L truth. Absolute returns are suspect until real quotes arrive.
   - **The size of that caveat is now measured, not guessed.** Replicating Cboe's published PPUT rule with our own pricer and differencing the NAVs puts the model-vs-market gap at **+1.34%/yr over 438 monthly rolls since 1990** — the model prices puts too cheap by roughly a fifth of the premium — and, critically, **the error flips sign in a crisis** (`docs/MODEL_RESIDUAL.md`, `make residual`). So the caveat is not "absolute returns are unknown" but "absolute returns are optimistic by a known, regime-dependent amount". That number is part of the result and travels with it.
-- **Six core datasets (v1):** underlying OHLCV (deep, broad), the volatility complex (VIX/VIX3M/VIX9D/VVIX/CBOE SKEW + realized vol), rates (Treasury curve/SOFR/fed funds, FRED), credit (HY/IG OAS, FRED), an event calendar (scheduled + a manual unscheduled table), and forward-collected option chains for the narrow tradable set. Everything else is deferred to `AGENT_TODO.md`.
+- **Six core datasets (v1):** underlying OHLCV (deep, broad), the volatility complex (VIX/VIX3M/VIX9D/VVIX/CBOE SKEW + realized vol), rates (Treasury curve/SOFR/fed funds, FRED), credit (HY/IG OAS, FRED), an event calendar (scheduled + a manual unscheduled table), and forward-collected option chains for the narrow tradable set (**live since 2026-08-26** — Cboe's keyless delayed-quote CDN, put wing only, 24 names, swept every weekday after the close; `docs/adr/0020`). Everything else is deferred to `AGENT_TODO.md`.
   - **Survivorship-bias caveat, stated loudly:** a free "current constituents" pull omits exactly the names that blew up and delisted — the most tail-sensitive assets of all. A point-in-time-constituents plan (or an explicit, loud caveat on every affected result) is a first-class research-validity requirement, not a footnote. (`docs/adr/0010`)
 
 ## Tech stack
@@ -67,12 +78,39 @@ The initial setup is **end-state documentation + a deployed walking skeleton** (
 - **VIX source is Yahoo Finance's public chart JSON** (`query1.finance.yahoo.com/v8/finance/chart/%5EVIX`), keyless — *not* the Stooq CSV first considered, which now serves a JavaScript anti-bot challenge to plain HTTP clients. Both are keyless; Yahoo's still returns clean JSON. Per-dataset source choices live in `docs/DATA_CONTRACTS.md`.
 - **The lakehouse defaults to local disk; Tigris is available now.** `lake/` exposes a `LakeStore` interface with one concrete implementation, `DeltaLakeStore` (Delta Lake via delta-rs, immutable bronze partitioned by `ingest_date`), rooted at a local directory by default — no credentials needed, so CI and plain local dev always work — or at `s3://tail-lab-lake` on Fly Tigris (S3-compatible) when `TAIL_LAB_LAKE_BACKEND=tigris` (`tail_lab.config.get_lake_store`) — no other layer changes when switching. (`docs/adr/0012`, `docs/adr/0013`)
 
+## What this is and is not
+
+Named plainly because the category is crowded with things that sound like it.
+
+**It is** a single-operator research instrument for one decision: which puts to
+buy, on what, when, and at what carry. Its surfaces are named after desk
+functions — the Screen, the Tape, the Bake-off, Prior Art, the Carry Budget —
+because a tool that speaks a desk's vocabulary is legible to anyone who has
+worked on one (`docs/adr/0021`).
+
+**It is not a fund, and not a fund's software.** It runs no execution, holds no
+money, manages no outside capital, and has no business-operations or growth
+function — not as unbuilt backlog but as constitutional wall (`docs/adr/0007`).
+Of the six functions a real desk runs, this platform implements Research and
+Signal, is adding Risk, walls off Execution behind a separate credential-holding
+process (`docs/adr/0019`), and declines the last two outright.
+
+**It does not tell you what a position is worth.** Backtests are model-priced,
+the model is optimistic by a measured +1.34%/yr, and that error flips sign in a
+crisis (`docs/MODEL_RESIDUAL.md`). Every number it shows is a *relative* ranking
+until real quotes are deep enough to say otherwise.
+
+**It is not a signal service, an alpha product, or advice.** There is no
+subscriber, no customer, and nothing here has been validated on money.
+
 ## Documentation map
 
 - `docs/END_STATE.md` — the detailed end-state the agent works toward.
 - `docs/AGENT_MISSION.md` — the daily agent's mission, value bar, and guardrails.
 - `docs/STANDARDS.md` — the strict engineering + correctness standards.
 - `docs/DATA_CONTRACTS.md` — the six core datasets: schemas, sources, cadence, validation rules.
+- `docs/adr/0020` — why the option-chain collection runs daily and fails loudly.
+- `docs/adr/0021` — the desk-function vocabulary every surface is named from.
 - `docs/adr/` — architecture decision records (the constitution's clauses).
 - `AGENT_TODO.md` / `HUMAN_TODO.md` — the two separate backlogs.
 - `ARCHITECTURE.md` — layout, layer boundaries, where new code goes.

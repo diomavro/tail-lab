@@ -151,6 +151,33 @@ one-off notebook result that goes stale.
 5. **How does option behavior (IV, skew, volume where available) move
    around FOMC/CPI releases and past crises** specifically — a pattern
    library the event calendar (§1.4) can flag against in real time.
+6. **How much volatility risk premium does the screen pay?** Implied vol
+   sits above subsequent realized most of the time (Kakushadze & Serur
+   §7.4; Carr & Wu 2009; Bakshi & Kapadia 2003) — that premium is the
+   headwind S1 fights on every roll, and the platform currently never
+   measures it. The sharper form of the question reframes the screen
+   itself: rank not by raw sensitivity but by **sensitivity per unit of
+   VRP paid**, which is the precise definition the README's
+   "cheapness-adjusted variants" has so far been gesturing at.
+7. **Is the sensitivity screen finding cheap tails, or just buying beta
+   expensively?** Index implied vol runs systematically above the vol
+   implied by its own constituents plus their correlations (Kakushadze &
+   Serur §6.3; Driessen, Maenhout & Vilkov 2009) — the correlation risk
+   premium. Single-name OOM puts do not carry it, so they *should* be
+   cheaper per unit of tail than an index put; but in a crash correlations
+   go to one, which is exactly what the index put is being paid for. The
+   decisive test is a like-for-like backtest of the screened basket
+   against the SPY put that costs the same premium. If the basket does not
+   beat it, S1's edge is a correlation short wearing a sensitivity
+   screen's clothes, and that is a finding worth having early.
+8. **Can the bleed be financed without giving up the tail?** The naked
+   long put is one point in a family (Kakushadze & Serur §2.9, §2.19,
+   §2.21, §2.37). A put ratio backspread — short one near-ATM put, long
+   two further OTM — is often structured at zero or negative net debit and
+   keeps convexity, and a calendar/diagonal sells shorter-dated puts
+   against a longer-dated one. Whether any of these survives the screen's
+   ranking *after* costs is an open question, and it is the question the
+   Carry Budget (`docs/adr/0021`) exists to make answerable.
 
 ---
 

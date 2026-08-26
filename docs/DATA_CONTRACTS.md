@@ -253,44 +253,93 @@ catch.
 
 ## 6. Forward-collected option chains
 
-**Purpose.** Ground truth for the narrow, options-liquid tradable subset
-(`docs/adr/0008`) once real quotes are needed — starts accumulating from
-whenever ingestion begins, not backfilled historically.
+**Status: LIVE since 2026-08-26** (`docs/adr/0020`). What follows is what
+ships, not what was planned — the plan below it differed in three ways and
+the deltas are recorded rather than quietly overwritten.
 
-**Source (free, keyless).** Yahoo Finance option-chain endpoint (via
-`yfinance`, unofficial/keyless) or CBOE's free delayed-quote pages, for
-the narrow symbol list only (not the broad screening universe).
+**Purpose.** The one dataset here that cannot be backfilled. Nobody sells a
+free retroactive option chain, so this accumulates forward from first run and
+a session not captured is lost at any price. It is a deposit against
+`docs/adr/0004`'s model-priced caveat: in a year it turns the model-vs-market
+residual from a constant measured on one vendor's SPY history into a function
+of name and regime.
 
-**Cadence.** Daily snapshot (forward-collected — there is no free
-historical source for this, by design; see `docs/adr/0004`'s caveat on
-why the backtest stays model-priced until this dataset has enough
-history, or a paid historical source is added per `HUMAN_TODO.md`).
+**Source (free, keyless).** Cboe's delayed-quote CDN,
+`https://cdn.cboe.com/api/global/delayed_quotes/options/{SYMBOL}.json` —
+15-minute delayed, the exchange's own feed, no key, no cookie, no crumb. Cash
+indices take an underscore prefix (`_SPX`, `_VIX`); equities and ETFs use the
+bare root. Yahoo's `/v7/finance/options`, the originally-planned source, now
+answers **401** without a cookie+crumb pair and is no longer viable.
 
-**Schema — `OptionChainRow`:**
+**Coverage.** `DEFAULT_SNAPSHOT_SYMBOLS` — 24 options-liquid names, not the
+70-name screening universe. Screen broad, trade narrow (`docs/adr/0008`).
+
+**Cadence.** Weekdays at 21:30 UTC, after the 16:00 ET close in both DST
+regimes (`.github/workflows/daily-chain-snapshot.yml`). An empty sweep exits
+non-zero and turns the workflow red: this is the one scheduled job here that
+may not legitimately do nothing.
+
+**The slice.** Puts only, strikes within 0.40-1.05 of spot, tenors 0-180
+days. SPY's full document is 5.9 MB / 13,288 contracts; the slice is ~3,600
+rows. Bands match §"real historical option quotes" deliberately, so the
+vendor back-history and this forward collection union on their shared columns
+with no translation layer.
+
+**Schema — `OptionChainSnapshotSchema`** (`contracts/option_chain.py`). The
+first nine columns are exactly `OptionQuoteSchema`:
 
 | Column | Type | Constraints |
 |---|---|---|
-| `underlying_symbol` | `str` | non-null, in the tradable subset |
-| `contract_symbol` | `str` | non-null, unique per snapshot |
-| `expiry_date` | `date` | non-null, > `snapshot_date` |
-| `strike` | `float` | > 0 |
-| `option_type` | `str` | `"put"` or `"call"` |
-| `bid`, `ask` | `float` | ≥ 0; `bid ≤ ask` |
-| `last_price` | `float \| None` | ≥ 0 when present |
-| `implied_vol` | `float \| None` | ≥ 0 when present |
-| `open_interest`, `volume` | `int` | ≥ 0 |
-| `snapshot_date` | `date` | non-null |
-| `source_id` | `str` | `"yfinance_chains"` or `"cboe_delayed"` |
-| `ingested_at` | `datetime` (UTC) | non-null |
+| `underlying` | `str` | non-null |
+| `quote_date` | `Timestamp` | non-null; the session, from the payload's own stamp |
+| `expiration` | `Timestamp` | non-null |
+| `strike` | `float` | > 0, ≤ 100,000 |
+| `bid` | `float` | ≥ 0 (a zero bid is a real market state) |
+| `ask` | `float` | **> 0** (no offer means there was no quote) |
+| `volume` | `int` | ≥ 0 |
+| `open_interest` | `int` | ≥ 0 |
+| `spot` | `float` | > 0; carried per row so a quote is self-describing |
+| `iv` | `float \| None` | 0-10 when present |
+| `delta` | `float \| None` | -1 to 0 when present |
+| `theo` | `float \| None` | ≥ 0 when present |
 
-**Bronze partition key.** `source_id=<src>/underlying_symbol=<sym>/snapshot_date=<YYYY-MM-DD>/`.
+Key: `(underlying, quote_date, expiration, strike)`.
 
-**Point-in-time rule.** Trivially point-in-time by construction — this
-dataset is never backfilled, so `snapshot_date` and `ingested_at` coincide
-by design. The trap to avoid is the opposite direction: never let backtest
-code treat this dataset as if it had history before its first real
-snapshot; `lake/asof.py` returning "no data" for pre-collection dates is
+**The zero-fill trap.** Cboe **zero-fills** `iv`/`delta`/`theo` when it
+cannot compute them (expiring contracts, no two-sided market) rather than
+omitting them. A listed put cannot have 0.0 implied vol, so that zero is a
+sentinel — the exact class of error `docs/DATA_VERDICTS.md` caught in the
+vendor parquet. The adapter maps it to `None` on the way in, and because
+Cboe computes the block together, a zero IV nulls delta and theo on the same
+row. **Never read a 0.0 in these columns as a measurement.**
+
+**Bronze partition key.** `ingest_date=<YYYY-MM-DD>/` — ONE partition per
+day for the whole set, not one per symbol. Bronze is immutable and
+re-ingesting an `ingest_date` is a no-op (`lake/store.py`), so a per-symbol
+write would silently persist only the first symbol. It also means a
+half-finished sweep cannot look complete to an as-of read.
+
+**Point-in-time rule.** `quote_date` comes from the payload's own last-trade
+stamp, never from the wall clock, so a sweep that runs late still lands on
+the session it belongs to. The trap to avoid is the opposite direction:
+nothing in `research/` or `api/` may treat this dataset as having history
+before its first snapshot, and a `LookupError` for pre-collection dates is
 correct behavior, not a bug to work around.
+
+**Freshness.** `GET /api/ingest/option-chain/status` reports the last session
+collected and `stale_days`. Public, and read by the daily agent before it
+picks any work.
+
+### Deltas from the original plan (kept for the record)
+
+The plan in this section before 2026-08-26 specified Yahoo/`yfinance` as the
+source, both puts and calls with an `option_type` column, and a
+`source_id`/`contract_symbol`/`ingested_at` trio partitioned by symbol.
+Shipped instead: Cboe (Yahoo now 401s), puts only (this platform buys puts,
+and the call wing doubles storage to answer nothing currently asked — the
+dispersion question in `docs/END_STATE.md` §4 Q7 is the one that would need
+it, and it can widen the slice when it lands), and the `option_quotes`-
+compatible column set so the two quote datasets concatenate.
 
 ---
 
