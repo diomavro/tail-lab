@@ -121,7 +121,12 @@ jobs:
                and, only if you touched the frontend:
                  cd frontend && npm run typecheck && npm run build
                If any of these fail, fix it or reduce the change until they pass. Never open a red PR.
-            6. Open ONE pull request from a branch named `agent/<short-slug>` using `gh pr create`.
+            6. Open ONE pull request from a branch named `agent/<short-slug>` using `gh pr create`,
+               ALWAYS passing `--assignee diomavro`. That assignment is the only thing that puts
+               the PR in Dio's notification stream: since these PRs are authored by `claude[bot]`
+               and nobody watches the repo, an unassigned agent PR opens, merges and deploys
+               completely silently. Assigning him makes him a participant, so he gets the open and the
+               merge mail. Never skip it.
                Do NOT merge it yourself — a separate `automerge` workflow squash-merges it
                automatically once CI is fully green, and leaves it open if any check fails. You
                never merge manually, never `--admin`/force a merge, never bypass a red check.
