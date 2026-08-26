@@ -11,7 +11,7 @@ VENV := .venv
 PY := env -u PYTHONPATH $(VENV)/bin/python
 PIP := env -u PYTHONPATH $(VENV)/bin/pip
 
-.PHONY: setup lint format typecheck import-lint test check cov-floors ingest-vix ingest-ohlcv ingest-cboe-strategy ingest-rates ingest-option-quotes residual skew api frontend clean
+.PHONY: setup lint format typecheck import-lint test check cov-floors ingest-vix ingest-ohlcv ingest-cboe-strategy ingest-rates ingest-credit ingest-option-quotes residual skew api frontend clean
 
 help:
 	@echo "Targets:"
@@ -26,6 +26,7 @@ help:
 	@echo "  ingest-ohlcv Live OHLCV fetch (Nasdaq, Yahoo fallback) -> bronze for SYMBOL (default AAPL; network; not run in CI)"
 	@echo "  ingest-cboe-strategy  Live Cboe strategy-index fetch -> bronze (TICKERS=... ; network; not run in CI)"
 	@echo "  ingest-rates Live FRED rates fetch -> bronze (SERIES=... ; needs FRED_API_KEY; network; not run in CI)"
+	@echo "  ingest-credit Live FRED credit-spread fetch -> bronze (SERIES=... ; needs FRED_API_KEY; network; not run in CI)"
 	@echo "  api          Run FastAPI on :8000 with auto-reload"
 	@echo "  frontend     Run the Vite dev server"
 	@echo "  clean        Remove caches and build artifacts"
@@ -105,6 +106,9 @@ ingest-cboe-strategy:
 SERIES ?=
 ingest-rates:
 	env -u PYTHONPATH $(VENV)/bin/python -c "from tail_lab.ingestion.rates import ingest_rates; from tail_lab.config import get_lake_store, get_settings; from tail_lab.observability import configure_logging; configure_logging(); s = [x.upper() for x in '$(SERIES)'.split(',')] if '$(SERIES)' else None; r = ingest_rates(get_lake_store(), s, api_key=get_settings().fred_api_key); print(f'committed {r.valid_rows} rows for {len(r.series_ids)} series -> {r.bronze_path} ({r.quarantined_rows} quarantined)')"
+
+ingest-credit:
+	env -u PYTHONPATH $(VENV)/bin/python -c "from tail_lab.ingestion.credit import ingest_credit; from tail_lab.config import get_lake_store, get_settings; from tail_lab.observability import configure_logging; configure_logging(); s = [x.upper() for x in '$(SERIES)'.split(',')] if '$(SERIES)' else None; r = ingest_credit(get_lake_store(), s, api_key=get_settings().fred_api_key); print(f'committed {r.valid_rows} rows for {len(r.series_ids)} series -> {r.bronze_path} ({r.quarantined_rows} quarantined)')"
 
 api:
 	env -u PYTHONPATH $(VENV)/bin/uvicorn tail_lab.api.main:app --reload --port 8000
