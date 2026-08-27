@@ -35,7 +35,9 @@ from __future__ import annotations
 
 from typing import ClassVar
 
+import pandas as pd
 import pandera.pandas as pa
+from pandera.errors import SchemaErrors
 from pandera.typing import Series
 
 #: The dataset's bronze name. Deliberately *not* ``option_quotes`` — that is
@@ -142,3 +144,28 @@ DEFAULT_SNAPSHOT_SYMBOLS: tuple[str, ...] = (
     "mstr",
     "smci",
 )
+
+
+def split_valid_and_quarantined(df: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame]:
+    """Split ``df`` into ``(valid, quarantined)`` against this contract.
+
+    Lives here, next to the schema, rather than in the adapter as its
+    siblings do -- because this dataset has **two** writers. The adapter
+    writes it on the local path, and ``api/ingest_routes`` writes it on the
+    scheduled path (``docs/adr/0020`` splits the sweep at its credential
+    seam). They must agree on what a bad row costs, and the first time they
+    did not, they disagreed expensively: the endpoint rejected an entire
+    22,006-quote sweep because a few dozen far-OTM strikes had no resting
+    offer overnight. For a dataset whose whole premise is "capture it today
+    or lose it forever", one unquotable strike must never cost the session.
+
+    Bad rows are never silently dropped -- they come back in the second frame
+    so the caller can persist them for inspection.
+    """
+    try:
+        return OptionChainSnapshotSchema.validate(df, lazy=True), df.iloc[0:0]
+    except SchemaErrors as err:
+        bad_index = pd.Index(err.failure_cases["index"].dropna().unique())
+        quarantined = df.loc[df.index.isin(bad_index)]
+        kept = df.loc[~df.index.isin(bad_index)]
+        return OptionChainSnapshotSchema.validate(kept, lazy=True), quarantined

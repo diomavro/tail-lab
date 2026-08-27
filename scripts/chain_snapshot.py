@@ -122,10 +122,15 @@ def main(argv: list[str] | None = None) -> int:
         print(f"::error::could not reach {args.post}: {exc.reason}", file=sys.stderr)
         return 1
 
+    quarantined = result_json.get("quarantined", 0)
     print(
         f"committed {result_json['rows']} rows for {result_json['symbols']} symbols "
         f"(session {result_json['quote_date']}) -> {result_json['bronze_path']}"
     )
+    if quarantined:
+        # Expected in small numbers -- far-OTM strikes with no resting offer.
+        # Worth surfacing, never worth failing the sweep over.
+        print(f"::warning::{quarantined} rows quarantined (no two-sided quote)")
     return 0
 
 

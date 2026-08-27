@@ -92,6 +92,17 @@ the same session no-op the way immutability intends, and makes
 `read_bronze_as_of(session)` mean "the chain as it closed that session"
 rather than "whenever the runner happened to fire".
 
+**5b. A bad row is quarantined; a bad *sweep* fails.** *(Amended 2026-08-27.)*
+Both writers -- the adapter on the local path and the endpoint on the
+scheduled one -- split against the contract and commit the survivors, with the
+rejects going to `option_chain_snapshot__quarantine`. The endpoint's first
+version validated all-or-nothing and returned 422, and on an overnight re-run
+it discarded a complete 22,006-quote sweep because a few dozen far-OTM strikes
+had no resting offer. Two writers of one dataset disagreeing about what a bad
+row costs is how a session gets lost. The split now lives in
+`contracts/option_chain.py` so there is exactly one answer. A 422 means
+*nothing* validated.
+
 **6. An empty sweep is a failure, not a no-op.** Below 200 rows across two
 dozen liquid chains the script exits non-zero and the workflow goes red. Every
 other scheduled job here may legitimately do nothing; this one may not, and the
