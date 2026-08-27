@@ -133,12 +133,35 @@ def test_an_omitted_iv_round_trips_as_null_not_zero(
     assert stored["iv"].isna().all()
 
 
-def test_rows_are_revalidated_server_side(
+def test_a_bad_row_is_quarantined_and_the_rest_of_the_sweep_still_lands(
+    client: TestClient, store: DeltaLakeStore, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The bug this replaced: the endpoint validated all-or-nothing and threw
+    away a whole 22,006-quote sweep because a few dozen far-OTM strikes had no
+    resting offer overnight — while the local path, running the same contract,
+    quarantined those rows and kept the rest. For a dataset that cannot be
+    backfilled, one unquotable strike must never cost the session."""
+    _set_token(monkeypatch, TOKEN)
+    resp = client.post(
+        "/api/ingest/option-chain",
+        json=_body(_row(strike=700.0, ask=0.0), _row(strike=710.0)),
+        headers={"Authorization": f"Bearer {TOKEN}"},
+    )
+
+    assert resp.status_code == 200
+    assert resp.json()["rows"] == 1
+    assert resp.json()["quarantined"] == 1
+    stored = store.read_bronze_as_of(DATASET, dt.date(2026, 8, 26))
+    assert stored["strike"].tolist() == [710.0]
+    quarantined = store.read_bronze_as_of(f"{DATASET}__quarantine", dt.date(2026, 8, 26))
+    assert quarantined["strike"].tolist() == [700.0]
+
+
+def test_a_sweep_where_nothing_validates_is_still_a_422(
     client: TestClient, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """A trusted caller is not the same as a well-formed payload, and bronze
-    is immutable once written — so the contract is enforced here too, not
-    only in the workflow that produced the rows."""
+    """Quarantining is not the same as accepting anything. If not one row
+    survives the contract, the sweep is broken and must say so."""
     _set_token(monkeypatch, TOKEN)
     resp = client.post(
         "/api/ingest/option-chain",
@@ -146,7 +169,7 @@ def test_rows_are_revalidated_server_side(
         headers={"Authorization": f"Bearer {TOKEN}"},
     )
     assert resp.status_code == 422
-    assert "contract violation" in resp.json()["detail"]
+    assert "no rows satisfied the contract" in resp.json()["detail"]
 
 
 def test_an_empty_sweep_is_a_client_error_not_an_empty_partition(

@@ -38,7 +38,7 @@ from tail_lab.api.schemas import (
 )
 from tail_lab.config import get_lake_store as _get_configured_lake_store
 from tail_lab.config import get_settings
-from tail_lab.contracts.option_chain import DATASET, OptionChainSnapshotSchema
+from tail_lab.contracts.option_chain import DATASET, split_valid_and_quarantined
 from tail_lab.lake.store import LakeStore
 from tail_lab.observability import log_event
 
@@ -90,10 +90,19 @@ def ingest_option_chain_snapshot(
     frame["quote_date"] = pd.to_datetime(frame["quote_date"])
     frame["expiration"] = pd.to_datetime(frame["expiration"])
 
-    try:
-        valid = OptionChainSnapshotSchema.validate(frame, lazy=True)
-    except Exception as exc:  # pandera raises SchemaErrors; surface it as a 422
-        raise HTTPException(status_code=422, detail=f"contract violation: {exc}") from exc
+    # Quarantine bad rows; do NOT reject the batch. The first version of this
+    # endpoint validated all-or-nothing and threw away a whole 22,006-quote
+    # sweep because a few dozen far-OTM strikes had no resting offer -- while
+    # the local path, running the same contract, quarantined those rows and
+    # kept the rest. Two writers disagreeing about what a bad row costs is
+    # how a session gets lost, which is the one thing this dataset cannot
+    # afford. A 422 now means nothing at all validated.
+    valid, quarantined = split_valid_and_quarantined(frame)
+    if valid.empty:
+        raise HTTPException(
+            status_code=422,
+            detail=f"no rows satisfied the contract ({len(quarantined)} quarantined)",
+        )
 
     # The partition IS the session, not the wall clock. Scheduled runners
     # drift -- GitHub ran the 21:30 cron at 00:57 the next day on the very
@@ -104,6 +113,8 @@ def ingest_option_chain_snapshot(
     # a re-run of the same session no-op the way immutability intends.
     ingest_date = body.ingest_date or valid["quote_date"].max().date()
     bronze_path = store.write_bronze(DATASET, ingest_date, valid)
+    if not quarantined.empty:
+        store.write_bronze(QUARANTINE_DATASET, ingest_date, quarantined)
 
     log_event(
         _LOGGER,
@@ -111,6 +122,7 @@ def ingest_option_chain_snapshot(
         dataset=DATASET,
         ingest_date=ingest_date,
         rows=len(valid),
+        quarantined=len(quarantined),
         symbols=valid["underlying"].nunique(),
         quote_date=str(valid["quote_date"].max().date()),
         bronze_path=bronze_path,
@@ -119,6 +131,7 @@ def ingest_option_chain_snapshot(
         dataset=DATASET,
         ingest_date=ingest_date,
         rows=len(valid),
+        quarantined=len(quarantined),
         symbols=int(valid["underlying"].nunique()),
         quote_date=valid["quote_date"].max().date(),
         bronze_path=bronze_path,

@@ -133,6 +133,7 @@ class OptionChainSnapshotResponse(BaseModel):
     dataset: str
     ingest_date: dt.date
     rows: int
+    quarantined: int = 0
     symbols: int
     quote_date: dt.date
     bronze_path: str

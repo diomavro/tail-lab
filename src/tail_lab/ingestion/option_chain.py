@@ -42,14 +42,13 @@ from typing import Any
 
 import pandas as pd
 import requests
-from pandera.errors import SchemaErrors
 
 from tail_lab.contracts.option_chain import (
     DATASET,
     MAX_TENOR_DAYS,
     MONEYNESS_MAX,
     MONEYNESS_MIN,
-    OptionChainSnapshotSchema,
+    split_valid_and_quarantined,
 )
 from tail_lab.lake.store import LakeStore
 from tail_lab.observability import log_event
@@ -231,13 +230,7 @@ def validate_and_quarantine(df: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFram
     Bad rows are never silently dropped: they come back in the second frame
     so the caller can persist them for inspection.
     """
-    try:
-        return OptionChainSnapshotSchema.validate(df, lazy=True), df.iloc[0:0]
-    except SchemaErrors as err:
-        bad_index = pd.Index(err.failure_cases["index"].dropna().unique())
-        quarantined = df.loc[df.index.isin(bad_index)]
-        kept = df.loc[~df.index.isin(bad_index)]
-        return OptionChainSnapshotSchema.validate(kept, lazy=True), quarantined
+    return split_valid_and_quarantined(df)
 
 
 def ingest_option_chain(
