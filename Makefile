@@ -28,6 +28,7 @@ help:
 	@echo "  ingest-rates Live FRED rates fetch -> bronze (SERIES=... ; needs FRED_API_KEY; network; not run in CI)"
 	@echo "  ingest-credit Live FRED credit-spread fetch -> bronze (SERIES=... ; needs FRED_API_KEY; network; not run in CI)"
 	@echo "  ingest-option-chain  TODAY's put wing from Cboe -> bronze (CHAIN_SYMBOLS=... ; network; UNRECOVERABLE if skipped)"
+	@echo "  greeks-check Score our greeks vs the exchange's own (read-only; needs a chain snapshot)"
 	@echo "  api          Run FastAPI on :8000 with auto-reload"
 	@echo "  frontend     Run the Vite dev server"
 	@echo "  clean        Remove caches and build artifacts"
@@ -115,6 +116,12 @@ ingest-rates:
 CHAIN_SYMBOLS ?=
 ingest-option-chain:
 	env -u PYTHONPATH $(VENV)/bin/python scripts/chain_snapshot.py --local $(if $(CHAIN_SYMBOLS),--symbols $(CHAIN_SYMBOLS),)
+
+# Read-only: scores our greeks against the exchange's own from the forward-
+# collected chain (docs/adr/0020). CI proves the pricer differentiates itself
+# correctly; this is the only independent check that the MODEL is right.
+greeks-check:
+	env -u PYTHONPATH $(VENV)/bin/python scripts/greeks_check.py
 
 ingest-credit:
 	env -u PYTHONPATH $(VENV)/bin/python -c "from tail_lab.ingestion.credit import ingest_credit; from tail_lab.config import get_lake_store, get_settings; from tail_lab.observability import configure_logging; configure_logging(); s = [x.upper() for x in '$(SERIES)'.split(',')] if '$(SERIES)' else None; r = ingest_credit(get_lake_store(), s, api_key=get_settings().fred_api_key); print(f'committed {r.valid_rows} rows for {len(r.series_ids)} series -> {r.bronze_path} ({r.quarantined_rows} quarantined)')"

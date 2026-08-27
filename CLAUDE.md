@@ -70,8 +70,13 @@ Frontend (from `frontend/`): `npm run typecheck`, `npm run lint` (oxlint), `npm 
   regime, so a rule can collect its second regime (and a `confirmed` verdict)
   from a boundary wobble. Second independent defect on the same axis as the
   moneyness confound above.
-- **There are no greeks.** `option_pricer.py` only prices. Portfolio theta —
-  the North Star's "bleed" — cannot be computed yet.
+- **Greeks exist now** (`option_pricer.PutGreeks`) in desk units: **vega per vol
+  point, theta per calendar day**. `make greeks-check` scores them against the
+  exchange's own from the chain snapshot — the only independent check that the
+  *model* is right, as opposed to internally consistent. **It found a live bug**:
+  the roll backtest prices every name at `q = 0`, so delta error tracks dividend
+  yield (TSLA 0.0006, SPY 0.0043, TLT 0.060, **HYG 0.197**). Put prices and
+  greeks on income names are biased cheap until that is fixed.
 - **Two backlogs:** the agent owns `AGENT_TODO.md`; anything needing an account/key/money goes to `HUMAN_TODO.md` and is never attempted by the agent.
 
 ## ARCHITECTURE.md's tree is partly aspirational
