@@ -57,6 +57,15 @@ Frontend (from `frontend/`): `npm run typecheck`, `npm run lint` (oxlint), `npm 
   Bake-off, Prior Art, Carry Budget, Regime. Code layers keep their plumbing
   names; anything a human reads takes a desk word or argues for a new one in an
   ADR. "Leaderboard", "dashboard" and "panel" are not desk words.
+- **Strikes are picked by fixed moneyness, and that confounds regime comparisons**
+  (`docs/PRIOR_ART.md` §1). `put_roll.py` uses `spot * (1 - moneyness_pct/100)`;
+  at our own regime bands a "10% OOM 4-week put" is 0.05-delta in calm and
+  17.6-delta in crisis. Anything comparing across regimes — the Bake-off, §4 Q4,
+  `docs/adr/0015`'s `confirmed` verdict — is partly measuring whether the strike
+  was reachable. Delta-based selection is queued; until it lands, say which
+  parameterisation a result used.
+- **There are no greeks.** `option_pricer.py` only prices. Portfolio theta —
+  the North Star's "bleed" — cannot be computed yet.
 - **Two backlogs:** the agent owns `AGENT_TODO.md`; anything needing an account/key/money goes to `HUMAN_TODO.md` and is never attempted by the agent.
 
 ## ARCHITECTURE.md's tree is partly aspirational

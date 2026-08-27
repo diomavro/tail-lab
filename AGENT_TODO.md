@@ -570,6 +570,64 @@ item 2 is time-sensitive in a way nothing else in this file is.
       Yahoo partitions are internally consistent and still readable; nothing
       is broken today.
 
+## Prior-art increments (2026-08-27 — see `docs/PRIOR_ART.md`)
+
+From reading nautilus_trader, hftbacktest and kalshimarketmaker. Ordered by
+severity: the first is a possible correctness problem in results already
+published, the rest are capability.
+
+- [ ] **Delta-based strike selection, alongside moneyness** (`docs/PRIOR_ART.md`
+      §1 — read it before starting; the numbers are the argument). Priced at
+      our own regime bands, a "10% OOM 4-week put" is a **0.05-delta** contract
+      in calm (VIX 12) and a **17.6-delta** contract in crisis (VIX 45) — a
+      350x spread, premium 0.00% vs 1.26% of notional. Every cross-regime
+      comparison we make therefore partly measures whether the strike was
+      reachable at all, which is mechanical. Add a `StrikeSelection` seam to
+      `research/backtest/put_roll.py` with two implementations — `ByMoneyness`
+      (today's, unchanged and still the default) and `ByDelta(target,
+      tolerance)` — mirroring the `OptionPricer` pluggability of
+      `docs/adr/0004`. Needs greeks (next item) or a solve against the stored
+      Cboe `delta` from `docs/adr/0020`. Then re-run the Bake-off and the
+      regime verdicts under both and **report whether the conclusions move** —
+      that comparison is the deliverable, not the feature. If they move,
+      `docs/adr/0015`'s `regime_only` vs `confirmed` needs an ADR, because a
+      rule_hash carrying `moneyness_pct` has been treating two very different
+      contracts as one rule.
+- [ ] **Greeks on the pricer.** `research/option_pricer.py` has only
+      `price_put` — it prices but does not differentiate, which is why the
+      North Star's last clause ("how much would the position bleed if nothing
+      happens") has never been answerable. Add `delta`, `gamma`, `vega`,
+      `theta` and `itm_prob` from the same closed form already there. Copy
+      nautilus's conventions verbatim so the numbers are legible to anyone off
+      a desk: **vega scaled 0.01** (per 1 vol point), **theta scaled 1/365.25**
+      (per calendar day). Pin each against a hand-computable case and against
+      the stored Cboe greeks on a liquid SPY strike — an independent second
+      opinion we now have for free (`docs/adr/0020`).
+- [ ] **The Carry Budget** (`docs/adr/0021`'s missing Risk function), once
+      greeks exist. Portfolio theta over the recommended basket IS the
+      annualised bleed. Report it per candidate and for the whole set, against
+      a stated annual budget, and show what fraction is consumed. Limits are
+      declarative config, never agent-tunable (`docs/adr/0021` §5). Pairs with
+      **shock scenarios** — `spot_shock` / `vol_shock` / `time_to_expiry_shock`
+      as arguments, not a separate page: carry is what the hedge costs, shock
+      is what it buys, and we currently surface neither.
+- [ ] **Beta-weighted greeks and time-weighted vega.** Beta-weighting expresses
+      delta/gamma in index terms — the professional form of what the Screen
+      already does by hand, since everything here is ranked *versus SPY*, and
+      the missing bridge from a sensitivity rank to a book-level exposure
+      number. Time-weighted vega normalises to a 30-day base so the sweep's
+      1-12 week tenors are actually comparable; today they are compared
+      without it.
+- [ ] **Make the cost model pluggable, like the pricer.** `OptionPricer` is a
+      seam (`docs/adr/0004`); `research/backtest/brokerage.py`'s half-spread is
+      one hardcoded assumption. hftbacktest names its unobservables
+      (`QueueModel`, `LatencyModel`, with `RiskAdverseQueueModel` documented as
+      the conservative default) and nautilus names its fill models. Give the
+      fill assumption the same treatment with a conservative default, so the
+      Bake-off can rank cost assumptions alongside metrics and the
+      model-vs-market residual (`docs/MODEL_RESIDUAL.md`) becomes attributable
+      to pricing versus execution.
+
 ## Strategy-family increments (2026-08-26 — from Kakushadze & Serur, *151 Trading Strategies*, SSRN 3247865)
 
 Four increments from a read of the options (§2) and volatility (§7) chapters.
