@@ -80,6 +80,18 @@ would silently persist only the first symbol. The sweep accumulates and writes
 once — which also means a half-finished sweep cannot look complete to an as-of
 read (`docs/adr/0009`).
 
+**5a. The partition is the session, not the clock.** *(Amended 2026-08-27,
+after the first scheduled run.)* `ingest_date` is derived from the quotes'
+own `quote_date`, never from the runner's wall clock. GitHub ran the 21:30 UTC
+cron at **00:57 the next day** — scheduled workflows drift under load — and a
+clock-derived partition turns that drift into two bugs at once: the session
+lands under tomorrow's key, and tomorrow's real sweep then no-ops against the
+key that already exists (bronze is immutable) and is lost. Deriving the
+partition from the quotes makes a late run land correctly, makes a re-run of
+the same session no-op the way immutability intends, and makes
+`read_bronze_as_of(session)` mean "the chain as it closed that session"
+rather than "whenever the runner happened to fire".
+
 **6. An empty sweep is a failure, not a no-op.** Below 200 rows across two
 dozen liquid chains the script exits non-zero and the workflow goes red. Every
 other scheduled job here may legitimately do nothing; this one may not, and the
@@ -111,6 +123,13 @@ picks any work, and a gap outranks whatever was next on its backlog.
 - **The model-vs-market residual becomes a live measurement.** `make skew`
   currently reports the gap on 210 historical SPY dates. The same computation
   will run forward on 24 names, daily, free.
+- **The first scheduled run found the clock bug, and it was the expensive
+  kind: silent.** Nothing went red. The sweep reported success, 21,176 rows
+  landed, and the only visible symptom was a row count that changed on a
+  partition that is supposed to be immutable. Had it not been caught, the
+  Thursday session would have been dropped without a single failing check —
+  the exact loss this ADR exists to prevent, produced by the mechanism meant
+  to prevent it.
 - **A red workflow is now a real alarm.** Everywhere else in this repo a failed
   scheduled job can be re-run tomorrow. Here it cannot, so this is the one red
   build that should interrupt a day.

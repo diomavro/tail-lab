@@ -255,7 +255,6 @@ def ingest_option_chain(
     cost the other sixty-nine their only chance at today's quotes.
     """
     fetcher = fetch or fetch_chain_raw
-    ingest_date = ingest_date or dt.date.today()
 
     frames: list[pd.DataFrame] = []
     ok: list[str] = []
@@ -282,6 +281,11 @@ def ingest_option_chain(
     combined = pd.concat(frames, ignore_index=True) if frames else pd.DataFrame(columns=_COLUMNS)
     valid, quarantined = validate_and_quarantine(combined)
 
+    # Partition by the SESSION the quotes belong to, never by the clock --
+    # see the note in ``api/ingest_routes``. Falls back to today only when
+    # the sweep produced nothing to read a session from.
+    session = valid["quote_date"].max().date() if not valid.empty else dt.date.today()
+    ingest_date = ingest_date or session
     bronze_path = store.write_bronze(DATASET, ingest_date, valid)
     quarantine_path: str | None = None
     if not quarantined.empty:
