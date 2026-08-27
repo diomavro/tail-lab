@@ -142,8 +142,8 @@ jobs:
           fi
           changed=$(git diff --name-only "$BASE_SHA...HEAD")
           echo "Changed files:"; echo "$changed"
-          if echo "$changed" | grep -qE '^docs/adr/|^ARCHITECTURE\.md$|^docs/STANDARDS\.md$|^README\.md$|^docs/AGENT_MISSION\.md$|^docs/END_STATE\.md$'; then
-            echo "::error::This agent PR edits the constitution (docs/adr, ARCHITECTURE.md, STANDARDS.md, README.md, AGENT_MISSION.md, or END_STATE.md). A human must review + merge it — auto-merge is blocked."
+          if echo "$changed" | grep -qE '^docs/adr/|^\.github/workflows/|^ARCHITECTURE\.md$|^docs/STANDARDS\.md$|^README\.md$|^docs/AGENT_MISSION\.md$|^docs/END_STATE\.md$'; then
+            echo "::error::This agent PR edits the constitution (docs/adr, ARCHITECTURE.md, STANDARDS.md, README.md, AGENT_MISSION.md, END_STATE.md) or .github/workflows (where the agent's own instructions and this guard live). A human must review + merge it — auto-merge is blocked."
             exit 1
           fi
           echo "OK: agent PR leaves the constitution untouched."
