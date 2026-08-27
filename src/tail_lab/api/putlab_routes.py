@@ -9,8 +9,10 @@ agrees with the ingest clock, as ``/api/vix/stretch`` does) and delegate to
   per-cycle P&L, and headline stats.
 - ``GET /api/putlab/sweep`` — the strike x tenor grid of total return, one
   backtest per cell (the heatmap).
-- ``GET /api/putlab/cadence`` — the static options-listing cadence for an
-  asset (``contracts/options_calendar.py``).
+- ``GET /api/putlab/cadence`` — the options-listing cadence for an asset:
+  live-derived from its bronze expiration-date chain
+  (``research/cadence.py``) when a snapshot exists, else the static table
+  (``contracts/options_calendar.py``).
 """
 
 from __future__ import annotations
@@ -60,6 +62,7 @@ from tail_lab.research.backtest.ranking import BENCHMARK, UniverseRanking, rank_
 from tail_lab.research.backtest.regime_verdict import RegimeVerdict, compute_regime_verdict
 from tail_lab.research.backtest.roll_schedule import RollSchedule, build_roll_schedule
 from tail_lab.research.backtest.sweep import MODEL_PRICED_MAX_MONEYNESS_PCT, run_sweep
+from tail_lab.research.cadence import live_cadence_for
 from tail_lab.research.data_quality import DataQualityReport, assess_asset_quality
 from tail_lab.research.regimes.timeline import RegimeTimelineView, compute_regime_view
 
@@ -335,8 +338,18 @@ def putlab_regime_verdict(
 @router.get("/api/putlab/cadence")
 def putlab_cadence(
     asset: str = Query(description="Underlying ticker, e.g. spy."),
+    as_of: dt.date | None = Query(default=None),
+    store: LakeStore = Depends(get_lake_store),
 ) -> OptionsCadence:
-    return cadence_for(asset)
+    resolved = _resolve_as_of(as_of)
+    try:
+        return live_cadence_for(store, asset, as_of=resolved)
+    except (LookupError, ValueError):
+        # No bronze snapshot for this symbol yet (true for every symbol
+        # today -- `make ingest-options-expiry` has never run against prod,
+        # docs/DATA_FLOW.md §3.1), or too few near-term expirations to
+        # classify from one. Either way, fall back to the curated table.
+        return cadence_for(asset)
 
 
 @router.get("/api/putlab/regimes")

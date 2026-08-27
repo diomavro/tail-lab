@@ -126,27 +126,30 @@ account, no API key, no money — the constitution's free-data-first rule.
 | **Cboe CDN** — `VIX_History.csv` | `vix` (1990→) | daily | ✅ | Yahoo | `make ingest-vix` |
 | **Cboe CDN** — `{TICKER}_History.csv` | `cboe_strategy` (11 indices, 1975→) | daily | ✅ | none | `make ingest-cboe-strategy` |
 | **Nasdaq** historical | `ohlcv_<symbol>` | daily | ✅ | Yahoo | `make ingest-ohlcv SYMBOL=…` |
-| **Cboe** delayed quote chain | `options_expiry_<symbol>` | daily | ✅ | Yahoo (cookie+crumb) | ⚠️ **nothing** — see §3.1 |
+| **Cboe** delayed quote chain | `options_expiry_<symbol>` | daily | ✅ | Yahoo (cookie+crumb) | `make ingest-options-expiry SYMBOL=…` — see §3.1 |
 | **Local vendor file** — lambdaclass `data-v1` | `option_quotes` (42,131 real SPY quotes, 2008→2025) | one-shot | ✅ (manual download) | none | `make ingest-option-quotes` |
 | **Static catalogue** | screening universe, options cadence | n/a | ✅ | n/a | none — it is code |
 
-### 3.1 One dangling branch — `options_expiry`
+### 3.1 `options_expiry` is now wired, not dangling
 
-Writing this map surfaced a gap worth recording rather than quietly fixing.
-`ingestion/options_expiry.py` and `transforms/options_expiry.py` both exist,
-are tested, and have a fallback chain. But:
+Writing this map originally surfaced a gap: `ingestion/options_expiry.py`
+and `transforms/options_expiry.py` existed and were tested, but nothing ran
+or read them — no `make ingest-options-expiry` target, no
+`options_expiry_*` partition in production bronze, and
+`/api/putlab/cadence` answered from the static catalogue regardless. That is
+the most dangerous shape a pipeline can have: it looks wired on a dependency
+graph and is inert in production.
 
-- there is **no `make ingest-options-expiry` target**, so nothing ever runs it;
-- **no `options_expiry_*` partition exists in production bronze** (verified
-  2026-08-22);
-- `/api/putlab/cadence` answers from the **static catalogue**, not from the
-  lake, so the panel works and nobody noticed.
-
-So the code path is real, the data path is not. That is the most dangerous
-shape a pipeline can have — it looks wired on a dependency graph and is inert
-in production — and a lineage map is exactly the artifact that should catch
-it. Queued in `AGENT_TODO.md`; nothing is broken today because the static
-catalogue is honest about being static.
+**Resolved**: `make ingest-options-expiry SYMBOL=…` now exists, and
+`research/cadence.py` orchestrates bronze-as-of read → `classify_cadence` →
+a live `OptionsCadence`. `/api/putlab/cadence` tries the live path first and
+falls back to the static catalogue (`contracts/options_calendar.py`) on
+`LookupError`/`ValueError` — i.e. for any symbol that has never been
+ingested, which as of this writing is still every symbol in production,
+since the target has only been run in tests so far. The static catalogue
+therefore remains the answer everyone actually sees today; the live path
+activates automatically, symbol by symbol, the first time a human runs the
+ingest for it.
 
 **Sources do not depend on each other.** Every arrow in §1 runs source →
 lake; there is no source that must be fetched before another. What *is*
@@ -159,7 +162,7 @@ flowchart TB
     VIX[("vix")]
     STRAT[("cboe_strategy")]
     OHLCV[("ohlcv_*")]
-    EXP[("options_expiry_*<br/>⚠ never ingested")]
+    EXP[("options_expiry_*<br/>⚠ not yet ingested in prod")]
     QUOTES[("option_quotes<br/>optional")]
 
     VIX --> REGIME["regimes/timeline<br/>vix_stretch"]
@@ -168,8 +171,9 @@ flowchart TB
     OHLCV --> ROLL["backtest/put_roll<br/>portfolio · ranking · sweep"]
     OHLCV --> METRICS["metrics/*<br/>leaderboard"]
     OHLCV --> DQ["data_quality"]
-    EXP -.dangling.-> CADENCE["transforms/options_expiry"]
-    STATIC2["contracts/options_calendar<br/>static catalogue"] --> CADENCEAPI["/api/putlab/cadence"]
+    EXP --> CADENCE["research/cadence<br/>classify_cadence"]
+    CADENCE --> CADENCEAPI["/api/putlab/cadence"]
+    STATIC2["contracts/options_calendar<br/>static catalogue"] -.fallback.-> CADENCEAPI
     QUOTES --> SKEW["skew<br/>hand-run measurement"]
     VIX --> SKEW
 

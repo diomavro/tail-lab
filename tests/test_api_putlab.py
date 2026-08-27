@@ -16,6 +16,7 @@ from tail_lab.api import putlab_routes
 from tail_lab.api.main import app
 from tail_lab.api.putlab_routes import get_lake_store as putlab_get_lake_store
 from tail_lab.contracts.ohlcv import dataset_id
+from tail_lab.contracts.options_expiry import dataset_id as options_expiry_dataset_id
 from tail_lab.lake.store import DeltaLakeStore
 
 
@@ -403,6 +404,38 @@ def test_cadence_known_and_unknown(client: TestClient) -> None:
     body = unknown.json()
     assert body["symbol"] == "ZZZ"
     assert "assumed" in body["label"].lower()  # flagged as a default, not a verified listing
+
+
+def test_cadence_prefers_a_live_bronze_snapshot_over_the_static_table(
+    client: TestClient, tmp_path: Path
+) -> None:
+    """Once a symbol has a real ``options_expiry_*`` bronze snapshot, the
+    endpoint answers from it (``research/cadence.py``) rather than the
+    static catalogue (``docs/DATA_FLOW.md`` §3.1)."""
+    store = DeltaLakeStore(tmp_path)
+    today = dt.datetime.now(dt.UTC).date()
+    _seed_ohlcv(store, "spy", today)
+    _seed_vix(store, today)
+    # Two monthly-spaced expirations ahead of "today" -- must be relative to
+    # it, not fixed calendar dates, or they fall outside classify_cadence's
+    # near-term window and the test silently exercises the fallback instead.
+    df = pd.DataFrame(
+        {
+            "symbol": "SPY",
+            "expiration_date": pd.to_datetime(
+                [today + dt.timedelta(days=30), today + dt.timedelta(days=60)]
+            ),
+        }
+    )
+    store.write_bronze(options_expiry_dataset_id("spy"), today, df)
+    app.dependency_overrides[putlab_get_lake_store] = lambda: store
+
+    resp = client.get("/api/putlab/cadence", params={"asset": "spy"})
+
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["cadence"] == "monthly"
+    assert "live" in body["label"].lower()
 
 
 def test_accuracy_never_404s_even_with_nothing_to_report(client: TestClient) -> None:
