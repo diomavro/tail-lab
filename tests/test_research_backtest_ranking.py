@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import datetime as dt
+import zlib
 from pathlib import Path
 
 import numpy as np
@@ -18,7 +19,14 @@ from tail_lab.research.backtest.ranking import rank_universe
 def _seed_symbol(
     store: DeltaLakeStore, symbol: str, ingest: dt.date, drift: float, vol: float, n: int = 320
 ) -> None:
-    rng = np.random.default_rng(abs(hash(symbol)) % (2**32))
+    # crc32, not hash(): str hashing is randomised per process (PYTHONHASHSEED),
+    # so `default_rng(hash(symbol))` reads as seeded while reseeding differently
+    # on every run -- which made this module's synthetic paths, and any test
+    # asserting on their shape, quietly non-deterministic. crc32 is stable
+    # across processes and distinct per symbol (unlike the `len(symbol) * 7 + 1`
+    # used in test_research_backtest_metric_screen.py, which collides for
+    # equal-length names).
+    rng = np.random.default_rng(zlib.crc32(symbol.encode()))
     steps = rng.normal(drift, vol, size=n)
     closes = np.clip(100 * np.exp(np.cumsum(steps / 100)), 5, None)
     dates = pd.date_range(end=ingest, periods=n, freq="B")
@@ -208,8 +216,25 @@ def test_the_best_cells_stats_all_describe_the_best_cell(tmp_path: Path) -> None
     assert row.best_hit_rate == pytest.approx(at_best.hit_rate)
     assert row.best_n_cycles == at_best.n_cycles
     assert row.best_annualized == pytest.approx(annualized_return(at_best.roi_on_premium, 1.0))
-    # ...and the screened-cell figures are still their own, unmixed.
-    assert row.n_cycles != row.best_n_cycles or row.roi_on_premium != row.best_roi_on_premium
+    # ...and the screened-cell figures are still their own, unmixed. Asserted
+    # positively -- against an independent run at the *screened* parameters --
+    # rather than as "the best cell differs from the screened one", which was
+    # only true when the argmax happened not to land on 2% OOM and so failed
+    # on roughly one seed in ten.
+    at_screened = run_put_roll(
+        prices,
+        iv,
+        asset="wild",
+        as_of=ingest,
+        notional=1000.0,
+        moneyness_pct=2.0,
+        tenor_weeks=1.0,
+        lookback_years=1.0,
+        include_curves=False,
+    )
+    assert row.roi_on_premium == pytest.approx(at_screened.roi_on_premium)
+    assert row.hit_rate == pytest.approx(at_screened.hit_rate)
+    assert row.n_cycles == at_screened.n_cycles
 
 
 def test_the_ranking_does_not_sweep_cells_it_could_never_pick(tmp_path: Path) -> None:
