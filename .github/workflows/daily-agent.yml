@@ -106,8 +106,12 @@ jobs:
                to you today — ahead of whatever is at the top of `AGENT_TODO.md`. Say so in
                the PR. If it is fresh, note the last session and move on.
             3. Read `docs/AGENT_MISSION.md`, `README.md`, `ARCHITECTURE.md`, `docs/STANDARDS.md`,
-               and `AGENT_TODO.md`. Note the value bar's **irreversibility override**: work
-               whose cost rises the longer it waits outranks work with a bigger payoff today.
+               `docs/END_STATE.md` and `AGENT_TODO.md`. `END_STATE.md` §4 is where the
+               documented research questions live — step 4 asks you to point at one, so you
+               cannot skip it. Note the value bar's **irreversibility override**
+               (`docs/AGENT_MISSION.md` §"The exception: work that expires"): work whose cost
+               rises the longer it waits, or whose window closes, outranks work with a bigger
+               payoff today. Forward data collection is the clear case.
             4. Choose the SINGLE highest-value item — an open `issue` from step 1 that fits this
                run, or otherwise the top of `AGENT_TODO.md` — that (a) advances a documented
                research question or measurably sharpens the put-buying cockpit, AND (b) needs NO
@@ -115,7 +119,13 @@ jobs:
                (that is the human's queue). If nothing clears the value bar today, STOP and open
                nothing — proposing nothing is a valid, expected outcome.
             5. Implement exactly that ONE item — minimal, faithful, extending the proven
-               walking-skeleton patterns (do NOT invent new architecture). Add tests that pin
+               walking-skeleton patterns (do NOT invent new architecture). If it adds or
+               renames anything a human reads — a view, a tile, a column header, a
+               `research/` module — name it from the CLOSED desk vocabulary in
+               `docs/adr/0021`: Screen, Tape, Marks, Book, Blotter, Carry, Surface, Regime,
+               Prior Art, Bake-off. "Leaderboard", "dashboard", "panel" and "tool" are not
+               desk words and describe nothing. Needing a word that is not on the list is
+               fine, but it is an ADR to propose, not a name to invent in a PR. Add tests that pin
                behavior against a known/independent value per `docs/STANDARDS.md`. Respect the
                module dependency rule (import-linter enforces it). Check the item off in
                `AGENT_TODO.md` (or resolve the feedback issue per step 1). If you discover a
@@ -144,5 +154,8 @@ jobs:
                closing line "Auto-generated daily; auto-merges on green CI."
                NOTE: a `constitution-guard` check blocks auto-merge for any agent PR that edits the
                constitution (docs/adr/**, ARCHITECTURE.md, docs/STANDARDS.md, README.md,
-               docs/AGENT_MISSION.md, docs/END_STATE.md). Do NOT edit those — if a change needs one,
-               describe it in the PR body / propose an ADR for a human.
+               docs/AGENT_MISSION.md, docs/END_STATE.md) **or `.github/workflows/**`** — the last
+               because that is where this prompt, the auto-merge rule and the guard itself live,
+               so an unreviewed edit there could quietly widen everything else (`docs/adr/0022`).
+               Do NOT edit those — if a change needs one, describe it in the PR body / propose an
+               ADR for a human.

@@ -40,7 +40,7 @@ jobs:
           # Belt-and-suspenders: the constitution-guard CI job already fails
           # (→ this workflow never runs) for such PRs, but re-check here too.
           files=$(gh pr view "$pr" --repo "$REPO" --json files -q '.files[].path')
-          if echo "$files" | grep -qE '^docs/adr/|^ARCHITECTURE\.md$|^docs/STANDARDS\.md$|^README\.md$|^docs/AGENT_MISSION\.md$|^docs/END_STATE\.md$'; then
+          if echo "$files" | grep -qE '^docs/adr/|^\.github/workflows/|^ARCHITECTURE\.md$|^docs/STANDARDS\.md$|^README\.md$|^docs/AGENT_MISSION\.md$|^docs/END_STATE\.md$'; then
             echo "PR #$pr edits the constitution — leaving it for a human."
             exit 0
           fi
