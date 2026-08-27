@@ -8,6 +8,7 @@ Read 2026-08-27. The repos are cloned shallow at `~/Documents/reference/`
 | [`nautechsystems/nautilus_trader`](https://github.com/nautechsystems/nautilus_trader) | Production algo-trading platform, Rust core + Python API | Options/greeks modelling, backtest realism, agent practices |
 | [`nkaz001/hftbacktest`](https://github.com/nkaz001/hftbacktest) | HFT backtester with queue-position and latency models | The discipline of modelling what you cannot observe |
 | [`rodlaf/kalshimarketmaker`](https://github.com/rodlaf/kalshimarketmaker) | Avellaneda-Stoikov market maker for Kalshi | Fair value vs mid; the paper/live interface seam |
+| [`AshJha0/quant-portfolio`](https://github.com/AshJha0/quant-portfolio) | 31-subproject quant portfolio (Python/C++/Rust) | Vol surfaces, regime switching, greeks — §6-§9 below |
 
 **Most of these repos is behind our wall.** They exist to place orders;
 `docs/adr/0007` says we never do. Execution engines, order routing, live
@@ -160,3 +161,136 @@ Two things do transfer:
 - **A practical warning**: if tail-lab is ever open-sourced, or if Dio
   contributes to nautilus, the commit trailers and the autonomous merge are
   both policy violations there. Cheap to know in advance.
+
+---
+
+# Part two: `AshJha0/quant-portfolio` (read 2026-08-27)
+
+**What it is, stated plainly.** A portfolio — 31 sub-projects built to
+demonstrate breadth to an employer, not a system with users. ~97k lines of
+Python, 18k Rust, 10k C++, 26k of markdown, 239 Python test files, a claimed
+5,963 passing tests (not run here; this reading covered the docs, module
+headers and the specific functions cited below, not all 97k lines).
+
+That provenance cuts *for* it on our particular gaps. Nautilus gives an API to
+imitate; this gives a worked derivation with "where it fails" written down,
+which is what you want when the thing you are missing is the maths. Two of its
+sub-projects — `python/equity/09-vol-surface` and
+`python/equity/10-regime-switching` — sit exactly on top of two weaknesses this
+platform already knows it has.
+
+## 6. Our model delta would be the wrong delta, which changes yesterday's plan
+
+`09-vol-surface/src/eq_surface/greeks.py` documents the distinction our pricer
+silently takes a side on:
+
+- **Sticky-strike**: vol at each fixed strike is unchanged when spot moves, so
+  the hedge ratio is the plain Black-Scholes delta at `sigma(K)`.
+- **Sticky-delta / sticky-moneyness**: the smile rides with the forward, so
+  `dV/dS = delta_BS + vega_BS * dsigma/dS` where
+  `dsigma/dS = -(1/S) * dsigma/dk`. With the usual negative equity skew this
+  makes the true delta differ materially from the BS one.
+
+`research/option_pricer.py` prices at a flat trailing-realized-vol proxy — no
+smile at all — so any delta computed from it is a sticky-strike delta on a
+smile that does not exist. That matters because `AGENT_TODO`'s
+delta-based-strike-selection item was written to *fix* a regime confound: a
+delta that inherits the flat-vol error would import the same class of error it
+was meant to remove.
+
+**The resolution is already in the lake, and it changes the plan.** Cboe
+publishes its own `delta`, computed off the real market smile, and
+`docs/adr/0020` has been storing it since 2026-08-26. So:
+
+- **Forward / live strike selection uses the stored Cboe delta.** No model, no
+  smile assumption, no error to inherit.
+- **Only the historical backtest needs a model delta**, because the vendor
+  back-history predates the collection — and that one must state the
+  sticky-strike assumption on the surface where its results appear, exactly as
+  `docs/MODEL_RESIDUAL.md` does for the premium.
+
+## 7. A principled replacement for `MODEL_PRICED_MAX_MONEYNESS_PCT`
+
+`research/backtest/sweep.py` carries `MODEL_PRICED_MAX_MONEYNESS_PCT = 10.0` —
+one hardcoded number standing for "past here our premium is a rounding
+artefact rather than a price" (`docs/adr/0018`). It is a blunt instrument: the
+same cutoff for every name, every regime, every tenor.
+
+The vol-surface project enforces two no-arbitrage conditions instead — the
+**Durrleman condition** (`g >= 0`, butterfly / positive implied density) across
+strikes, and a **calendar-spread check** (total variance non-decreasing in T).
+Those are the honest form of the same question. A model is trustworthy exactly
+where the density it implies stays positive, and that boundary moves with vol
+and tenor rather than sitting at a fixed 10%.
+
+This is a strictly better answer to 0018 and it is testable: a surface that
+violates Durrleman deep in the wing tells you *where* the pricer stopped being
+a pricer, per name, per day.
+
+## 8. The regime classifier flip-flops, and verdicts are keyed on it
+
+`contracts/regime.py` classifies on VIX level: calm < 17, elevated < 28, crisis
+above. Hard thresholds, no state, no hysteresis — so a VIX oscillating
+16.9 -> 17.1 -> 16.8 changes regime three times in three days.
+
+`10-regime-switching` uses **hysteresis bands** (enter bear at p > 0.70, exit
+at p < 0.30) and reports that this cuts turnover by **67-82%**. The mechanism
+is general and does not require an HMM: two thresholds instead of one, with the
+current state as tiebreak.
+
+This matters here for the same reason yesterday's delta finding did.
+`docs/adr/0015` keys verdicts on `(rule_hash, regime)` and calls a rule
+`confirmed` when it paid in >= 2 regimes. Threshold chatter therefore
+manufactures regime transitions, and a rule can collect its second regime from
+a boundary wobble rather than from a genuine change of state. **That is a
+second, independent defect on the same axis as the moneyness confound** — the
+regime label and the contract identity are both noisier than the verdict
+treats them.
+
+Adding hysteresis is a few lines and needs no new model. Adopting an HMM is a
+separate, larger question; if it is ever taken, note the trap this project
+flags in bold: **trading on *smoothed* probabilities is look-ahead**. Only
+filtered `P(s_t | x_{1..t})` is tradeable.
+
+## 9. A no-lookahead test that can actually fail
+
+The best single technique in any of the four repos, and it is four lines. From
+`10-regime-switching/src/eq_regime/detection.py`:
+
+> appending future observations must leave the **filtered** probability at `t`
+> bit-identical, while the **smoothed** probability at `t` **must change**
+> (sanity contrast).
+
+We have `tests/test_point_in_time_clock.py` — tests that try to read the future
+and must fail. What we do not have is the second half: **a positive control
+that proves the test could have caught the violation.** A no-lookahead
+assertion with no contrast passes just as happily when the value being checked
+is constant, absent, or never computed. Pairing every such assertion with a
+deliberately-cheating variant that *must* move is what makes it evidence rather
+than decoration.
+
+## 10. Two documentation practices worth importing
+
+**A numbered assumptions register.** Their `CONVENTIONS.md` requires every
+project to answer six questions in writing, and the load-bearing one for us is
+*"What assumptions did you make?" — an explicit, numbered register, each entry
+with what breaks if it is violated.* Our constitution already demands that
+"the assumptions a number rests on and how much they move it" be visible where
+the result is shown; what it lacks is the artifact. The register is the
+concrete form of a principle we already hold.
+
+**A model-governance tripwire.** `docs/MARKET_RISK.md` backtests every VaR
+series with Kupiec (right *number* of exceptions) and Christoffersen (they are
+not *clustered*), and states a rule: a method failing either for two
+consecutive quarters is retired. We measure our model-vs-market residual
+(`docs/MODEL_RESIDUAL.md`, +1.34%/yr, sign-flipping in crisis) but have **no
+stated threshold at which the model-priced backtest stops being trusted**.
+`docs/adr/0004`'s caveat is qualitative; a tripwire would make it operational.
+
+## Not for this repo: the question bank
+
+`docs/LEARN.md` carries **481 self-test questions across 18 rounds** covering
+options pricing, vol surfaces, risk metrics, execution and regime models. That
+is out of scope here, but it is a ready-made seed for a market-microstructure
+content domain in the sibling `quizkit` repo, which is where Dio's stated
+interview-prep motivation actually belongs.

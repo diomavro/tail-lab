@@ -64,6 +64,12 @@ Frontend (from `frontend/`): `npm run typecheck`, `npm run lint` (oxlint), `npm 
   `docs/adr/0015`'s `confirmed` verdict — is partly measuring whether the strike
   was reachable. Delta-based selection is queued; until it lands, say which
   parameterisation a result used.
+- **The regime classifier has no hysteresis** (`docs/PRIOR_ART.md` §8).
+  `contracts/regime.py` is hard VIX thresholds, so a VIX oscillating around 17
+  or 28 flips regime on consecutive days — and `docs/adr/0015` keys verdicts on
+  regime, so a rule can collect its second regime (and a `confirmed` verdict)
+  from a boundary wobble. Second independent defect on the same axis as the
+  moneyness confound above.
 - **There are no greeks.** `option_pricer.py` only prices. Portfolio theta —
   the North Star's "bleed" — cannot be computed yet.
 - **Two backlogs:** the agent owns `AGENT_TODO.md`; anything needing an account/key/money goes to `HUMAN_TODO.md` and is never attempted by the agent.

@@ -586,8 +586,13 @@ published, the rest are capability.
       `research/backtest/put_roll.py` with two implementations — `ByMoneyness`
       (today's, unchanged and still the default) and `ByDelta(target,
       tolerance)` — mirroring the `OptionPricer` pluggability of
-      `docs/adr/0004`. Needs greeks (next item) or a solve against the stored
-      Cboe `delta` from `docs/adr/0020`. Then re-run the Bake-off and the
+      `docs/adr/0004`. **Use the stored Cboe `delta` (`docs/adr/0020`), not a
+      model delta** — `docs/PRIOR_ART.md` §6: our pricer is flat-vol, so a model
+      delta is a sticky-strike delta on a smile that does not exist, and would
+      import the same flat-vol error this item exists to remove. Cboe's is
+      computed off the real smile. Only the pre-collection backtest needs a
+      model delta, and it must state the sticky-strike assumption where its
+      results appear. Then re-run the Bake-off and the
       regime verdicts under both and **report whether the conclusions move** —
       that comparison is the deliverable, not the feature. If they move,
       `docs/adr/0015`'s `regime_only` vs `confirmed` needs an ADR, because a
@@ -627,6 +632,57 @@ published, the rest are capability.
       Bake-off can rank cost assumptions alongside metrics and the
       model-vs-market residual (`docs/MODEL_RESIDUAL.md`) becomes attributable
       to pricing versus execution.
+
+## Portfolio-repo increments (2026-08-27 — see `docs/PRIOR_ART.md` §6-§10)
+
+From `AshJha0/quant-portfolio`. The first two are cheap and fix things that are
+demonstrably wrong today; the rest are upgrades.
+
+- [ ] **Hysteresis on the regime classifier.** `contracts/regime.py` uses hard
+      VIX thresholds (calm < 17, elevated < 28), so a VIX oscillating
+      16.9 -> 17.1 -> 16.8 flips regime three times in three days. Two
+      thresholds with the current state as tiebreak fixes it in a few lines and
+      needs no new model; the reference implementation reports 67-82% less
+      turnover from exactly this change. **This is not cosmetic**:
+      `docs/adr/0015` keys verdicts on `(rule_hash, regime)` and calls a rule
+      `confirmed` once it paid in >= 2 regimes, so threshold chatter lets a rule
+      collect its second regime from a boundary wobble. Pin it with a series
+      that crosses the boundary repeatedly and assert the label changes once.
+      Then re-count how many existing `confirmed` verdicts survive, and say so.
+- [ ] **Give every no-lookahead test a positive control** (`docs/PRIOR_ART.md`
+      §9 — the best technique found in four repos, and four lines). Today
+      `tests/test_point_in_time_clock.py` asserts that a future read fails.
+      What is missing is proof the assertion *could* have caught it: pair each
+      one with a deliberately-cheating variant that **must** move when future
+      data is appended. Without the contrast a no-lookahead test passes just as
+      happily when the value is constant, absent, or never computed. Our #1
+      invariant currently rests on tests that have never been shown capable of
+      failing.
+- [ ] **Replace `MODEL_PRICED_MAX_MONEYNESS_PCT` with an arbitrage check.**
+      That constant (10.0, `research/backtest/sweep.py`) is one hardcoded number
+      standing in for "past here our premium is a rounding artefact"
+      (`docs/adr/0018`) — same cutoff for every name, regime and tenor. The
+      honest form is the **Durrleman condition** (`g >= 0`, positive implied
+      density) plus a calendar check (total variance non-decreasing in T): the
+      model is trustworthy exactly where the density it implies stays positive,
+      and that boundary moves with vol and tenor. Supersedes 0018's constant
+      with a measurement; needs an ADR since 0018 is constitution.
+- [ ] **A model-governance tripwire for the pricer.** `docs/MODEL_RESIDUAL.md`
+      measures the model-vs-market gap (+1.34%/yr, sign-flipping in crisis) but
+      nothing states *at what point the model-priced backtest stops being
+      trusted*. Borrow the VaR-backtesting discipline: a stated threshold and a
+      consequence (the reference retires a method failing Kupiec or
+      Christoffersen for two consecutive quarters). Now that the forward
+      collection is running (`docs/adr/0020`), the residual can be recomputed
+      continuously instead of once on 210 historical dates — so the tripwire has
+      something live to trip on.
+- [ ] **A numbered assumptions register per research module.** The constitution
+      already requires that "the assumptions a number rests on and how much they
+      move it" be visible where the result is shown; there is no artifact for
+      it. Adopt the reference's form: a numbered list, each entry with **what
+      breaks if it is violated**. Start with `option_pricer.py` (flat vol, no
+      smile, European exercise, sticky-strike greeks) since that is where the
+      known error lives.
 
 ## Strategy-family increments (2026-08-26 — from Kakushadze & Serur, *151 Trading Strategies*, SSRN 3247865)
 
