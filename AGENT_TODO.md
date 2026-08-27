@@ -598,7 +598,18 @@ published, the rest are capability.
       `docs/adr/0015`'s `regime_only` vs `confirmed` needs an ADR, because a
       rule_hash carrying `moneyness_pct` has been treating two very different
       contracts as one rule.
-- [ ] **Greeks on the pricer.** `research/option_pricer.py` has only
+- [x] **Greeks on the pricer.** **Done 2026-08-27.** `PutGreeks` (delta,
+      gamma, vega, theta, rho, itm_prob) with nautilus's conventions — vega per
+      **vol point**, theta per **calendar day**. Validated three ways: against
+      central finite differences of `price_put` across six parameter regimes,
+      against the put-call delta-parity identity `delta_call - delta_put =
+      e^{-qT}` (which catches sign and discount-factor errors a single
+      hand-computed case cannot), and against **the exchange's own greeks** on
+      7,618 liquid contracts from the stored chain snapshot — median absolute
+      delta error **0.005**, with the residual tracking dividend yield exactly
+      as theory predicts (TSLA, a non-payer, 0.0006; SPY 0.0043). A numbered
+      assumptions register now heads the module. Original note follows.
+- [ ] ~~Greeks on the pricer (original)~~ `research/option_pricer.py` has only
       `price_put` — it prices but does not differentiate, which is why the
       North Star's last clause ("how much would the position bleed if nothing
       happens") has never been answerable. Add `delta`, `gamma`, `vega`,
@@ -633,12 +644,39 @@ published, the rest are capability.
       model-vs-market residual (`docs/MODEL_RESIDUAL.md`) becomes attributable
       to pricing versus execution.
 
+## Found by validation (2026-08-27)
+
+- [ ] **Pass a dividend yield through the roll backtest.** Discovered by
+      `make greeks-check`, the new scoring of our greeks against the
+      exchange's own (`docs/adr/0020` chains). The delta error orders itself
+      by distribution yield exactly as theory demands — TSLA (no payout)
+      0.0006, SPY 0.0043, **TLT 0.0601, HYG 0.1967** — because
+      `research/backtest/put_roll.py` prices every name at `q = 0`.
+      `index_replication` already passes `q`; the roll backtest does not. A
+      0.20 delta error on HYG means we are pricing a different option than we
+      think, and HYG and TLT sit in the universe *specifically* as the credit
+      and rates hedges — the names the tail thesis most wants to be right
+      about. Needs a per-symbol yield source (a keyless one: the distribution
+      history is derivable from the OHLCV adapter's `close` vs `adj_close`
+      divergence, which is already ingested). Until it lands, put prices and
+      greeks on income names are biased cheap; say so where they are shown.
+
 ## Portfolio-repo increments (2026-08-27 — see `docs/PRIOR_ART.md` §6-§10)
 
 From `AshJha0/quant-portfolio`. The first two are cheap and fix things that are
 demonstrably wrong today; the rest are upgrades.
 
-- [ ] **Hysteresis on the regime classifier.** `contracts/regime.py` uses hard
+- [x] **Hysteresis on the regime classifier.** **Done 2026-08-27.**
+      `HYSTERESIS_BAND = 1.0` VIX point, `classify_vix_series` in
+      `contracts/regime.py`, wired through `label_vix_series`. Measured on the
+      full 1990-2026 VIX history (9,255 days): regime transitions fall
+      **753 -> 338 (-55%)** while only **6.5% of day-labels change** and the
+      label mix barely moves (calm 4292->4137, elevated 3955->4100, crisis
+      1008->1018) — it removed churn, not signal. `band=0.0` reproduces the old
+      thresholds exactly, so the change stays auditable. **Not yet done: the
+      re-count of how many existing `confirmed` verdicts survive** — that needs
+      a sweep against the stored memory and is its own increment.
+      Original note follows. `contracts/regime.py` uses hard
       VIX thresholds (calm < 17, elevated < 28), so a VIX oscillating
       16.9 -> 17.1 -> 16.8 flips regime three times in three days. Two
       thresholds with the current state as tiebreak fixes it in a few lines and
@@ -649,15 +687,18 @@ demonstrably wrong today; the rest are upgrades.
       collect its second regime from a boundary wobble. Pin it with a series
       that crosses the boundary repeatedly and assert the label changes once.
       Then re-count how many existing `confirmed` verdicts survive, and say so.
-- [ ] **Give every no-lookahead test a positive control** (`docs/PRIOR_ART.md`
-      §9 — the best technique found in four repos, and four lines). Today
-      `tests/test_point_in_time_clock.py` asserts that a future read fails.
-      What is missing is proof the assertion *could* have caught it: pair each
-      one with a deliberately-cheating variant that **must** move when future
-      data is appended. Without the contrast a no-lookahead test passes just as
-      happily when the value is constant, absent, or never computed. Our #1
-      invariant currently rests on tests that have never been shown capable of
-      failing.
+- [~] **Give every no-lookahead test a positive control** (`docs/PRIOR_ART.md`
+      §9). **Partly done 2026-08-27, and the premise needed correcting**: the
+      lake layer already had this — `test_lake_store.py` builds its restatement
+      so it WOULD change the answer if it leaked, and `test_point_in_time_clock.py`
+      proves the naive local clock would have disagreed. The real gap was one
+      layer up, in **derived series**, where a "harmless denoising step"
+      imports the future without touching the store at all. Closed for the
+      regime timeline (`tests/test_contracts_regime_hysteresis.py` pairs the
+      causal assertion with a centred-window control that must move).
+      **Remaining**: audit the other derived series the same way — the fragility
+      metrics' rolling windows, `research/regimes/timeline.py`'s callers, and
+      anything in `research/backtest/` that z-scores or smooths over time.
 - [ ] **Replace `MODEL_PRICED_MAX_MONEYNESS_PCT` with an arbitrage check.**
       That constant (10.0, `research/backtest/sweep.py`) is one hardcoded number
       standing in for "past here our premium is a rounding artefact"

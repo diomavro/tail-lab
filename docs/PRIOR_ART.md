@@ -261,13 +261,27 @@ The best single technique in any of the four repos, and it is four lines. From
 > bit-identical, while the **smoothed** probability at `t` **must change**
 > (sanity contrast).
 
-We have `tests/test_point_in_time_clock.py` — tests that try to read the future
-and must fail. What we do not have is the second half: **a positive control
-that proves the test could have caught the violation.** A no-lookahead
-assertion with no contrast passes just as happily when the value being checked
-is constant, absent, or never computed. Pairing every such assertion with a
-deliberately-cheating variant that *must* move is what makes it evidence rather
-than decoration.
+**Correction, after checking rather than assuming** (2026-08-27): the first
+draft of this section claimed we had no such control. That was wrong at the
+layer that matters most. `tests/test_lake_store.py` already does it —
+`test_restated_value_does_not_leak_into_earlier_asof_read` states outright that
+"the revision is constructed so it WOULD change the answer if it leaked", then
+asserts the restatement *is* visible at the later as-of date. So does
+`test_point_in_time_clock.py`, whose second test proves the naive local clock
+would have disagreed. The lake layer is covered.
+
+Where the pattern was genuinely missing is one layer up: anything that computes
+a **derived series** over time, where a "harmless denoising step" imports the
+future without touching the store at all. Smoothing a series and classifying
+the smoothed version reads as tidying and is not causal. That gap is now closed
+for the regime timeline (`tests/test_contracts_regime_hysteresis.py` pairs
+"appending future observations cannot change an earlier label" with a centred-
+window control that *must* move on the same data). Auditing the remaining
+derived series for the same pairing is queued.
+
+The general rule is worth keeping regardless of who already follows it: a
+no-lookahead assertion with no contrast passes just as happily when the value
+being checked is constant, absent, or never computed.
 
 ## 10. Two documentation practices worth importing
 

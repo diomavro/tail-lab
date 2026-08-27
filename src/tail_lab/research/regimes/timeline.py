@@ -13,15 +13,21 @@ import datetime as dt
 import pandas as pd
 from pydantic import BaseModel
 
-from tail_lab.contracts.regime import RegimeLabel, classify_vix_level
+from tail_lab.contracts.regime import RegimeLabel, classify_vix_series
 from tail_lab.lake.store import LakeStore
 
 VIX_DATASET = "vix"
 
 
 def label_vix_series(vix_close: pd.Series) -> pd.Series:
-    """Regime label for each VIX close, preserving the input index."""
-    labels = [classify_vix_level(float(v)) for v in vix_close.to_numpy()]
+    """Regime label for each VIX close, preserving the input index.
+
+    Uses the hysteresis classifier (`contracts/regime.classify_vix_series`),
+    not the bare level thresholds: verdicts are keyed by regime, so boundary
+    chatter is not cosmetic here (`docs/PRIOR_ART.md` §8). Still causal, so
+    the point-in-time invariant is untouched.
+    """
+    labels = classify_vix_series(vix_close.to_numpy().tolist())
     return pd.Series(labels, index=vix_close.index, name="regime")
 
 
