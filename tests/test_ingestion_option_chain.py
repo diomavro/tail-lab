@@ -286,3 +286,34 @@ def test_sweep_to_records_skips_a_failing_symbol() -> None:
         ["SPY", "BROKEN"], fetch=_fetcher(SPY=_payload(_put(95.0), symbol="SPY"))
     )
     assert [r["underlying"] for r in records] == ["SPY"]
+
+
+def test_the_partition_is_the_session_not_the_clock(tmp_path: Path) -> None:
+    """A scheduled runner drifts. GitHub ran the 21:30 cron at 00:57 the next
+    day on the very first sweep, and a clock-derived partition turned that
+    into two bugs at once: the session landed under tomorrow's key, and
+    tomorrow's real sweep would then no-op against it (bronze is immutable)
+    and be lost. The quotes know which session they are."""
+    store = DeltaLakeStore(tmp_path)
+    result = ingest_option_chain(
+        store, ["SPY"], fetch=_fetcher(SPY=_payload(_put(95.0), symbol="SPY"))
+    )
+
+    session = dt.date.fromisoformat(QUOTE_DAY)
+    assert result.quote_date == session
+    assert f"ingest_date={QUOTE_DAY}" in result.bronze_path
+    # And it is readable as of that session, not only as of "today".
+    assert len(store.read_bronze_as_of(DATASET, session)) == 1
+
+
+def test_a_late_rerun_of_the_same_session_no_ops(tmp_path: Path) -> None:
+    """Immutability doing its job: the delayed run and the on-time run carry
+    the same session, so the second is a no-op rather than a second partition
+    that shadows the first."""
+    store = DeltaLakeStore(tmp_path)
+    payload = _payload(_put(95.0), symbol="SPY")
+    first = ingest_option_chain(store, ["SPY"], fetch=_fetcher(SPY=payload))
+    second = ingest_option_chain(store, ["SPY"], fetch=_fetcher(SPY=payload))
+
+    assert first.bronze_path == second.bronze_path
+    assert len(store.read_bronze_as_of(DATASET, dt.date.fromisoformat(QUOTE_DAY))) == 1

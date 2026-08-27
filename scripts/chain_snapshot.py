@@ -28,7 +28,6 @@ that must never look like a good day.
 from __future__ import annotations
 
 import argparse
-import datetime as dt
 import json
 import sys
 import urllib.error
@@ -106,7 +105,11 @@ def main(argv: list[str] | None = None) -> int:
         print("::error::--post needs --token", file=sys.stderr)
         return 2
 
-    payload = {"rows": records, "ingest_date": dt.date.today().isoformat()}
+    # No ingest_date: the server derives the partition from the session the
+    # quotes belong to. Sending today's date here is what put 2026-08-26's
+    # session into an ingest_date=2026-08-27 partition when GitHub ran the
+    # 21:30 cron at 00:57 (docs/adr/0020, "the partition is the session").
+    payload = {"rows": records}
     try:
         result_json = _post(args.post, args.token, payload, args.timeout)
     except urllib.error.HTTPError as exc:

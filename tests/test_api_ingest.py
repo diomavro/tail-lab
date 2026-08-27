@@ -190,3 +190,21 @@ def test_status_reports_the_last_session_collected(
     assert payload["rows"] == 2
     assert payload["symbols"] == 2
     assert payload["stale_days"] == (dt.date.today() - dt.date(2026, 8, 26)).days
+
+
+def test_the_partition_defaults_to_the_session_not_the_server_clock(
+    client: TestClient, store: DeltaLakeStore, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """With no explicit ingest_date the rows decide the partition. Sending
+    the runner's today is what put 2026-08-26's session into an
+    ingest_date=2026-08-27 partition on the first scheduled sweep."""
+    _set_token(monkeypatch, TOKEN)
+    resp = client.post(
+        "/api/ingest/option-chain",
+        json={"rows": [_row()]},
+        headers={"Authorization": f"Bearer {TOKEN}"},
+    )
+
+    assert resp.status_code == 200
+    assert "ingest_date=2026-08-26" in resp.json()["bronze_path"]
+    assert len(store.read_bronze_as_of(DATASET, dt.date(2026, 8, 26))) == 1

@@ -95,7 +95,14 @@ def ingest_option_chain_snapshot(
     except Exception as exc:  # pandera raises SchemaErrors; surface it as a 422
         raise HTTPException(status_code=422, detail=f"contract violation: {exc}") from exc
 
-    ingest_date = body.ingest_date or dt.date.today()
+    # The partition IS the session, not the wall clock. Scheduled runners
+    # drift -- GitHub ran the 21:30 cron at 00:57 the next day on the very
+    # first scheduled sweep -- and a clock-derived partition turns that drift
+    # into two bugs at once: the session lands under tomorrow's key, and
+    # tomorrow's real sweep then no-ops against it (bronze is immutable) and
+    # is lost. Deriving it from the quotes makes a late run land correctly and
+    # a re-run of the same session no-op the way immutability intends.
+    ingest_date = body.ingest_date or valid["quote_date"].max().date()
     bronze_path = store.write_bronze(DATASET, ingest_date, valid)
 
     log_event(
