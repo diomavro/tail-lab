@@ -11,6 +11,7 @@ bucket.
 
 from __future__ import annotations
 
+import contextlib
 import datetime as dt
 import uuid
 from collections.abc import Iterator
@@ -71,10 +72,8 @@ def tigris_store() -> Iterator[tuple[DeltaLakeStore, str]]:
         # empty directory markers behind on Tigris.
         for layer in ("bronze", "silver", "gold"):
             prefix = f"{settings.s3_bucket}/{layer}/{dataset}"
-            try:
+            with contextlib.suppress(FileNotFoundError):
                 cleanup_fs.delete_dir(prefix)
-            except FileNotFoundError:
-                pass
 
 
 def test_tigris_round_trip_write_read_and_as_of(

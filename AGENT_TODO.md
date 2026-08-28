@@ -644,6 +644,26 @@ published, the rest are capability.
       model-vs-market residual (`docs/MODEL_RESIDUAL.md`) becomes attributable
       to pricing versus execution.
 
+## Ratchet reduction (2026-08-28 — the weekly cleanup agent's queue, `docs/adr/0023`)
+
+`pyproject.toml`'s limits sit at today's worst offenders. Each item below is
+"refactor this function, then lower the number in the same PR". They may only
+ever go down.
+
+- [ ] **`research/backtest/ranking.py:rank_universe`** — cyclomatic complexity
+      **14**, the value `max-complexity` is currently pinned to. 182 lines.
+- [ ] **`research/backtest/put_roll.py:run_put_roll`** — **13 keyword arguments**
+      (pins `max-args`) and **75 statements** (pins `max-statements`), 206 lines.
+      The textbook accretion case: every increment added a flag rather than
+      reshaping. Likely wants a parameter object for the roll spec.
+- [ ] **`research/backtest/metric_screen.py:compare_metric_screens`** (144 lines,
+      complexity 11) and **`index_replication.py:run_index_replication`**
+      (121 lines, 11 args).
+- [ ] **`api/putlab_routes.py`** is 669 lines, the largest module in the repo.
+      Check whether it is still one thing before it becomes a god module; the
+      flat `api/` layout is a documented deviation (`CLAUDE.md`) and splitting
+      it needs `ARCHITECTURE.md` to agree, so this one may need an ADR.
+
 ## Found by validation (2026-08-27)
 
 - [ ] **Pass a dividend yield through the roll backtest.** Discovered by

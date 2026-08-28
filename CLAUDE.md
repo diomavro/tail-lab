@@ -35,6 +35,17 @@ Frontend (from `frontend/`): `npm run typecheck`, `npm run lint` (oxlint), `npm 
 ## Things that will bite you
 
 - **Agent branches auto-merge, and green main auto-deploys.** `.github/workflows/automerge.yml` squash-merges any `agent/*` branch PR automatically once CI is fully green, and `.github/workflows/deploy.yml` then ships every green `main` commit to Fly (`docs/adr/0016`). Pushing to an `agent/*` branch is effectively pushing to production-after-CI; use a differently-named branch when a human should review first. CI's `constitution-guard` job fails any `agent/*` PR that touches `README.md`, `ARCHITECTURE.md`, `docs/STANDARDS.md`, `docs/AGENT_MISSION.md`, `docs/END_STATE.md`, or `docs/adr/` — those changes need a human-merged PR. **`.github/workflows/**` is guarded too** (`docs/adr/0022`): the agent's own prompt, the auto-merge rule and the guard itself all live there, so an unreviewed edit could quietly widen everything else. The principle for the guarded set: *a file is constitutional if changing it changes what the agent is allowed to do* — which is why `AGENT_TODO.md` is deliberately not guarded. Agent PRs are authored by `claude[bot]` (the action mints a GitHub App token), **not** by `diomavro`, and nobody watches this repo — so an agent PR reaches Dio's inbox only because `daily-agent.yml` tells the agent to pass `--assignee diomavro`. Drop that flag and the whole open→merge→deploy chain goes silent.
+- **Lint limits in `pyproject.toml` are a RATCHET, not preferences**
+  (`docs/adr/0023`). `max-complexity`, `max-args` and `max-statements` sit at the
+  current worst offenders, each naming the function that set it. They may only
+  ever go DOWN. If a change trips one, reshape the change — raising the number is
+  by definition the edit that makes the codebase worse. The weekly cleanup agent
+  (`weekly-cleanup.yml`) is what lowers them.
+- **`agent/*` PRs get an adversarial design review in CI** and it can block
+  auto-merge. It looks only at what linters cannot see — duplication, dead
+  abstraction, accretion, unearned complexity. Context for why: 40 agent PRs
+  added 16,079 lines and deleted 1,020 (15.8:1) while humans on this repo ran
+  2.4:1, and nothing in the gate could see it.
 - **Everything automated must be logged in detail** (`docs/STANDARDS.md` §f) — ingestion runs, backtests, deploys all leave structured records; an automated behavior without runtime logging is below the bar.
 - **Point-in-time correctness is the #1 invariant** (`docs/adr/0009`). Backtest reads go through the lake store's as-of resolution; tests that try to read future data must fail (see `tests/test_point_in_time_clock.py`). Bronze is immutable — re-ingesting an existing `ingest_date` is a no-op, corrections are new partitions.
 - **Layering is machine-checked.** `import-linter` (contracts in `pyproject.toml`) enforces `api > research > (ingestion | transforms | feedback) > lake > contracts`, plus: `api`/`research` may never import `ingestion`. A violation fails CI.

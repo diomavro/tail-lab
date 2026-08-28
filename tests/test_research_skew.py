@@ -83,7 +83,7 @@ def _quotes(*, skew_slope: float, n_dates: int = 24, sigma_atm: float = 0.20) ->
         spot = 400.0
         expiration = stamp + pd.Timedelta(days=30)
         t = 30 / 365.25
-        for otm_pct in range(0, 26):
+        for otm_pct in range(26):
             strike = spot * (1 - otm_pct / 100)
             sigma = sigma_atm + skew_slope * otm_pct
             price = pricer.price_put(

@@ -74,6 +74,30 @@ change lands on `main` without a human catching it; a string of them erodes
 the codebase. The bar is higher, not lower, because no one is gating each
 one. When in doubt, don't.
 
+### You now have a reviewer, and a counterweight
+
+Two things changed on 2026-08-28 (`docs/adr/0023`), because 75% of merged PRs
+here are yours and CI was the only thing reading them.
+
+**An adversarial design reviewer runs on every `agent/*` PR** and can block
+auto-merge. It does not re-check correctness, types, layering or style — other
+jobs prove those. It looks for duplication, dead or speculative code,
+functions gaining parameters instead of being reshaped, and complexity that
+does not earn itself. Write as if a skeptical reader with no context will read
+the diff cold, because one will.
+
+**A weekly cleanup agent exists to delete things**, so you do not have to. The
+rule against padding your change with unrelated cleanup still stands and is
+still right — but when you *notice* dead code, duplication or a function that
+has outgrown its shape, **add it to `AGENT_TODO.md` instead of either fixing it
+or ignoring it.** That is now a real queue with a real consumer, not a
+politeness.
+
+**The lint limits in `pyproject.toml` are a ratchet.** They sit at today's worst
+offenders. If your change trips one, the answer is to reshape your change, never
+to raise the number — raising it is the one edit that makes the codebase
+measurably worse by definition.
+
 ## The wall
 
 **You never trade. You never touch money, brokerage accounts, or

@@ -50,11 +50,44 @@ target-version = "py312"
 extend-exclude = ["node_modules", "dist", "frontend", "data", ".venv"]
 
 [tool.ruff.lint]
-select = ["E", "W", "F", "I", "B", "UP", "RUF"]
+# The first seven families catch bugs and style. The last five exist because
+# CI could previously see everything about this code EXCEPT whether it was
+# well designed, and 75% of merged PRs are written by an unattended agent
+# whose charter forbids it from cleaning anything up. Measured 2026-08-28:
+# the agent adds 15.8 lines for every 1 it deletes; humans on this same repo
+# run 2.4:1. Nothing in the gate could see that.
+#
+# SIM/RET/PIE/ARG were all at ZERO findings when enabled, which is the useful
+# nuance: the agent does not write sloppy lines. The decay is structural —
+# functions accumulating parameters because extending is always cheaper than
+# reshaping. So those four are free to enforce forever, and the three counters
+# below are a RATCHET.
+select = ["E", "W", "F", "I", "B", "UP", "RUF", "SIM", "RET", "PIE", "ARG", "C901", "PLR0913", "PLR0915", "PLR0917"]
 ignore = [
     "E501", # line too long — handled by the formatter
     "B008", # function calls in argument defaults — FastAPI Depends
 ]
+
+# RATCHET. These are today's worst offenders, not a design opinion: a limit set
+# where the code already is costs nothing now and makes it impossible for the
+# next 400 agent PRs to make it worse. **These numbers may only ever go down.**
+# Lowering them is a one-line PR gated on refactoring the functions named in
+# AGENT_TODO.md; raising one means an increment made the codebase measurably
+# worse and should be rejected instead.
+# pytest fixtures are requested by name and used for their side effect, so a
+# test that takes `fixed_clock` and never references it is correct, not dead.
+# ARG cannot tell those apart from a genuinely unused parameter, and in library
+# code it can — so it stays on there and off here.
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = ["ARG001", "ARG002", "ARG005"]
+
+[tool.ruff.lint.mccabe]
+max-complexity = 14 # ranking.rank_universe
+
+[tool.ruff.lint.pylint]
+max-args = 13 # put_roll.run_put_roll — keyword-only, which is why it is survivable
+max-positional-args = 8
+max-statements = 75 # put_roll.run_put_roll
 
 [tool.ruff.format]
 quote-style = "double"
