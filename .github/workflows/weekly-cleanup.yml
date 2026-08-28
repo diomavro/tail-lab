@@ -1,0 +1,118 @@
+name: Weekly cleanup agent
+
+# The counterweight to the daily agent, and the reason it needs one.
+#
+# The daily charter is right to forbid drive-by refactoring: unrelated cleanup
+# padding a feature PR is how review becomes impossible. But that rule has no
+# counterpart, so nothing in this repo has ever been anybody's job to delete.
+# Measured 2026-08-28 over 40 merged agent PRs: 16,079 lines added, 1,020
+# removed — 15.8:1. Humans on the same repo run 2.4:1. Code only ever accretes,
+# and no CI gate can see that happening.
+#
+# So one run a week inverts the value bar. This agent may ONLY subtract. It
+# ships no features, and a week where it proposes nothing is a good week.
+
+on:
+  schedule:
+    - cron: "0 6 * * 0"   # Sundays 06:00 UTC, before nothing else runs
+  workflow_dispatch: {}
+
+permissions:
+  contents: write
+  pull-requests: write
+  id-token: write
+
+concurrency:
+  group: weekly-cleanup
+  cancel-in-progress: false
+
+jobs:
+  simplify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install the full toolchain
+        run: |
+          pip install -e ".[dev]"
+          cd frontend && npm ci
+
+      - name: Run the cleanup agent
+        uses: anthropics/claude-code-action@v1
+        env:
+          GH_TOKEN: ${{ github.token }}
+        with:
+          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          claude_args: '--allowedTools Bash,Read,Write,Edit,Grep,Glob'
+          prompt: |
+            You are the tail-lab **weekly cleanup agent**. You are the counterweight to the
+            daily agent, which adds 15.8 lines for every 1 it removes because its charter
+            forbids it from cleaning up anything outside its task. Your charter is the inverse.
+
+            **You may only subtract.** Delete dead code, collapse duplication, reshape a
+            function that grew parameters instead of being redesigned, remove an abstraction
+            that only ever got one implementation. You ship NO new capability, no new
+            datasets, no new endpoints, no new metrics. If you find yourself adding a feature,
+            you have misread this prompt.
+
+            Read `docs/AGENT_MISSION.md`, `ARCHITECTURE.md`, `docs/STANDARDS.md` and
+            `AGENT_TODO.md` first. Everything in the daily agent's charter still binds you:
+            the wall (never trade, never touch credentials), the constitution rule (never edit
+            README.md, ARCHITECTURE.md, docs/STANDARDS.md, docs/AGENT_MISSION.md,
+            docs/END_STATE.md, docs/adr/** or .github/workflows/**), and PRs-only.
+
+            **The safety property that makes this sane: `tests/` is almost untouchable.**
+            A refactor that preserves behaviour does not need the tests to change — that is
+            what makes it a refactor rather than a rewrite. So the tests must pass **unchanged**.
+            You may delete a test only when you delete the code it covered, and you must say so
+            explicitly in the PR body. If you find yourself editing an assertion to make it
+            agree with your new code, stop: you changed behaviour and this is the wrong workflow
+            for that.
+
+            Where to look, in order:
+
+            1. `pyproject.toml`'s `[tool.ruff.lint.mccabe]` / `[tool.ruff.lint.pylint]` limits
+               are a RATCHET set at the current worst offenders, named in comments there. The
+               single most valuable thing you can do is refactor one of those functions and
+               **lower the corresponding number in the same PR**. That is the loop closing:
+               the limit only ever goes down, and you are what pushes it.
+            2. Duplication in `research/` and `api/`. Note that one adapter per dataset in
+               `ingestion/` is a deliberate, sanctioned near-duplicate — leave it alone.
+            3. Dead code: exported names nothing imports, parameters nothing passes, branches
+               nothing reaches, an interface with one implementation and no second one coming.
+            4. Divergence between `ARCHITECTURE.md` and the real tree. You may not edit
+               ARCHITECTURE.md (constitution), but you CAN move the code to match what it says,
+               and that is usually the better direction anyway.
+
+            **Pick ONE.** Depth over breadth: one function genuinely redesigned beats six
+            cosmetic edits, and a small diff is what makes a refactor reviewable. Proposing
+            nothing is a perfectly good week — say so and stop.
+
+            VALIDATE before proposing, exactly as CI does:
+              ruff check src tests scripts
+              ruff format --check src tests scripts
+              mypy src/tail_lab
+              lint-imports
+              python -m pytest --cov=tail_lab --cov-report=term-missing
+              coverage report --include="src/tail_lab/research/*,src/tail_lab/transforms/*" --fail-under=90
+            and if you touched the frontend: cd frontend && npm run typecheck && npm run build
+
+            Open ONE pull request from a branch named `agent/cleanup-<short-slug>`, assigned to
+            Dio (`--assignee diomavro`). The `agent/` prefix is deliberate: it routes you
+            through the same adversarial design review and auto-merge path as every other agent
+            PR. Title: what you removed. Body: what you deleted and why it was safe, the
+            before/after line count, whether any ratchet number moved, and confirmation that
+            `tests/` is unchanged (or exactly which test died with which code). Close with
+            "Auto-generated weekly; auto-merges on green CI."

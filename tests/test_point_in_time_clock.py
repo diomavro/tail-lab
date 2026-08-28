@@ -43,7 +43,7 @@ BUGGY_LOCAL_DATE = _INSTANT_UTC.astimezone(_SIMULATED_LOCAL_OFFSET).date()
 def _assert_dates_differ_by_construction() -> None:
     # Sanity-check the fixture itself: if this ever failed, the rest of the
     # test would pass for the wrong reason (no actual tz skew simulated).
-    assert BUGGY_LOCAL_DATE == EXPECTED_UTC_DATE - dt.timedelta(days=1)
+    assert EXPECTED_UTC_DATE - dt.timedelta(days=1) == BUGGY_LOCAL_DATE
 
 
 class _FixedClock:

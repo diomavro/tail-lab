@@ -199,6 +199,6 @@ def test_the_priced_grid_is_the_full_grid_minus_what_cannot_be_priced() -> None:
     hand-maintained, or they drift the first time a strike is added."""
     from tail_lab.research.backtest.sweep import MODEL_PRICED_SWEEP_MONEYNESS
 
-    assert MODEL_PRICED_SWEEP_MONEYNESS == tuple(m for m in SWEEP_MONEYNESS if is_model_priced(m))
+    assert tuple(m for m in SWEEP_MONEYNESS if is_model_priced(m)) == MODEL_PRICED_SWEEP_MONEYNESS
     assert MODEL_PRICED_SWEEP_MONEYNESS
     assert len(MODEL_PRICED_SWEEP_MONEYNESS) < len(SWEEP_MONEYNESS)

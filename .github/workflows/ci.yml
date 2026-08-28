@@ -155,8 +155,107 @@ jobs:
   # bot-initiated run emits on completion (docs/adr/0016, found on PR #11).
   # Runs only on main (push or dispatched-by-automerge), only when every
   # gate above is green.
+  # Reviews what every other gate here is structurally blind to. ruff, mypy,
+  # import-linter and the coverage floors can prove a change is correct, typed,
+  # layered and tested; none of them can see duplication, dead abstraction, or
+  # a function quietly growing its fourteenth parameter.
+  #
+  # That blindness matters because 75% of merged PRs in this repo are written
+  # by an unattended agent that auto-merges on green CI, and whose charter
+  # (rightly) forbids it from cleaning up anything unrelated to its task.
+  # Measured 2026-08-28: the agent adds 15.8 lines for every 1 it deletes;
+  # humans on this same repo run 2.4:1. Nothing was watching that number.
+  #
+  # Runs as a JOB IN CI rather than a workflow_run listener on purpose:
+  # workflow_run events from bot-initiated runs are suppressed by GitHub
+  # (docs/adr/0016), so a listener would never fire on the exact PRs it exists
+  # to review. As a CI job it also blocks auto-merge for free -- automerge.yml
+  # only acts when the whole CI run succeeded.
+  agent-review:
+    if: startsWith(github.head_ref, 'agent/')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: write
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Adversarial design review
+        uses: anthropics/claude-code-action@v1
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        with:
+          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          claude_args: '--allowedTools Bash,Read,Grep,Glob'
+          prompt: |
+            You are the adversarial design reviewer for an autonomous agent's pull request.
+            You did not write this change and have no stake in it landing.
+
+            Read the diff first:  git diff "$BASE_SHA...HEAD"
+
+            **What you are NOT for.** Correctness, types, layering, formatting and coverage are
+            already proven by other jobs in this same run. Do not re-check them. Do not comment
+            on style the formatter owns. If your finding would have been caught by ruff or mypy,
+            it is not your finding.
+
+            **What you ARE for** — the four things no linter here can see:
+
+            1. DUPLICATION. Does this re-implement something that already exists? Search before
+               concluding it does not: `grep -rn` for the key function names, and for the same
+               computation expressed differently. This repo has genuine near-duplicates by
+               design (one ingestion adapter per dataset, deliberately) — that pattern is
+               sanctioned in ingestion/ and is NOT a finding. Duplication inside research/ or
+               api/ is.
+            2. DEAD OR SPECULATIVE CODE. A parameter nothing passes, a branch nothing reaches,
+               an abstraction with exactly one implementation and no second one in sight, an
+               exported name nothing imports.
+            3. ACCRETION. Did a function gain parameters instead of being reshaped? Did a module
+               grow past the point where it is one thing? The known offenders are listed in
+               AGENT_TODO.md; a change that makes one of them worse is a finding even if it is
+               small.
+            4. UNEARNED COMPLEXITY. Would a reader with no context understand why this shape was
+               chosen? Is there a materially simpler version that passes the same tests?
+
+            **The bar for BLOCKING is high, deliberately.** This job gates auto-merge, so a
+            false positive stops the platform's only daily increment and costs a human's
+            morning. Block ONLY when you can name the specific file and line, quote the code,
+            and state what should have happened instead. Taste disagreements, "I would have
+            named it differently", and speculative future-proofing concerns are ADVISORY, never
+            blocking. **When you are uncertain, pass.** A missed nit is cheap; a stalled
+            pipeline is not.
+
+            Post your review as a PR comment either way, so there is a record that a review
+            happened and what it said:
+              gh pr comment "$PR_NUMBER" --body "<your review>"
+
+            Then write your verdict to a file, exactly one word, nothing else:
+              echo PASS  > /tmp/verdict    (nothing blocking; advisory notes are fine)
+              echo BLOCK > /tmp/verdict    (a specific, quoted, actionable defect)
+
+      - name: Enforce the verdict
+        run: |
+          set -uo pipefail
+          verdict="$(cat /tmp/verdict 2>/dev/null | tr -d '[:space:]')"
+          if [ -z "$verdict" ]; then
+            echo "::warning::reviewer produced no verdict — treating as PASS."
+            echo "A reviewer that cannot run must not become a gate that cannot open:"
+            echo "an outage here would silently halt the daily increment."
+            exit 0
+          fi
+          echo "verdict: $verdict"
+          if [ "$verdict" = "BLOCK" ]; then
+            echo "::error::Design review blocked this PR. See the review comment on the PR."
+            exit 1
+          fi
+          exit 0
+
   trigger-deploy:
-    needs: [backend, frontend, e2e, constitution-guard]
+    needs: [backend, frontend, e2e, constitution-guard]  # not agent-review: it is skipped on non-agent branches
     if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     permissions:
