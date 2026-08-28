@@ -22,6 +22,20 @@ on:
     # 21:30 UTC on weekdays — after the 16:00 ET close in both DST regimes
     # (90 min in summer, 30 in winter), and well past Cboe's 15-minute delay.
     - cron: "30 21 * * 1-5"
+    # CATCH-UP, and the reason it exists: on 2026-08-27 the 21:30 run simply
+    # never fired. Not late, not red — absent. GitHub drops scheduled runs
+    # under load, and a run that never happens produces no failing build, so
+    # silence is indistinguishable from success. The Thursday session was
+    # recovered by hand eight hours later, which is not a control.
+    #
+    # This is free insurance because the design is already idempotent: bronze
+    # is immutable and the partition is derived from the session, so if the
+    # 21:30 run landed, this one writes nothing and exits green. If it did not,
+    # this recovers the session — Cboe's CDN keeps serving the last close until
+    # the next open (13:30 UTC), which is the window this sits inside.
+    #
+    # Two independent schedules now both have to be dropped to lose a session.
+    - cron: "0 5 * * 2-6"
   workflow_dispatch: {}
 
 permissions:
