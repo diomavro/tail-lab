@@ -22,12 +22,14 @@ from collections.abc import Mapping, Sequence
 from functools import lru_cache
 from typing import Any
 
+import pandas as pd
 from fastapi import APIRouter, Depends, HTTPException, Query
 
 from tail_lab.api.schemas import PortfolioRequest, SweepResponse
 from tail_lab.config import get_lake_store as _get_configured_lake_store
 from tail_lab.config import get_settings
 from tail_lab.contracts.ohlcv import dataset_id
+from tail_lab.contracts.option_chain import DATASET as OPTION_CHAIN_DATASET
 from tail_lab.contracts.options_calendar import (
     OptionsCadence,
     cadence_for,
@@ -45,6 +47,7 @@ from tail_lab.research.backtest.index_replication import (
     IndexReplicationResult,
     compute_index_replication,
 )
+from tail_lab.research.backtest.marks import MarkedSchedule, mark_schedule
 from tail_lab.research.backtest.metric_screen import (
     MetricScreenComparison,
     compare_metric_screens,
@@ -510,6 +513,64 @@ def _rank_cached(
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     _LEADERBOARD_CACHE[cache_key] = (time.monotonic() + _LEADERBOARD_TTL_S, ranking)
     return ranking
+
+
+@router.get("/api/putlab/roll-schedule/marked")
+def putlab_roll_schedule_marked(
+    moneyness_pct: float = Query(default=5.0, gt=0, lt=100),
+    tenor_weeks: float = Query(default=4.0, gt=0, le=52),
+    years: float = Query(default=4.0, gt=0, le=20),
+    notional: float = Query(default=1000.0, gt=0, le=1_000_000),
+    top_k: int = Query(default=10, ge=1, le=50),
+    as_of: dt.date | None = Query(default=None),
+    store: LakeStore = Depends(get_lake_store),
+) -> MarkedSchedule:
+    """The same order intent, priced against the **listed** chain.
+
+    ``/roll-schedule`` states what the screen concluded in the screen's own
+    units: a strike at an exact real number no board lists, an expiry counted
+    in trading days, and a Black-Scholes premium at a flat vol. This route adds
+    what the market says about that same recommendation -- the listed strike
+    and expiry it snaps to, the real bid/ask, the contract count the premium
+    budget actually buys at the offer, and the market/model ratio.
+
+    It also *refuses*. A leg with no bid, too little open interest, or a spread
+    wider than half its mid comes back ``illiquid`` and carries no contract
+    count, because the screen ranks on fragility and has never once asked
+    whether anyone trades the contract it names.
+
+    Coverage is partial on purpose (``docs/adr/0020`` collects 24 of the 70
+    screened names), so a leg may come back ``not_collected``. That is a gap in
+    the data, not a verdict on the trade, and the two are deliberately
+    distinguishable.
+    """
+    schedule = putlab_roll_schedule(
+        moneyness_pct=moneyness_pct,
+        tenor_weeks=tenor_weeks,
+        years=years,
+        notional=notional,
+        top_k=top_k,
+        as_of=as_of,
+        store=store,
+    )
+    resolved = _resolve_as_of(as_of)
+    try:
+        chain = store.read_bronze_as_of(OPTION_CHAIN_DATASET, resolved)
+    except LookupError:
+        # Before the first sweep, or as-of a date that predates it. Every leg
+        # marks as not_collected, which is the honest answer.
+        chain = pd.DataFrame()
+    marked = mark_schedule(schedule, chain)
+    log_event(
+        logger,
+        "api.putlab.roll_schedule_marked",
+        as_of=resolved,
+        schedule_id=marked.schedule_id,
+        legs=len(marked.legs),
+        quoted=marked.quoted_legs,
+        quote_session=marked.quote_session,
+    )
+    return marked
 
 
 @router.get("/api/putlab/roll-schedule")
