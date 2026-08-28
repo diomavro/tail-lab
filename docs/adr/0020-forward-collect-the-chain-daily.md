@@ -103,6 +103,26 @@ row costs is how a session gets lost. The split now lives in
 `contracts/option_chain.py` so there is exactly one answer. A 422 means
 *nothing* validated.
 
+**5c. Two schedules, because a run that never fires is silent.**
+*(Amended 2026-08-28, after losing most of a session.)* On 2026-08-27 the
+21:30 run did not happen — not late, not red, **absent**. GitHub drops
+scheduled runs under load, and decision 6 below only fires when the job
+*runs*: a job that never starts produces no failing build, so silence is
+indistinguishable from success. The Thursday session was recovered by hand
+eight hours later, inside the window where Cboe's CDN still served the
+previous close. Recovery by noticing is not a control.
+
+A second cron at 05:00 UTC now catches up. It is free insurance precisely
+because the design is already idempotent — bronze is immutable (decision 5)
+and the partition is the session (5a) — so if the evening run landed, the
+morning one writes nothing and exits green. Losing a session now requires
+**two** independent schedules to be dropped, and the catch-up sits inside the
+recovery window (Cboe serves the last close until the next open at 13:30 UTC).
+
+The general lesson is worth more than the fix: **a loud failure only protects
+you against failures that execute.** Absence needs its own detector, and the
+cheapest one is a redundant attempt that costs nothing when unnecessary.
+
 **6. An empty sweep is a failure, not a no-op.** Below 200 rows across two
 dozen liquid chains the script exits non-zero and the workflow goes red. Every
 other scheduled job here may legitimately do nothing; this one may not, and the

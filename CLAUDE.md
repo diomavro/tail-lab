@@ -60,7 +60,7 @@ Frontend (from `frontend/`): `npm run typecheck`, `npm run lint` (oxlint), `npm 
   any price. An empty sweep therefore **fails red on purpose** rather than
   no-opping, and a red build here is the one that should interrupt a day. Check
   `GET /api/ingest/option-chain/status` before assuming it is healthy. Two
-  gotchas: the sweep must write **one partition for all symbols** (bronze is
+  gotchas: **GitHub drops scheduled runs** — the 2026-08-27 evening sweep never fired at all, and an absent run produces no red build, so a second catch-up cron at 05:00 UTC now covers it (free, because the write is idempotent); the sweep must write **one partition for all symbols** (bronze is
   immutable, so a per-symbol write persists only the first), and Cboe
   **zero-fills** `iv`/`delta`/`theo` it cannot compute — the adapter maps those to
   null, and a 0.0 in those columns is never a measurement.
