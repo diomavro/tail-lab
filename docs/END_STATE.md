@@ -211,3 +211,5 @@ This ordering is a default, not a straitjacket — the agent should still
 apply the value bar (`docs/AGENT_MISSION.md`) to whatever it picks next,
 and a smaller, sharper increment out of order beats a large one strictly
 in order.
+
+<!-- verification probe for docs/adr/0023 agent-review; delete with the branch -->
