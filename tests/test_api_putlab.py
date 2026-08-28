@@ -528,6 +528,44 @@ def test_roll_schedule_is_placeable_order_intent(client: TestClient) -> None:
     assert leg["moneyness_pct"] <= 10.0
 
 
+def test_marked_schedule_reports_no_quotes_when_no_chain_was_collected(
+    client: TestClient,
+) -> None:
+    """The fixture lake carries OHLCV and VIX but no option_chain_snapshot, which
+    is exactly the state this route must survive: it is the state the platform
+    was in until 2026-08-26, and the state it returns to for any as-of before
+    the first sweep. Every leg marks not_collected -- a gap in the data, never a
+    silent zero and never a crash."""
+    resp = client.get(
+        "/api/putlab/roll-schedule/marked",
+        params={"moneyness_pct": 5, "tenor_weeks": 4, "years": 1, "notional": 1000, "top_k": 3},
+    )
+    assert resp.status_code == 200
+    body = resp.json()
+
+    assert body["quoted_legs"] == 0
+    assert body["quote_session"] is None
+    assert body["marks_notes"]
+    for leg in body["legs"]:
+        assert leg["quote_status"] == "not_collected"
+        assert leg["listed_strike"] is None
+        assert leg["market_contracts"] is None
+
+
+def test_marking_preserves_the_screen_identity(client: TestClient) -> None:
+    """An executor dedupes on schedule_id. Marking says what the market thinks
+    of a recommendation; it must not look like a different recommendation."""
+    params = {"moneyness_pct": 5, "tenor_weeks": 4, "years": 1, "notional": 1000, "top_k": 3}
+    plain = client.get("/api/putlab/roll-schedule", params=params).json()
+    marked = client.get("/api/putlab/roll-schedule/marked", params=params).json()
+
+    assert marked["schedule_id"] == plain["schedule_id"]
+    assert [leg["asset"] for leg in marked["legs"]] == [leg["asset"] for leg in plain["legs"]]
+    # ...and the screen's own fields are carried through untouched.
+    assert marked["legs"][0]["target_strike"] == plain["legs"][0]["target_strike"]
+    assert marked["legs"][0]["model_premium"] == plain["legs"][0]["model_premium"]
+
+
 def test_roll_schedule_is_stable_for_the_same_screen(client: TestClient) -> None:
     """An executor dedupes on schedule_id; re-fetching must not look like a new
     set of orders to place."""

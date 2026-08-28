@@ -570,6 +570,50 @@ item 2 is time-sensitive in a way nothing else in this file is.
       Yahoo partitions are internally consistent and still readable; nothing
       is broken today.
 
+## Execution-path increments (2026-08-28 — the schedule is going to be executed)
+
+Dio confirmed the direction: tail-lab dumps a recommended strategy as a JSON
+file and a **separate** daily process picks it up and executes it
+(`docs/adr/0019`'s shape; 0019 stays **Proposed** for now, deliberately — see
+its Status). Real quotes therefore stop being an upgrade and become the
+critical path.
+
+The first marked run, 2026-08-28, produced **0 of 10 placeable legs**. That is
+the number to move.
+
+- [ ] **Drive the chain collection off the screen's own output.** 7 of the top
+      10 legs came back `not_collected`: the 24 names in
+      `DEFAULT_SNAPSHOT_SYMBOLS` were chosen for options liquidity and thesis
+      span, and the screen ranks over all 70 — so the set we collect and the
+      set we recommend are misaligned by construction. Collect at least the
+      union of (a) today's top-K legs and (b) a stable core, or widen toward
+      the full 70. Measured cost of the current 24 is 4.68 MB / 25s, and the 46
+      additions are mostly thin chains (`docs/adr/0020`).
+- [ ] **The screen optimises toward untradeable contracts, and this is the
+      deep one.** All 3 collected legs came back `illiquid` — KRE bid 0.00 / OI
+      0, XLE bid 0.01 ask 0.20 (a 190%-of-mid spread), XLF bid 0.00. That is
+      not bad luck. `rank_universe` picks the strike x tenor cell maximising
+      `best_annualized`, every such figure divides by the **model** premium,
+      and the model premium collapses toward zero exactly where real markets
+      thin out — so the optimiser is systematically steered into contracts
+      nobody trades. `MODEL_PRICED_MAX_MONEYNESS_PCT` (`docs/adr/0018`) was
+      meant to bound this and does not: KRE was at 8%, inside the bound, and
+      still 600x mispriced. Candidate fixes, in order of honesty: rank on
+      *market* premium where a quote exists; failing that, add a liquidity
+      prior to the objective; failing that, bound by the arbitrage check queued
+      under the portfolio-repo increments rather than by a moneyness constant.
+      **This likely changes every published ranking**, so it needs an ADR and a
+      before/after.
+- [ ] **Write the marked schedule to the lake as a dated artifact**, not only
+      as an endpoint. The executor should read a durable, auditable file whose
+      history survives the app being down; `schedule_id` already makes it
+      dedupable. JSON, schema-validated, data-never-code.
+- [ ] **Decide how fills flow back** — `docs/adr/0019` left it open and it is
+      the loop that makes the system measure itself. A fill is a free
+      measurement of the model-vs-market gap on a contract we actually chose,
+      which is strictly better evidence than `make greeks-check` on the whole
+      chain.
+
 ## Prior-art increments (2026-08-27 — see `docs/PRIOR_ART.md`)
 
 From reading nautilus_trader, hftbacktest and kalshimarketmaker. Ordered by
