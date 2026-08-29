@@ -149,12 +149,31 @@ a large one strictly in order.
       → full VX history 2004→present; build the constant-maturity curve
       in `transforms/`. New contract in `contracts/`, adapter follows the
       VIX shape.
-- [ ] **Point-in-time S&P 500 constituents ingestion** from
+- [x] **Point-in-time S&P 500 constituents ingestion** from
       `github.com/fja05680/sp500` (MIT, maintained, 1996→present; raw CSV
       over HTTPS, keyless) — closes `docs/adr/0010` at membership
-      granularity. Cross-check row counts against Wikipedia's "Historical
-      components of the S&P 500". Wire the survivorship caveat into any
-      result that still uses current-constituents.
+      granularity. **Adapter done 2026-08-29**: `contracts/
+      sp500_constituents.py` (dataset #9 in `docs/DATA_CONTRACTS.md`) +
+      `ingestion/sp500_constituents.py` + `make ingest-sp500-constituents`,
+      following `cboe_strategy.py`'s "refetch full history every time"
+      shape so a partial fetch can never truncate a good partition. Live
+      fetch on 2026-08-29 verified 2,718 observation dates, 1996-01-02 to
+      2026-06-30, 487→503 tickers per row over that span — in the plausible
+      range for "S&P 500" once multi-class listings (GOOG/GOOGL,
+      NWS/NWSA, FOX/FOXA) are counted, so the row shape is sane by
+      inspection; the row-count cross-check against Wikipedia's "Historical
+      components of the S&P 500" this item asked for is **not done** and
+      is the natural next step before trusting the series for research.
+      One deliberate deviation from a literal per-`(date, ticker)` table:
+      each row keeps the source's own full comma-joined membership list
+      rather than exploding to long format (~1.3M rows for no consumer yet
+      to justify it) — see the contract module's docstring for the
+      "resolve latest `obs_date` <= target, then split" read pattern a
+      future consumer follows. **Not yet wired**: no `research/` consumer
+      reads it, and the screening universe (`contracts/options_calendar.py`)
+      is still current-constituents-only — wiring the survivorship caveat
+      into any result that uses it is a separate, later increment, same
+      ship-the-adapter-first precedent `rates.py`/`credit.py` followed.
 - [ ] **Earnings-calendar adapter** via Nasdaq's keyless endpoint
       (`api.nasdaq.com/api/calendar/earnings?date=YYYY-MM-DD`, browser UA
       + JSON Accept header; verified back to 2010) → `EARNINGS` rows in

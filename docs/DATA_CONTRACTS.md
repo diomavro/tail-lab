@@ -444,6 +444,61 @@ raises rather than committing a partition that would shadow a good one
 
 ---
 
+## 9. Point-in-time S&P 500 constituents
+
+**Purpose.** Closes `docs/adr/0010`'s survivorship-bias gap at membership
+granularity (`docs/END_STATE.md` §2.3). Today's screening universe is
+"current constituents," which by construction omits exactly the names that
+blew up and delisted — the most tail-sensitive assets of all. This dataset
+answers "which tickers were actually in the index on date D" for any
+historical D.
+
+**Source (free, keyless).** `fja05680/sp500` on GitHub (MIT-licensed,
+community-maintained): a single raw CSV over HTTPS,
+`raw.githubusercontent.com/fja05680/sp500/master/S%26P%20500%20Historical%20Components%20%26%20Changes%20(Updated).csv`.
+Refetched in full on every pull (like dataset #7's adapter), so a partial or
+failed fetch can never truncate a good partition. Live-verified 2026-08-29:
+2,718 observation dates, 1996-01-02 to 2026-06-30.
+
+**Schema — `Sp500ConstituentsRowSchema`:**
+
+| Column | Type | Constraints |
+|---|---|---|
+| `obs_date` | `date` | non-null, unique |
+| `tickers` | `str` | non-null, non-empty; comma-joined membership list |
+
+**Shape — kept as the source's own, not exploded.** One row per observation
+date holds that date's *full* membership as a single comma-joined string,
+not one row per `(date, ticker)`. Exploding to long format would cost ~1.3M
+rows for ~500 tickers x ~2,700 dates with no consumer yet to justify it —
+`contracts/sp500_constituents.py` documents the "resolve latest obs_date
+<= target, then split" read pattern a future consumer follows.
+
+**Cadence.** Observation dates are irregular — the source republishes the
+full list only when membership actually moves (roughly weekly, sometimes
+months apart), not one row per trading day.
+
+**Point-in-time note.** Unlike dataset #5's `announced_at` trap, this
+dataset needs no separate point-in-time field: `obs_date` already *is* the
+date the recorded membership was true, mirroring how `date`/`close` works
+for dataset #1's OHLCV. The lake's `ingest_date`-based `read_bronze_as_of`
+still governs which *ingestion* of this file a backtest may see (guarding
+against a future corrected re-ingest silently rewriting old history); a
+research consumer resolving membership for a specific historical date reads
+within the returned snapshot's `obs_date` column, the same second-level
+filter `research/regimes/timeline.py` already does for VIX closes.
+
+**Bronze partition key.** `ingest_date=<YYYY-MM-DD>`, same as every other
+dataset.
+
+**Not yet wired.** This adapter ships alone — no `research/` orchestrator
+reads it yet, and the existing screening universe
+(`contracts/options_calendar.py`) is still "current constituents." Wiring a
+survivorship-aware universe (and the loud caveat `docs/END_STATE.md` §2.3
+requires until one exists) is a separate, later increment.
+
+---
+
 ## Deferred datasets (backlog, not built)
 
 Tracked in `docs/END_STATE.md` §2.2 — do not build adapters for these
@@ -456,7 +511,7 @@ until pulled onto `AGENT_TODO.md`:
 - Margin debt.
 - Market breadth indicators.
 
-Point-in-time historical index constituents (`docs/adr/0010`) is tracked
-separately in `docs/END_STATE.md` §2.3 — it's a research-validity
-requirement, not an ordinary backlog item, and should be prioritized
-accordingly once the six core datasets are stable.
+Point-in-time historical index constituents (`docs/adr/0010`) is now dataset
+#9 above — the adapter exists, but nothing yet reads it (see that section's
+"Not yet wired"). It remains a research-validity requirement, not an
+ordinary backlog item, per `docs/END_STATE.md` §2.3.
