@@ -16,6 +16,7 @@ from tail_lab.api import putlab_routes
 from tail_lab.api.main import app
 from tail_lab.api.putlab_routes import get_lake_store as putlab_get_lake_store
 from tail_lab.contracts.ohlcv import dataset_id
+from tail_lab.contracts.options_expiry import dataset_id as options_expiry_dataset_id
 from tail_lab.lake.store import DeltaLakeStore
 
 
@@ -403,6 +404,30 @@ def test_cadence_known_and_unknown(client: TestClient) -> None:
     body = unknown.json()
     assert body["symbol"] == "ZZZ"
     assert "assumed" in body["label"].lower()  # flagged as a default, not a verified listing
+
+
+def test_cadence_prefers_a_live_snapshot_over_the_static_table(tmp_path: Path) -> None:
+    store = DeltaLakeStore(tmp_path)
+    today = dt.datetime.now(dt.UTC).date()
+    dates = [today + dt.timedelta(days=d) for d in range(0, 90, 30)]  # monthly gaps
+    df = pd.DataFrame(
+        {
+            "symbol": pd.Series(["IWM"] * len(dates), dtype="object"),
+            "expiration_date": pd.Series(pd.to_datetime(dates), dtype="datetime64[ns]"),
+        }
+    )
+    store.write_bronze(options_expiry_dataset_id("iwm"), today, df)
+    app.dependency_overrides[putlab_get_lake_store] = lambda: store
+    try:
+        resp = TestClient(app).get("/api/putlab/cadence", params={"asset": "iwm"})
+    finally:
+        app.dependency_overrides.pop(putlab_get_lake_store, None)
+
+    assert resp.status_code == 200
+    body = resp.json()
+    # IWM is "weekly" in the static table; the live snapshot must override it.
+    assert body["cadence"] == "monthly"
+    assert body["label"] == "Monthlies (live)"
 
 
 def test_accuracy_never_404s_even_with_nothing_to_report(client: TestClient) -> None:

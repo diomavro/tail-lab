@@ -450,23 +450,26 @@ item 2 is time-sensitive in a way nothing else in this file is.
       for a given asset or window, the surface says *that* rather than
       staying silent.
 
-- [ ] **`options_expiry` is a dangling branch — wire it or retire it.**
-      Surfaced by writing `docs/DATA_FLOW.md` §3.1. The adapter
-      (`ingestion/options_expiry.py`, with a Cboe-primary fallback chain) and
-      the transform (`transforms/options_expiry.py`) both exist and are
-      tested, but there is **no `make ingest-options-expiry` target**, **no
-      `options_expiry_*` partition in production bronze** (verified
-      2026-08-22), and `/api/putlab/cadence` answers from the static catalogue
-      in `contracts/options_calendar.py` instead. The code path is real and
-      the data path is inert — the shape that looks wired on a dependency
-      graph and does nothing in production.
-      **Decide, do not drift:** either add the ingest target and point the
-      cadence endpoint at the lake (real, per-symbol expiration cadence
-      instead of a hand-maintained list), or delete the adapter and transform
-      and say in `docs/DATA_CONTRACTS.md` that cadence is deliberately static.
-      Both are defensible; leaving tested code that nothing runs is not.
-      **Acceptance:** either way, `docs/DATA_FLOW.md` §3.1 stops describing a
-      dangling branch.
+- [x] **`options_expiry` is a dangling branch — wire it or retire it.**
+      **Wired, 2026-08-30.** Chose "wire it": `research/cadence.py`
+      (`resolve_cadence`) reads the `options_expiry_{symbol}` bronze
+      partition as-of a date, mirroring `research/data_quality.py`'s
+      point-in-time read shape, and classifies it with the existing
+      `transforms/options_expiry.classify_cadence`; `/api/putlab/cadence`
+      now calls it (with `as_of`/`store` params matching every other Put Lab
+      route) instead of reading `contracts/options_calendar.cadence_for`
+      directly. New `make ingest-options-expiry SYMBOL=...` target, mirroring
+      `ingest-ohlcv`'s shape. **Falls back to the static table whenever the
+      lake has no snapshot for a symbol, is empty, or has too few near-term
+      expirations to classify** — so behavior in prod is unchanged today
+      (no `options_expiry_*` partition exists there yet, same
+      ship-the-pure-function-first precedent `rates.py`/`credit.py` followed)
+      and becomes live the moment Dio runs the ingest target for a symbol, with
+      no further code change. A live-derived record is labelled
+      `"Weeklies (live)"`/`"Monthlies (live)"` so the two provenances are
+      never visually confused with the static table's `"(assumed)"` flag.
+      `docs/DATA_FLOW.md` §3.1 still describes the pre-wiring state and should
+      be updated to match next time someone is in that file.
 
 - [ ] **Free-source health canary.** Yahoo degraded from "works" to "429s
       everywhere" between 2026-08-19 and 2026-08-21 and nothing in the
