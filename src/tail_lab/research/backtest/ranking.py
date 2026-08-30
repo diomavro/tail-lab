@@ -26,6 +26,8 @@ from __future__ import annotations
 import datetime as dt
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
+from dataclasses import dataclass
+from functools import partial
 
 import pandas as pd
 from pydantic import BaseModel
@@ -153,6 +155,177 @@ def _frac_rank(values: list[float | None], *, fragile_high: bool) -> dict[int, f
     return {i: 1.0 - pos / (len(ordered) - 1) for pos, (i, _) in enumerate(ordered)}
 
 
+def _load_benchmark_returns(store: LakeStore, as_of: dt.date) -> pd.Series | None:
+    """SPY's returns as of ``as_of``, or ``None`` if no benchmark snapshot exists yet
+    (a name's own fragility columns come back ``None`` in that case, not a hard failure)."""
+    try:
+        bench_prices, _ = load_asof_series(store, BENCHMARK, as_of)
+    except LookupError:
+        return None
+    return _returns(bench_prices)
+
+
+def _score_and_sort(rows: list[RankedAsset]) -> list[RankedAsset]:
+    """Composite fragility score (average of ``COMPOSITE_METRICS``' cross-sectional
+    ranks) then sort most-fragile-first; rows too thin to score sort last."""
+    ranks = {
+        "downside_beta": _frac_rank([r.downside_beta for r in rows], fragile_high=True),
+        "co_skewness": _frac_rank([r.co_skewness for r in rows], fragile_high=False),
+        "tail_beta": _frac_rank([r.tail_beta for r in rows], fragile_high=True),
+        "downside_capture": _frac_rank([r.downside_capture for r in rows], fragile_high=True),
+        "vol_beta": _frac_rank([r.vol_beta for r in rows], fragile_high=False),
+    }
+    for i, r in enumerate(rows):
+        parts = [ranks[m][i] for m in COMPOSITE_METRICS if i in ranks[m]]
+        r.fragility_score = sum(parts) / len(parts) if parts else None
+    rows.sort(
+        key=lambda r: r.fragility_score if r.fragility_score is not None else -1.0, reverse=True
+    )
+    return rows
+
+
+@dataclass(frozen=True)
+class _RankContext:
+    """Everything ``_rank_one`` needs for a single name, computed once per
+    ``rank_universe`` call and shared read-only across the thread pool."""
+
+    store: LakeStore
+    as_of: dt.date
+    notional: float
+    moneyness_pct: float
+    tenor_weeks: float
+    years: float
+    timeline: pd.Series
+    bench_ret: pd.Series | None
+    vol_changes: pd.Series
+    lookback_days: int
+
+
+def _fragility(
+    asset_prices: pd.Series, bench_ret: pd.Series | None, lookback_days: int
+) -> tuple[float | None, float | None, float | None, float | None, float | None]:
+    if bench_ret is None:
+        return None, None, None, None, None
+    aligned = pd.concat({"a": _returns(asset_prices), "b": bench_ret}, axis=1).dropna()
+    window = aligned.iloc[-lookback_days:]
+    a, b = window["a"], window["b"]
+
+    def _safe(fn: Callable[[pd.Series, pd.Series], float]) -> float | None:
+        try:
+            return fn(a, b)
+        except ValueError:
+            return None
+
+    return (
+        _safe(downside_beta),
+        _safe(co_skewness),
+        _safe(co_kurtosis),
+        _safe(tail_beta),
+        _safe(downside_capture),
+    )
+
+
+def _vol_beta_for(
+    asset_prices: pd.Series, vol_changes: pd.Series, lookback_days: int
+) -> float | None:
+    """Unlike ``_fragility``, this needs no SPY benchmark -- the regressor is
+    the VIX change series, always present here."""
+    aligned = pd.concat({"a": _returns(asset_prices), "v": vol_changes}, axis=1).dropna()
+    window = aligned.iloc[-lookback_days:]
+    try:
+        return vol_beta(window["a"], window["v"])
+    except ValueError:
+        return None
+
+
+def _rank_one(symbol: str, ctx: _RankContext) -> RankedAsset | None:
+    try:
+        prices, iv_proxy = load_asof_series(ctx.store, symbol, ctx.as_of)
+        result = run_put_roll(
+            prices,
+            iv_proxy,
+            asset=symbol,
+            as_of=ctx.as_of,
+            notional=ctx.notional,
+            moneyness_pct=ctx.moneyness_pct,
+            tenor_weeks=ctx.tenor_weeks,
+            lookback_years=ctx.years,
+        )
+    except LookupError:
+        return None  # no data / too short a window for this name -> skip
+    # Drop a name whose history does not cover the window being asked about,
+    # rather than comparing an annualized-over-four-years figure that only
+    # saw two (see MIN_WINDOW_COVERAGE).
+    covered_days = (result.cycles[-1].expiry_date - result.cycles[0].entry_date).days
+    if covered_days / 365.25 < ctx.years * MIN_WINDOW_COVERAGE:
+        return None
+    # The heatmap's grid, over the price path already in hand, but only the
+    # strikes the model can actually price: `best_point` is bounded to them
+    # (the raw argmax is drawn to the deepest cell, where the premium rounds
+    # to nothing -- docs/adr/0018), so sweeping deeper here would compute
+    # numbers this function is required to discard.
+    best = best_point(
+        run_sweep(
+            prices,
+            iv_proxy,
+            asset=symbol,
+            as_of=ctx.as_of,
+            notional=ctx.notional,
+            years=ctx.years,
+            moneyness_grid=MODEL_PRICED_SWEEP_MONEYNESS,
+        )
+    )
+    db, cs, ck, tb, dc = _fragility(prices, ctx.bench_ret, ctx.lookback_days)
+    vb = _vol_beta_for(prices, ctx.vol_changes, ctx.lookback_days)
+    _, verdict = regime_breakdown(result.cycles, ctx.timeline)
+    # One more roll, at the winning cell, so every ``best_*`` figure comes from
+    # the same strategy. ~2% on top of the 55-cell sweep already run.
+    best_run = None
+    best_verdict: Verdict | None = None
+    if best is not None:
+        try:
+            best_run = run_put_roll(
+                prices,
+                iv_proxy,
+                asset=symbol,
+                as_of=ctx.as_of,
+                notional=ctx.notional,
+                moneyness_pct=best.moneyness_pct,
+                tenor_weeks=best.tenor_weeks,
+                lookback_years=ctx.years,
+                include_curves=False,
+            )
+            _, best_verdict = regime_breakdown(best_run.cycles, ctx.timeline)
+        except LookupError:  # pragma: no cover - the sweep already scored it
+            best_run = None
+    return RankedAsset(
+        asset=symbol,
+        name=cadence_for(symbol).name,
+        spot=result.spot,
+        downside_beta=db,
+        co_skewness=cs,
+        co_kurtosis=ck,
+        tail_beta=tb,
+        downside_capture=dc,
+        vol_beta=vb,
+        fragility_score=None,  # filled in cross-sectionally below
+        roi_on_premium=result.roi_on_premium,
+        annualized_return=result.annualized_return,
+        verdict=verdict,
+        hit_rate=result.hit_rate,
+        biggest_payoff_mult=result.biggest_payoff_mult,
+        n_cycles=result.n_cycles,
+        best_annualized=best.annualized_return if best else None,
+        best_moneyness_pct=best.moneyness_pct if best else None,
+        best_tenor_weeks=best.tenor_weeks if best else None,
+        best_roi_on_premium=best_run.roi_on_premium if best_run else None,
+        best_hit_rate=best_run.hit_rate if best_run else None,
+        best_biggest_payoff_mult=best_run.biggest_payoff_mult if best_run else None,
+        best_n_cycles=best_run.n_cycles if best_run else None,
+        best_verdict=best_verdict,
+    )
+
+
 def rank_universe(
     store: LakeStore,
     *,
@@ -176,158 +349,32 @@ def rank_universe(
     # compute_regime_timeline above already proved a VIX snapshot exists as of
     # `as_of`, so this cannot raise LookupError here.
     vol_changes = load_vix_close(store, as_of=as_of).pct_change().dropna()
-
-    try:
-        bench_prices, _ = load_asof_series(store, BENCHMARK, as_of)
-        bench_ret: pd.Series | None = _returns(bench_prices)
-    except LookupError:
-        bench_ret = None
-
-    def _fragility(
-        asset_prices: pd.Series,
-    ) -> tuple[float | None, float | None, float | None, float | None, float | None]:
-        if bench_ret is None:
-            return None, None, None, None, None
-        aligned = pd.concat({"a": _returns(asset_prices), "b": bench_ret}, axis=1).dropna()
-        window = aligned.iloc[-lookback_days:]
-        a, b = window["a"], window["b"]
-
-        def _safe(fn: Callable[[pd.Series, pd.Series], float]) -> float | None:
-            try:
-                return fn(a, b)
-            except ValueError:
-                return None
-
-        return (
-            _safe(downside_beta),
-            _safe(co_skewness),
-            _safe(co_kurtosis),
-            _safe(tail_beta),
-            _safe(downside_capture),
-        )
-
-    def _vol_beta_for(asset_prices: pd.Series) -> float | None:
-        """Unlike ``_fragility``, this needs no SPY benchmark -- the
-        regressor is the VIX change series, always present here."""
-        aligned = pd.concat({"a": _returns(asset_prices), "v": vol_changes}, axis=1).dropna()
-        window = aligned.iloc[-lookback_days:]
-        try:
-            return vol_beta(window["a"], window["v"])
-        except ValueError:
-            return None
-
-    def _rank_one(symbol: str) -> RankedAsset | None:
-        try:
-            prices, iv_proxy = load_asof_series(store, symbol, as_of)
-            result = run_put_roll(
-                prices,
-                iv_proxy,
-                asset=symbol,
-                as_of=as_of,
-                notional=notional,
-                moneyness_pct=moneyness_pct,
-                tenor_weeks=tenor_weeks,
-                lookback_years=years,
-            )
-        except LookupError:
-            return None  # no data / too short a window for this name -> skip
-        # Drop a name whose history does not cover the window being asked
-        # about, rather than comparing an annualized-over-four-years figure
-        # that only saw two (see MIN_WINDOW_COVERAGE).
-        covered_days = (result.cycles[-1].expiry_date - result.cycles[0].entry_date).days
-        if covered_days / 365.25 < years * MIN_WINDOW_COVERAGE:
-            return None
-        # The heatmap's grid, over the price path already in hand, but only the
-        # strikes the model can actually price: `best_point` is bounded to them
-        # (the raw argmax is drawn to the deepest cell, where the premium rounds
-        # to nothing -- docs/adr/0018), so sweeping deeper here would compute
-        # numbers this function is required to discard.
-        best = best_point(
-            run_sweep(
-                prices,
-                iv_proxy,
-                asset=symbol,
-                as_of=as_of,
-                notional=notional,
-                years=years,
-                moneyness_grid=MODEL_PRICED_SWEEP_MONEYNESS,
-            )
-        )
-        db, cs, ck, tb, dc = _fragility(prices)
-        vb = _vol_beta_for(prices)
-        _, verdict = regime_breakdown(result.cycles, timeline)
-        # One more roll, at the winning cell, so every ``best_*`` figure comes
-        # from the same strategy. ~2% on top of the 55-cell sweep already run.
-        best_run = None
-        best_verdict: Verdict | None = None
-        if best is not None:
-            try:
-                best_run = run_put_roll(
-                    prices,
-                    iv_proxy,
-                    asset=symbol,
-                    as_of=as_of,
-                    notional=notional,
-                    moneyness_pct=best.moneyness_pct,
-                    tenor_weeks=best.tenor_weeks,
-                    lookback_years=years,
-                    include_curves=False,
-                )
-                _, best_verdict = regime_breakdown(best_run.cycles, timeline)
-            except LookupError:  # pragma: no cover - the sweep already scored it
-                best_run = None
-        return RankedAsset(
-            asset=symbol,
-            name=cadence_for(symbol).name,
-            spot=result.spot,
-            downside_beta=db,
-            co_skewness=cs,
-            co_kurtosis=ck,
-            tail_beta=tb,
-            downside_capture=dc,
-            vol_beta=vb,
-            fragility_score=None,  # filled in cross-sectionally below
-            roi_on_premium=result.roi_on_premium,
-            annualized_return=result.annualized_return,
-            verdict=verdict,
-            hit_rate=result.hit_rate,
-            biggest_payoff_mult=result.biggest_payoff_mult,
-            n_cycles=result.n_cycles,
-            best_annualized=best.annualized_return if best else None,
-            best_moneyness_pct=best.moneyness_pct if best else None,
-            best_tenor_weeks=best.tenor_weeks if best else None,
-            best_roi_on_premium=best_run.roi_on_premium if best_run else None,
-            best_hit_rate=best_run.hit_rate if best_run else None,
-            best_biggest_payoff_mult=best_run.biggest_payoff_mult if best_run else None,
-            best_n_cycles=best_run.n_cycles if best_run else None,
-            best_verdict=best_verdict,
-        )
+    bench_ret = _load_benchmark_returns(store, as_of)
+    ctx = _RankContext(
+        store=store,
+        as_of=as_of,
+        notional=notional,
+        moneyness_pct=moneyness_pct,
+        tenor_weeks=tenor_weeks,
+        years=years,
+        timeline=timeline,
+        bench_ret=bench_ret,
+        vol_changes=vol_changes,
+        lookback_days=lookback_days,
+    )
 
     # Each name is an independent lake read + roll; the S3 read releases the
     # GIL, so a bounded thread pool cuts the cold warm-up.
     with ThreadPoolExecutor(max_workers=8) as pool:
-        rows = [r for r in pool.map(_rank_one, symbols) if r is not None]
+        rows = list(filter(None, pool.map(partial(_rank_one, ctx=ctx), symbols)))
 
     # Composite fragility: higher downside beta / tail beta / downside capture,
     # and *lower* (more negative) co-skewness / vol beta, all mean more fragile.
     # Average the cross-sectional ranks of the COMPOSITE_METRICS present
     # (co-kurtosis is ranked for display but excluded from the blend -- see
-    # COMPOSITE_METRICS).
-    ranks = {
-        "downside_beta": _frac_rank([r.downside_beta for r in rows], fragile_high=True),
-        "co_skewness": _frac_rank([r.co_skewness for r in rows], fragile_high=False),
-        "tail_beta": _frac_rank([r.tail_beta for r in rows], fragile_high=True),
-        "downside_capture": _frac_rank([r.downside_capture for r in rows], fragile_high=True),
-        "vol_beta": _frac_rank([r.vol_beta for r in rows], fragile_high=False),
-    }
-    for i, r in enumerate(rows):
-        parts = [ranks[m][i] for m in COMPOSITE_METRICS if i in ranks[m]]
-        r.fragility_score = sum(parts) / len(parts) if parts else None
-
-    # Most fragile first (names with no fragility estimate sort last).
-    rows.sort(
-        key=lambda r: r.fragility_score if r.fragility_score is not None else -1.0, reverse=True
-    )
+    # COMPOSITE_METRICS). Most fragile first; names with no fragility estimate
+    # sort last.
+    rows = _score_and_sort(rows)
     return UniverseRanking(
         as_of=as_of,
         moneyness_pct=moneyness_pct,
