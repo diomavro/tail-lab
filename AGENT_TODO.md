@@ -478,18 +478,27 @@ item 2 is time-sensitive in a way nothing else in this file is.
       above. **Acceptance:** a red canary is visible in the cockpit without
       anyone reading logs. Keep it cheap — one HEAD/small-GET per source per
       day, not a crawl.
-- [ ] **Minneapolis Fed MPD adapter** (free, keyless, official). Risk-neutral
-      density statistics for the S&P 500 backed out of real option prices by
-      Breeden-Litzenberger:
-      `https://www.minneapolisfed.org/-/media/files/banking/mpd/mpd_stats.csv`
-      (dictionary at `mpd_data_dictionary.csv`). The `sp12m` market runs
-      **2007-01-12 to 2026-08-19, 821 weekly observations**, carrying `mu`,
-      `sd`, `skew`, `kurt`, `p10`/`p50`/`p90` and the probability of a ±20%
-      move. Weekly and single-tenor, so it is a *calibration and validation
-      target* for the skew-aware pricer through the 2008 crisis — not a
-      chain and not a substitute for one. Ingest the `sp12m` rows at
-      minimum; the file also carries per-firm densities (aig, citi, bac, gs,
-      ms...) that the fragility screen may want later.
+- [x] **Minneapolis Fed MPD adapter** (free, keyless, official). **Done
+      2026-08-31.** `contracts/mpd.py` (`docs/DATA_CONTRACTS.md` #9) +
+      `ingestion/mpd.py` + `make ingest-mpd`, following the
+      `ingestion/cboe_strategy.py` shape (one fetch, one long-format panel,
+      no per-ticker loop needed since the source is a single file covering
+      the whole market family). Parser pinned against a real fixture
+      (`tests/fixtures/mpd_stats_sample.csv`, live-fetched 2026-08-31):
+      the Sep-Oct 2008 crisis window for `sp12m`, plus `bac` and `infl1y`
+      rows and a real blank-`maturity_target` row, so the null-handling and
+      the inflation markets' different "large move" threshold (source's own
+      preamble note) are both pinned, not assumed. **The live file no
+      longer carries most of the per-firm densities** the original item
+      described (aig/gs/jpm/ms/wfc/... are absent from the current file;
+      only `bac`/`citi` remain alongside `sp12m`/`sp6m` and several
+      commodity/FX/rate/inflation markets) — ingesting the whole file rather
+      than filtering to `sp12m` costs nothing extra (one fetch either way)
+      and keeps whatever the source still carries. **Not yet run against
+      prod** and **no `research/` consumer wired yet** — same
+      ship-the-adapter-first precedent `rates.py`/`credit.py` followed; the
+      calibration/validation use (`docs/END_STATE.md` §4 Q2, the skew-aware
+      pricer) is a follow-up once a live `mpd` partition exists.
 
 ### Working rules for this section
 
