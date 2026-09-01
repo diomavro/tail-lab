@@ -183,12 +183,31 @@ a large one strictly in order.
       → full VX history 2004→present; build the constant-maturity curve
       in `transforms/`. New contract in `contracts/`, adapter follows the
       VIX shape.
-- [ ] **Point-in-time S&P 500 constituents ingestion** from
+- [x] **Point-in-time S&P 500 constituents ingestion** from
       `github.com/fja05680/sp500` (MIT, maintained, 1996→present; raw CSV
       over HTTPS, keyless) — closes `docs/adr/0010` at membership
-      granularity. Cross-check row counts against Wikipedia's "Historical
-      components of the S&P 500". Wire the survivorship caveat into any
-      result that still uses current-constituents.
+      granularity. **Adapter done 2026-08-29**: `contracts/
+      sp500_constituents.py` (dataset #9 in `docs/DATA_CONTRACTS.md`) +
+      `ingestion/sp500_constituents.py` + `make ingest-sp500-constituents`,
+      following `cboe_strategy.py`'s "refetch full history every time"
+      shape so a partial fetch can never truncate a good partition. Live
+      fetch on 2026-08-29 verified 2,718 observation dates, 1996-01-02 to
+      2026-06-30, 487→503 tickers per row over that span — in the plausible
+      range for "S&P 500" once multi-class listings (GOOG/GOOGL,
+      NWS/NWSA, FOX/FOXA) are counted, so the row shape is sane by
+      inspection; the row-count cross-check against Wikipedia's "Historical
+      components of the S&P 500" this item asked for is **not done** and
+      is the natural next step before trusting the series for research.
+      One deliberate deviation from a literal per-`(date, ticker)` table:
+      each row keeps the source's own full comma-joined membership list
+      rather than exploding to long format (~1.3M rows for no consumer yet
+      to justify it) — see the contract module's docstring for the
+      "resolve latest `obs_date` <= target, then split" read pattern a
+      future consumer follows. **Not yet wired**: no `research/` consumer
+      reads it, and the screening universe (`contracts/options_calendar.py`)
+      is still current-constituents-only — wiring the survivorship caveat
+      into any result that uses it is a separate, later increment, same
+      ship-the-adapter-first precedent `rates.py`/`credit.py` followed.
 - [ ] **Earnings-calendar adapter** via Nasdaq's keyless endpoint
       (`api.nasdaq.com/api/calendar/earnings?date=YYYY-MM-DD`, browser UA
       + JSON Accept header; verified back to 2010) → `EARNINGS` rows in
@@ -615,6 +634,22 @@ item 2 is time-sensitive in a way nothing else in this file is.
       **Until this is decided, do not re-ingest prod OHLCV.** The existing
       Yahoo partitions are internally consistent and still readable; nothing
       is broken today.
+
+## Operational (2026-09-01)
+
+- [ ] **Detect agent PRs that have gone silently CI-less.** GitHub runs
+      `pull_request` workflows on the merge commit, so a branch that conflicts
+      with `main` reports **zero** check runs — which is indistinguishable from
+      "queued" and from a dropped event, and is therefore invisible. This is
+      not hypothetical: five agent PRs stalled 2026-08-29..09-01, and as
+      siblings merged they all conflicted on `Makefile` (each adds an
+      `ingest-*` target at the same place) and stopped getting CI entirely.
+      Cheapest fix is a scheduled check that lists open `agent/*` PRs with
+      `mergeable == false` or no check runs, and says so loudly. A better fix
+      also removes the cause: the per-adapter `Makefile` targets are a
+      guaranteed collision point, so consider a single generic
+      `make ingest DATASET=<name>` dispatching on the adapter, which would make
+      new adapters conflict-free by construction.
 
 ## Position sizing / optimal leverage (2026-09-01 — Dio; `docs/END_STATE.md` §4 Q8)
 
