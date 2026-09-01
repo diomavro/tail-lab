@@ -9,8 +9,10 @@ agrees with the ingest clock, as ``/api/vix/stretch`` does) and delegate to
   per-cycle P&L, and headline stats.
 - ``GET /api/putlab/sweep`` — the strike x tenor grid of total return, one
   backtest per cell (the heatmap).
-- ``GET /api/putlab/cadence`` — the static options-listing cadence for an
-  asset (``contracts/options_calendar.py``).
+- ``GET /api/putlab/cadence`` — an asset's options-listing cadence, live-
+  derived from the forward-collected chain snapshot when one exists
+  (``research/cadence.py``), else the static fallback
+  (``contracts/options_calendar.py``).
 """
 
 from __future__ import annotations
@@ -32,7 +34,6 @@ from tail_lab.contracts.ohlcv import dataset_id
 from tail_lab.contracts.option_chain import DATASET as OPTION_CHAIN_DATASET
 from tail_lab.contracts.options_calendar import (
     OptionsCadence,
-    cadence_for,
     screening_universe,
     universe_symbols,
 )
@@ -63,6 +64,7 @@ from tail_lab.research.backtest.ranking import BENCHMARK, UniverseRanking, rank_
 from tail_lab.research.backtest.regime_verdict import RegimeVerdict, compute_regime_verdict
 from tail_lab.research.backtest.roll_schedule import RollSchedule, build_roll_schedule
 from tail_lab.research.backtest.sweep import MODEL_PRICED_MAX_MONEYNESS_PCT, run_sweep
+from tail_lab.research.cadence import resolve_cadence
 from tail_lab.research.data_quality import DataQualityReport, assess_asset_quality
 from tail_lab.research.regimes.timeline import RegimeTimelineView, compute_regime_view
 
@@ -338,8 +340,10 @@ def putlab_regime_verdict(
 @router.get("/api/putlab/cadence")
 def putlab_cadence(
     asset: str = Query(description="Underlying ticker, e.g. spy."),
+    as_of: dt.date | None = Query(default=None),
+    store: LakeStore = Depends(get_lake_store),
 ) -> OptionsCadence:
-    return cadence_for(asset)
+    return resolve_cadence(store, asset, as_of=_resolve_as_of(as_of))
 
 
 @router.get("/api/putlab/regimes")

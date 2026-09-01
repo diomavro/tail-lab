@@ -105,11 +105,13 @@ concerns" (README, *Accuracy is surfaced, not filed*).
 
 Two things on this map are **not** in the lake at all:
 
-- **The screening universe and the options-cadence labels**
-  (`/api/putlab/universe`, `/api/putlab/cadence`) come from a static catalogue
-  in `contracts/options_calendar.py`. No freshness, no failure mode — and see
-  the dangling branch below, because this is *not* what the architecture
-  intended.
+- **The screening universe** (`/api/putlab/universe`) comes from a static
+  catalogue in `contracts/options_calendar.py`. No freshness, no failure mode.
+- **The options-cadence labels** (`/api/putlab/cadence`) now prefer the lake
+  (`research/cadence.py` reads the `options_expiry_*` bronze partition
+  as-of-date and classifies it) but fall back to that same static catalogue
+  whenever a symbol has no snapshot yet — see §3.1, no longer a dangling
+  branch but still waiting on its first production ingest.
 - **Feedback and hypothesis memory** are JSON blobs under `ops/` via
   `BlobStore`, not Delta tables — different lifecycle, never point-in-time
   read (`docs/adr/0014`, `docs/adr/0015`).
@@ -126,27 +128,30 @@ account, no API key, no money — the constitution's free-data-first rule.
 | **Cboe CDN** — `VIX_History.csv` | `vix` (1990→) | daily | ✅ | Yahoo | `make ingest-vix` |
 | **Cboe CDN** — `{TICKER}_History.csv` | `cboe_strategy` (11 indices, 1975→) | daily | ✅ | none | `make ingest-cboe-strategy` |
 | **Nasdaq** historical | `ohlcv_<symbol>` | daily | ✅ | Yahoo | `make ingest-ohlcv SYMBOL=…` |
-| **Cboe** delayed quote chain | `options_expiry_<symbol>` | daily | ✅ | Yahoo (cookie+crumb) | ⚠️ **nothing** — see §3.1 |
+| **Cboe** delayed quote chain | `options_expiry_<symbol>` | daily | ✅ | Yahoo (cookie+crumb) | `make ingest-options-expiry SYMBOL=…` |
 | **Local vendor file** — lambdaclass `data-v1` | `option_quotes` (42,131 real SPY quotes, 2008→2025) | one-shot | ✅ (manual download) | none | `make ingest-option-quotes` |
-| **Static catalogue** | screening universe, options cadence | n/a | ✅ | n/a | none — it is code |
+| **Static catalogue** | screening universe, options-cadence fallback | n/a | ✅ | n/a | none — it is code |
 
-### 3.1 One dangling branch — `options_expiry`
+### 3.1 `options_expiry` — wired 2026-08-30, still waiting on its first ingest
 
-Writing this map surfaced a gap worth recording rather than quietly fixing.
-`ingestion/options_expiry.py` and `transforms/options_expiry.py` both exist,
-are tested, and have a fallback chain. But:
+This map originally surfaced a gap: `ingestion/options_expiry.py` and
+`transforms/options_expiry.py` existed and were tested, but nothing ran the
+adapter and `/api/putlab/cadence` never read the result — a pipeline that
+looks wired on a dependency graph and is inert in production. That is fixed
+on the code side: `research/cadence.py` reads the `options_expiry_<symbol>`
+bronze partition as-of-date, classifies it with
+`transforms/options_expiry.classify_cadence`, and `/api/putlab/cadence` calls
+it; `make ingest-options-expiry SYMBOL=…` now exists to populate the
+partition.
 
-- there is **no `make ingest-options-expiry` target**, so nothing ever runs it;
-- **no `options_expiry_*` partition exists in production bronze** (verified
-  2026-08-22);
-- `/api/putlab/cadence` answers from the **static catalogue**, not from the
-  lake, so the panel works and nobody noticed.
-
-So the code path is real, the data path is not. That is the most dangerous
-shape a pipeline can have — it looks wired on a dependency graph and is inert
-in production — and a lineage map is exactly the artifact that should catch
-it. Queued in `AGENT_TODO.md`; nothing is broken today because the static
-catalogue is honest about being static.
+**Still true today:** no `options_expiry_*` partition exists in production
+bronze — running the ingest target is a human action (`AGENT_MISSION.md`'s
+"data changes" rule), not one the daily agent takes. Until Dio runs it for a
+symbol, `resolve_cadence` falls back to the static catalogue exactly as
+`/api/putlab/cadence` always has, so production behavior is unchanged for now.
+The moment a symbol has a snapshot, its cadence label switches from
+`"Weeklies/Monthlies (assumed)"` to `"Weeklies/Monthlies (live)"` with no
+further code change.
 
 **Sources do not depend on each other.** Every arrow in §1 runs source →
 lake; there is no source that must be fetched before another. What *is*
@@ -159,7 +164,7 @@ flowchart TB
     VIX[("vix")]
     STRAT[("cboe_strategy")]
     OHLCV[("ohlcv_*")]
-    EXP[("options_expiry_*<br/>⚠ never ingested")]
+    EXP[("options_expiry_*<br/>⚠ not yet ingested in prod")]
     QUOTES[("option_quotes<br/>optional")]
 
     VIX --> REGIME["regimes/timeline<br/>vix_stretch"]
@@ -168,8 +173,9 @@ flowchart TB
     OHLCV --> ROLL["backtest/put_roll<br/>portfolio · ranking · sweep"]
     OHLCV --> METRICS["metrics/*<br/>leaderboard"]
     OHLCV --> DQ["data_quality"]
-    EXP -.dangling.-> CADENCE["transforms/options_expiry"]
-    STATIC2["contracts/options_calendar<br/>static catalogue"] --> CADENCEAPI["/api/putlab/cadence"]
+    EXP --> CADENCE["research/cadence<br/>resolve_cadence"]
+    STATIC2["contracts/options_calendar<br/>static catalogue"] -.fallback.-> CADENCE
+    CADENCE --> CADENCEAPI["/api/putlab/cadence"]
     QUOTES --> SKEW["skew<br/>hand-run measurement"]
     VIX --> SKEW
 
@@ -198,7 +204,7 @@ free source here has already degraded at least once: Yahoo went from "works" to
 | **Cboe VIX** | Regime tab, VIX stretch tile, the residual, the regime mix in the accuracy panel | every backtest, the ranking, the screen | nothing yet — canary is queued |
 | **Cboe strategy indices** | the residual, the benchmark table in the accuracy panel | everything else; the panel drops two blocks and says so | nothing yet |
 | **OHLCV (Nasdaq + Yahoo both)** | **everything** — no price path, no backtest, no ranking | the Regime tab | the backtest 404s loudly |
-| **Cboe chains + Yahoo** | **nothing** — the dataset is never ingested (§3.1) | everything, including the cadence panel | n/a |
+| **Cboe chains + Yahoo** | nothing yet — no production partition exists to lose (§3.1) | everything, including the cadence panel (fallback to the static catalogue) | n/a |
 | **`option_quotes`** (licence-limited) | `make skew` only | **everything** — by construction | raises `LookupError` |
 
 **The asymmetry is deliberate.** The licence-limited source is the one whose

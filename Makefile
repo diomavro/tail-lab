@@ -11,7 +11,7 @@ VENV := .venv
 PY := env -u PYTHONPATH $(VENV)/bin/python
 PIP := env -u PYTHONPATH $(VENV)/bin/pip
 
-.PHONY: setup lint format typecheck import-lint test check cov-floors ingest-vix ingest-ohlcv ingest-cboe-strategy ingest-rates ingest-credit ingest-mpd ingest-option-quotes residual skew api frontend clean
+.PHONY: setup lint format typecheck import-lint test check cov-floors ingest-vix ingest-ohlcv ingest-options-expiry ingest-cboe-strategy ingest-rates ingest-credit ingest-option-quotes residual skew api frontend clean ingest-mpd
 
 help:
 	@echo "Targets:"
@@ -24,6 +24,7 @@ help:
 	@echo "  check        lint + typecheck + import-lint + test (all CI gates)"
 	@echo "  ingest-vix   Live VIX fetch (Cboe, Yahoo fallback) -> bronze (network; not run in CI)"
 	@echo "  ingest-ohlcv Live OHLCV fetch (Nasdaq, Yahoo fallback) -> bronze for SYMBOL (default AAPL; network; not run in CI)"
+	@echo "  ingest-options-expiry Live listed-expiry fetch (Cboe, Yahoo fallback) -> bronze for SYMBOL (default AAPL; network; not run in CI)"
 	@echo "  ingest-cboe-strategy  Live Cboe strategy-index fetch -> bronze (TICKERS=... ; network; not run in CI)"
 	@echo "  ingest-rates Live FRED rates fetch -> bronze (SERIES=... ; needs FRED_API_KEY; network; not run in CI)"
 	@echo "  ingest-credit Live FRED credit-spread fetch -> bronze (SERIES=... ; needs FRED_API_KEY; network; not run in CI)"
@@ -97,6 +98,13 @@ residual:
 SYMBOL ?= AAPL
 ingest-ohlcv:
 	env -u PYTHONPATH $(VENV)/bin/python -c "from tail_lab.ingestion.ohlcv import ingest_ohlcv; from tail_lab.config import get_lake_store; from tail_lab.observability import configure_logging; configure_logging(); r = ingest_ohlcv(get_lake_store(), '$(SYMBOL)'); print(f'committed {r.valid_rows} rows from {r.source_id} (adj_close basis: {r.adjustment_basis}) -> {r.bronze_path} ({r.quarantined_rows} quarantined)')"
+
+# Listed expiration dates for SYMBOL, so /api/putlab/cadence can derive the
+# real listing cadence instead of reading contracts/options_calendar.py's
+# hand-maintained table (research/cadence.py falls back to that table for any
+# symbol with no partition here yet).
+ingest-options-expiry:
+	env -u PYTHONPATH $(VENV)/bin/python -c "from tail_lab.ingestion.options_expiry import ingest_options_expiry; from tail_lab.config import get_lake_store; from tail_lab.observability import configure_logging; configure_logging(); r = ingest_options_expiry(get_lake_store(), '$(SYMBOL)'); print(f'committed {r.valid_rows} rows from {r.source_id} -> {r.bronze_path} ({r.quarantined_rows} quarantined)')"
 
 # TICKERS is an optional comma-separated override; empty means the adapter's
 # DEFAULT_TICKERS (the tail-hedge family + SPX).
