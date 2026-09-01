@@ -170,7 +170,41 @@ one-off notebook result that goes stale.
    against the SPY put that costs the same premium. If the basket does not
    beat it, S1's edge is a correlation short wearing a sensitivity
    screen's clothes, and that is a finding worth having early.
-8. **Can the bleed be financed without giving up the tail?** The naked
+8. **What fraction of wealth belongs in this, and is the growth-optimal
+   allocation larger than a variance-based rule would allow?** The platform
+   spends a fixed cash budget per leg — a placeholder standing where a
+   decision should be. The right objective is the **time-average growth
+   rate** of the combined portfolio (benchmark plus hedge), not expected
+   wealth: under multiplicative dynamics the two differ and an investor
+   lives one trajectory (Peters, *Optimal leverage from non-ergodicity*,
+   Quantitative Finance 11(11), 2011; Peters & Gell-Mann, *Evaluating
+   gambles using dynamics*, Chaos 26, 2016; Peters, Nature Physics 15,
+   2019). For geometric Brownian motion that gives Kelly leverage
+   `l* = (mu - r) / sigma^2`, with growth going **negative** outside
+   `[0, 2 l*]` — over-betting does not merely reduce growth, it destroys it,
+   and symmetrically about the optimum.
+
+   **Why that formula does not transfer, and why the answer may still be
+   larger than it looks.** The `sigma^2` penalty comes from a quadratic loss
+   term that assumes losses scale with leverage without bound — twice-levered
+   equity is ruined by a 50% fall. A long put cannot lose more than its
+   premium, and its variance is mostly *upside*, which is the product rather
+   than the risk. A variance penalty calibrated on symmetric outcomes
+   therefore over-penalises this payoff, and the growth-optimal fraction can
+   plausibly exceed what a naive Kelly reading suggests. That is a
+   **hypothesis to measure, not a result to assume**: the payoff is neither
+   lognormal nor symmetric, so `l*` has to be found numerically on the
+   empirical payoff distribution, and reported with the in-sample caveat the
+   Bake-off already carries.
+
+   **The trap to avoid.** Evaluated standalone the answer is *zero* — a long
+   put usually has negative expected value (that is Q6's volatility risk
+   premium) and Kelly on a negative-EV bet says do not bet. The question is
+   only well-posed for the **combined** portfolio, where a negative-EV leg
+   can raise geometric growth by truncating the left tail. Any answer that
+   reports an optimal size for the put book alone has answered the wrong
+   question.
+9. **Can the bleed be financed without giving up the tail?** The naked
    long put is one point in a family (Kakushadze & Serur §2.9, §2.19,
    §2.21, §2.37). A put ratio backspread — short one near-ATM put, long
    two further OTM — is often structured at zero or negative net debit and

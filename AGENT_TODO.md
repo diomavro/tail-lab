@@ -512,18 +512,27 @@ item 2 is time-sensitive in a way nothing else in this file is.
       above. **Acceptance:** a red canary is visible in the cockpit without
       anyone reading logs. Keep it cheap — one HEAD/small-GET per source per
       day, not a crawl.
-- [ ] **Minneapolis Fed MPD adapter** (free, keyless, official). Risk-neutral
-      density statistics for the S&P 500 backed out of real option prices by
-      Breeden-Litzenberger:
-      `https://www.minneapolisfed.org/-/media/files/banking/mpd/mpd_stats.csv`
-      (dictionary at `mpd_data_dictionary.csv`). The `sp12m` market runs
-      **2007-01-12 to 2026-08-19, 821 weekly observations**, carrying `mu`,
-      `sd`, `skew`, `kurt`, `p10`/`p50`/`p90` and the probability of a ±20%
-      move. Weekly and single-tenor, so it is a *calibration and validation
-      target* for the skew-aware pricer through the 2008 crisis — not a
-      chain and not a substitute for one. Ingest the `sp12m` rows at
-      minimum; the file also carries per-firm densities (aig, citi, bac, gs,
-      ms...) that the fragility screen may want later.
+- [x] **Minneapolis Fed MPD adapter** (free, keyless, official). **Done
+      2026-08-31.** `contracts/mpd.py` (`docs/DATA_CONTRACTS.md` #9) +
+      `ingestion/mpd.py` + `make ingest-mpd`, following the
+      `ingestion/cboe_strategy.py` shape (one fetch, one long-format panel,
+      no per-ticker loop needed since the source is a single file covering
+      the whole market family). Parser pinned against a real fixture
+      (`tests/fixtures/mpd_stats_sample.csv`, live-fetched 2026-08-31):
+      the Sep-Oct 2008 crisis window for `sp12m`, plus `bac` and `infl1y`
+      rows and a real blank-`maturity_target` row, so the null-handling and
+      the inflation markets' different "large move" threshold (source's own
+      preamble note) are both pinned, not assumed. **The live file no
+      longer carries most of the per-firm densities** the original item
+      described (aig/gs/jpm/ms/wfc/... are absent from the current file;
+      only `bac`/`citi` remain alongside `sp12m`/`sp6m` and several
+      commodity/FX/rate/inflation markets) — ingesting the whole file rather
+      than filtering to `sp12m` costs nothing extra (one fetch either way)
+      and keeps whatever the source still carries. **Not yet run against
+      prod** and **no `research/` consumer wired yet** — same
+      ship-the-adapter-first precedent `rates.py`/`credit.py` followed; the
+      calibration/validation use (`docs/END_STATE.md` §4 Q2, the skew-aware
+      pricer) is a follow-up once a live `mpd` partition exists.
 
 ### Working rules for this section
 
@@ -603,6 +612,63 @@ item 2 is time-sensitive in a way nothing else in this file is.
       **Until this is decided, do not re-ingest prod OHLCV.** The existing
       Yahoo partitions are internally consistent and still readable; nothing
       is broken today.
+
+## Position sizing / optimal leverage (2026-09-01 — Dio; `docs/END_STATE.md` §4 Q8)
+
+Dio's ask, in his words: a control where "the investor can either keep
+investing in the same way they do now, or invest a portion of their wealth",
+plus "analytics on what the optimal leverage is with this strategy, it might be
+higher than normal". He is right that it might be, and right that it is not the
+textbook number — but the reason matters, and getting the framing wrong
+produces a confident wrong answer. **Read §4 Q8 before starting.** Ordered so
+that nothing depends on a number the platform cannot yet compute honestly.
+
+- [ ] **Sizing mode: fixed cash OR a fraction of wealth.** Today
+      `premium_budget_per_leg` is a fixed $1,000 — a placeholder, not a
+      decision. Add a `SizingMode` seam mirroring the `OptionPricer`
+      pluggability of `docs/adr/0004`: `FixedPremium(amount)` (today's,
+      unchanged, still the default) and `WealthFraction(alpha, wealth)` where
+      the per-leg budget is `alpha * wealth / n_legs`. Thread it through
+      `put_roll`, `portfolio`, `ranking` and `roll_schedule`, and surface it as
+      a toggle on the Put Lab control bar. Small, self-contained, and it
+      unblocks everything below. **Note for the executor path**: the roll
+      schedule's premium-budget sizing is deliberate (`roll_schedule.py`
+      docstring) — a wealth fraction must resolve to a cash budget *before* the
+      artifact is written, so the file an executor reads stays absolute.
+- [ ] **Report time-average growth, not just ROI.** Every headline the platform
+      shows — `roi_on_premium`, `hit_rate`, `annualized`,
+      `biggest_payoff_mult` — describes a put in isolation, and **none of them
+      can say how much to hold**. Add `g = (1/T) * log(W_T / W_0)` computed on
+      the *combined* portfolio path (benchmark + hedge at fraction alpha),
+      alongside the arithmetic figures, and label the difference. For a
+      right-skewed payoff the two diverge sharply, and the gap is the whole
+      point (`docs/END_STATE.md` §4 Q8).
+- [ ] **The leverage analytic Dio asked for: a `g(alpha)` sweep.** Sweep alpha
+      across a grid, plot the time-average growth of the combined portfolio,
+      and report three numbers: the argmax `alpha*`, the growth at `alpha = 0`
+      (hold no hedge), and the `alpha` at which `g` returns to zero — the
+      Peters analogue of leverage `2 l*`, where over-allocation stops merely
+      costing growth and starts destroying it. Desk vocabulary
+      (`docs/adr/0021`): this belongs under **Carry**, next to the bleed it
+      trades against. Compute `alpha*` **numerically on the empirical payoff
+      distribution** — the closed form `l* = (mu - r)/sigma^2` assumes
+      lognormal symmetric returns and a long put is neither.
+- [ ] **Default to fractional Kelly, and say so on the surface.** Full Kelly is
+      notoriously sensitive to parameter error, and this platform's parameters
+      are *known* to be wrong by measured amounts: a +1.34%/yr model residual
+      (`docs/MODEL_RESIDUAL.md`) and a model premium off by up to 600x on a
+      real recommended leg (`docs/PRIOR_ART.md`). Half-Kelly or less by
+      default, with the full-Kelly number shown beside it and the reason for
+      the haircut named where the number appears — "accuracy is surfaced, not
+      filed" (README).
+- [ ] **Then, and only then, answer whether it really is higher than normal.**
+      The hypothesis: a variance penalty calibrated on symmetric outcomes
+      over-penalises a payoff whose loss is bounded at the premium and whose
+      variance is mostly upside, so `alpha*` may exceed what a naive Kelly
+      reading suggests. Test it, do not assert it — and report the standalone
+      result next to the portfolio one, because standalone the growth-optimal
+      allocation to a negative-EV bet is **zero**, and a reader who sees only
+      the portfolio number will not understand why the position is held at all.
 
 ## Execution-path increments (2026-08-28 — the schedule is going to be executed)
 
@@ -728,8 +794,20 @@ published, the rest are capability.
 "refactor this function, then lower the number in the same PR". They may only
 ever go down.
 
-- [ ] **`research/backtest/ranking.py:rank_universe`** — cyclomatic complexity
+- [x] **`research/backtest/ranking.py:rank_universe`** — cyclomatic complexity
       **14**, the value `max-complexity` is currently pinned to. 182 lines.
+      **Done (weekly cleanup, 2026-08-30).** The 14 was mostly closures: ruff's
+      mccabe folds a nested `def`'s own complexity into its enclosing function,
+      so `_fragility`/`_vol_beta_for`/`_rank_one` being defined *inside*
+      `rank_universe` added their combined complexity (11) on top of its own
+      branching. Un-nested all three to module level (closure variables bundled
+      into a `_RankContext` dataclass passed explicitly, `_rank_one` invoked via
+      `functools.partial` in the thread pool), and split the composite-score +
+      sort tail into `_score_and_sort`. `rank_universe` itself is now complexity
+      **1** with no logic change — `tests/test_research_backtest_ranking.py`
+      passes unchanged. New repo-wide worst offender is 11
+      (`put_roll.run_put_roll` / `metric_screen.compare_metric_screens`, both
+      below), so `max-complexity` moved **14 -> 11** in the same PR.
 - [ ] **`research/backtest/put_roll.py:run_put_roll`** — **13 keyword arguments**
       (pins `max-args`) and **75 statements** (pins `max-statements`), 206 lines.
       The textbook accretion case: every increment added a flag rather than

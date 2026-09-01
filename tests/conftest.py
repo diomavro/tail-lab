@@ -73,6 +73,18 @@ def cboe_chain_sample() -> dict[str, Any]:
 
 
 @pytest.fixture
+def mpd_stats_sample() -> str:
+    """Real Minneapolis Fed MPD rows: the whole Sep-Oct 2008 crisis window for
+    ``sp12m`` (the market this platform cares about), plus one row each for a
+    single-name market (``bac``), an inflation market (``infl1y``, whose
+    ``lg_change_decr``/``lg_change_incr`` mean something different from the
+    equity markets' -- see the source's own preamble note) and a row with a
+    blank (``NA``) ``maturity_target``, so the parser is pinned against every
+    quirk the real file actually contains rather than a hand-invented shape."""
+    return (FIXTURES_DIR / "mpd_stats_sample.csv").read_text()
+
+
+@pytest.fixture
 def lambdaclass_vendor_dir() -> Path:
     """Directory holding a small **real** slice of the lambdaclass ``data-v1``
     SPY chains, cut straight from the 632 MB original: two roll dates (one
