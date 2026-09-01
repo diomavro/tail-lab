@@ -33,6 +33,27 @@ These are inviolable. Changing any requires a human-approved ADR.
 - **Everything automated is logged in detail.** Autonomous operation is only reviewable if every automated action — agent runs, merges, deploys, ingestion runs, backtests — leaves a detailed record (`docs/adr/0016`, `docs/STANDARDS.md` §f). An increment that adds automated behavior without logging it does not meet the standard.
 - **Accuracy is surfaced, not filed.** Anything that tells the reader how far a result sits from the truth — the model-vs-market residual, the benchmark the strategy should be judged against, the data-quality flags on its inputs, the assumptions a number rests on and how much they move it — must be visible **where the result is shown**, not only in a doc, a log, or a make target. A backtest figure displayed without the known size of its error is a number pretending to be a measurement, and this platform exists to measure a mispricing, so an unqualified number is the specific failure mode it cannot afford. A new result and its accuracy context ship in the same increment; if the context is not yet known, say that on the surface too.
 - **The workspace fits one screen; the page never scrolls.** The Put Lab is an app shell, not a document. The fragility ranking stays pinned in view so that clicking a name and seeing what it does are the same gesture — a result you have to scroll to find is a result you will not compare. Only the active view scrolls, and only when its own content exceeds the space left for it. Panels that grow without bound (a 35-row table, an eleven-column screen) are collapsed, capped, or made user-resizable instead of being allowed to push the answer below the fold. **This principle was violated once because it lived only in Dio's head**; it is written here so the next increment has to argue with it rather than forget it.
+- **Position size is a portfolio question, not a leg question — and the objective
+  is time-average growth.** The platform currently spends a fixed cash budget per
+  leg, which is a placeholder, not a decision. Replacing it correctly means
+  answering *what fraction of wealth belongs in convexity*, and that question has
+  a specific right form: maximise the **time-average growth rate** of the combined
+  portfolio, `g = lim (1/T) log(W_T/W_0)`, not expected wealth and not
+  return-on-premium. For multiplicative dynamics the ensemble average and the time
+  average differ, and an investor lives exactly one trajectory (Peters 2011; Peters
+  & Gell-Mann 2016).
+
+  Two consequences bind here. **First, every sizing metric this platform currently
+  reports is the wrong shape**: `roi_on_premium`, `hit_rate`, `annualized` and
+  `biggest_payoff_mult` all describe a put in isolation, and *none of them can say
+  how much to hold*. **Second, the standalone answer is zero.** A long OOM put
+  usually has negative expected value — that is the volatility risk premium — and
+  the growth-optimal allocation to a standalone negative-EV bet is not "small", it
+  is nought. The position is only justifiable as a *hedge*: a negative-EV leg can
+  raise the geometric growth of a portfolio by truncating its left tail, because
+  the geometric mean is far more sensitive to large drawdowns than the arithmetic
+  mean. Any sizing result that does not evaluate the combined portfolio is
+  answering a different question than the one that matters.
 - **Some work expires; that work goes first.** Almost everything here is
   recoverable — a metric not built today costs the same next week, and a FRED
   series not pulled today is one `make` invocation from being caught up. Forward
