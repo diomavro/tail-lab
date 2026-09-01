@@ -30,6 +30,16 @@ def options_expiry_yahoo_sample() -> dict[str, Any]:
 
 
 @pytest.fixture
+def fomc_calendar_sample() -> str:
+    """Real markup from federalreserve.gov/monetarypolicy/fomccalendars.htm --
+    the full 2024 panel (fetched 2026-09-01), covering a plain two-day
+    meeting, four Summary-of-Economic-Projections meetings (the ``*`` flag),
+    and one month-spanning meeting (``Apr/May``, ``30-1``) -- the one shape
+    a hand-written fixture would be tempted to skip."""
+    return (FIXTURES_DIR / "fomc_calendar_sample.html").read_text()
+
+
+@pytest.fixture
 def cboe_pput_sample() -> str:
     """Real PPUT rows straight from Cboe's CDN: the 1986 inception days plus
     the Sep-Oct 2008 crisis window, so the parser is pinned against actual
