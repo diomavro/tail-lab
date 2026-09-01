@@ -215,10 +215,27 @@ spread series are revised too.
 **Source (free, keyless, two parts).**
 - *Scheduled*: Federal Reserve FOMC meeting calendar
   (`federalreserve.gov`, public HTML/ICS), BLS CPI release schedule
-  (`bls.gov`, public), both keyless.
+  (`bls.gov`, public), both keyless. **The FOMC half ships**
+  (`ingestion/fomc.py` + `make ingest-fomc`, done 2026-09-01) — HTML-only
+  (the ICS feed 404s), parsing `fomccalendars.htm`'s 2021-2027 window.
+  `announced_at` is set to the ingestion timestamp for every row rather than
+  the true historical announcement date (conservative and point-in-time-safe,
+  not a look-ahead risk, but under-informative for pre-ingest simulation
+  dates — see the module docstring). BLS CPI is not yet built.
 - *Manual*: a hand-maintained table (YAML/CSV under version control, not
   fetched) for unscheduled events — crises, surprise announcements,
-  anything without a published future date.
+  anything without a published future date. Not yet built.
+
+**A second producer must not write its own bronze snapshot on a day the
+first one already has.** Bronze immutability is keyed on `(dataset,
+ingest_date)`, not on which producer wrote it (`docs/adr/0013`) — so if the
+BLS or manual writer above ever calls `write_bronze("event_calendar",
+today, ...)` independently on a day `ingestion/fomc.py` already committed,
+that write is a silent no-op and its rows are lost, not merged. The next
+producer must either combine all sources into one call before writing (the
+`ingestion/cboe_strategy.py`/`ingestion/rates.py` family-in-one-write
+pattern) or this shared-dataset design needs revisiting — not a footnote to
+discover by losing a day of CPI events.
 
 **Cadence.** Scheduled: weekly refresh (calendars change rarely, but do
 change). Manual: edited by commit, not on a cadence.

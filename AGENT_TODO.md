@@ -109,12 +109,46 @@ a large one strictly in order.
       (downside beta) is wired in — a second sensitivity metric (item below)
       is what makes the leaderboard's per-metric tabs (`docs/END_STATE.md`
       §1.1) real.
-- [ ] Add the event-calendar ingestion adapter for FOMC dates
+- [x] Add the event-calendar ingestion adapter for FOMC dates
       (`federalreserve.gov`, keyless) with the `announced_at` point-in-time
-      field required by `docs/DATA_CONTRACTS.md` #5. Sourcing note
-      (2026-08-19, `docs/DATA_SOURCING.md` §2): HTML only — the ICS feed
-      404s; current page covers 2021–2027, `fomc_historical.htm` year
-      pages reach 1936.
+      field required by `docs/DATA_CONTRACTS.md` #5. **Done 2026-09-01**:
+      `contracts/event_calendar.py` (the shared `EventRow` schema every
+      producer — this adapter, a future CPI/earnings adapter, and the
+      manual unscheduled table — writes into) + `ingestion/fomc.py` +
+      `make ingest-fomc`. Parses `fomccalendars.htm`'s HTML with a small
+      regex over the page's consistent `fomc-meeting__month`/
+      `fomc-meeting__date` markup (no new HTML-parsing dependency — bs4/lxml
+      aren't installed and the structure is regular enough that adding one
+      wasn't worth it); pinned against a real fetched panel
+      (`tests/fixtures/fomc_calendar_sample.html`, the full 2024 year: one
+      plain two-day meeting, four Summary-of-Economic-Projections meetings,
+      and the one month-spanning case, `Apr/May` `30-1`, that a hand-written
+      fixture would be tempted to skip). `event_date` is the meeting's
+      *last* day (the decision/statement day, matching the Fed's own
+      `monetary<YYYYMMDD>a.htm` URLs), not the first.
+      **Known limitation, stated in the module docstring, not hidden**: the
+      adapter has only ever scraped the page once, so it cannot recover the
+      real historical announcement date for a meeting already on the page
+      (the Fed typically publishes a year's calendar a year ahead). It sets
+      `announced_at` to the ingestion timestamp for every row, past or
+      future — conservative and point-in-time-safe (never claims earlier
+      knowledge than provable, so no as-of read can leak), but it means a
+      backtest simulating a date before this adapter's first live run will
+      see zero FOMC events rather than the ones genuinely public by then.
+      A positive-control test (`test_ingest_announced_at_never_predates_the_actual_scrape`)
+      pins exactly this behavior so it can't regress silently.
+      **Not yet run against prod** (no live-run credential in this
+      workflow — `docs/AGENT_MISSION.md`'s "data changes" rule) and **no
+      `research/`/`api/` consumer wired yet** — same ship-the-adapter-first
+      precedent `rates.py`/`credit.py`/`options_expiry.py` followed: ship
+      the pure adapter, wire it into the event calendar's proximity flags
+      (`docs/END_STATE.md` §1.4) once a live partition exists to read.
+      **Scoped narrower than the full item**: only the FOMC half of dataset
+      #5; the BLS CPI adapter (needs browser-like headers per
+      `docs/DATA_SOURCING.md` §2) and the manual unscheduled-event table are
+      still open, and the historical `fomc_historical.htm` archive (reaches
+      back to 1936) is a follow-up once the announcement-date backfill
+      question above is worth solving.
 - [ ] Add the CPI release-schedule adapter (BLS, keyless), same shape as
       the FOMC adapter above. Sourcing note (2026-08-19): `bls.gov` 403s
       non-browser clients — send browser-like headers; archived
