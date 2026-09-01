@@ -48,6 +48,33 @@ jobs:
       - name: coverage floors (research/ + transforms/ >= 90%, STANDARDS §e)
         run: coverage report --include="src/tail_lab/research/*,src/tail_lab/transforms/*" --fail-under=90
 
+  # Two checks that cost a second and would have caught a real outage. On
+  # 2026-09-01 a Makefile was committed with unresolved conflict markers on two
+  # branches: `make` failed to parse for EVERY target, and since make is the
+  # only sanctioned entry point for the gates (CLAUDE.md's `env -u PYTHONPATH`
+  # isolation), that broke `make check`, `make lint` and `make test` for anyone
+  # who pulled. All four other jobs stayed green -- ruff does not read
+  # Makefiles and pytest never invokes make -- and only the LLM design reviewer
+  # noticed. That was lucky, and luck is not a gate: anything a `grep` can
+  # catch should never cost a model call (docs/adr/0023).
+  hygiene:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: No unresolved merge-conflict markers
+        run: |
+          if git grep -nE '^(<<<<<<< |>>>>>>> |=======$)' -- .; then
+            echo "::error::Unresolved merge-conflict markers are committed above."
+            exit 1
+          fi
+          echo "clean"
+
+      - name: The Makefile parses
+        # `make help` touches no venv and runs no tool -- it only proves the
+        # file is syntactically a Makefile, which is exactly what was broken.
+        run: make help > /dev/null
+
   frontend:
     runs-on: ubuntu-latest
     defaults:
@@ -277,7 +304,7 @@ jobs:
           exit 0
 
   trigger-deploy:
-    needs: [backend, frontend, e2e, constitution-guard]  # not agent-review: it is skipped on non-agent branches
+    needs: [backend, hygiene, frontend, e2e, constitution-guard]  # not agent-review: it is skipped on non-agent branches
     if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     permissions:
