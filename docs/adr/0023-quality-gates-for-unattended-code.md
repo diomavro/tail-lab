@@ -112,6 +112,21 @@ so it is reviewed and merged by exactly the same path as everything else.
 - **Agent PRs cost more.** One extra Claude invocation each. At roughly one
   agent PR a day that is affordable, and it buys the only reader the code
   otherwise has.
+- **The reviewer earned its keep on its first real block, and the lesson was
+  to build a cheaper check.** *(2026-09-01.)* Its first genuine BLOCK found a
+  `Makefile` committed with unresolved conflict markers: `make` failed to parse
+  for every target, and since make is the only sanctioned entry point for the
+  gates, that broke `make check`/`lint`/`test` for anyone who pulled. All four
+  other jobs were green — ruff does not read Makefiles, pytest never invokes
+  make. The review was specific, quoted the lines, named the fix, and explicitly
+  cleared the Python half of the change.
+
+  The right response was not to celebrate it. **Anything a `grep` can catch
+  should never cost a model call**, so CI gained a `hygiene` job — conflict
+  markers, and `make help` to prove the file parses — that would have caught it
+  deterministically in one second. The reviewer's value is the class of defect
+  that *cannot* be reduced to a check; every time it finds one that can, that
+  check should be written and the reviewer freed to look elsewhere.
 - **The reviewer is an LLM, and this is a second opinion, not a proof.** It will
   miss things. Its value is that it has no stake in the change landing and it
   reads the diff cold, which is exactly the perspective the authoring agent
