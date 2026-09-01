@@ -35,6 +35,15 @@ Frontend (from `frontend/`): `npm run typecheck`, `npm run lint` (oxlint), `npm 
 ## Things that will bite you
 
 - **Agent branches auto-merge, and green main auto-deploys.** `.github/workflows/automerge.yml` squash-merges any `agent/*` branch PR automatically once CI is fully green, and `.github/workflows/deploy.yml` then ships every green `main` commit to Fly (`docs/adr/0016`). Pushing to an `agent/*` branch is effectively pushing to production-after-CI; use a differently-named branch when a human should review first. CI's `constitution-guard` job fails any `agent/*` PR that touches `README.md`, `ARCHITECTURE.md`, `docs/STANDARDS.md`, `docs/AGENT_MISSION.md`, `docs/END_STATE.md`, or `docs/adr/` — those changes need a human-merged PR. **`.github/workflows/**` is guarded too** (`docs/adr/0022`): the agent's own prompt, the auto-merge rule and the guard itself all live there, so an unreviewed edit could quietly widen everything else. The principle for the guarded set: *a file is constitutional if changing it changes what the agent is allowed to do* — which is why `AGENT_TODO.md` is deliberately not guarded. Agent PRs are authored by `claude[bot]` (the action mints a GitHub App token), **not** by `diomavro`, and nobody watches this repo — so an agent PR reaches Dio's inbox only because `daily-agent.yml` tells the agent to pass `--assignee diomavro`. Drop that flag and the whole open→merge→deploy chain goes silent.
+- **A conflicted PR gets NO CI, and that looks exactly like CI being slow.**
+  GitHub runs `pull_request` workflows on the merge commit, so when a branch
+  conflicts with `main` it cannot build one and reports *zero* check runs —
+  indistinguishable from queued, or from a dropped event. Diagnose with
+  `gh api repos/diomavro/tail-lab/pulls/<n> --jq .mergeable` **before** blaming
+  the scheduler (2026-09-01: 15 minutes lost to exactly that misdiagnosis). It
+  matters here because agent PRs auto-merge or sit: any PR that stalls a day or
+  two will conflict as siblings land, and then go quietly CI-less rather than
+  red.
 - **Lint limits in `pyproject.toml` are a RATCHET, not preferences**
   (`docs/adr/0023`). `max-complexity`, `max-args` and `max-statements` sit at the
   current worst offenders, each naming the function that set it. They may only
