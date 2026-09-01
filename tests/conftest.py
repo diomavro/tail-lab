@@ -55,6 +55,15 @@ def nasdaq_ohlcv_sample() -> dict[str, Any]:
 
 
 @pytest.fixture
+def sp500_constituents_sample() -> str:
+    """Real rows from `fja05680/sp500`'s historical-components CSV: the 1996
+    inception window, a 2007 pre-crisis slice, and the latest 2026 rows -- so
+    the parser is pinned against actual source formatting (quoted,
+    comma-joined ticker lists) rather than a hand-invented shape."""
+    return (FIXTURES_DIR / "sp500_constituents_sample.csv").read_text()
+
+
+@pytest.fixture
 def cboe_chain_sample() -> dict[str, Any]:
     """A real Cboe delayed-quote chain slice (SPY) spanning six expiries,
     with two contracts each -- enough to prove de-duplication works."""
