@@ -703,8 +703,20 @@ published, the rest are capability.
 "refactor this function, then lower the number in the same PR". They may only
 ever go down.
 
-- [ ] **`research/backtest/ranking.py:rank_universe`** — cyclomatic complexity
+- [x] **`research/backtest/ranking.py:rank_universe`** — cyclomatic complexity
       **14**, the value `max-complexity` is currently pinned to. 182 lines.
+      **Done (weekly cleanup, 2026-08-30).** The 14 was mostly closures: ruff's
+      mccabe folds a nested `def`'s own complexity into its enclosing function,
+      so `_fragility`/`_vol_beta_for`/`_rank_one` being defined *inside*
+      `rank_universe` added their combined complexity (11) on top of its own
+      branching. Un-nested all three to module level (closure variables bundled
+      into a `_RankContext` dataclass passed explicitly, `_rank_one` invoked via
+      `functools.partial` in the thread pool), and split the composite-score +
+      sort tail into `_score_and_sort`. `rank_universe` itself is now complexity
+      **1** with no logic change — `tests/test_research_backtest_ranking.py`
+      passes unchanged. New repo-wide worst offender is 11
+      (`put_roll.run_put_roll` / `metric_screen.compare_metric_screens`, both
+      below), so `max-complexity` moved **14 -> 11** in the same PR.
 - [ ] **`research/backtest/put_roll.py:run_put_roll`** — **13 keyword arguments**
       (pins `max-args`) and **75 statements** (pins `max-statements`), 206 lines.
       The textbook accretion case: every increment added a flag rather than
