@@ -601,6 +601,22 @@ item 2 is time-sensitive in a way nothing else in this file is.
       Yahoo partitions are internally consistent and still readable; nothing
       is broken today.
 
+## Operational (2026-09-01)
+
+- [ ] **Detect agent PRs that have gone silently CI-less.** GitHub runs
+      `pull_request` workflows on the merge commit, so a branch that conflicts
+      with `main` reports **zero** check runs — which is indistinguishable from
+      "queued" and from a dropped event, and is therefore invisible. This is
+      not hypothetical: five agent PRs stalled 2026-08-29..09-01, and as
+      siblings merged they all conflicted on `Makefile` (each adds an
+      `ingest-*` target at the same place) and stopped getting CI entirely.
+      Cheapest fix is a scheduled check that lists open `agent/*` PRs with
+      `mergeable == false` or no check runs, and says so loudly. A better fix
+      also removes the cause: the per-adapter `Makefile` targets are a
+      guaranteed collision point, so consider a single generic
+      `make ingest DATASET=<name>` dispatching on the adapter, which would make
+      new adapters conflict-free by construction.
+
 ## Position sizing / optimal leverage (2026-09-01 — Dio; `docs/END_STATE.md` §4 Q8)
 
 Dio's ask, in his words: a control where "the investor can either keep
