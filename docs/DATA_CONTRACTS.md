@@ -444,7 +444,58 @@ raises rather than committing a partition that would shadow a good one
 
 ---
 
-## 9. Point-in-time S&P 500 constituents
+## 9. Minneapolis Fed Market-Based Probability Densities (MPD)
+
+**Purpose.** A genuine **skew/kurtosis** panel backed out of real option
+prices via Breeden-Litzenberger — a calibration/validation target for
+`docs/END_STATE.md` §4 Q2 ("how did skew evolve before crashes") and the
+skew-aware pricer, unlike VIX (a single implied-vol number) or the
+model-priced pricer's own flat-vol proxy.
+
+**Source.** The Minneapolis Fed's public CSV,
+`https://www.minneapolisfed.org/-/media/files/banking/mpd/mpd_stats.csv`.
+Free, keyless, official (a Federal Reserve Bank). `ingestion/mpd.py` +
+`make ingest-mpd` ship the adapter. One file carries the whole market
+family — `sp12m`/`sp6m` (S&P 500, the markets this platform cares about),
+several single-name/commodity/FX/rate/inflation markets — in long format,
+so unlike the per-symbol OHLCV adapter there is no per-ticker fetch: one
+GET, one parse, one bronze partition. **Not yet run against prod** — no
+`mpd` bronze partition exists yet, and wiring a `research/` consumer is a
+follow-up (`AGENT_TODO.md`), same precedent `rates.py`/`credit.py` followed.
+
+**Cadence.** Weekly. `sp12m` runs 2007-01-12 to date (measured
+2026-08-21, `AGENT_TODO.md`), covering the whole 2008 crisis.
+
+**Schema — `MpdRowSchema`:**
+
+| Column | Type | Constraints |
+|---|---|---|
+| `market` | `str` | non-null, e.g. `sp12m`, `bac`, `infl1y` |
+| `obs_date` | `date` | non-null |
+| `maturity_months` | `float` | nullable — the source leaves this blank for a real subset of rows |
+| `mu`, `sd`, `skew`, `kurt`, `p10`, `p50`, `p90` | `float` | nullable; `sd >= 0` |
+| `prob_large_decline`, `prob_large_increase` | `float` | nullable, `0 <= p <= 1` |
+
+**Bronze partition key.** `ingest_date=<YYYY-MM-DD>`, one partition per run
+covering every market the file carries (mirrors `cboe_strategy` — the
+source itself is one fetch, so there is no partial-run case to guard
+against). Unique on `(market, obs_date)`.
+
+**Point-in-time rule.** None beyond the ordinary `ingest_date` partition —
+the Minneapolis Fed does not publish a vintage/revision history for this
+series, unlike FRED's ALFRED data (#3, #4).
+
+**One quirk, not a bug.** For the inflation markets (`infl1y`/`infl2y`/
+`infl5y`), the source's own preamble says the "large move" threshold behind
+`prob_large_decline`/`prob_large_increase` is `<1%`/`>3%`, not the
+symmetric +/-20% band the equity/commodity/FX markets use. The adapter
+carries the resulting probabilities as-is; a reader comparing them across
+market families should know the threshold defining "large" is not the same
+number everywhere.
+
+---
+
+## 10. Point-in-time S&P 500 constituents
 
 **Purpose.** Closes `docs/adr/0010`'s survivorship-bias gap at membership
 granularity (`docs/END_STATE.md` §2.3). Today's screening universe is

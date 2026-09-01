@@ -75,6 +75,14 @@ Frontend (from `frontend/`): `npm run typecheck`, `npm run lint` (oxlint), `npm 
   `docs/adr/0015`'s `confirmed` verdict — is partly measuring whether the strike
   was reachable. Delta-based selection is queued; until it lands, say which
   parameterisation a result used.
+- **Position size is a placeholder, and the metrics cannot fix it.**
+  `premium_budget_per_leg` is a fixed $1,000. Replacing it means maximising the
+  **time-average growth of the combined portfolio** (`docs/END_STATE.md` §4 Q8),
+  not ROI — and every headline metric here (`roi_on_premium`, `hit_rate`,
+  `annualized`) describes a put in isolation and cannot say how much to hold.
+  Standalone, the growth-optimal size for a negative-EV bet is zero; the position
+  is only justifiable as a portfolio hedge. Do not report an "optimal size" for
+  the put book alone.
 - **The regime classifier has no hysteresis** (`docs/PRIOR_ART.md` §8).
   `contracts/regime.py` is hard VIX thresholds, so a VIX oscillating around 17
   or 28 flips regime on consecutive days — and `docs/adr/0015` keys verdicts on

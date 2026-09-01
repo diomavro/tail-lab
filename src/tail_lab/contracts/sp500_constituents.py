@@ -1,5 +1,5 @@
 """Pandera schema for point-in-time S&P 500 constituents
-(`docs/DATA_CONTRACTS.md` #9, `docs/adr/0010`).
+(`docs/DATA_CONTRACTS.md` #10, `docs/adr/0010`).
 
 This module is a LEAF: it must never import anything else from
 ``tail_lab`` (enforced by the import-linter layers contract in
