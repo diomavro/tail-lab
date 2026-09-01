@@ -117,6 +117,26 @@ so it is reviewed and merged by exactly the same path as everything else.
   reads the diff cold, which is exactly the perspective the authoring agent
   cannot have. Treating its PASS as a guarantee of quality would be a worse
   error than having no reviewer at all.
+- **The stalled pipeline happened immediately, and the fallback did not fire.**
+  *(Amended 2026-09-01.)* From 2026-08-29 to 09-01, five agent PRs sat green on
+  every other gate and blocked on `agent-review`, and the platform shipped
+  nothing for four days. The reviewer had not formed a single opinion:
+  `claude-code-action` refuses bot-triggered runs by default (an
+  anti-prompt-injection measure), every agent PR is opened by `claude[bot]`, so
+  the action **failed to start** and the step exited non-zero.
+
+  The pass-on-missing-verdict fallback below was written for exactly this and
+  could not help, because it lives in the *next* step and a failing step aborts
+  the job before reaching it. The principle was right and the implementation
+  could not honour it — which is its own lesson: **a fallback that shares a
+  failure domain with the thing it backs up is not a fallback.** Fixed with
+  `allowed_bots: 'claude'` (named, not `*`) and `continue-on-error: true` on the
+  review step, so the verdict step always runs and always decides.
+
+  The warning text now says, in the log, that a repeated no-verdict means the
+  reviewer is silently reviewing nothing — because the failure mode that
+  followed the fix would be worse than the outage: a green check standing for a
+  review that never happened.
 - **A new failure mode: the stalled pipeline.** If the reviewer becomes
   trigger-happy the daily increment stops, and the collection in
   `docs/adr/0020` is the one thing that cannot wait. The high blocking bar, the
