@@ -570,6 +570,63 @@ item 2 is time-sensitive in a way nothing else in this file is.
       Yahoo partitions are internally consistent and still readable; nothing
       is broken today.
 
+## Position sizing / optimal leverage (2026-09-01 — Dio; `docs/END_STATE.md` §4 Q8)
+
+Dio's ask, in his words: a control where "the investor can either keep
+investing in the same way they do now, or invest a portion of their wealth",
+plus "analytics on what the optimal leverage is with this strategy, it might be
+higher than normal". He is right that it might be, and right that it is not the
+textbook number — but the reason matters, and getting the framing wrong
+produces a confident wrong answer. **Read §4 Q8 before starting.** Ordered so
+that nothing depends on a number the platform cannot yet compute honestly.
+
+- [ ] **Sizing mode: fixed cash OR a fraction of wealth.** Today
+      `premium_budget_per_leg` is a fixed $1,000 — a placeholder, not a
+      decision. Add a `SizingMode` seam mirroring the `OptionPricer`
+      pluggability of `docs/adr/0004`: `FixedPremium(amount)` (today's,
+      unchanged, still the default) and `WealthFraction(alpha, wealth)` where
+      the per-leg budget is `alpha * wealth / n_legs`. Thread it through
+      `put_roll`, `portfolio`, `ranking` and `roll_schedule`, and surface it as
+      a toggle on the Put Lab control bar. Small, self-contained, and it
+      unblocks everything below. **Note for the executor path**: the roll
+      schedule's premium-budget sizing is deliberate (`roll_schedule.py`
+      docstring) — a wealth fraction must resolve to a cash budget *before* the
+      artifact is written, so the file an executor reads stays absolute.
+- [ ] **Report time-average growth, not just ROI.** Every headline the platform
+      shows — `roi_on_premium`, `hit_rate`, `annualized`,
+      `biggest_payoff_mult` — describes a put in isolation, and **none of them
+      can say how much to hold**. Add `g = (1/T) * log(W_T / W_0)` computed on
+      the *combined* portfolio path (benchmark + hedge at fraction alpha),
+      alongside the arithmetic figures, and label the difference. For a
+      right-skewed payoff the two diverge sharply, and the gap is the whole
+      point (`docs/END_STATE.md` §4 Q8).
+- [ ] **The leverage analytic Dio asked for: a `g(alpha)` sweep.** Sweep alpha
+      across a grid, plot the time-average growth of the combined portfolio,
+      and report three numbers: the argmax `alpha*`, the growth at `alpha = 0`
+      (hold no hedge), and the `alpha` at which `g` returns to zero — the
+      Peters analogue of leverage `2 l*`, where over-allocation stops merely
+      costing growth and starts destroying it. Desk vocabulary
+      (`docs/adr/0021`): this belongs under **Carry**, next to the bleed it
+      trades against. Compute `alpha*` **numerically on the empirical payoff
+      distribution** — the closed form `l* = (mu - r)/sigma^2` assumes
+      lognormal symmetric returns and a long put is neither.
+- [ ] **Default to fractional Kelly, and say so on the surface.** Full Kelly is
+      notoriously sensitive to parameter error, and this platform's parameters
+      are *known* to be wrong by measured amounts: a +1.34%/yr model residual
+      (`docs/MODEL_RESIDUAL.md`) and a model premium off by up to 600x on a
+      real recommended leg (`docs/PRIOR_ART.md`). Half-Kelly or less by
+      default, with the full-Kelly number shown beside it and the reason for
+      the haircut named where the number appears — "accuracy is surfaced, not
+      filed" (README).
+- [ ] **Then, and only then, answer whether it really is higher than normal.**
+      The hypothesis: a variance penalty calibrated on symmetric outcomes
+      over-penalises a payoff whose loss is bounded at the premium and whose
+      variance is mostly upside, so `alpha*` may exceed what a naive Kelly
+      reading suggests. Test it, do not assert it — and report the standalone
+      result next to the portfolio one, because standalone the growth-optimal
+      allocation to a negative-EV bet is **zero**, and a reader who sees only
+      the portfolio number will not understand why the position is held at all.
+
 ## Execution-path increments (2026-08-28 — the schedule is going to be executed)
 
 Dio confirmed the direction: tail-lab dumps a recommended strategy as a JSON
