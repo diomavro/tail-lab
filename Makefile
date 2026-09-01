@@ -27,11 +27,8 @@ help:
 	@echo "  ingest-cboe-strategy  Live Cboe strategy-index fetch -> bronze (TICKERS=... ; network; not run in CI)"
 	@echo "  ingest-rates Live FRED rates fetch -> bronze (SERIES=... ; needs FRED_API_KEY; network; not run in CI)"
 	@echo "  ingest-credit Live FRED credit-spread fetch -> bronze (SERIES=... ; needs FRED_API_KEY; network; not run in CI)"
-<<<<<<< HEAD
 	@echo "  ingest-fomc  Live FOMC calendar fetch -> bronze (keyless; network; not run in CI)"
-=======
 	@echo "  ingest-mpd   Live Minneapolis Fed MPD fetch -> bronze, whole market family (network; not run in CI)"
->>>>>>> origin/main
 	@echo "  ingest-option-chain  TODAY's put wing from Cboe -> bronze (CHAIN_SYMBOLS=... ; network; UNRECOVERABLE if skipped)"
 	@echo "  greeks-check Score our greeks vs the exchange's own (read-only; needs a chain snapshot)"
 	@echo "  api          Run FastAPI on :8000 with auto-reload"
@@ -131,13 +128,10 @@ greeks-check:
 ingest-credit:
 	env -u PYTHONPATH $(VENV)/bin/python -c "from tail_lab.ingestion.credit import ingest_credit; from tail_lab.config import get_lake_store, get_settings; from tail_lab.observability import configure_logging; configure_logging(); s = [x.upper() for x in '$(SERIES)'.split(',')] if '$(SERIES)' else None; r = ingest_credit(get_lake_store(), s, api_key=get_settings().fred_api_key); print(f'committed {r.valid_rows} rows for {len(r.series_ids)} series -> {r.bronze_path} ({r.quarantined_rows} quarantined)')"
 
-<<<<<<< HEAD
 ingest-fomc:
 	env -u PYTHONPATH $(VENV)/bin/python -c "from tail_lab.ingestion.fomc import ingest_fomc_calendar; from tail_lab.config import get_lake_store; from tail_lab.observability import configure_logging; configure_logging(); r = ingest_fomc_calendar(get_lake_store()); print(f'committed {r.valid_rows} rows -> {r.bronze_path} ({r.quarantined_rows} quarantined)')"
-=======
 ingest-mpd:
 	env -u PYTHONPATH $(VENV)/bin/python -c "from tail_lab.ingestion.mpd import ingest_mpd; from tail_lab.config import get_lake_store; from tail_lab.observability import configure_logging; configure_logging(); r = ingest_mpd(get_lake_store()); print(f'committed {r.valid_rows} rows for {len(r.markets)} markets -> {r.bronze_path} ({r.quarantined_rows} quarantined)')"
->>>>>>> origin/main
 
 api:
 	env -u PYTHONPATH $(VENV)/bin/uvicorn tail_lab.api.main:app --reload --port 8000
