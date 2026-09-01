@@ -185,12 +185,30 @@ jobs:
 
       - name: Adversarial design review
         uses: anthropics/claude-code-action@v1
+        # continue-on-error, because the step below is the fallback and a failing
+        # step would abort the job before ever reaching it. That is exactly what
+        # happened 2026-08-29..09-01: the action refused to start, the job died
+        # here, and five green PRs sat blocked for four days by a gate that had
+        # never formed an opinion. docs/adr/0023 says "a reviewer that cannot run
+        # must not become a gate that cannot open" -- this is the line that makes
+        # that true rather than aspirational.
+        continue-on-error: true
         env:
           GH_TOKEN: ${{ github.token }}
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
         with:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          # The action refuses bot-triggered runs by default, to stop an
+          # attacker driving it through a bot-authored PR. Every PR this job
+          # reviews is opened by `claude[bot]` -- the daily agent -- so without
+          # this the reviewer can never run on the only PRs it exists for.
+          #
+          # Named, not `*`: the trust boundary is the same one docs/adr/0016
+          # already accepted for the daily agent itself, whose inputs are this
+          # repo's own backlog and code rather than untrusted external data. A
+          # wildcard would extend that to any bot that ever opens a PR here.
+          allowed_bots: 'claude'
           claude_args: '--allowedTools Bash,Read,Grep,Glob'
           prompt: |
             You are the adversarial design reviewer for an autonomous agent's pull request.
@@ -244,7 +262,11 @@ jobs:
           if [ -z "$verdict" ]; then
             echo "::warning::reviewer produced no verdict — treating as PASS."
             echo "A reviewer that cannot run must not become a gate that cannot open:"
-            echo "an outage here would silently halt the daily increment."
+            echo "an outage here would silently halt the daily increment. This is"
+            echo "not hypothetical — it halted it for four days from 2026-08-29."
+            echo "If you see this warning repeatedly, the reviewer is broken and"
+            echo "is silently reviewing nothing. Fix it or remove the job; do not"
+            echo "leave a green check standing for a review that never happened."
             exit 0
           fi
           echo "verdict: $verdict"
