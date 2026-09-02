@@ -27,10 +27,17 @@ from typing import ClassVar
 import pandera.pandas as pa
 from pandera.typing import Series
 
-#: The event types this schema accepts. ``EARNINGS`` requires ``symbol``;
-#: every other type must leave it null (enforced by the ingestion adapter,
-#: not by pandera, since a cross-column conditional isn't expressible as a
-#: single `Field` constraint here).
+#: The event types this schema accepts. ``EARNINGS`` is meant to require
+#: ``symbol`` while every other type leaves it null -- a cross-column
+#: conditional pandera cannot express as a single ``Field`` constraint.
+#:
+#: **Nothing enforces that today.** The rule was written as "enforced by the
+#: ingestion adapter", but no EARNINGS producer has shipped, so there is no
+#: adapter to enforce it and the sentence described a guarantee that did not
+#: exist (design review, PR #63). A documented invariant nobody checks is worse
+#: than an absent one, because the next reader budgets for a safety that is not
+#: there. **The first EARNINGS adapter owns making this true**, and should
+#: delete this note when it does.
 EVENT_TYPES: tuple[str, ...] = ("FOMC", "CPI", "EARNINGS", "MANUAL")
 
 #: Which producer wrote a given row. One value per adapter plus the manual

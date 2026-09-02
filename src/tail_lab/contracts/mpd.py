@@ -40,7 +40,8 @@ DATASET = "mpd"
 class MpdRowSchema(pa.DataFrameModel):
     """Shape shared by bronze (raw-but-typed) and silver MPD rows.
 
-    ``maturity_target`` is nullable: the source leaves it blank (``NA``) for
+    ``maturity_months`` is nullable (the source calls the column
+    ``maturity_target``): the source leaves it blank (``NA``) for
     a real, if uncommon, subset of rows -- not a parse failure.
     """
 
