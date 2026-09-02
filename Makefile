@@ -11,7 +11,7 @@ VENV := .venv
 PY := env -u PYTHONPATH $(VENV)/bin/python
 PIP := env -u PYTHONPATH $(VENV)/bin/pip
 
-.PHONY: setup lint format typecheck import-lint test check cov-floors ingest-vix ingest-ohlcv ingest-cboe-strategy ingest-rates ingest-credit ingest-fomc ingest-option-quotes residual skew api frontend clean ingest-mpd ingest-options-expiry ingest-sp500-constituents
+.PHONY: setup lint format typecheck import-lint test check cov-floors ingest-vix ingest-ohlcv ingest-cboe-strategy ingest-rates ingest-credit ingest-fomc ingest-option-quotes residual skew api frontend clean ingest-mpd ingest-options-expiry ingest-sp500-constituents ingest-vix-futures
 
 help:
 	@echo "Targets:"
@@ -31,6 +31,7 @@ help:
 	@echo "  ingest-fomc  Live FOMC calendar fetch -> bronze (keyless; network; not run in CI)"
 	@echo "  ingest-sp500-constituents  Live point-in-time S&P 500 membership fetch -> bronze (network; not run in CI)"
 	@echo "  ingest-mpd   Live Minneapolis Fed MPD fetch -> bronze, whole market family (network; not run in CI)"
+	@echo "  ingest-vix-futures  Live VX futures term structure fetch -> bronze (keyless; network; not run in CI)"
 	@echo "  ingest-option-chain  TODAY's put wing from Cboe -> bronze (CHAIN_SYMBOLS=... ; network; UNRECOVERABLE if skipped)"
 	@echo "  greeks-check Score our greeks vs the exchange's own (read-only; needs a chain snapshot)"
 	@echo "  api          Run FastAPI on :8000 with auto-reload"
@@ -139,10 +140,15 @@ ingest-credit:
 
 ingest-fomc:
 	env -u PYTHONPATH $(VENV)/bin/python -c "from tail_lab.ingestion.fomc import ingest_fomc_calendar; from tail_lab.config import get_lake_store; from tail_lab.observability import configure_logging; configure_logging(); r = ingest_fomc_calendar(get_lake_store()); print(f'committed {r.valid_rows} rows -> {r.bronze_path} ({r.quarantined_rows} quarantined)')"
+
 ingest-sp500-constituents:
 	env -u PYTHONPATH $(VENV)/bin/python -c "from tail_lab.ingestion.sp500_constituents import ingest_sp500_constituents; from tail_lab.config import get_lake_store; from tail_lab.observability import configure_logging; configure_logging(); r = ingest_sp500_constituents(get_lake_store()); print(f'committed {r.valid_rows} rows -> {r.bronze_path} ({r.quarantined_rows} quarantined)')"
+
 ingest-mpd:
 	env -u PYTHONPATH $(VENV)/bin/python -c "from tail_lab.ingestion.mpd import ingest_mpd; from tail_lab.config import get_lake_store; from tail_lab.observability import configure_logging; configure_logging(); r = ingest_mpd(get_lake_store()); print(f'committed {r.valid_rows} rows for {len(r.markets)} markets -> {r.bronze_path} ({r.quarantined_rows} quarantined)')"
+
+ingest-vix-futures:
+	env -u PYTHONPATH $(VENV)/bin/python -c "from tail_lab.ingestion.vix_futures import ingest_vix_futures; from tail_lab.config import get_lake_store; from tail_lab.observability import configure_logging; configure_logging(); r = ingest_vix_futures(get_lake_store()); print(f'committed {r.valid_rows} rows across {len(r.expiries)} contracts -> {r.bronze_path} ({r.quarantined_rows} quarantined)')"
 
 api:
 	env -u PYTHONPATH $(VENV)/bin/uvicorn tail_lab.api.main:app --reload --port 8000
