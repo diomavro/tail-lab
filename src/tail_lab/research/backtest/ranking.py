@@ -366,7 +366,12 @@ def rank_universe(
     # Each name is an independent lake read + roll; the S3 read releases the
     # GIL, so a bounded thread pool cuts the cold warm-up.
     with ThreadPoolExecutor(max_workers=8) as pool:
-        rows = list(filter(None, pool.map(partial(_rank_one, ctx=ctx), symbols)))
+        # `is not None`, not `filter(None, ...)`: the latter drops every falsy
+        # value, and only stays correct while RankedAsset happens to define no
+        # __bool__/__len__. Making the predicate say what it means costs
+        # nothing and removes a trap for whoever adds one. (Design review, #60.)
+        ranked_or_none = pool.map(partial(_rank_one, ctx=ctx), symbols)
+        rows = [row for row in ranked_or_none if row is not None]
 
     # Composite fragility: higher downside beta / tail beta / downside capture,
     # and *lower* (more negative) co-skewness / vol beta, all mean more fragile.

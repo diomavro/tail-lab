@@ -63,6 +63,22 @@ def test_parse_drops_blank_ticker_rows_but_keeps_malformed_dates() -> None:
     assert df["obs_date"].isna().sum() == 1
 
 
+def test_parse_raises_when_the_source_header_changes_shape() -> None:
+    """The earlier version fell back to the first and last columns when it
+    could not find `date`/`tickers`. That is right for today's header by
+    coincidence and silently wrong the moment the source adds or reorders a
+    column -- it would parse some other column as dates, on the one dataset
+    whose whole purpose is knowing WHICH names were in the index WHEN
+    (docs/adr/0010). A survivorship panel quietly off by a column is worse
+    than no panel, so this fails loudly instead."""
+    reordered = 'idx,date,tickers\n1,2024-01-02,"AAPL,MSFT"\n'
+    parse_constituents_csv(reordered)  # still fine: both names are present
+
+    renamed = 'observation_date,members\n2024-01-02,"AAPL,MSFT"\n'
+    with pytest.raises(ValueError, match="missing required column"):
+        parse_constituents_csv(renamed)
+
+
 def test_parse_empty_source_returns_typed_empty_frame() -> None:
     df = parse_constituents_csv("date,tickers\n")
 

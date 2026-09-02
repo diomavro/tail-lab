@@ -98,8 +98,24 @@ def parse_constituents_csv(raw: str) -> pd.DataFrame:
         return _empty_frame()
 
     columns = {str(c).strip().lower(): c for c in frame.columns}
-    date_col = columns.get("date", frame.columns[0])
-    tickers_col = columns.get("tickers", frame.columns[-1])
+    missing = [name for name in ("date", "tickers") if name not in columns]
+    if missing:
+        # Raise rather than fall back to a positional guess. The earlier
+        # version defaulted to the first and last columns, which happen to be
+        # right for today's header and would silently become wrong the moment
+        # the source adds or reorders one -- parsing some other column as
+        # dates, on the one dataset whose entire purpose is knowing WHICH
+        # names were in the index WHEN (`docs/adr/0010`). A survivorship
+        # dataset that is quietly off by a column is worse than no dataset,
+        # and this module's own docstring promises bad data is never silently
+        # discarded. Flagged as advisory by the design review on PR #59.
+        raise ValueError(
+            f"constituents CSV is missing required column(s) {missing}; "
+            f"got {list(frame.columns)}. The source's header changed shape — "
+            "check it before trusting any partition written from it."
+        )
+    date_col = columns["date"]
+    tickers_col = columns["tickers"]
 
     df = pd.DataFrame(
         {
