@@ -22,14 +22,13 @@ settings on every request (not cached at import time) and never logged.
 
 from __future__ import annotations
 
-import secrets
 from functools import lru_cache
 
 from fastapi import APIRouter, Depends, Header, HTTPException
 
+from tail_lab.api.auth import require_bearer_token as _require_token
 from tail_lab.api.schemas import FeedbackCreateRequest, FeedbackListResponse
 from tail_lab.config import get_feedback_store as _get_configured_feedback_store
-from tail_lab.config import get_settings
 from tail_lab.feedback.store import FeedbackRecord, FeedbackStore
 
 router = APIRouter()
@@ -38,17 +37,6 @@ router = APIRouter()
 @lru_cache(maxsize=1)
 def get_feedback_store() -> FeedbackStore:
     return _get_configured_feedback_store()
-
-
-def _require_token(authorization: str | None) -> None:
-    configured_token = get_settings().feedback_token
-    if not configured_token:
-        raise HTTPException(status_code=404, detail="not found")
-    presented = ""
-    if authorization and authorization.lower().startswith("bearer "):
-        presented = authorization[len("Bearer ") :].strip()
-    if not presented or not secrets.compare_digest(presented, configured_token):
-        raise HTTPException(status_code=401, detail="unauthorized")
 
 
 @router.post("/api/feedback", status_code=201)

@@ -18,10 +18,10 @@ from __future__ import annotations
 
 import datetime as dt
 import logging
-import secrets
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Query
 
+from tail_lab.api.auth import require_bearer_token as _require_token
 from tail_lab.api.schemas import MemoryPriorArt, MemoryRecordResponse, RecordedRegime
 from tail_lab.config import get_lake_store as _get_configured_lake_store
 from tail_lab.config import get_memory_store as _get_configured_memory_store
@@ -48,17 +48,6 @@ def get_lake_store() -> LakeStore:
 
 def get_memory_store() -> HypothesisMemory:
     return _get_configured_memory_store()
-
-
-def _require_token(authorization: str | None) -> None:
-    configured = get_settings().feedback_token
-    if not configured:
-        raise HTTPException(status_code=404, detail="not found")
-    presented = ""
-    if authorization and authorization.lower().startswith("bearer "):
-        presented = authorization[len("Bearer ") :].strip()
-    if not presented or not secrets.compare_digest(presented, configured):
-        raise HTTPException(status_code=401, detail="unauthorized")
 
 
 def _resolve_as_of(as_of: dt.date | None) -> dt.date:

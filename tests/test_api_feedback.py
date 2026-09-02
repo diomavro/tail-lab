@@ -29,11 +29,11 @@ def client(feedback_store: FeedbackStore) -> Iterator[TestClient]:
 
 
 def _set_token(monkeypatch: pytest.MonkeyPatch, token: str | None) -> None:
-    """``_require_token`` reads ``get_settings()`` directly (not a FastAPI
+    """The gate reads ``get_settings()`` directly (not a FastAPI
     ``Depends``, so ``app.dependency_overrides`` can't reach it) -- patch the
     name as imported into ``feedback_routes`` instead."""
     monkeypatch.setattr(
-        "tail_lab.api.feedback_routes.get_settings",
+        "tail_lab.api.auth.get_settings",
         lambda: Settings(feedback_token=token),
     )
 
