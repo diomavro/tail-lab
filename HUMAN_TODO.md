@@ -61,7 +61,10 @@ acts on, removes, or reorders anything in this file.**
       Until it exists the review job runs exactly as it does today — it reviews,
       it blocks, and it says in the log that the fix loop is off.
 
-- [ ] Provision `TAIL_LAB_FEEDBACK_TOKEN` (`docs/adr/0014`, in-app feedback):
+- [x] **Done** (verified 2026-09-02: the GitHub Actions secret exists and
+      `GET /api/feedback` returns 401 rather than 404, so the Fly secret is set
+      too — the item had simply never been ticked). Provision
+      `TAIL_LAB_FEEDBACK_TOKEN` (`docs/adr/0014`, in-app feedback):
       generate a random secret and set it in **two** places — a Fly secret
       on the `tail-lab` app (`flyctl secrets set TAIL_LAB_FEEDBACK_TOKEN=...
       -a tail-lab`, so `GET /api/feedback` and the resolve endpoint stop

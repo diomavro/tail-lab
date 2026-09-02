@@ -32,6 +32,17 @@ env -u PYTHONPATH .venv/bin/python -m pytest tests/test_lake_store.py -k asof -x
 
 Frontend (from `frontend/`): `npm run typecheck`, `npm run lint` (oxlint), `npm run build`, `npm run e2e` (Playwright). CI gates on the frontend build **and** on `npm run e2e` — the browser suite is hermetic (it starts its own dev server and mocks every `/api/**` call from `frontend/e2e/fixtures/`), so it needs no lake and no network. A red e2e run blocks the deploy.
 
+## Prior art lives outside this repo
+
+Four third-party systems were read for ideas and are cloned read-only at
+`~/Documents/reference/` — `nautilus_trader`, `hftbacktest`,
+`kalshimarketmaker`, `quant-portfolio` (~295 MB, shallow). **`docs/PRIOR_ART.md`
+is the index**: what each was read for, what was taken, and what was rejected
+and why. Read it before mining any of them again — several findings already in
+`AGENT_TODO.md` came from there, and re-deriving them costs more than the notes
+did. They are reference material, never a dependency; nothing here imports
+them.
+
 ## Things that will bite you
 
 - **Agent branches auto-merge, and green main auto-deploys.** `.github/workflows/automerge.yml` squash-merges any `agent/*` branch PR automatically once CI is fully green, and `.github/workflows/deploy.yml` then ships every green `main` commit to Fly (`docs/adr/0016`). Pushing to an `agent/*` branch is effectively pushing to production-after-CI; use a differently-named branch when a human should review first. CI's `constitution-guard` job fails any `agent/*` PR that touches `README.md`, `ARCHITECTURE.md`, `docs/STANDARDS.md`, `docs/AGENT_MISSION.md`, `docs/END_STATE.md`, or `docs/adr/` — those changes need a human-merged PR. **`.github/workflows/**` is guarded too** (`docs/adr/0022`): the agent's own prompt, the auto-merge rule and the guard itself all live there, so an unreviewed edit could quietly widen everything else. The principle for the guarded set: *a file is constitutional if changing it changes what the agent is allowed to do* — which is why `AGENT_TODO.md` is deliberately not guarded. Agent PRs are authored by `claude[bot]` (the action mints a GitHub App token), **not** by `diomavro`, and nobody watches this repo — so an agent PR reaches Dio's inbox only because `daily-agent.yml` tells the agent to pass `--assignee diomavro`. Drop that flag and the whole open→merge→deploy chain goes silent.

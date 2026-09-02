@@ -8,7 +8,26 @@ Read 2026-08-27. The repos are cloned shallow at `~/Documents/reference/`
 | [`nautechsystems/nautilus_trader`](https://github.com/nautechsystems/nautilus_trader) | Production algo-trading platform, Rust core + Python API | Options/greeks modelling, backtest realism, agent practices |
 | [`nkaz001/hftbacktest`](https://github.com/nkaz001/hftbacktest) | HFT backtester with queue-position and latency models | The discipline of modelling what you cannot observe |
 | [`rodlaf/kalshimarketmaker`](https://github.com/rodlaf/kalshimarketmaker) | Avellaneda-Stoikov market maker for Kalshi | Fair value vs mid; the paper/live interface seam |
-| [`AshJha0/quant-portfolio`](https://github.com/AshJha0/quant-portfolio) | 31-subproject quant portfolio (Python/C++/Rust) | Vol surfaces, regime switching, greeks — §6-§9 below |
+| [`AshJha0/quant-portfolio`](https://github.com/AshJha0/quant-portfolio) · [site](https://ashjha0.github.io/quant-portfolio/) | 31-subproject quant portfolio (Python/C++/Rust) | Vol surfaces, regime switching, greeks — §6-§10 below |
+
+**On the GitHub Pages site** (`ashjha0.github.io/quant-portfolio`): it is an
+8.8 KB landing page whose seven links all point back into the repo's own
+`CONVENTIONS.md`, `ARCHITECTURE.md`, `COOKBOOK.md`, `DIAGRAMS.md`, `LEARN.md`
+and `MARKET_RISK.md` — every one of which is in the clone and was read on
+2026-08-27. **It carries nothing the clone does not**, which is worth writing
+down precisely so that being handed the URL later does not start a re-read of
+97k lines.
+
+**Keeping the library current.** These are `--depth 1` clones, so they go stale
+silently — `git log` shows a plausible recent commit either way. To check for
+new material rather than assume:
+
+```bash
+cd ~/Documents/reference/<repo> && git fetch --depth 20 origin \
+  && git rev-list --count HEAD..origin/main   # 0 == nothing new
+```
+
+Verified 0 for `quant-portfolio` on 2026-09-03.
 
 **Most of these repos is behind our wall.** They exist to place orders;
 `docs/adr/0007` says we never do. Execution engines, order routing, live
