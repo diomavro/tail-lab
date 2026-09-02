@@ -6,6 +6,12 @@ name: CI
 # `make ingest-vix` (a human-run target), and the Playwright suite answers
 # every /api/** call from `frontend/e2e/fixtures/` (docs/adr/0017).
 
+env:
+  # Bound on the review -> fix -> re-review loop (docs/adr/0024). "Loop until
+  # the review is clean" and "loop forever" are the same program whenever the
+  # reviewer and the fixer disagree, so the disagreement has to terminate.
+  MAX_FIX_ROUNDS: 3
+
 on:
   push:
     branches: [main]
@@ -201,107 +207,209 @@ jobs:
   agent-review:
     if: startsWith(github.head_ref, 'agent/')
     runs-on: ubuntu-latest
+    env:
+      # The `secrets` context is not available in a step-level `if:`, so the
+      # token's presence is reduced to a boolean here, where it is.
+      HAS_FIX_TOKEN: ${{ secrets.AGENT_FIX_TOKEN != '' }}
     permissions:
-      contents: read
+      contents: write
       pull-requests: write
       id-token: write
     steps:
+      # AGENT_FIX_TOKEN (a PAT) rather than github.token, because the whole
+      # loop turns on one GitHub rule: a push made with GITHUB_TOKEN does NOT
+      # trigger workflows (recursion prevention, docs/adr/0016). A fix pushed
+      # with the default token would therefore never be re-reviewed, and the
+      # loop would stall after exactly one round. Falls back to github.token,
+      # in which case the job still reviews and still blocks — it just cannot
+      # fix, which is the behaviour up to 2026-09-02.
       - uses: actions/checkout@v4
         with:
+          token: ${{ secrets.AGENT_FIX_TOKEN || github.token }}
+          ref: ${{ github.head_ref }}
           fetch-depth: 0
 
+      - name: How many fix rounds has this branch already had?
+        id: rounds
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: |
+          n=$(git log --oneline "$BASE_SHA..HEAD" --grep='^\[review-fix\]' | wc -l | tr -d ' ')
+          echo "count=$n" >> "$GITHUB_OUTPUT"
+          if [ "$n" -lt "${MAX_FIX_ROUNDS}" ] && [ "${HAS_FIX_TOKEN}" = "true" ]; then
+            echo "can_fix=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "can_fix=false" >> "$GITHUB_OUTPUT"
+          fi
+          echo "prior fix rounds: $n (max ${MAX_FIX_ROUNDS}); fix token present: ${HAS_FIX_TOKEN}"
+        # A bound, because "loop until the review is clean" and "loop forever"
+        # are the same program when the reviewer and the fixer disagree.
+
       - name: Adversarial design review
-        uses: anthropics/claude-code-action@v1
-        # continue-on-error, because the step below is the fallback and a failing
-        # step would abort the job before ever reaching it. That is exactly what
-        # happened 2026-08-29..09-01: the action refused to start, the job died
-        # here, and five green PRs sat blocked for four days by a gate that had
-        # never formed an opinion. docs/adr/0023 says "a reviewer that cannot run
-        # must not become a gate that cannot open" -- this is the line that makes
-        # that true rather than aspirational.
         continue-on-error: true
         env:
           GH_TOKEN: ${{ github.token }}
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
+        uses: anthropics/claude-code-action@v1
         with:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
-          # The action refuses bot-triggered runs by default, to stop an
-          # attacker driving it through a bot-authored PR. Every PR this job
-          # reviews is opened by `claude[bot]` -- the daily agent -- so without
-          # this the reviewer can never run on the only PRs it exists for.
-          #
-          # Named, not `*`: the trust boundary is the same one docs/adr/0016
-          # already accepted for the daily agent itself, whose inputs are this
-          # repo's own backlog and code rather than untrusted external data. A
-          # wildcard would extend that to any bot that ever opens a PR here.
           allowed_bots: 'claude'
           claude_args: '--allowedTools Bash,Read,Grep,Glob'
           prompt: |
             You are the adversarial design reviewer for an autonomous agent's pull request.
-            You did not write this change and have no stake in it landing.
+            You did not write this change and have no stake in it landing. If earlier commits
+            on this branch are prefixed `[review-fix]`, a previous round of this same review
+            asked for them — review them as critically as anything else; a fix that missed the
+            point is a finding, not a resolution.
 
             Read the diff first:  git diff "$BASE_SHA...HEAD"
 
             **What you are NOT for.** Correctness, types, layering, formatting and coverage are
-            already proven by other jobs in this same run. Do not re-check them. Do not comment
-            on style the formatter owns. If your finding would have been caught by ruff or mypy,
-            it is not your finding.
+            already proven by other jobs in this same run. Do not re-check them. If your finding
+            would have been caught by ruff or mypy, it is not your finding.
 
             **What you ARE for** — the four things no linter here can see:
 
-            1. DUPLICATION. Does this re-implement something that already exists? Search before
-               concluding it does not: `grep -rn` for the key function names, and for the same
-               computation expressed differently. This repo has genuine near-duplicates by
-               design (one ingestion adapter per dataset, deliberately) — that pattern is
-               sanctioned in ingestion/ and is NOT a finding. Duplication inside research/ or
-               api/ is.
+            1. DUPLICATION. Does this re-implement something that already exists? `grep -rn`
+               before concluding it does not. One ingestion adapter per dataset is a sanctioned
+               near-duplicate in `ingestion/` and is NOT a finding; duplication in `research/`
+               or `api/` is.
             2. DEAD OR SPECULATIVE CODE. A parameter nothing passes, a branch nothing reaches,
-               an abstraction with exactly one implementation and no second one in sight, an
-               exported name nothing imports.
-            3. ACCRETION. Did a function gain parameters instead of being reshaped? Did a module
-               grow past the point where it is one thing? The known offenders are listed in
-               AGENT_TODO.md; a change that makes one of them worse is a finding even if it is
-               small.
-            4. UNEARNED COMPLEXITY. Would a reader with no context understand why this shape was
-               chosen? Is there a materially simpler version that passes the same tests?
+               an abstraction with one implementation and no second in sight.
+            3. ACCRETION. Did a function gain parameters instead of being reshaped? The known
+               offenders are in `AGENT_TODO.md`; making one worse is a finding.
+            4. UNEARNED COMPLEXITY. Is there a materially simpler version that passes the same
+               tests?
 
-            **The bar for BLOCKING is high, deliberately.** This job gates auto-merge, so a
-            false positive stops the platform's only daily increment and costs a human's
-            morning. Block ONLY when you can name the specific file and line, quote the code,
-            and state what should have happened instead. Taste disagreements, "I would have
-            named it differently", and speculative future-proofing concerns are ADVISORY, never
-            blocking. **When you are uncertain, pass.** A missed nit is cheap; a stalled
-            pipeline is not.
+            **Blocking bar.** Block ONLY when you can name the file and line, quote the code, and
+            state what should have happened instead. Taste, naming preferences and speculative
+            future-proofing are ADVISORY, never blocking. **When uncertain, pass.**
 
-            Post your review as a PR comment either way, so there is a record that a review
-            happened and what it said:
+            Post the review as a PR comment either way, so there is a record:
               gh pr comment "$PR_NUMBER" --body "<your review>"
 
-            Then write your verdict to a file, exactly one word, nothing else:
-              echo PASS  > /tmp/verdict    (nothing blocking; advisory notes are fine)
-              echo BLOCK > /tmp/verdict    (a specific, quoted, actionable defect)
+            Advisory notes matter even on a PASS — the daily agent now reads them (step 2b of
+            its charter), so write them to be acted on, not to be admired.
+
+            Then write your verdict, exactly one word, nothing else:
+              echo PASS  > /tmp/verdict
+              echo BLOCK > /tmp/verdict
+
+      - name: Read the verdict
+        id: verdict
+        run: |
+          v="$(tr -d '[:space:]' < /tmp/verdict 2>/dev/null || true)"
+          [ -z "$v" ] && v="NONE"
+          echo "value=$v" >> "$GITHUB_OUTPUT"
+          echo "verdict: $v"
+
+      # Only pay for the toolchain when there is actually something to fix.
+      - name: Install the full toolchain
+        if: steps.verdict.outputs.value == 'BLOCK' && steps.rounds.outputs.can_fix == 'true'
+        run: |
+          pip install -e ".[dev]"
+          cd frontend && npm ci
+
+      - name: Apply the review's findings
+        if: steps.verdict.outputs.value == 'BLOCK' && steps.rounds.outputs.can_fix == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        uses: anthropics/claude-code-action@v1
+        with:
+          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          allowed_bots: 'claude'
+          claude_args: '--allowedTools Bash,Read,Write,Edit,Grep,Glob'
+          prompt: |
+            A design review just BLOCKED this pull request. Read its findings — the most recent
+            review comment on PR $PR_NUMBER:
+
+              gh pr view "$PR_NUMBER" --json comments --jq '.comments[-1].body'
+
+            Fix what it found, and **only** what it found. You are not here to improve the PR;
+            you are here to answer a specific review. Scope creep makes the next review harder
+            and defeats the loop.
+
+            You may DISAGREE. If a finding is wrong — it misreads the code, or the pattern it
+            objects to is sanctioned elsewhere in this repo — do not contort the code to satisfy
+            it. Leave that part alone and say so plainly in a PR comment, with the evidence.
+            The next review round reads the diff fresh; a reasoned disagreement recorded in the
+            thread is a legitimate way for this loop to terminate, and a worse outcome than
+            either is code bent to satisfy a reviewer that was mistaken.
+
+            Everything in `docs/AGENT_MISSION.md` still binds you — above all the constitution
+            rule: never edit `README.md`, `ARCHITECTURE.md`, `docs/STANDARDS.md`,
+            `docs/AGENT_MISSION.md`, `docs/END_STATE.md`, `docs/adr/**` or `.github/workflows/**`.
+            If a finding can only be resolved by editing one of those, do not: say so in a
+            comment and stop.
+
+            VALIDATE before you finish — the other CI jobs in this run tested the code as it was
+            BEFORE your fix, so their green is now stale and you are the only thing standing
+            between a broken change and a merge:
+              ruff check src tests scripts
+              ruff format --check src tests scripts
+              mypy src/tail_lab
+              lint-imports
+              python -m pytest --cov=tail_lab --cov-report=term-missing
+              coverage report --include="src/tail_lab/research/*,src/tail_lab/transforms/*" --fail-under=90
+            and if you touched the frontend: cd frontend && npm run typecheck && npm run build
+
+            Do NOT commit or push — a later step does that. Just leave the working tree fixed.
+
+      - name: Push the fix and hand off to a fresh review
+        id: pushed
+        if: steps.verdict.outputs.value == 'BLOCK' && steps.rounds.outputs.can_fix == 'true'
+        run: |
+          set -euo pipefail
+          if [ -z "$(git status --porcelain)" ]; then
+            echo "::warning::the fixer changed nothing — treating the block as standing."
+            echo "did=false" >> "$GITHUB_OUTPUT"; exit 0
+          fi
+          git config user.name  "tail-lab review loop"
+          git config user.email "noreply@github.com"
+          git add -A
+          git commit -q -m "[review-fix] round $(( ${{ steps.rounds.outputs.count }} + 1 )): apply design-review findings
+
+          Automated response to the adversarial review on PR #${{ github.event.pull_request.number }}.
+          Pushed with AGENT_FIX_TOKEN so this triggers a fresh CI run and a fresh,
+          independent review of the fixed code (docs/adr/0024)."
+          git push origin "HEAD:${{ github.head_ref }}"
+          echo "did=true" >> "$GITHUB_OUTPUT"
 
       - name: Enforce the verdict
         run: |
           set -uo pipefail
-          verdict="$(cat /tmp/verdict 2>/dev/null | tr -d '[:space:]')"
-          if [ -z "$verdict" ]; then
+          v="${{ steps.verdict.outputs.value }}"
+          rounds="${{ steps.rounds.outputs.count }}"
+          if [ "$v" = "NONE" ]; then
             echo "::warning::reviewer produced no verdict — treating as PASS."
-            echo "A reviewer that cannot run must not become a gate that cannot open:"
-            echo "an outage here would silently halt the daily increment. This is"
-            echo "not hypothetical — it halted it for four days from 2026-08-29."
-            echo "If you see this warning repeatedly, the reviewer is broken and"
-            echo "is silently reviewing nothing. Fix it or remove the job; do not"
-            echo "leave a green check standing for a review that never happened."
+            echo "A reviewer that cannot run must not become a gate that cannot open;"
+            echo "that outage halted this repo for four days from 2026-08-29. But a"
+            echo "REPEATED no-verdict means the reviewer is silently reviewing nothing:"
+            echo "fix it or remove the job, do not leave a green check standing for a"
+            echo "review that never happened."
             exit 0
           fi
-          echo "verdict: $verdict"
-          if [ "$verdict" = "BLOCK" ]; then
-            echo "::error::Design review blocked this PR. See the review comment on the PR."
+          if [ "$v" = "PASS" ]; then
+            echo "review clean after $rounds fix round(s) — the loop has terminated."
+            exit 0
+          fi
+          if [ "${{ steps.pushed.outputs.did }}" = "true" ]; then
+            echo "::notice::Findings applied and pushed. This run fails on purpose: the"
+            echo "fresh run triggered by that push carries the authoritative review."
             exit 1
           fi
-          exit 0
+          if [ "${HAS_FIX_TOKEN}" != "true" ]; then
+            echo "::error::Design review blocked this PR, and AGENT_FIX_TOKEN is not set,"
+            echo "so the fix loop is disabled and a human must resolve it (HUMAN_TODO.md)."
+            exit 1
+          fi
+          echo "::error::Design review still blocking after $rounds fix round(s) — the loop"
+          echo "gave up rather than spinning. A human should read the review thread: either"
+          echo "the finding is subtle, or the reviewer and the fixer disagree."
+          exit 1
 
   trigger-deploy:
     needs: [backend, hygiene, frontend, e2e, constitution-guard]  # not agent-review: it is skipped on non-agent branches
