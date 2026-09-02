@@ -521,8 +521,10 @@ item 2 is time-sensitive in a way nothing else in this file is.
       no further code change. A live-derived record is labelled
       `"Weeklies (live)"`/`"Monthlies (live)"` so the two provenances are
       never visually confused with the static table's `"(assumed)"` flag.
-      `docs/DATA_FLOW.md` §3.1 still describes the pre-wiring state and should
-      be updated to match next time someone is in that file.
+      `docs/DATA_FLOW.md` §3.1 was updated in the same PR, so it already
+      matches (the draft note claiming otherwise was stale on arrival — caught
+      by the adversarial reviewer on #61 and, characteristically, merged
+      unaddressed before this fix).
 
 - [ ] **Free-source health canary.** Yahoo degraded from "works" to "429s
       everywhere" between 2026-08-19 and 2026-08-21 and nothing in the
@@ -637,6 +639,14 @@ item 2 is time-sensitive in a way nothing else in this file is.
 
 ## Operational (2026-09-01)
 
+- [ ] **Surface `agent/*` PRs blocked by design review for more than a day.**
+      A BLOCK leaves the PR red, and the agent that wrote it is a one-shot
+      daily run that never comes back — so absent a human it rots (five PRs,
+      four days, 2026-08-29..09-01). The advisory half of this leak is closed
+      (the daily agent now reads review comments, `docs/adr/0023`); the block
+      half still needs a nudge. Cheapest is a scheduled check listing open
+      `agent/*` PRs whose `agent-review` is failing, in the same place the
+      chain-freshness check reports.
 - [ ] **Detect agent PRs that have gone silently CI-less.** GitHub runs
       `pull_request` workflows on the merge commit, so a branch that conflicts
       with `main` reports **zero** check runs — which is indistinguishable from

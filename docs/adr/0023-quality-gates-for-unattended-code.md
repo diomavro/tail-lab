@@ -112,6 +112,33 @@ so it is reviewed and merged by exactly the same path as everything else.
 - **Agent PRs cost more.** One extra Claude invocation each. At roughly one
   agent PR a day that is affordable, and it buys the only reader the code
   otherwise has.
+- **The reviewer was write-only for its first week, and nobody noticed.**
+  *(2026-09-02, found because Dio asked whether its comments were ever
+  applied.)* They were not. There are two leaks and both are structural.
+
+  **PASS with advisory notes.** A passing review lets `automerge` squash the PR
+  within seconds, so the comment is posted to a thread that closes immediately.
+  No human opens it and no agent reads it. Real findings were lost this way: a
+  `docs/DATA_CONTRACTS.md` cross-reference left pointing at `#9` after the
+  dataset became `#10`, and an `AGENT_TODO.md` note claiming a doc "should be
+  updated next time someone is in that file" when the same diff had already
+  updated it. Both were correct, specific, cheap to fix, merged, and then sat in
+  `main` unread.
+
+  **BLOCK.** The PR sits red — and the agent that wrote it is a one-shot daily
+  run that never returns. So a block requires a human, and absent one the PR
+  rots. That is not hypothetical either: five PRs sat for four days.
+
+  So the job cost a model call per PR and, in both branches of its own verdict,
+  produced nothing anybody acted on. The fix reuses machinery that already
+  works: the daily agent pulls in-app feedback at step 1 and acts on it, so it
+  now pulls **review comments on recently-merged `agent/*` PRs** the same way,
+  and must either fix an advisory finding or file it in `AGENT_TODO.md`. The
+  block path is covered by the stalled-PR detection queued in `AGENT_TODO.md`.
+
+  The general lesson is worth more than the fix: **a review nobody is obliged to
+  read is not a gate, it is a diary.** When adding a reviewer, specify the
+  consumer of its output before specifying its criteria.
 - **The reviewer earned its keep on its first real block, and the lesson was
   to build a cheaper check.** *(2026-09-01.)* Its first genuine BLOCK found a
   `Makefile` committed with unresolved conflict markers: `make` failed to parse
