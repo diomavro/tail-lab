@@ -41,6 +41,26 @@ acts on, removes, or reorders anything in this file.**
       the `FRED_API_KEY` repo secret (2026-08-17). For local dev, export
       `FRED_API_KEY` from that same value.
 
+- [ ] **Create `AGENT_FIX_TOKEN` and add it to the repo's Actions secrets** —
+      the one thing standing between the design review being an alarm and being
+      a loop (`docs/adr/0024`). A fine-grained PAT scoped to `diomavro/tail-lab`
+      with **Contents: read & write** is enough; nothing else.
+
+      Why a PAT at all: a push made with the default `GITHUB_TOKEN` does not
+      trigger workflows (GitHub's recursion prevention, `docs/adr/0016`), so a
+      fix pushed by CI would never be re-reviewed and the loop would stall after
+      one round — while *looking* like it worked.
+
+      Blast radius, stated plainly because this repo has deliberately kept
+      privileged tokens out of CI (`docs/adr/0019`): it can push to an `agent/*`
+      branch and nothing else. Everything on that path is still gated by full
+      CI, by `constitution-guard` (which blocks `.github/workflows/**` and every
+      rule document), and by the review itself. It cannot deploy, cannot reach a
+      broker, cannot touch the constitution.
+
+      Until it exists the review job runs exactly as it does today — it reviews,
+      it blocks, and it says in the log that the fix loop is off.
+
 - [ ] Provision `TAIL_LAB_FEEDBACK_TOKEN` (`docs/adr/0014`, in-app feedback):
       generate a random secret and set it in **two** places — a Fly secret
       on the `tail-lab` app (`flyctl secrets set TAIL_LAB_FEEDBACK_TOKEN=...
