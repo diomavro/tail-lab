@@ -25,19 +25,18 @@ from __future__ import annotations
 
 import datetime as dt
 import logging
-import secrets
 from functools import lru_cache
 
 import pandas as pd
 from fastapi import APIRouter, Depends, Header, HTTPException
 
+from tail_lab.api.auth import require_bearer_token as _require_token
 from tail_lab.api.schemas import (
     OptionChainSnapshotRequest,
     OptionChainSnapshotResponse,
     OptionChainSnapshotStatus,
 )
 from tail_lab.config import get_lake_store as _get_configured_lake_store
-from tail_lab.config import get_settings
 from tail_lab.contracts.option_chain import DATASET, split_valid_and_quarantined
 from tail_lab.lake.store import LakeStore
 from tail_lab.observability import log_event
@@ -52,20 +51,6 @@ QUARANTINE_DATASET = f"{DATASET}__quarantine"
 @lru_cache(maxsize=1)
 def get_lake_store() -> LakeStore:
     return _get_configured_lake_store()
-
-
-def _require_token(authorization: str | None) -> None:
-    """Same gate as ``feedback_routes``: unset token -> 404 (an unconfigured
-    deploy does not advertise the route), bad bearer -> 401, constant-time
-    compare, never logged."""
-    configured_token = get_settings().feedback_token
-    if not configured_token:
-        raise HTTPException(status_code=404, detail="not found")
-    presented = ""
-    if authorization and authorization.lower().startswith("bearer "):
-        presented = authorization[len("Bearer ") :].strip()
-    if not presented or not secrets.compare_digest(presented, configured_token):
-        raise HTTPException(status_code=401, detail="unauthorized")
 
 
 @router.post("/api/ingest/option-chain")
