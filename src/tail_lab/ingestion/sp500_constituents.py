@@ -1,5 +1,5 @@
 """Point-in-time S&P 500 constituents ingestion adapter — bronze layer
-(`docs/DATA_CONTRACTS.md` #9).
+(`docs/DATA_CONTRACTS.md` #10).
 
 **Source: `fja05680/sp500` on GitHub** (MIT-licensed, community-maintained),
 a single raw CSV over HTTPS, keyless: no account, no login, no rate limit

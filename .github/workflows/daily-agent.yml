@@ -105,6 +105,20 @@ jobs:
                daily sweep is broken, and diagnosing it is the highest-value thing available
                to you today — ahead of whatever is at the top of `AGENT_TODO.md`. Say so in
                the PR. If it is fresh, note the last session and move on.
+            2b. Pick up the design reviewer's unaddressed findings:
+                  gh pr list --state merged --limit 6 --json number,headRefName \
+                    --jq '.[]|select(.headRefName|startswith("agent/"))|.number' \
+                  | while read p; do gh pr view "$p" --json comments \
+                      --jq '.comments[].body' | head -60; done
+                Every `agent/*` PR gets an adversarial design review, and a review that
+                PASSES **with advisory notes** is merged by automerge within seconds — so
+                nobody has ever read those notes. They were write-only until 2026-09-02,
+                and real findings were lost that way (a doc cross-reference off by one, a
+                backlog note that was stale on arrival). Treat an advisory finding exactly
+                like a `kind: "issue"` from step 1: if it is small and fits this run, fix
+                it and say so; otherwise add it to `AGENT_TODO.md` so it stops being
+                invisible. Ignoring one silently is the failure mode this step exists to
+                end. A finding already fixed needs nothing — check before you act.
             3. Read `docs/AGENT_MISSION.md`, `README.md`, `ARCHITECTURE.md`, `docs/STANDARDS.md`,
                `docs/END_STATE.md` and `AGENT_TODO.md`. `END_STATE.md` §4 is where the
                documented research questions live — step 4 asks you to point at one, so you
