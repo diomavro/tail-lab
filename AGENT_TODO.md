@@ -155,6 +155,20 @@ a large one strictly in order.
       *scheduled-release-date* PDFs go back to ≥2006
       (`bls.gov/bls/archived_sched.htm`), exactly what the point-in-time
       `announced_at` rule needs.
+      **Tried and blocked, 2026-09-02**: sending a full browser `User-Agent` +
+      `Accept`/`Accept-Language` headers still gets a **403 Akamai bot-block on
+      every path tried**, including the bare `bls.gov/` root — not just the
+      schedule page. This is IP-reputation/fingerprint blocking, not a missing
+      header, so it doesn't yield to the fix `docs/DATA_SOURCING.md` §2
+      anticipated. Confirms that note's parenthetical: this needs Playwright (a
+      real headless browser) or another rendering approach, which is a new
+      dependency decision for a human, not a same-day adapter increment. Left
+      unbuilt; also note the second producer landing in `event_calendar` (this
+      adapter, once unblocked) must combine its write with `ingestion/fomc.py`'s
+      rather than write independently — same-day bronze writes to a dataset
+      already written that day silently no-op (`lake/store.py:write_bronze`),
+      so two independent producers would lose whichever wrote second. See
+      `ingestion/fomc.py`'s module docstring and `contracts/event_calendar.py`'s.
 
 ## Data-sourcing increments (2026-08-19 — free/keyless; see `docs/DATA_SOURCING.md`)
 
@@ -176,18 +190,43 @@ a large one strictly in order.
       tile listing recent automated actions (ingests with row counts,
       backtests, deploys), so "what happened while I was away" is one
       glance.
-- [ ] **VIX futures term-structure ingestion** (keyless, big free win):
+- [~] **VIX futures term-structure ingestion** (keyless, big free win):
       per-contract daily settlement CSVs
       `cdn.cboe.com/data/us/futures/market_statistics/historical_data/VX/VX_{expiry}.csv`
       + pre-2013 archive `.../resources/futures/archive/volume-and-price/CFE_{M}{YY}_VX.csv`
       → full VX history 2004→present; build the constant-maturity curve
       in `transforms/`. New contract in `contracts/`, adapter follows the
       VIX shape.
+      **Modern-path adapter done 2026-09-02**: `contracts/vix_futures.py`
+      (dataset #11) + `ingestion/vix_futures.py` + `make ingest-vix-futures`.
+      Scoped to the URL pattern above only, verified live to serve contracts
+      expiring on or after **2013-01-16** (earlier dates 403/`AccessDenied`);
+      `compute_vx_expiry` (third Friday of the following month, minus 30
+      days) pinned against four real contracts fetched live 2026-09-02
+      spanning 2013-2026. `default_expiries` picks a conservative 6 months
+      forward — CBOE has listed at least that many consecutive months
+      throughout the product's history — so the default `make` target never
+      guesses past what's actually listed. OHLC's Cboe zero-fill (a no-trade
+      day) is mapped to null before validation, mirroring
+      `ingestion/option_chain.py`'s greeks convention; `settle` is never
+      zero-filled and stays mandatory. **Not done, deliberately deferred**:
+      the pre-2013 archive path is a **different URL/filename convention**
+      with an apparent **10x price-scaling difference** from the modern
+      series (a probed 2007 contract settled ~150-200, versus spot VIX
+      trading ~15-20 the same era) — confirmed reachable but not ingested,
+      since gluing two differently-scaled sources into one dataset without
+      validating the scaling first would be worse than shipping half of it
+      honestly. Also not done: the expiry rule has **no holiday adjustment**
+      (Cboe moves a holiday-Wednesday expiry to the preceding business day;
+      this adapter doesn't), and the `transforms/` constant-maturity curve —
+      same ship-the-adapter-first precedent every other dataset here has
+      followed. No `research/` consumer wired yet and not yet run against
+      prod (no live-run credential in this workflow).
 - [x] **Point-in-time S&P 500 constituents ingestion** from
       `github.com/fja05680/sp500` (MIT, maintained, 1996→present; raw CSV
       over HTTPS, keyless) — closes `docs/adr/0010` at membership
       granularity. **Adapter done 2026-08-29**: `contracts/
-      sp500_constituents.py` (dataset #9 in `docs/DATA_CONTRACTS.md`) +
+      sp500_constituents.py` (dataset #10 in `docs/DATA_CONTRACTS.md`) +
       `ingestion/sp500_constituents.py` + `make ingest-sp500-constituents`,
       following `cboe_strategy.py`'s "refetch full history every time"
       shape so a partial fetch can never truncate a good partition. Live

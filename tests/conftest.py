@@ -82,6 +82,16 @@ def cboe_chain_sample() -> dict[str, Any]:
 
 
 @pytest.fixture
+def vix_futures_h2020_sample() -> str:
+    """Real Cboe VX_2020-03-18.csv rows: the Mar-2020 (H) contract's listing
+    window (including a genuine no-trade day, OHLC all zero-filled) plus its
+    final three weeks into expiry, spanning the COVID vol spike -- so the
+    parser is pinned against actual source formatting and against the
+    zero-fill convention it has to detect."""
+    return (FIXTURES_DIR / "vix_futures_h2020_sample.csv").read_text()
+
+
+@pytest.fixture
 def mpd_stats_sample() -> str:
     """Real Minneapolis Fed MPD rows: the whole Sep-Oct 2008 crisis window for
     ``sp12m`` (the market this platform cares about), plus one row each for a

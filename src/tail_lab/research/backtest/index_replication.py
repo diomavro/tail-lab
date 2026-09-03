@@ -60,6 +60,7 @@ import numpy as np
 import pandas as pd
 from pydantic import BaseModel
 
+from tail_lab.contracts.calendar import third_friday
 from tail_lab.contracts.cboe_strategy import DATASET as CBOE_STRATEGY_DATASET
 from tail_lab.contracts.regime import RegimeLabel
 from tail_lab.lake.store import LakeStore
@@ -180,17 +181,6 @@ class IndexReplicationResult(BaseModel):
     by_regime: list[ResidualBucket]
     dividend_sensitivity: list[DividendSensitivityPoint]
     rolls: list[ReplicationRoll]
-
-
-def third_friday(year: int, month: int) -> dt.date:
-    """The third Friday of ``year``-``month`` — the standard US equity-index
-    option expiration, and therefore the roll date of every program here."""
-    fridays = [
-        d
-        for d in (dt.date(year, month, day) for day in range(1, 29))
-        if d.weekday() == 4  # Monday is 0
-    ]
-    return fridays[2]
 
 
 def roll_schedule(

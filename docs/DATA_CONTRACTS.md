@@ -567,6 +567,84 @@ requires until one exists) is a separate, later increment.
 
 ---
 
+## 11. VIX futures term structure
+
+**Purpose.** Every research question this platform answers about "which
+regime" or "how expensive is the tail right now" reads spot VIX; none of
+them can see the *term structure* (contango/backwardation, how a shock moves
+the front month versus the back) that a curve of contract settlements
+provides for free. Feeds the constant-maturity curve `transforms/` builds
+next (`AGENT_TODO.md`).
+
+**Source (free, keyless).** Cboe's public per-contract settlement CSVs,
+`https://cdn.cboe.com/data/us/futures/market_statistics/historical_data/VX/VX_{expiry}.csv`
+— same keyless CDN host as datasets #2 and #7. Each file is one contract's
+*entire* trade history from listing to expiry, so a refetch is always safe
+(matches dataset #7's full-history-every-time shape). Verified live
+2026-09-02: this URL pattern only serves contracts expiring on or after
+**2013-01-16**; earlier dates 403/`AccessDenied`. Pre-2013 contracts live at
+a different path (`.../resources/futures/archive/volume-and-price/CFE_{month
+code}{YY}_VX.csv`) with an apparent 10x price-scaling difference from the
+modern series — confirmed reachable but **not ingested by this adapter**,
+deliberately: gluing two differently-scaled sources into one dataset without
+validating the scaling first would be worse than shipping half of it
+honestly (`ingestion/vix_futures.py` module docstring).
+
+**Which contracts.** `ingestion/vix_futures.py`'s `default_expiries` picks
+the next 6 not-yet-expired monthly contracts as of the ingest date — a
+deliberately conservative window CBOE has listed throughout the product's
+history, so the default `make ingest-vix-futures` run never guesses past
+what is actually listed. A caller wanting deeper history (a full
+2013-present backfill) passes an explicit expiry list.
+
+**Expiry computation.** A VX contract settles the Wednesday 30 calendar days
+before the third Friday of the *following* calendar month
+(`compute_vx_expiry`), verified against four real contracts spanning
+2013-2026. **No holiday adjustment**: Cboe moves the real settlement date to
+the preceding business day when that Wednesday is a market holiday, and this
+adapter does not. The failure mode is loud, not silent — a wrong guess 404s
+against the one-file-per-exact-date URL rather than fetching a different
+contract's data.
+
+**Schema — `VxFuturesRow`:**
+
+| Column | Type | Constraints |
+|---|---|---|
+| `contract_expiry` | `date` | non-null; the join key identifying the contract |
+| `trade_date` | `date` | non-null |
+| `open` / `high` / `low` / `close` | `float \| None` | > 0, ≤ 300 when present; null on a no-trade day (see below) |
+| `settle` | `float` | non-null, > 0, ≤ 300 |
+| `volume` | `int` | non-null, ≥ 0 |
+| `open_interest` | `int` | non-null, ≥ 0 |
+
+Unique on `(contract_expiry, trade_date)` — two contracts trade on the same
+calendar day every day, so uniqueness on `trade_date` alone would reject the
+very panel this dataset exists to build.
+
+**Zero-fill convention.** Cboe zero-fills OHLC on a day the contract did not
+trade — a real futures price is never exactly $0.00 — so the adapter maps
+that sentinel to a typed null before validation, the same convention
+`ingestion/option_chain.py` uses for its zero-filled greeks. `settle` is the
+exchange's own computed settlement price and is never zero-filled, so it
+stays non-nullable; a missing or non-positive `settle` is a genuinely bad
+row, not a quiet day.
+
+**Cadence.** Daily, after Cboe publishes (~EOD).
+
+**Bronze partition key.** `ingest_date=<YYYY-MM-DD>`, holding the whole
+requested curve as one immutable snapshot — a partial run must not
+half-overwrite a previously-complete curve.
+
+**Point-in-time rule.** Same shape as datasets #1, #2 and #7 — as-of on
+`ingest_date`, not `trade_date`.
+
+**Not yet wired.** This adapter ships alone — no `transforms/` constant-
+maturity curve and no `research/` consumer read it yet, and it has not been
+run against prod (no live-run credential in the daily agent's workflow).
+Same ship-the-adapter-first precedent every other dataset here has followed.
+
+---
+
 ## Deferred datasets (backlog, not built)
 
 Tracked in `docs/END_STATE.md` §2.2 — do not build adapters for these
@@ -580,6 +658,6 @@ until pulled onto `AGENT_TODO.md`:
 - Market breadth indicators.
 
 Point-in-time historical index constituents (`docs/adr/0010`) is now dataset
-#9 above — the adapter exists, but nothing yet reads it (see that section's
+#10 above — the adapter exists, but nothing yet reads it (see that section's
 "Not yet wired"). It remains a research-validity requirement, not an
 ordinary backlog item, per `docs/END_STATE.md` §2.3.
