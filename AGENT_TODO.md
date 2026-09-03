@@ -252,12 +252,47 @@ a large one strictly in order.
       + JSON Accept header; verified back to 2010) → `EARNINGS` rows in
       dataset #5. Unofficial endpoint: throttle, cache, and treat errors
       as "retry tomorrow", not hard failures.
-- [ ] **Switch OHLCV primary to Tiingo** once the key exists
-      (`HUMAN_TODO.md` phase 1): new adapter (500 unique symbols/month
-      budget — plan symbol rotation), demote Yahoo to fallback, update
-      `docs/DATA_CONTRACTS.md` #1's source section in the same PR. Then
-      backfill delisted ex-constituents enumerated from the PIT membership
-      file (spot-check LEH/BSC/WM/SIVB actually return data first).
+- [ ] **Switch OHLCV primary to Tiingo** — the key now exists and is
+      verified (`HUMAN_TODO.md`, 2026-09-03). New adapter (500 unique
+      symbols/month budget — plan symbol rotation), demote Yahoo to
+      fallback, update `docs/DATA_CONTRACTS.md` #1's source section in the
+      same PR. Measured: SPY 1993-01-29 → 2026-09-02 with `adjClose` and
+      `divCash`, so 33 years of adjusted daily history. Auth is
+      `Authorization: Token <key>`; put the key in `config.py` as
+      `tiingo_api_key` mirroring `fred_api_key` (plain env name, not
+      `TAIL_LAB_`-prefixed).
+
+      **DO NOT also attempt the delisted backfill on Tiingo.** The gate this
+      item used to carry — "spot-check LEH/BSC/WM/SIVB actually return data
+      first" — was run on 2026-09-03 and Tiingo FAILS it. Do not re-litigate
+      this; the measurements are:
+
+      | Ticker | Result |
+      |---|---|
+      | LEH | HTTP **200 with zero rows** |
+      | BSC | HTTP **200 with zero rows** |
+      | SIVB, FRC | 404 |
+      | WM | 200, but it returns **Waste Management**, not Washington Mutual |
+      | SBNY | 881 rows through 2026 at $0.32 — OTC continuation, not the listed bank |
+
+      Two of those are worse than a plain absence, which is why this needs
+      saying rather than just "no":
+
+      * **LEH/BSC return 200 with an empty list.** An adapter would record
+        "no data in this period" rather than "this source lacks this name",
+        so a backfill whose entire purpose is removing survivorship bias
+        would silently reintroduce it — the exact failure `docs/adr/0010`
+        exists to prevent.
+      * **WM returns plausible prices for the wrong company.** Waste
+        Management traded ~$34 through the week Washington Mutual collapsed.
+        A backfill keyed on ticker alone splices one company's history into
+        the other's position and nothing looks wrong. Any future delisted
+        adapter must key on a permanent identifier (PERMNO/CUSIP/FIGI), not
+        on a ticker, and must treat an empty-but-200 response as a hard
+        error rather than as "no trading that period".
+
+      The delisted source itself is now a purchasing decision, tracked in
+      `HUMAN_TODO.md`.
 - [ ] **optionsDX ingestion + real-quote pricer validation** once the
       zips are staged (`HUMAN_TODO.md` phase 1): bronze-ingest the
       2010–2023 SPY/SPX/QQQ EOD chains, add the second `OptionPricer`

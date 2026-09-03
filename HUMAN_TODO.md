@@ -85,17 +85,26 @@ acts on, removes, or reorders anything in this file.**
 
 Phase 1 — free accounts (~30 min total, all $0):
 
-- [ ] Get a free **Tiingo** API key (tiingo.com) → repo secret
-      `TIINGO_API_KEY` + local `.env`. Unblocks replacing the throttled
-      Yahoo chart endpoint as OHLCV primary (500 unique symbols/month,
-      30+ yrs history) and the delisted-name backfill (`docs/adr/0010`).
-      **Also unblocks the cross-source price validation Dio asked for**
-      (2026-08-20): a true independent second source to reconcile against
-      Yahoo. Keyless second sources are now walled (Stooq gates behind a JS
-      proof-of-work); until Tiingo, the single-source guard is the bad-tick /
-      stale-feed detector in `research/data_quality.py` +
-      `GET /api/putlab/data-quality`, which catches print errors without
-      flagging real crashes.
+- [x] **Done 2026-09-03.** Free **Tiingo** API key in the `TIINGO_API_KEY`
+      repo secret + local `.env`, verified live (`/api/test` → 200).
+      Unblocks replacing the throttled Yahoo chart endpoint as OHLCV primary
+      and the cross-source price validation Dio asked for (2026-08-20) — a
+      true independent second source to reconcile against Yahoo, which
+      matters because the keyless alternatives are now walled (Stooq gates
+      behind a JS proof-of-work).
+      **Verified working:** SPY 1993-01-29 → 2026-09-02, with `adjClose`
+      and `divCash` (2008-09-15 close 120.09 vs adjClose 86.33).
+      **Does NOT unblock the delisted-name backfill** (`docs/adr/0010`) —
+      see the measured spot-check under "Switch OHLCV primary to Tiingo" in
+      `AGENT_TODO.md`. That still needs a paid or different source, so it
+      stays open below.
+- [ ] **A source for delisted names**, because Tiingo is not one. Needed for
+      the survivorship-bias-free backfill (`docs/adr/0010`) and therefore for
+      any honest crisis-period backtest: a universe screened only on names
+      that still exist in 2026 cannot see 2008. Candidates to price up:
+      Sharadar SEP (Nasdaq Data Link, ~$50/mo, explicitly survivorship-free),
+      Norgate (~$70/mo, US equities incl. delisted), or CRSP via an academic
+      affiliation (free at some institutions — worth asking Milestone).
 - [x] **Done 2026-09-03.** optionsDX corpus downloaded (83 archives, 1.1 GB)
       and moved to `data/vendor/optionsdx/`; adapter, contract, tests and
       `make ingest-optionsdx` shipped (`docs/DATA_CONTRACTS.md` #12). VIX is
