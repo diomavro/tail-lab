@@ -365,6 +365,8 @@ jobs:
         id: verdict
         env:
           REVIEW_OUTCOME: ${{ steps.review.outcome }}
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
         run: |
           v="$(tr -d '[:space:]' < /tmp/verdict 2>/dev/null || true)"
           [ -z "$v" ] && v="NONE"
@@ -388,8 +390,28 @@ jobs:
           if [ -f /tmp/claude-review-ran ]; then
             reason="ran"
           elif [ "${REVIEW_OUTCOME}" = "success" ]; then
-            # The action exits 0 when it self-skips on workflow validation.
-            reason="workflow_validation_skip"
+            # The action exits 0 when it self-skips on workflow validation:
+            # "the workflow file must ... have identical content to the version
+            # on the default branch". TWO very different situations produce
+            # that, and only one is safe:
+            #
+            #   a) this PR EDITS .github/workflows -- benign, because such a
+            #      PR cannot auto-merge anyway (automerge.yml refuses it), so a
+            #      human reads it regardless;
+            #   b) this branch is merely STALE -- main changed ci.yml after the
+            #      branch was cut. The PR touches no workflow, is perfectly
+            #      mergeable, and gets NO review. Observed on PR #76, which
+            #      changed two Python files, was skipped because main had moved
+            #      on via #77, and auto-merged unreviewed.
+            #
+            # (b) is the dangerous one and it is the COMMON one: every branch
+            # older than the last ci.yml change is in it.
+            if gh api --paginate "repos/${GITHUB_REPOSITORY}/pulls/${PR_NUMBER}/files" \
+                 --jq '.[].filename' | grep -q '^\.github/workflows/'; then
+              reason="workflow_edit_skip"
+            else
+              reason="stale_branch_skip"
+            fi
           else
             reason="outage"
           fi
@@ -505,27 +527,40 @@ jobs:
           rounds="${{ steps.rounds.outputs.count }}"
           if [ "$v" = "NONE" ]; then
             reason="${{ steps.verdict.outputs.reason }}"
-            if [ "$reason" = "workflow_validation_skip" ]; then
-              echo "::warning::reviewer skipped: this PR edits the workflow that runs it."
+            if [ "$reason" = "workflow_edit_skip" ]; then
+              echo "::warning::reviewer skipped: this PR edits .github/workflows."
               echo "claude-code-action refuses to run when the calling workflow differs"
               echo "from the copy on the default branch, so a PR cannot rewrite the"
-              echo "reviewer that judges it. Such a PR touches .github/**, which"
-              echo "automerge.yml refuses to merge — a human reads it regardless."
-              echo "Passing this check rather than blocking every workflow change."
+              echo "reviewer that judges it. Such a PR is on automerge.yml's"
+              echo "constitution list and will not auto-merge — a human reads it"
+              echo "regardless, so this check passes rather than blocking every"
+              echo "workflow change. See docs/adr/0025."
               exit 0
             fi
-            echo "::error::The design reviewer did not run, and NOT because this PR edits"
-            echo "the workflow (reason: $reason). That means an expired"
-            echo "CLAUDE_CODE_OAUTH_TOKEN, an API outage, a usage limit, or an action"
-            echo "regression — and this PR is therefore unreviewed but otherwise"
-            echo "mergeable, which is the one combination that must not pass silently."
+            if [ "$reason" = "stale_branch_skip" ]; then
+              echo "::error::The design reviewer did not run because this BRANCH IS STALE."
+              echo
+              echo "claude-code-action requires the workflow file to match the copy on"
+              echo "the default branch. This PR touches no workflow — but main changed"
+              echo "ci.yml after the branch was cut, so the check fails anyway and the"
+              echo "review is skipped."
+              echo
+              echo "That combination is the dangerous one: the PR is unreviewed AND"
+              echo "perfectly mergeable. It is also the COMMON one — every branch older"
+              echo "than the last ci.yml change is in it. PR #76 merged this way on"
+              echo "2026-09-03 with no review at all."
+              echo
+              echo "FIX: rebase or merge main into this branch, then push. The review"
+              echo "will run. Do not override this."
+              exit 1
+            fi
+            echo "::error::The design reviewer did not run (reason: $reason). That points"
+            echo "at an expired CLAUDE_CODE_OAUTH_TOKEN, an API outage, a usage limit or"
+            echo "an action regression — leaving this PR unreviewed but otherwise"
+            echo "mergeable, the one combination that must not pass silently."
             echo
-            echo "docs/adr/0025 originally treated every no-verdict as benign, on the"
-            echo "reasoning that unreviewable implied unmergeable. That holds only for"
-            echo "the workflow-validation case handled above."
-            echo
-            echo "A human should merge this one, and fix the reviewer before relying on"
-            echo "the loop again."
+            echo "A human should review and merge this one, and the reviewer must be"
+            echo "fixed before the loop is relied on again."
             exit 1
           fi
           if [ "$v" = "PASS" ]; then

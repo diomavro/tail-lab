@@ -118,7 +118,7 @@ now that the branch gate is gone:
   that a future session finding a reviewed human PR does not read it as a
   misconfiguration and narrow the scope back.
 
-## A PR that edits the workflow cannot be reviewed by it
+## When the reviewer silently does not run
 
 Observed on the very PR that introduced this ADR (#79, 2026-09-03), which is
 why it is recorded here rather than learned twice.
@@ -136,23 +136,53 @@ reviewer is asked to judge. The consequence is that **any PR touching
 `.github/workflows/**` gets no review**, produces no verdict, and is converted
 by the enforce step's no-verdict rule into a green `agent-review` check.
 
-This does not open a hole, and the reason is worth stating because it is
-load-bearing and easy to break by accident: the set of PRs the reviewer cannot
-read is a *subset* of the set `automerge.yml` already refuses to merge, since
-`.github/workflows/**` is on its constitution list. Unreviewable and
-unmergeable-without-a-human coincide exactly.
+**A first version of this ADR claimed that opened no hole**, on the reasoning
+that the set of PRs the reviewer cannot read is a subset of the set
+`automerge.yml` refuses, since `.github/workflows/**` is on its constitution
+list — so unreviewable and needs-a-human coincided exactly.
 
-Two consequences follow, and both are easy to get wrong later:
+That is wrong, and it was disproved within the hour. The validation compares
+the workflow file to the default branch's copy; it does not ask whether *this
+PR* changed it. So it also fails when the branch is merely **stale** — main
+changed `ci.yml` after the branch was cut. Such a PR touches no workflow, is
+fully mergeable, and gets no review.
+
+That is not a corner case, it is the common one: every branch older than the
+last `ci.yml` change is in it. And it happened. PR #76 changed two Python
+files, was skipped because main had moved on via #77, produced `verdict: NONE`,
+was passed by the no-verdict rule and **auto-merged with no review at all** on
+2026-09-03. It was a probe branch carrying deliberate duplication, so the
+review it never got was the entire point of it.
+
+So the three causes must be told apart, and the code now does:
+
+| Cause | Reviewed? | Mergeable? | Verdict step |
+|---|---|---|---|
+| PR edits `.github/workflows/**` | no | no — constitution list | **pass** |
+| Branch stale vs main's `ci.yml` | no | **yes** | **block**, "rebase and push" |
+| Token expired / API outage / regression | no | **yes** | **block** |
+
+Only the first is safe to wave through, and only because a different gate
+catches it.
+
+Three consequences, all easy to get wrong later:
 
 - **Do not remove the constitution check in `automerge.yml`** on the grounds
   that `constitution-guard` in CI covers it. That job only inspects `agent/*`
   branches, so for every other author the automerge check is the only thing
   standing between an unreviewed workflow edit and an automatic merge.
-- **Do not "fix" the green check on a workflow-editing PR** by making a missing
-  verdict fatal. That would make every workflow change unmergeable by CI while
-  the thing it actually needs — a human reading it — is already required. The
-  green check is honest as long as the merge is blocked; it is the *merge* gate
-  that carries the weight here, not the review gate.
+- **Do not make the workflow-edit skip fatal.** That would make every workflow
+  change unmergeable by CI while the thing it actually needs — a human reading
+  it — is already required. Its green check is honest precisely because the
+  merge is blocked elsewhere.
+- **Do not make the stale-branch skip lenient**, however noisy it gets. Its
+  cure is one rebase, and its alternative is the silent unreviewed merge above.
+  A long-lived branch will hit it every time `ci.yml` changes; that is the
+  mechanism working, not a false positive.
+
+The general lesson, which is the one this repo keeps paying for: a gate that
+cannot run is not the same as a gate that ran and found nothing, and any
+"treat absence as success" rule must first ask *why* the thing was absent.
 
 ## Hardening required before this could ship
 
