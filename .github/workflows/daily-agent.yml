@@ -110,7 +110,8 @@ jobs:
                     --jq '.[]|select(.headRefName|startswith("agent/"))|.number' \
                   | while read p; do gh pr view "$p" --json comments \
                       --jq '.comments[].body' | head -60; done
-                Every `agent/*` PR gets an adversarial design review, and a review that
+                Every PR here gets an adversarial design review — yours and everyone
+                else's since `docs/adr/0025` — and a review that
                 PASSES **with advisory notes** is merged by automerge within seconds — so
                 nobody has ever read those notes. They were write-only until 2026-09-02,
                 and real findings were lost that way (a doc cross-reference off by one, a

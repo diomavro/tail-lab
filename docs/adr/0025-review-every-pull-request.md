@@ -96,9 +96,16 @@ now that the branch gate is gone:
   preventing it on the changes least likely to get a second reader.
 - **Ordinary work merges without a human.** That is the point, and it is the
   same bargain `docs/adr/0024` already struck for the agent: a correct
-  increment must not rot unmerged over a quality nit. The bar that replaces a
-  human reader is CI plus an adversarial review that must return `PASS`, or
-  `FINDINGS` that survived up to three fix-and-re-review rounds.
+  increment must not rot unmerged over a quality nit. Be precise about what
+  the bar actually is, because it is weaker than "review passed": CI green,
+  plus a review that returned `PASS` **or** `FINDINGS` that the loop did not
+  resolve. `FINDINGS` merges as soon as there is nothing left to re-review —
+  which includes round zero, when the fixer runs and changes nothing because
+  it judged the findings wrong or could not act on them, and also the case
+  where `AGENT_FIX_TOKEN` is absent so no fix is attempted at all. Only
+  `DEFECT` blocks unconditionally. An earlier draft of this ADR said
+  `FINDINGS` merges only after "up to three fix-and-re-review rounds"; that
+  overstated the guarantee and is corrected here.
 - **Cost rises with PR volume.** One review per pull request, plus fix rounds
   on any PR the reviewer blocks. Previously only agent PRs could incur rounds.
 - **A reviewer outage now affects everyone.** `docs/adr/0024`'s no-verdict rule
@@ -146,6 +153,50 @@ Two consequences follow, and both are easy to get wrong later:
   the thing it actually needs — a human reading it — is already required. The
   green check is honest as long as the merge is blocked; it is the *merge* gate
   that carries the weight here, not the review gate.
+
+## Hardening required before this could ship
+
+An adversarial review of this ADR's own implementation (2026-09-03) found seven
+defects, two of them merge-safety holes. Recorded because the *shape* of them
+repeats: each was a gate that looked present and was not.
+
+- **`gh pr view --json files` truncates at 100 files, silently.** It issues a
+  fixed GraphQL `files(first: 100)` with no cursor loop — confirmed against a
+  live 252-file PR that returned exactly 100 paths and `hasNextPage: true`, with
+  no warning. On any PR over 100 files a constitution edit sorting past position
+  100 was invisible and would auto-merge. Now `gh api --paginate`, plus an
+  assertion that the count read equals `changedFiles` so a short read fails
+  closed instead of open.
+- **A no-verdict was treated as benign in every case.** See the section above:
+  that reasoning covered only the workflow-validation skip. The verdict step now
+  records *why* no verdict appeared — the reviewer writes `/tmp/claude-review-ran`
+  as its first act — and an outage blocks while a workflow skip passes.
+- **No head-SHA pin.** `gh pr merge` merged whatever the head was at merge time,
+  not the commit CI validated. Push A → CI-A; push B → CI-B; CI-A goes green and
+  merges A+B, code never tested or reviewed. CI declares no `concurrency` group,
+  so the superseded run is not cancelled and the race is reachable. Now compares
+  the head to `workflow_run.head_sha` and passes `--match-head-commit` when the
+  runner's `gh` supports it.
+- **The PAT was persisted into `.git/config`.** `actions/checkout` defaults to
+  `persist-credentials: true`, writing the token as an `http.extraheader` — and
+  the review step runs `Bash` over a diff the PR author wrote. Prompt-injected
+  text could have read it back. Now `persist-credentials: false`, with the token
+  supplied only to the one `git push`.
+- **A draft marked ready could never merge.** `ready_for_review` is not in the
+  default `pull_request` activity set, so no CI run fired, so no `workflow_run`,
+  so automerge was never re-evaluated. The PR sat green and stuck. Added to the
+  trigger's `types`.
+- **The draft check failed open while the file check failed closed.** Under
+  `bash -e`, a failed command substitution inside `if [ ... ]` does not abort,
+  but a bare assignment does. A rate-limited `gh` therefore yielded an empty
+  string that is not `"true"` — and a draft merged. Both now assign first and
+  require an explicit safe value.
+- **Guard list gaps.** The regex was case-sensitive (`git mv README.md
+  Readme.md` in the same PR that rewrites it passed) and omitted
+  `pyproject.toml`, which holds the mypy strictness, the ruff rule set, the
+  import-linter contracts and the coverage floor — flipping `strict = false`
+  turns three CI gates green by deleting them. Now case-insensitive, `^\.github/`
+  rather than `^\.github/workflows/`, and `pyproject.toml` is on the list.
 
 ## Notes
 

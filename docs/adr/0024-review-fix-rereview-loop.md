@@ -5,8 +5,12 @@ Date: 2026-09-02
 ## Status
 
 **Accepted.** Implemented in `.github/workflows/ci.yml` (`agent-review`).
-Fully active only once `AGENT_FIX_TOKEN` exists (`HUMAN_TODO.md`); without it
-the job reviews and blocks exactly as it did before, and cannot fix.
+Fully active only once `AGENT_FIX_TOKEN` exists (`HUMAN_TODO.md`). Without it
+the job still reviews, but it cannot fix — and note what that means for the
+verdict, because an earlier wording of this line ("reviews and blocks exactly
+as it did before") was wrong: with no token `can_fix` is false, so a `FINDINGS`
+verdict falls straight through to the merge path rather than blocking. `DEFECT`
+still blocks unconditionally.
 
 Amended by `docs/adr/0025`: this loop — review, fix, re-review, merge — now
 runs on every pull request rather than on `agent/*` branches only. Everything
