@@ -62,7 +62,6 @@ past what is actually listed. A caller who wants deeper history (a full
 
 from __future__ import annotations
 
-import calendar
 import datetime as dt
 import io
 import logging
@@ -73,6 +72,7 @@ import pandas as pd
 import requests
 from pandera.errors import SchemaErrors
 
+from tail_lab.contracts.calendar import third_friday
 from tail_lab.contracts.vix_futures import DATASET, VxFuturesSchema
 from tail_lab.lake.store import LakeStore
 from tail_lab.observability import log_event
@@ -115,17 +115,7 @@ def compute_vx_expiry(year: int, month: int) -> dt.date:
     third Friday of the following calendar month. See the module docstring
     for the one case this does not handle."""
     next_month, next_year = (1, year + 1) if month == 12 else (month + 1, year)
-    third_friday = _third_friday(next_year, next_month)
-    return third_friday - dt.timedelta(days=30)
-
-
-def _third_friday(year: int, month: int) -> dt.date:
-    fridays = [
-        d
-        for d in calendar.Calendar().itermonthdates(year, month)
-        if d.month == month and d.weekday() == 4
-    ]
-    return fridays[2]
+    return third_friday(next_year, next_month) - dt.timedelta(days=30)
 
 
 def default_expiries(as_of: dt.date, *, n_months: int = 6) -> list[dt.date]:
