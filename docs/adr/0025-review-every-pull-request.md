@@ -45,41 +45,62 @@ what made it reviewable was that a reader with no stake in it landing read it.
 
 ## Decision
 
-**The review runs on every pull request. The auto-fixer stays scoped to the
-daily agent.**
+**The whole loop runs on every pull request: review, fix, re-review, merge.**
+
+Dio stated the intended shape directly: *agent A prepares the PR, agent B does
+an adversarial review, agent C checks whether the critiques are fair and
+adjusts the PR as it should be, then back to B until C judges the review has
+nothing important.* And then it merges. `docs/adr/0024` built exactly that, and
+scoped it to `agent/*`.
 
 1. `agent-review` triggers on `github.event_name == 'pull_request'` rather than
    on the branch prefix. Gated to pull requests because every step in the job
    reads `github.event.pull_request.*`, which is null on `push` and
    `workflow_dispatch`.
-2. `can_fix` additionally requires `startsWith(github.head_ref, 'agent/')`. The
-   fixer commits and pushes to the PR branch; that is correct for a one-shot
-   author whose findings otherwise rot, and wrong for a branch a human is
-   working on, where rewriting the branch underneath them is a surprise and the
-   human is present to act on the review anyway.
-3. The reviewer's prompt no longer addresses "an autonomous agent's pull
+2. `can_fix` no longer requires an `agent/` head ref. A first pass at this ADR
+   kept the fixer agent-only, reasoning that pushing commits to a branch a
+   human is working on is a surprise. That was the wrong trade and Dio
+   corrected it: a PR that gets the review but not the fixer is back to being
+   an alarm rather than a control loop, which is the exact failure
+   `docs/adr/0024` exists to fix. The fixer is instructed to record a reasoned
+   disagreement rather than contort code to satisfy a finding it thinks is
+   wrong, so step 3 really is a judgement and not compliance.
+3. `automerge.yml` drops its `agent/*` gate, so the loop terminates in a merge
+   for every author. It is renamed accordingly.
+4. The reviewer's prompt no longer addresses "an autonomous agent's pull
    request". It is told the author may be the agent, a human, or a human's
    assistant, and to review identically either way — explicitly including a
    warning not to soften a finding because the author looks careful.
 
-Verdict semantics are unchanged: `PASS` merges, `FINDINGS` merges after at most
-`MAX_FIX_ROUNDS` (immediately, on a human branch, since there is no fix round),
-`DEFECT` never auto-merges. Auto-merge itself is unaffected — `automerge.yml`
-is independently gated on `agent/*`, so a human PR that passes review still
-waits for a human to merge it.
+Verdict semantics are unchanged: `PASS` merges; `FINDINGS` drives up to
+`MAX_FIX_ROUNDS` fix-and-re-review rounds and then merges anyway, the finding
+surviving as queued work rather than as a stalled PR; `DEFECT` never
+auto-merges.
+
+**Two things still stop an auto-merge**, and they are the whole safety story
+now that the branch gate is gone:
+
+- **A draft PR.** A draft is a proposal, not a request to merge.
+- **A PR touching the constitution** — `docs/adr/**`, `.github/workflows/**`,
+  `README.md`, `ARCHITECTURE.md`, `docs/STANDARDS.md`, `docs/AGENT_MISSION.md`,
+  `docs/END_STATE.md`. The rules governing the agents must not be changeable by
+  the agents (`docs/adr/0022`). Note *where* this is enforced: the
+  `constitution-guard` CI job only inspects `agent/*` branches, so for every
+  other author the check inside `automerge.yml` is not a second line of defence,
+  it is the only one. Do not remove it on the grounds that CI already covers it.
 
 ## Consequences
 
 - **Every merged change has been read by something that did not write it.**
   That is the property `docs/adr/0023` was after; the branch scope was
   preventing it on the changes least likely to get a second reader.
-- **Human PRs get a verdict but not a rewrite.** A `DEFECT` blocks. `FINDINGS`
-  reports and merges, since `can_fix` is false and the enforce step already
-  treats unfixable findings as advisory rather than fatal — the daily agent
-  picks them up from the comment.
-- **Cost rises with PR volume, not with agent volume.** One review per pull
-  request. The fix-and-re-review rounds, which are the expensive part, remain
-  agent-only.
+- **Ordinary work merges without a human.** That is the point, and it is the
+  same bargain `docs/adr/0024` already struck for the agent: a correct
+  increment must not rot unmerged over a quality nit. The bar that replaces a
+  human reader is CI plus an adversarial review that must return `PASS`, or
+  `FINDINGS` that survived up to three fix-and-re-review rounds.
+- **Cost rises with PR volume.** One review per pull request, plus fix rounds
+  on any PR the reviewer blocks. Previously only agent PRs could incur rounds.
 - **A reviewer outage now affects everyone.** `docs/adr/0024`'s no-verdict rule
   (`NONE` is treated as `PASS`, with a warning) is what keeps this from
   becoming a repo-wide stall, and it matters more under this ADR than it did

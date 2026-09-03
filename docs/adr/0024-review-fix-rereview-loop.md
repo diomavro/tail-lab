@@ -8,10 +8,10 @@ Date: 2026-09-02
 Fully active only once `AGENT_FIX_TOKEN` exists (`HUMAN_TODO.md`); without it
 the job reviews and blocks exactly as it did before, and cannot fix.
 
-Amended by `docs/adr/0025`: the review half now runs on every pull request,
-while the fix-and-re-review loop described below remains scoped to `agent/*`
-branches. Everything below about the loop's mechanics, bound and verdicts is
-unchanged.
+Amended by `docs/adr/0025`: this loop — review, fix, re-review, merge — now
+runs on every pull request rather than on `agent/*` branches only. Everything
+below about its mechanics, bound and verdicts is unchanged; only who it applies
+to changed.
 
 ## Context
 

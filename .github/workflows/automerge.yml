@@ -1,11 +1,27 @@
-name: Auto-merge agent PRs
+name: Auto-merge reviewed PRs
 
-# Merges the daily agent's PRs automatically once CI is fully green — no human
-# in the loop for ordinary increments. Fires when the CI workflow completes;
-# only acts on `agent/*` branches, and only when CI *succeeded* (so a failed
-# constitution-guard / test / lint job leaves the PR open for a human). This
-# is the free-plan stand-in for branch-protection-gated auto-merge (private
-# repos need GitHub Pro for required-status-check protection).
+# Merges a PR automatically once CI is fully green — no human in the loop for
+# ordinary increments. Fires when the CI workflow completes, and only when CI
+# *succeeded*, so a failed test, lint, constitution-guard or adversarial-review
+# job leaves the PR open. This is the free-plan stand-in for
+# branch-protection-gated auto-merge (private repos need GitHub Pro for
+# required-status-check protection).
+#
+# Every branch, not only `agent/*` (`docs/adr/0025`). The loop this closes is:
+# an agent writes the PR, an adversarial reviewer reads it, a fixer judges
+# whether the critique is fair and either applies it or records a reasoned
+# disagreement, and that repeats until the review has nothing important left --
+# then it merges. Scoping the merge to agent branches while the review ran on
+# everything left every other PR stuck at step 2 forever, which is the alarm
+# `docs/adr/0024` was written to replace.
+#
+# TWO things still stop an auto-merge, deliberately:
+#   * a DRAFT PR, which is a proposal and not a request to merge;
+#   * a PR touching the constitution (`docs/adr/**`, `.github/workflows/**`,
+#     README/ARCHITECTURE/STANDARDS/AGENT_MISSION/END_STATE) — the rules that
+#     govern the agents cannot be changed by the agents, so a human merges
+#     those by hand (`docs/adr/0022`). The check below is the enforcement
+#     point for EVERY author; `constitution-guard` in CI only covers `agent/*`.
 
 on:
   workflow_run:
@@ -19,26 +35,34 @@ permissions:
 
 jobs:
   merge:
-    # Only agent branches, only when the whole CI run passed.
-    if: >
-      github.event.workflow_run.conclusion == 'success' &&
-      startsWith(github.event.workflow_run.head_branch, 'agent/')
+    # Any branch, as long as the whole CI run passed (which now includes the
+    # adversarial review's verdict — see `agent-review` in ci.yml).
+    if: github.event.workflow_run.conclusion == 'success'
     runs-on: ubuntu-latest
     steps:
-      - name: Squash-merge the agent PR
+      - name: Squash-merge the reviewed PR
         env:
           GH_TOKEN: ${{ github.token }}
           BRANCH: ${{ github.event.workflow_run.head_branch }}
           REPO: ${{ github.repository }}
         run: |
+          if [ "$BRANCH" = "main" ]; then
+            echo "CI on main — nothing to merge."
+            exit 0
+          fi
           pr=$(gh pr list --repo "$REPO" --head "$BRANCH" --state open \
                  --json number -q '.[0].number')
           if [ -z "$pr" ]; then
             echo "No open PR for $BRANCH — nothing to merge."
             exit 0
           fi
-          # Belt-and-suspenders: the constitution-guard CI job already fails
-          # (→ this workflow never runs) for such PRs, but re-check here too.
+          if [ "$(gh pr view "$pr" --repo "$REPO" --json isDraft -q .isDraft)" = "true" ]; then
+            echo "PR #$pr is a draft — a proposal, not a request to merge."
+            exit 0
+          fi
+          # The enforcement point for EVERY author. `constitution-guard` in CI
+          # only fires on `agent/*`, so for any other branch this check is not
+          # belt-and-suspenders: it is the belt.
           files=$(gh pr view "$pr" --repo "$REPO" --json files -q '.files[].path')
           if echo "$files" | grep -qE '^docs/adr/|^\.github/workflows/|^ARCHITECTURE\.md$|^docs/STANDARDS\.md$|^README\.md$|^docs/AGENT_MISSION\.md$|^docs/END_STATE\.md$'; then
             echo "PR #$pr edits the constitution — leaving it for a human."

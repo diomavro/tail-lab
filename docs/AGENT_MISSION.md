@@ -80,7 +80,9 @@ Two things changed on 2026-08-28 (`docs/adr/0023`), because 75% of merged PRs
 here are yours and CI was the only thing reading them.
 
 **An adversarial design reviewer runs on every PR in this repo** — yours and
-everyone else's since `docs/adr/0025` — and can block auto-merge. It does not
+everyone else's since `docs/adr/0025` — and can block auto-merge. Its findings
+go to a fixer that may apply them or record a reasoned disagreement, and the
+loop repeats until the review is clean or the round bound is hit. It does not
 re-check correctness, types, layering or style — other jobs prove those. It looks for duplication, dead or speculative code,
 functions gaining parameters instead of being reshaped, and complexity that
 does not earn itself. Write as if a skeptical reader with no context will read

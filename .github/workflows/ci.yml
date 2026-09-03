@@ -226,8 +226,6 @@ jobs:
       # The `secrets` context is not available in a step-level `if:`, so the
       # token's presence is reduced to a boolean here, where it is.
       HAS_FIX_TOKEN: ${{ secrets.AGENT_FIX_TOKEN != '' }}
-      # The auto-FIX half stays scoped to the daily agent (see the rounds step).
-      IS_AGENT_BRANCH: ${{ startsWith(github.head_ref, 'agent/') }}
     permissions:
       contents: write
       pull-requests: write
@@ -253,19 +251,17 @@ jobs:
         run: |
           n=$(git log --oneline "$BASE_SHA..HEAD" --grep='^\[review-fix\]' | wc -l | tr -d ' ')
           echo "count=$n" >> "$GITHUB_OUTPUT"
-          # The auto-fixer commits and pushes to the PR branch. That is
-          # right for the daily agent -- a one-shot run that never comes back,
-          # so absent a fixer its findings rot. It is wrong for a branch with a
-          # human on it: rewriting someone's working branch underneath them is
-          # a surprise, and the human is right there to act on the review. So
-          # human PRs get the REVIEW (and its verdict) and not the rewrite.
-          if [ "$n" -lt "${MAX_FIX_ROUNDS}" ] && [ "${HAS_FIX_TOKEN}" = "true" ] \
-             && [ "${IS_AGENT_BRANCH}" = "true" ]; then
+          # Every branch, not just the agent's: the loop is review -> fix ->
+          # re-review -> merge, and a PR that gets the review but not the fixer
+          # is back to being an alarm rather than a control loop. The fixer is
+          # told to push back on findings it thinks are wrong rather than
+          # contort the code, so a disagreement terminates the loop honestly.
+          if [ "$n" -lt "${MAX_FIX_ROUNDS}" ] && [ "${HAS_FIX_TOKEN}" = "true" ]; then
             echo "can_fix=true" >> "$GITHUB_OUTPUT"
           else
             echo "can_fix=false" >> "$GITHUB_OUTPUT"
           fi
-          echo "prior fix rounds: $n (max ${MAX_FIX_ROUNDS}); fix token: ${HAS_FIX_TOKEN}; agent branch: ${IS_AGENT_BRANCH}"
+          echo "prior fix rounds: $n (max ${MAX_FIX_ROUNDS}); fix token: ${HAS_FIX_TOKEN}"
         # A bound, because "loop until the review is clean" and "loop forever"
         # are the same program when the reviewer and the fixer disagree.
 
