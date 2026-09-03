@@ -34,6 +34,7 @@ help:
 	@echo "  ingest-vix-futures  Live VX futures term structure fetch -> bronze (keyless; network; not run in CI)"
 	@echo "  ingest-option-chain  TODAY's put wing from Cboe -> bronze (CHAIN_SYMBOLS=... ; network; UNRECOVERABLE if skipped)"
 	@echo "  greeks-check Score our greeks vs the exchange's own (read-only; needs a chain snapshot)"
+	@echo "  ingest-optionsdx  Hand-downloaded optionsDX chains -> bronze (OPTIONSDX_SYMBOL=vix; local corpus, no network)"
 	@echo "  api          Run FastAPI on :8000 with auto-reload"
 	@echo "  frontend     Run the Vite dev server"
 	@echo "  clean        Remove caches and build artifacts"
@@ -134,6 +135,14 @@ ingest-option-chain:
 # correctly; this is the only independent check that the MODEL is right.
 greeks-check:
 	env -u PYTHONPATH $(VENV)/bin/python scripts/greeks_check.py
+
+# Reads the hand-downloaded, licence-limited optionsDX corpus in
+# data/vendor/optionsdx/ (gitignored; absent on CI and in prod). Touches no
+# network. NEVER extracts the corpus -- 1.1 GB of archives expand to 8.2 GB
+# against ~8.8 GB free -- so months are streamed and sliced one at a time.
+OPTIONSDX_SYMBOL ?= vix
+ingest-optionsdx:
+	env -u PYTHONPATH $(VENV)/bin/python -c "from tail_lab.ingestion.optionsdx import ingest_optionsdx; from tail_lab.config import get_lake_store; from tail_lab.observability import configure_logging; configure_logging(); r = ingest_optionsdx(get_lake_store(), '$(OPTIONSDX_SYMBOL)'); print(f'{r.symbol}: {r.valid_rows} quotes from {r.archives_read} archives -> {r.bronze_path} ({r.quarantined_rows} quarantined); months {r.first_quote}..{r.last_quote}, {r.months_present} present / {r.months_missing} MISSING')"
 
 ingest-credit:
 	env -u PYTHONPATH $(VENV)/bin/python -c "from tail_lab.ingestion.credit import ingest_credit; from tail_lab.config import get_lake_store, get_settings; from tail_lab.observability import configure_logging; configure_logging(); s = [x.upper() for x in '$(SERIES)'.split(',')] if '$(SERIES)' else None; r = ingest_credit(get_lake_store(), s, api_key=get_settings().fred_api_key); print(f'committed {r.valid_rows} rows for {len(r.series_ids)} series -> {r.bronze_path} ({r.quarantined_rows} quarantined)')"
