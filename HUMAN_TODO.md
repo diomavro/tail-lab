@@ -96,6 +96,16 @@ Phase 1 — free accounts (~30 min total, all $0):
       stale-feed detector in `research/data_quality.py` +
       `GET /api/putlab/data-quality`, which catches print errors without
       flagging real crashes.
+- [x] **Done 2026-09-03.** optionsDX corpus downloaded (83 archives, 1.1 GB)
+      and moved to `data/vendor/optionsdx/`; adapter, contract, tests and
+      `make ingest-optionsdx` shipped (`docs/DATA_CONTRACTS.md` #12). VIX is
+      ingested — 168,351 quotes, 168/168 months, 2010-2023. **Two things left
+      for you:** (a) the coverage is very uneven and SPY, the benchmark, has
+      only 63 of 168 months — deciding whether to fill those gaps is a
+      judgement about how much a market-priced SPY backtest is worth to you;
+      (b) 18 byte-identical `(1)` duplicates are still sitting in `~/Downloads`
+      (226 MB) and one `(2)` copy is in the vendor dir, all safe to delete —
+      left alone rather than deleting your files unasked.
 - [ ] Create a free **optionsDX** account (optionsdx.com) and download
       the free SPY/SPX/QQQ EOD option-chain zips (2010–2023, bid/ask +
       IV + greeks); drop them somewhere the agent can ingest from (e.g.

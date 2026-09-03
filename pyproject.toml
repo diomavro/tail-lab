@@ -16,6 +16,11 @@ dependencies = [
     "scipy>=1.13.0",
     "requests>=2.32.0",
     "deltalake>=1.0.0",
+    # Reads the hand-downloaded optionsDX .7z corpus in place. A runtime dep
+    # rather than dev-only because ingestion/ is library code, but nothing in
+    # research/ or api/ touches it: the whole dataset is optional and absent
+    # from CI and the deployed app (contracts/optionsdx).
+    "py7zr>=0.21.0",
 ]
 
 [project.optional-dependencies]
@@ -106,6 +111,11 @@ no_implicit_optional = true
 plugins = ["pydantic.mypy"]
 exclude = ["frontend", "data", ".venv"]
 
+
+[[tool.mypy.overrides]]
+# py7zr ships no type stubs; the adapter wraps it in one narrow function.
+module = ["py7zr"]
+ignore_missing_imports = true
 [[tool.mypy.overrides]]
 module = "pandera.*"
 ignore_missing_imports = true

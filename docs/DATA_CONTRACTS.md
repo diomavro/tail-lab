@@ -661,3 +661,91 @@ Point-in-time historical index constituents (`docs/adr/0010`) is now dataset
 #10 above — the adapter exists, but nothing yet reads it (see that section's
 "Not yet wired"). It remains a research-validity requirement, not an
 ordinary backlog item, per `docs/END_STATE.md` §2.3.
+
+---
+
+## 12. optionsDX historical end-of-day chains (optional, licence-limited)
+
+**Status: INGESTED for VIX, 2026-09-03.** The deepest quote source in this
+repo: real end-of-day bid/ask/IV/greeks for six underlyings over 2010-2023,
+downloaded by hand from optionsDX. `option_quotes` (#8) is one vendor's SPY
+monthly rolls; `option_chain_snapshot` (#6) only began collecting on
+2026-08-26; this reaches back fourteen years.
+
+That matters because `docs/adr/0004` bounds every backtest here with
+"model-priced, so treat it as a relative ranking, not P&L truth". **Where this
+dataset has coverage, that caveat can be replaced with a measurement.**
+
+**Source.** `data/vendor/optionsdx/` — 83 `.7z` archives, 1.1 GB, gitignored,
+absent on CI and in production. No network. Nothing in `research/` or `api/`
+may require it to exist.
+
+### Coverage is uneven, and it is the first thing to know
+
+| sym | months | span | gaps |
+|---|---|---|---|
+| **vix** | 168 | 2010-01 .. 2023-12 | **0** |
+| nvda | 93 | 2016-01 .. 2023-12 | 3 |
+| tsla | 84 | 2016-01 .. 2023-12 | 12 |
+| qqq | 75 | 2012-01 .. 2023-12 | 69 |
+| spx | 96 | 2010-01 .. 2023-12 | 72 |
+| **spy** | 63 | 2010-01 .. 2023-12 | **105** |
+
+**SPY is missing more months than it has, and SPY is the benchmark.** A roll
+backtest across it would skip the absent months silently and draw a smooth
+equity curve that is largely an artefact of the skipping — the exact
+silent-wrong-data failure `docs/adr/0009` exists to prevent, and one no test of
+the roll engine would catch, because the engine is correct on the rows it is
+given. `contracts/optionsdx.month_coverage` reports present/missing months, and
+**any consumer spanning a date range must consult it**. VIX is the one symbol
+where a continuous 14-year study is honestly available.
+
+### The slice
+
+Puts only, strike within **0.60-1.02** of spot, **0-120 days** to expiry — the
+existing sweep grid (30% out, 12 weeks) with headroom, not a maximal band. The
+corpus is 8.2 GB uncompressed against ~8.8 GB free, so it is never extracted
+whole: archives are expanded one at a time into a temp directory that is
+reclaimed before the next. Peak disk is one archive (~40 MB for a VIX year,
+~200 MB for the largest SPX quarter).
+
+### Schema — `OptionsDxQuoteSchema`
+
+The first eight columns are `OptionQuoteSchema` minus `open_interest` (this
+vendor does not publish it), so the three quote datasets concatenate. Plus
+`iv`, `delta`, `vega`, `theta`, all nullable. Key:
+`(underlying, quote_date, expiration, strike)`.
+
+**`theta` is per YEAR**, as the vendor publishes it — *not* the per-day
+convention `research/option_pricer.PutGreeks` uses. Converting on ingest would
+bury a provenance difference inside a number; the consumer converts and says so.
+
+### Three traps, all found on the first real run
+
+1. **A blank `P_IV` voids the whole greek block.** The vendor does not blank
+   the rest when its solver fails — it fills it with garbage. Real row, VIX
+   2010-01-22, spot 27.70, strike 18: IV blank, `P_DELTA` pinned to exactly
+   `-1.0` (true value near zero that far out), gamma and theta `0.0`, vega
+   `-41.4`. **A `-1.0` delta passes the schema**, so taking those at face value
+   put nonsense in the lake silently. Same rule as Cboe's zero-fill in
+   `ingestion/option_chain.py`, reached independently from a second vendor —
+   which is reason enough to treat it as the house rule for any greek source.
+   73% of VIX rows have usable greeks; the other 27% keep their quotes.
+2. **A re-downloaded archive silently deletes a year.** A browser copy landed
+   as `vix_eod_2010-0pjoap (2).7z` beside the original. The glob read both,
+   every row collided on the unique key, pandera quarantined *both* copies —
+   and the run reported "168 months present, 0 missing" while the stored data
+   began in 2011. Archives are now deduped by canonical name, and overlapping
+   archives (the corpus mixes year files with quarter files like
+   `tsla_eod_2022q2_3`) are deduped at row level, because repeated data is not
+   bad data and does not belong in quarantine.
+3. **Coverage must be measured on what was PARSED, not what survived.** A month
+   rejected wholesale otherwise falls outside the reported span and reads as
+   "never downloaded" rather than "downloaded and unusable" — opposite
+   problems, and the first is invisible. That is precisely how trap 2 hid.
+
+### Verified
+
+`make ingest-optionsdx OPTIONSDX_SYMBOL=vix` → **168,351 quotes,
+2010-01-04..2023-12-29, 168/168 months, 0 duplicate keys, 0 garbage deltas,
+2,139 quarantined (1.3%)**, ~23 s.

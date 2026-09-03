@@ -100,6 +100,16 @@ them.
   `docs/adr/0015`'s `confirmed` verdict — is partly measuring whether the strike
   was reachable. Delta-based selection is queued; until it lands, say which
   parameterisation a result used.
+- **optionsDX is the deepest quote source and its coverage is a trap**
+  (`docs/DATA_CONTRACTS.md` #12). Real 2010-2023 EOD chains in
+  `data/vendor/optionsdx/` (gitignored, licence-limited, absent on CI). **VIX is
+  the only complete panel** — 168/168 months. **SPY has 63 of 168**, and SPY is
+  the benchmark, so a roll backtest across it would skip the holes silently and
+  draw a curve that is mostly an artefact of skipping. Call
+  `contracts/optionsdx.month_coverage` before spanning any range. Also: a blank
+  `P_IV` means the vendor's solver failed and the REST of the greek block is
+  garbage (delta pinned to -1.0, which passes the schema) — the same house rule
+  as Cboe's zero-fill.
 - **Position size is a placeholder, and the metrics cannot fix it.**
   `premium_budget_per_leg` is a fixed $1,000. Replacing it means maximising the
   **time-average growth of the combined portfolio** (`docs/END_STATE.md` §4 Q8),
