@@ -195,6 +195,25 @@ export const ACCURACY: AccuracyResponse = {
     { name: 'Brokerage', value: '$0.65 per contract', leverage: 'small at this size' },
     { name: 'Fill', value: 'mid, no slippage', leverage: 'optimistic in a dislocation' },
   ],
+  // The partial-coverage case on purpose: real quotes exist for SPY and the
+  // window is only half covered by them, which is the state the panel most
+  // has to get right. A fixture showing "complete" would let a regression that
+  // drops the gap warning pass unnoticed.
+  quote_coverage: {
+    priced_from: 'model',
+    real_quotes_available: true,
+    window_months: 49,
+    months_present: 16,
+    months_missing: 33,
+    complete: false,
+    panel_first_month: '201001',
+    panel_last_month: '202312',
+    note:
+      'Real quotes for this name are 33 of the 49 months in this window MISSING. ' +
+      'The figures on screen do NOT use them either way — the roll engine still ' +
+      'prices every leg with Black-Scholes at a flat volatility (docs/adr/0004). ' +
+      'Holding the data is not the same as using it.',
+  },
 }
 
 export const CADENCE: CadenceResponse = {

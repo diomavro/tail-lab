@@ -1,0 +1,33 @@
+{
+  /* The Playwright suite and its fixtures.
+   *
+   * A separate project rather than folding `e2e` into tsconfig.app.json,
+   * because the fixtures run in Node under Playwright, not in the browser
+   * bundle -- different `types`, and `noUnusedLocals` would reject the
+   * deliberately-unused helpers a spec file keeps around.
+   *
+   * It exists at all because `e2e/fixtures/putlab.ts` annotates its mock
+   * payloads with the real API response types, so the fixtures cannot silently
+   * drift from the client contract -- and nothing was checking that annotation.
+   * `tsc -b` covered only `src`, so adding a required field to
+   * `AccuracyResponse` left the fixture short of it with a green typecheck, and
+   * the mismatch surfaced three CI jobs later as a red Playwright run whose
+   * message pointed at the DOM rather than the type (PR #79, 2026-09-03).
+   */
+  "compilerOptions": {
+    "tsBuildInfoFile": "./node_modules/.tmp/tsconfig.e2e.tsbuildinfo",
+    "target": "es2023",
+    "lib": ["ES2023", "DOM"],
+    "module": "esnext",
+    "types": ["node"],
+    "skipLibCheck": true,
+    "moduleResolution": "bundler",
+    "allowImportingTsExtensions": true,
+    "verbatimModuleSyntax": true,
+    "moduleDetection": "force",
+    "noEmit": true,
+    "strict": true,
+    "noFallthroughCasesInSwitch": true
+  },
+  "include": ["e2e", "playwright.config.ts"]
+}
