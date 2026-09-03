@@ -111,6 +111,42 @@ now that the branch gate is gone:
   that a future session finding a reviewed human PR does not read it as a
   misconfiguration and narrow the scope back.
 
+## A PR that edits the workflow cannot be reviewed by it
+
+Observed on the very PR that introduced this ADR (#79, 2026-09-03), which is
+why it is recorded here rather than learned twice.
+
+`claude-code-action` refuses to run when the calling workflow file differs from
+the copy on the default branch:
+
+> Skipping action due to workflow validation: Workflow validation failed. The
+> workflow file must exist and have identical content to the version on the
+> repository's default branch.
+
+That is a sound security property, not a bug: without it a pull request could
+edit the reviewer's own prompt — "approve everything" — in the same commit the
+reviewer is asked to judge. The consequence is that **any PR touching
+`.github/workflows/**` gets no review**, produces no verdict, and is converted
+by the enforce step's no-verdict rule into a green `agent-review` check.
+
+This does not open a hole, and the reason is worth stating because it is
+load-bearing and easy to break by accident: the set of PRs the reviewer cannot
+read is a *subset* of the set `automerge.yml` already refuses to merge, since
+`.github/workflows/**` is on its constitution list. Unreviewable and
+unmergeable-without-a-human coincide exactly.
+
+Two consequences follow, and both are easy to get wrong later:
+
+- **Do not remove the constitution check in `automerge.yml`** on the grounds
+  that `constitution-guard` in CI covers it. That job only inspects `agent/*`
+  branches, so for every other author the automerge check is the only thing
+  standing between an unreviewed workflow edit and an automatic merge.
+- **Do not "fix" the green check on a workflow-editing PR** by making a missing
+  verdict fatal. That would make every workflow change unmergeable by CI while
+  the thing it actually needs — a human reading it — is already required. The
+  green check is honest as long as the merge is blocked; it is the *merge* gate
+  that carries the weight here, not the review gate.
+
 ## Notes
 
 The general lesson is the one this repo keeps relearning, and it is worth

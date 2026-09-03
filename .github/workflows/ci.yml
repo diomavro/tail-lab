@@ -447,10 +447,19 @@ jobs:
           if [ "$v" = "NONE" ]; then
             echo "::warning::reviewer produced no verdict — treating as PASS."
             echo "A reviewer that cannot run must not become a gate that cannot open;"
-            echo "that outage halted this repo for four days from 2026-08-29. But a"
-            echo "REPEATED no-verdict means the reviewer is silently reviewing nothing:"
-            echo "fix it or remove the job, do not leave a green check standing for a"
-            echo "review that never happened."
+            echo "that outage halted this repo for four days from 2026-08-29."
+            echo
+            echo "EXPECTED CAUSE, if this PR edits .github/workflows/: claude-code-action"
+            echo "refuses to run when the calling workflow differs from the copy on the"
+            echo "default branch, so a PR cannot rewrite the reviewer that judges it."
+            echo "Such a PR is unreviewable AND unmergeable by automerge.yml (workflows"
+            echo "are on its constitution list), so a human reads it either way."
+            echo "See docs/adr/0025."
+            echo
+            echo "ANY OTHER CAUSE is a real outage: a repeated no-verdict on PRs that do"
+            echo "NOT touch the workflows means the reviewer is silently reviewing"
+            echo "nothing. Fix it or remove the job — do not leave a green check standing"
+            echo "for a review that never happened."
             exit 0
           fi
           if [ "$v" = "PASS" ]; then
