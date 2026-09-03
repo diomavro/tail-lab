@@ -351,8 +351,10 @@ def putlab_regimes(
     as_of: dt.date | None = Query(default=None),
     store: LakeStore = Depends(get_lake_store),
 ) -> RegimeTimelineView:
-    """The market-regime history (VIX-based) for the cockpit panel — the
-    current regime plus run-length-encoded calm/elevated/crisis bands."""
+    """The market-regime history for the cockpit panel — the current regime
+    plus run-length-encoded calm/elevated/crisis bands. VIX-based, escalated
+    by credit-spread stress wherever a credit snapshot is also available
+    (`research/regimes/timeline.py:compute_regime_timeline`)."""
     try:
         return compute_regime_view(store, as_of=_resolve_as_of(as_of))
     except LookupError as exc:

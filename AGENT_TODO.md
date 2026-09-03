@@ -306,10 +306,32 @@ a large one strictly in order.
       ship-the-adapter-first precedent `rates.py` followed. The next step
       in this dataset's life is the item below (widening the regime
       classifier), once this adapter has a live partition to read.
-- [ ] Widen the regime classifier (`research/regimes/timeline.py`) from
+- [x] Widen the regime classifier (`research/regimes/timeline.py`) from
       VIX-complex-only to also weigh credit spreads, once the FRED credit
       adapter above exists — closes the scope gap noted on the "regime-panel
-      gold mart" item below.
+      gold mart" item below. **Done 2026-09-03**: `contracts/regime.py` gained
+      a second, independent threshold set for HY OAS (calm < 5.0%, elevated
+      5.0-8.0%, crisis >= 8.0%, documented against the series' own history —
+      2016 oil selloff / 2018 Q4 in the high-single-digits, 2020 COVID ~10.9%,
+      2008 peak ~19.9%) sharing the existing VIX hysteresis engine (refactored
+      to take thresholds as parameters, so the two classifiers are one engine,
+      not two copies), plus `combine_regime_labels` (most-severe-wins — credit
+      stress can only escalate the VIX view, never talk it down).
+      `research/regimes/timeline.py:load_credit_oas` is the platform's first
+      research-layer consumer of an ALFRED vintage dataset: for each
+      `obs_date` it resolves to the latest `vintage_date`, which is safe
+      without extra as-of filtering because every vintage in the resolved
+      bronze partition already predates that partition's own `ingest_date`
+      (pinned by a positive-control point-in-time test mirroring the VIX
+      timeline's). `compute_regime_timeline` combines VIX and (ffill-aligned,
+      causal) credit labels per day, and **falls back to the VIX-only label
+      whenever no `credit` bronze partition exists** — same
+      ship-the-adapter-first / graceful-fallback precedent `research/cadence.py`
+      set for `options_expiry` — so production behavior is unchanged today (no
+      environment has ever run `make ingest-credit`) and becomes credit-aware
+      with no further code change the moment it does. `docs/DATA_FLOW.md` §3.2
+      and `docs/DATA_CONTRACTS.md` #4 updated in the same PR, mirroring §3.1's
+      write-up for the same not-yet-ingested state.
 - [x] Write the first adversarial point-in-time test for the as-of read
       path — construct a scenario where leaking a later bronze snapshot
       (a restated value, or a later-ingested date) would change what an
