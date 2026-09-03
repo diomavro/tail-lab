@@ -8,6 +8,11 @@ Date: 2026-09-02
 Fully active only once `AGENT_FIX_TOKEN` exists (`HUMAN_TODO.md`); without it
 the job reviews and blocks exactly as it did before, and cannot fix.
 
+Amended by `docs/adr/0025`: the review half now runs on every pull request,
+while the fix-and-re-review loop described below remains scoped to `agent/*`
+branches. Everything below about the loop's mechanics, bound and verdicts is
+unchanged.
+
 ## Context
 
 `docs/adr/0023` added an adversarial design reviewer to `agent/*` PRs. It

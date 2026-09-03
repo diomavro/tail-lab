@@ -193,11 +193,18 @@ jobs:
   # layered and tested; none of them can see duplication, dead abstraction, or
   # a function quietly growing its fourteenth parameter.
   #
-  # That blindness matters because 75% of merged PRs in this repo are written
-  # by an unattended agent that auto-merges on green CI, and whose charter
-  # (rightly) forbids it from cleaning up anything unrelated to its task.
-  # Measured 2026-08-28: the agent adds 15.8 lines for every 1 it deletes;
-  # humans on this same repo run 2.4:1. Nothing was watching that number.
+  # That blindness matters most for the unattended agent, which writes 75% of
+  # merged PRs here, auto-merges on green CI, and whose charter (rightly)
+  # forbids it from cleaning up anything unrelated to its task. Measured
+  # 2026-08-28: the agent adds 15.8 lines for every 1 it deletes; humans on
+  # this same repo run 2.4:1. Nothing was watching that number.
+  #
+  # It is not only for the agent, though, and scoping it that way was a
+  # mistake worth recording: for a month this job ran on `agent/` branches
+  # alone, so every PR from a human or a human's assistant showed
+  # `agent-review=SKIPPED`. An assistant-written PR is unattended code too --
+  # it is simply unattended at a different moment -- and the author is the one
+  # party who cannot review it. Now every pull request gets read.
   #
   # Runs as a JOB IN CI rather than a workflow_run listener on purpose:
   # workflow_run events from bot-initiated runs are suppressed by GitHub
@@ -205,12 +212,22 @@ jobs:
   # to review. As a CI job it also blocks auto-merge for free -- automerge.yml
   # only acts when the whole CI run succeeded.
   agent-review:
-    if: startsWith(github.head_ref, 'agent/')
+    # EVERY pull request, not just the daily agent's. The job was scoped to
+    # `agent/` branches on the theory that unattended code is what needs an
+    # adversarial reader -- which got it backwards: the reviewer was built here
+    # and then every human PR was routed around it, so the checks reported
+    # `agent-review=SKIPPED` on exactly the changes nobody else was reviewing.
+    # A review that only inspects the author who already has a second reader is
+    # not a gate. Gated to `pull_request` because every step below reads
+    # `github.event.pull_request.*`, which is null on push and dispatch.
+    if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
     env:
       # The `secrets` context is not available in a step-level `if:`, so the
       # token's presence is reduced to a boolean here, where it is.
       HAS_FIX_TOKEN: ${{ secrets.AGENT_FIX_TOKEN != '' }}
+      # The auto-FIX half stays scoped to the daily agent (see the rounds step).
+      IS_AGENT_BRANCH: ${{ startsWith(github.head_ref, 'agent/') }}
     permissions:
       contents: write
       pull-requests: write
@@ -236,12 +253,19 @@ jobs:
         run: |
           n=$(git log --oneline "$BASE_SHA..HEAD" --grep='^\[review-fix\]' | wc -l | tr -d ' ')
           echo "count=$n" >> "$GITHUB_OUTPUT"
-          if [ "$n" -lt "${MAX_FIX_ROUNDS}" ] && [ "${HAS_FIX_TOKEN}" = "true" ]; then
+          # The auto-fixer commits and pushes to the PR branch. That is
+          # right for the daily agent -- a one-shot run that never comes back,
+          # so absent a fixer its findings rot. It is wrong for a branch with a
+          # human on it: rewriting someone's working branch underneath them is
+          # a surprise, and the human is right there to act on the review. So
+          # human PRs get the REVIEW (and its verdict) and not the rewrite.
+          if [ "$n" -lt "${MAX_FIX_ROUNDS}" ] && [ "${HAS_FIX_TOKEN}" = "true" ] \
+             && [ "${IS_AGENT_BRANCH}" = "true" ]; then
             echo "can_fix=true" >> "$GITHUB_OUTPUT"
           else
             echo "can_fix=false" >> "$GITHUB_OUTPUT"
           fi
-          echo "prior fix rounds: $n (max ${MAX_FIX_ROUNDS}); fix token present: ${HAS_FIX_TOKEN}"
+          echo "prior fix rounds: $n (max ${MAX_FIX_ROUNDS}); fix token: ${HAS_FIX_TOKEN}; agent branch: ${IS_AGENT_BRANCH}"
         # A bound, because "loop until the review is clean" and "loop forever"
         # are the same program when the reviewer and the fixer disagree.
 
@@ -257,11 +281,15 @@ jobs:
           allowed_bots: 'claude'
           claude_args: '--allowedTools Bash,Read,Grep,Glob'
           prompt: |
-            You are the adversarial design reviewer for an autonomous agent's pull request.
-            You did not write this change and have no stake in it landing. If earlier commits
-            on this branch are prefixed `[review-fix]`, a previous round of this same review
-            asked for them — review them as critically as anything else; a fix that missed the
-            point is a finding, not a resolution.
+            You are the adversarial design reviewer for this pull request. You did not write
+            the change and have no stake in it landing. Review it the same way whoever opened
+            it — the daily agent, a human, or a human's assistant — because the point of this
+            job is that no author reviews their own work. Do not soften a finding because the
+            author looks careful, and do not manufacture one to look useful.
+
+            If earlier commits on this branch are prefixed `[review-fix]`, a previous round of
+            this same review asked for them — review them as critically as anything else; a fix
+            that missed the point is a finding, not a resolution.
 
             Read the diff first:  git diff "$BASE_SHA...HEAD"
 
@@ -467,7 +495,7 @@ jobs:
           exit 0
 
   trigger-deploy:
-    needs: [backend, hygiene, frontend, e2e, constitution-guard]  # not agent-review: it is skipped on non-agent branches
+    needs: [backend, hygiene, frontend, e2e, constitution-guard]  # not agent-review: it is pull_request-only, so it never runs on this push-to-main
     if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     permissions:
