@@ -4,10 +4,15 @@ import pytest
 
 from tail_lab.contracts.regime import (
     CALM_MAX,
+    CREDIT_CALM_MAX,
+    CREDIT_ELEVATED_MAX,
+    CREDIT_HYSTERESIS_BAND,
     ELEVATED_MAX,
     HYSTERESIS_BAND,
+    classify_credit_series,
     classify_vix_level,
     classify_vix_series,
+    combine_regime_labels,
 )
 
 
@@ -109,3 +114,71 @@ def test_every_close_maps_to_a_label_and_only_known_labels() -> None:
     labels = classify_vix_series([0.0, 9.0, CALM_MAX, ELEVATED_MAX, 200.0])
     assert len(labels) == 5
     assert set(labels) <= {"calm", "elevated", "crisis"}
+
+
+# ---- the credit half -- same engine, different thresholds -------------------
+#
+# `classify_credit_series` shares its hysteresis engine with `classify_vix_series`
+# (`contracts/regime._classify_series`), so this is a thinner mirror of the VIX
+# suite above, not a re-derivation: the load-bearing behaviour (band absorbs
+# chatter, a gap skips the middle regime, causality) is already proven there.
+# What's specific to credit and worth pinning on its own is the threshold set.
+
+
+def test_credit_thresholds_are_half_open() -> None:
+    assert classify_credit_series([CREDIT_CALM_MAX - 0.01], band=0.0) == ["calm"]
+    assert classify_credit_series([CREDIT_CALM_MAX], band=0.0) == ["elevated"]
+    assert classify_credit_series([CREDIT_ELEVATED_MAX - 0.01], band=0.0) == ["elevated"]
+    assert classify_credit_series([CREDIT_ELEVATED_MAX], band=0.0) == ["crisis"]
+
+
+def test_credit_boundary_chatter_produces_one_label_not_three() -> None:
+    chatter = [
+        CREDIT_CALM_MAX - 0.2,
+        CREDIT_CALM_MAX + 0.1,
+        CREDIT_CALM_MAX - 0.1,
+        CREDIT_CALM_MAX + 0.2,
+        CREDIT_CALM_MAX - 0.3,
+        CREDIT_CALM_MAX + 0.05,
+    ]
+    assert set(classify_credit_series(chatter)) == {"calm"}
+    assert len(set(classify_credit_series(chatter, band=0.0))) == 2
+
+
+def test_credit_gap_skips_the_middle_regime() -> None:
+    assert classify_credit_series([4.0, 12.0]) == ["calm", "crisis"]
+
+
+def test_a_negative_credit_band_is_rejected() -> None:
+    with pytest.raises(ValueError):
+        classify_credit_series([4.0], band=-1.0)
+
+
+def test_credit_hysteresis_band_is_documented_and_positive() -> None:
+    # Not a behaviour test -- just guards against silently zeroing the
+    # constant out (which would make the "boundary chatter" test above the
+    # only thing standing between a real transition and noise).
+    assert CREDIT_HYSTERESIS_BAND > 0.0
+
+
+# ---- combining the two channels ---------------------------------------------
+
+
+def test_combine_takes_the_more_severe_label() -> None:
+    assert combine_regime_labels("calm", "elevated") == "elevated"
+    assert combine_regime_labels("elevated", "crisis") == "crisis"
+    assert combine_regime_labels("crisis", "calm") == "crisis"
+    assert combine_regime_labels("calm", "calm") == "calm"
+
+
+def test_combine_is_order_independent() -> None:
+    assert combine_regime_labels("crisis", "calm") == combine_regime_labels("calm", "crisis")
+
+
+def test_combine_of_one_label_is_that_label() -> None:
+    assert combine_regime_labels("elevated") == "elevated"
+
+
+def test_combine_needs_at_least_one_label() -> None:
+    with pytest.raises(ValueError):
+        combine_regime_labels()
