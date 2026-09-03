@@ -54,6 +54,32 @@ attempts.
 4. **The fixer re-runs the whole gate.** The other CI jobs in that run tested
    the code *before* the fix, so their green is stale the moment a file changes;
    the fixer is then the only thing between a broken change and a merge.
+4a. **The loop terminates in a MERGE, not a stall.** *(Amended 2026-09-03,
+   after Dio pointed out the obvious: "the PR should not just sit, eventually,
+   after adversarial review it should be merged.")* The first version had a
+   terminal state that was not a merge — exhaust the rounds and the PR sat red
+   forever, waiting for a human who might not come. That is the same failure
+   as the four-day stall, arrived at more slowly.
+
+   So the reviewer now grades **severity**, and the two are treated
+   differently:
+
+   - **`FINDINGS`** — real quality problems in code that *works*. The loop
+     tries to fix them. If it cannot converge — out of rounds, no token, or the
+     fixer reasonably disagreed — the PR **merges anyway** and the findings are
+     picked up by the daily agent's step 2b. An unfixed nit is a smaller cost
+     than a correct increment rotting unmerged, and the finding is not lost,
+     only deferred.
+   - **`DEFECT`** — merging would ship a breakage: build or tooling broken, a
+     test weakened to get green, an auth or data-integrity fault, a
+     constitution violation. **Never auto-merges, at any number of rounds.**
+
+   The distinction is the whole of it. A conflict-marked `Makefile` that breaks
+   every target is a DEFECT. A duplicated helper is FINDINGS, however much it
+   ought to be fixed. Getting this wrong in the permissive direction ships
+   breakage; getting it wrong in the strict direction stops the platform, which
+   is the failure this repo has actually suffered.
+
 5. **`MAX_FIX_ROUNDS = 3`.** "Loop until the review is clean" and "loop forever"
    are the same program whenever the reviewer and the fixer disagree. On
    exhaustion the job fails with a message saying the loop gave up rather than
@@ -84,6 +110,12 @@ attempts.
 - **Until the secret exists, nothing changes.** The job reviews and blocks as
   before, and says in the log that the loop is disabled and why — the same
   no-op-until-provisioned pattern `deploy.yml` uses for `FLY_API_TOKEN`.
+- **A second risk, now that FINDINGS merges: a reviewer that inflates.** If
+  every duplicated helper gets called a DEFECT, the stall comes back wearing a
+  new label. The prompt spends its severity guidance almost entirely on holding
+  that line, and the honest check is the ratio: if DEFECT is more than a small
+  minority of blocks, the reviewer has drifted and the prompt needs tightening,
+  not the gate loosening.
 - **The risk to watch is a fixer that placates.** The instruction to disagree is
   the only thing preventing a loop that converges by making the code worse. If a
   `[review-fix]` commit ever weakens a test or contorts a design to satisfy a

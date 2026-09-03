@@ -292,9 +292,30 @@ jobs:
             Advisory notes matter even on a PASS — the daily agent now reads them (step 2b of
             its charter), so write them to be acted on, not to be admired.
 
-            Then write your verdict, exactly one word, nothing else:
-              echo PASS  > /tmp/verdict
-              echo BLOCK > /tmp/verdict
+            Then write your verdict, exactly one word, nothing else. **Which word you
+            choose decides whether this PR can ever merge**, so choose on consequence,
+            not on how much the finding annoys you:
+
+              echo PASS     > /tmp/verdict
+                Nothing to act on. Advisory notes are fine and still get read.
+
+              echo FINDINGS > /tmp/verdict
+                Real quality problems — duplication, dead code, accretion, unearned
+                complexity — in code that WORKS. The loop will try to fix them and
+                re-review. If it cannot converge, they are filed to `AGENT_TODO.md`
+                and **the PR merges anyway**: an unfixed nit is a smaller cost than a
+                correct increment rotting unmerged forever, and the finding is not lost
+                because it is now queued work. This is the right verdict for almost
+                everything you will find.
+
+              echo DEFECT   > /tmp/verdict
+                Something is actually BROKEN and merging it would ship the breakage:
+                the build or a tool cannot run, a test is weakened or disabled to get
+                green, a security or auth control is wrong, data is corrupted or
+                silently mis-parsed, the constitution is violated. **DEFECT never
+                auto-merges, at any number of rounds.** Reserve it. A conflict-marked
+                Makefile that breaks every `make` target is a DEFECT; a duplicated
+                helper is not, however much it ought to be fixed.
 
       - name: Read the verdict
         id: verdict
@@ -306,13 +327,13 @@ jobs:
 
       # Only pay for the toolchain when there is actually something to fix.
       - name: Install the full toolchain
-        if: steps.verdict.outputs.value == 'BLOCK' && steps.rounds.outputs.can_fix == 'true'
+        if: steps.verdict.outputs.value == 'FINDINGS' && steps.rounds.outputs.can_fix == 'true'
         run: |
           pip install -e ".[dev]"
           cd frontend && npm ci
 
       - name: Apply the review's findings
-        if: steps.verdict.outputs.value == 'BLOCK' && steps.rounds.outputs.can_fix == 'true'
+        if: steps.verdict.outputs.value == 'FINDINGS' && steps.rounds.outputs.can_fix == 'true'
         env:
           GH_TOKEN: ${{ github.token }}
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
@@ -360,7 +381,7 @@ jobs:
 
       - name: Push the fix and hand off to a fresh review
         id: pushed
-        if: steps.verdict.outputs.value == 'BLOCK' && steps.rounds.outputs.can_fix == 'true'
+        if: steps.verdict.outputs.value == 'FINDINGS' && steps.rounds.outputs.can_fix == 'true'
         run: |
           set -euo pipefail
           if [ -z "$(git status --porcelain)" ]; then
@@ -396,20 +417,32 @@ jobs:
             echo "review clean after $rounds fix round(s) — the loop has terminated."
             exit 0
           fi
+          if [ "$v" = "DEFECT" ]; then
+            echo "::error::Design review found a DEFECT: merging this would ship a"
+            echo "breakage (build/tooling broken, a test weakened to get green, an auth"
+            echo "or data-integrity fault, or a constitution violation). This never"
+            echo "auto-merges at any number of rounds. A human must read the review."
+            exit 1
+          fi
           if [ "${{ steps.pushed.outputs.did }}" = "true" ]; then
             echo "::notice::Findings applied and pushed. This run fails on purpose: the"
             echo "fresh run triggered by that push carries the authoritative review."
             exit 1
           fi
-          if [ "${HAS_FIX_TOKEN}" != "true" ]; then
-            echo "::error::Design review blocked this PR, and AGENT_FIX_TOKEN is not set,"
-            echo "so the fix loop is disabled and a human must resolve it (HUMAN_TODO.md)."
-            exit 1
-          fi
-          echo "::error::Design review still blocking after $rounds fix round(s) — the loop"
-          echo "gave up rather than spinning. A human should read the review thread: either"
-          echo "the finding is subtle, or the reviewer and the fixer disagree."
-          exit 1
+          # FINDINGS that the loop could not fix -- because it is out of rounds, or
+          # has no token, or the fixer reasonably disagreed with the reviewer.
+          #
+          # This MERGES. A correct increment must not rot unmerged because a quality
+          # nit could not be automated away: that is how a repo stops shipping, and
+          # it is what happened here for four days from 2026-08-29. The finding is
+          # not lost -- the daily agent reads review comments on merged PRs (its step
+          # 2b) and either fixes or files them, so the cost of merging is a delay,
+          # while the cost of stalling is the increment.
+          echo "::warning::Design review left unresolved FINDINGS after $rounds fix round(s)."
+          echo "Merging anyway, by design (docs/adr/0024): a working increment does not sit"
+          echo "unmerged over a quality finding. The findings stay in the review comment and"
+          echo "the daily agent picks them up on its next run."
+          exit 0
 
   trigger-deploy:
     needs: [backend, hygiene, frontend, e2e, constitution-guard]  # not agent-review: it is skipped on non-agent branches

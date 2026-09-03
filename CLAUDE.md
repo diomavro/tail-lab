@@ -61,8 +61,13 @@ them.
   ever go DOWN. If a change trips one, reshape the change — raising the number is
   by definition the edit that makes the codebase worse. The weekly cleanup agent
   (`weekly-cleanup.yml`) is what lowers them.
-- **`agent/*` PRs get an adversarial design review in CI** and it can block
-  auto-merge. It looks only at what linters cannot see — duplication, dead
+- **`agent/*` PRs get an adversarial design review in CI**, and it grades
+  severity (`docs/adr/0024`): **FINDINGS** are fixed by the loop if it can and
+  **merge anyway** if it cannot — a working increment never rots over a quality
+  nit, and the daily agent picks the finding up later. **DEFECT** (broken build,
+  weakened test, auth or data fault, constitution violation) never auto-merges
+  at any number of rounds. If DEFECT stops being a small minority of blocks, the
+  reviewer has drifted — tighten the prompt, do not loosen the gate. It looks only at what linters cannot see — duplication, dead
   abstraction, accretion, unearned complexity. Context for why: 40 agent PRs
   added 16,079 lines and deleted 1,020 (15.8:1) while humans on this repo ran
   2.4:1, and nothing in the gate could see it.
