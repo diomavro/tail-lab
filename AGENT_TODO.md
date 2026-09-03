@@ -700,6 +700,24 @@ item 2 is time-sensitive in a way nothing else in this file is.
       `make ingest DATASET=<name>` dispatching on the adapter, which would make
       new adapters conflict-free by construction.
 
+- [ ] **Chunked bronze write, so SPX can be ingested at all.**
+      `ingest_optionsdx` materialises a whole symbol before writing: it holds
+      `combined` and `valid` (near-identical, ~681 MB each on SPX) plus the
+      Arrow conversion the Delta write adds on top. SPX (168 months, ~7.6M
+      rows) is OOM-killed at ~3.9 GB on a 7.4 GB machine and is the ONE
+      symbol of the six still missing from the lake; the other five ingested
+      without complaint, because the failure scales with the largest symbol.
+      Four fixes were tried and none of them worked, so do not re-try these:
+      a dict-per-row parser rewrite, batched `pd.concat`, a hand-rolled line
+      parser, and freeing `combined` before the write. Profiling showed
+      accumulation was never the problem (7.65M rows = 681 MB of frames,
+      RSS 1,031 MB; peak through concat+dedup 2.2 GB) — the symbol being held
+      *whole* is. The fix belongs in the lake layer: append each month to the
+      Delta table as it is parsed, so no step ever holds the full symbol.
+      Note `write_bronze` is currently a no-op if the `ingest_date` partition
+      exists (immutable bronze), so a chunked writer needs an explicit
+      append-within-one-ingest mode rather than repeated `write_bronze` calls.
+
 ## Position sizing / optimal leverage (2026-09-01 — Dio; `docs/END_STATE.md` §4 Q8)
 
 Dio's ask, in his words: a control where "the investor can either keep

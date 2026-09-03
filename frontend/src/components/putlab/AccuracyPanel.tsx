@@ -70,6 +70,63 @@ function RegimeMix({ model }: { model: AccuracyResponse['model'] }) {
   )
 }
 
+/** "202403" -> "2024-03". The API emits the lake's partition key verbatim. */
+function fmtMonth(yyyymm: string): string {
+  return `${yyyymm.slice(0, 4)}-${yyyymm.slice(4)}`
+}
+
+/**
+ * Where the data is real, and whether this result used it.
+ *
+ * Two questions, and they disagree today -- which is the whole reason this
+ * renders. A fourteen-year market-priced panel sitting in the lake does not
+ * make the figures above market-priced: the roll engine still prices every leg
+ * with Black-Scholes at a flat volatility (docs/adr/0004). A lone "real quotes:
+ * yes" badge would make these numbers look more trustworthy than they are,
+ * which is the reading "accuracy is surfaced, not filed" exists to prevent. So
+ * the sentence leads with what PRICED the result, and the inventory of held
+ * quotes is subordinate to it.
+ *
+ * The explanatory prose is the server's `note` verbatim, not a second copy
+ * written here: the backend already phrases this for API consumers, and two
+ * wordings of one caveat drift apart exactly when it matters. This component
+ * owns emphasis and layout, not the sentences.
+ */
+function QuoteProvenance({ coverage }: { coverage: AccuracyResponse['quote_coverage'] }) {
+  const panelSpan =
+    coverage.panel_first_month && coverage.panel_last_month
+      ? `${fmtMonth(coverage.panel_first_month)}\u2013${fmtMonth(coverage.panel_last_month)}`
+      : null
+
+  return (
+    <section className="pl-acc-quotes" aria-label="Quote provenance">
+      <p className="pl-acc-lead">
+        <strong>
+          Priced from {coverage.priced_from === 'market' ? 'market quotes' : 'the model'}.
+        </strong>{' '}
+        <span className="pl-acc-held">
+          {coverage.months_present === 0 ? (
+            <span className="pl-acc-flag">
+              No real quotes cover this window
+              {panelSpan ? ` (the stored panel is ${panelSpan})` : ''}.
+            </span>
+          ) : coverage.complete ? (
+            <>Real quotes cover all {coverage.window_months} months of this window.</>
+          ) : (
+            <>
+              Real quotes cover {coverage.months_present} of this window&rsquo;s{' '}
+              {coverage.window_months} months,{' '}
+              <span className="pl-acc-flag">{coverage.months_missing} missing</span>
+              {panelSpan ? ` (stored panel: ${panelSpan})` : ''}.
+            </>
+          )}
+        </span>
+      </p>
+      <p className="pl-note">{coverage.note}</p>
+    </section>
+  )
+}
+
 export function AccuracyPanel({ accuracy }: { accuracy: ResourceState<AccuracyResponse> }) {
   if (accuracy.status !== 'ready') {
     // Deliberately not `return null`. An absent panel reads as "nothing to
@@ -90,7 +147,8 @@ export function AccuracyPanel({ accuracy }: { accuracy: ResourceState<AccuracyRe
     )
   }
 
-  const { model, benchmarks, data_quality_flags, data_quality_note, assumptions } = accuracy.data
+  const { model, benchmarks, data_quality_flags, data_quality_note, assumptions, quote_coverage } =
+    accuracy.data
 
   return (
     <section aria-label="Result accuracy">
@@ -105,6 +163,7 @@ export function AccuracyPanel({ accuracy }: { accuracy: ResourceState<AccuracyRe
       </div>
 
       <OptimismHeadline model={model} />
+      <QuoteProvenance coverage={quote_coverage} />
       <RegimeMix model={model} />
       <p className="pl-note" style={{ marginBottom: 6 }}>
         {model.caveat}

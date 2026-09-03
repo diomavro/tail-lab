@@ -462,6 +462,40 @@ def test_accuracy_reports_the_regime_mix_and_the_input_scan(client: TestClient) 
     assert body["model"]["caveat"]
 
 
+def test_accuracy_tells_the_frontend_what_priced_the_result(client: TestClient) -> None:
+    """The provenance block on the surface is served from here.
+
+    Asserted at the API boundary rather than only in the research layer
+    because the frontend reads THIS shape: a key silently renamed or dropped
+    would blank the block, and a blank provenance block reads as "priced from
+    real quotes" -- the one conclusion it exists to prevent.
+    """
+    resp = client.get(
+        "/api/putlab/accuracy",
+        params={"asset": "spy", "moneyness_pct": 5, "tenor_weeks": 4, "years": 1},
+    )
+
+    assert resp.status_code == 200
+    cov = resp.json()["quote_coverage"]
+    # The roll engine is still Black-Scholes at a flat vol (docs/adr/0004), so
+    # this must read "model" no matter how much vendor history the lake holds.
+    assert cov["priced_from"] == "model"
+    assert set(cov) == {
+        "priced_from",
+        "real_quotes_available",
+        "window_months",
+        "months_present",
+        "months_missing",
+        "complete",
+        "panel_first_month",
+        "panel_last_month",
+        "note",
+    }
+    # Windowed, like every other block in the report.
+    assert cov["months_present"] + cov["months_missing"] == cov["window_months"]
+    assert cov["note"]
+
+
 def test_accuracy_is_cached_per_parameter_set(client: TestClient) -> None:
     params = {"asset": "spy", "moneyness_pct": 5, "tenor_weeks": 4, "years": 1}
     first = client.get("/api/putlab/accuracy", params=params).json()

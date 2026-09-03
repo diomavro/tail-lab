@@ -77,6 +77,20 @@ class LakeStore(ABC):
         no snapshot exists on or before ``as_of``."""
 
     @abstractmethod
+    def read_bronze_column_as_of(self, dataset: str, as_of: dt.date, column: str) -> pd.Series:
+        """One column of the snapshot :meth:`read_bronze_as_of` would return.
+
+        Exists because that method materialises and caches the WHOLE partition,
+        which is right for the ~1k-row datasets it was built for and wrong for
+        the vendor quote panels: SPY alone is 3.3M rows / ~680 MB, and the app
+        runs on a 1 GB machine. A caller that needs one column must be able to
+        ask for one column.
+
+        Raises ``LookupError`` as :meth:`read_bronze_as_of` does, and ``KeyError``
+        if the snapshot has no such column.
+        """
+
+    @abstractmethod
     def bronze_snapshot_id(self, dataset: str, as_of: dt.date) -> str:
         """A stable identifier for the exact bronze snapshot ``read_bronze_as_of``
         would resolve to: the ingest-date partition plus a content hash. This
@@ -305,8 +319,36 @@ class DeltaLakeStore(LakeStore):
 
     def read_bronze_as_of(self, dataset: str, as_of: dt.date) -> pd.DataFrame:
         # .copy() so a caller mutating the frame can't corrupt the cache; cheap
-        # (a ~1k-row frame) next to the S3 read it replaces.
+        # (a ~1k-row frame) next to the S3 read it replaces. Callers reading the
+        # multi-million-row quote panels must use read_bronze_column_as_of --
+        # for those this copy is hundreds of MB, not a rounding error.
         return self._cached_partition(dataset, as_of)[1].copy()
+
+    def read_bronze_column_as_of(self, dataset: str, as_of: dt.date, column: str) -> pd.Series:
+        """Projected read: pushes the column list into the Parquet scan.
+
+        Deliberately does NOT populate ``_frame_cache`` -- that cache holds
+        whole partitions, and seeding it from a projected read would hand the
+        next full reader a frame missing most of its columns. It does reuse the
+        cached partition when one is already resident, since the expensive part
+        (the S3 read) has then already happened.
+        """
+        table_uri = self._table_uri(self._bronze_table_key(dataset))
+        snapshot_date = self._resolve_cached(table_uri, dataset, as_of)
+        cached = self._frame_cache.get((dataset, snapshot_date.isoformat()))
+        if cached is not None:
+            return cached[column].copy()
+        table = DeltaTable(table_uri, storage_options=self._storage_options)
+        # Checked against the schema first: pyarrow raises ArrowInvalid for an
+        # unknown projection, and this method's contract (and its callers'
+        # error handling) is KeyError.
+        if column not in table.schema().to_arrow().names:
+            raise KeyError(f"dataset {dataset!r} has no column {column!r}")
+        df = table.to_pandas(
+            partitions=[(_INGEST_DATE_COL, "=", snapshot_date.isoformat())],
+            columns=[column],
+        )
+        return df[column].reset_index(drop=True)
 
     def bronze_snapshot_id(self, dataset: str, as_of: dt.date) -> str:
         snapshot_date, df = self._cached_partition(dataset, as_of)

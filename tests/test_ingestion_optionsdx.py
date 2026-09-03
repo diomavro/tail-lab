@@ -102,6 +102,32 @@ def test_truncated_rows_are_counted_not_silently_dropped(sample: str) -> None:
     assert unparsable == 1
 
 
+def test_an_over_long_row_costs_that_row_and_not_the_whole_symbol(sample: str) -> None:
+    """A row with MORE fields than the header used to abort the entire symbol.
+
+    `pd.read_csv` raises on an over-long row by default, so one stray comma in
+    one member of one archive lost every month of that symbol -- while the
+    comment three lines above the parse promised the opposite, that an
+    unreadable row is counted rather than quietly dropped. A 6.6M-row corpus
+    cannot be all-or-nothing on one malformed line, and it must not be silent
+    about the line either.
+    """
+    lines = sample.splitlines()
+    # Placed after the first data row on purpose: pandas reads the FIRST data
+    # row to decide whether the file has an index column, so an over-long row
+    # in that position is silently reinterpreted rather than rejected. The
+    # real-world case is a stray comma somewhere in the middle of the month.
+    over_long = lines[1] + ",999,999"
+    damaged = "\n".join([*lines, over_long]) + "\n"
+
+    frame, unparsable = parse_optionsdx_month("spy", damaged)
+
+    assert unparsable == 1
+    # The good rows still made it: this is the part that used to be lost.
+    clean_frame, _ = parse_optionsdx_month("spy", sample)
+    assert len(frame) == len(clean_frame)
+
+
 # ---- coverage, which is the point of this dataset's contract ---------------
 
 

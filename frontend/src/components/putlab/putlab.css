@@ -773,6 +773,21 @@
 }
 .pl-acc-badge-direct { background: #e9f8ff; color: #004961; }
 .pl-acc-badge-unmeasured { border: 1px solid var(--rule-2); background: transparent; color: var(--ink-45); }
+/* Quote provenance. No card and no uppercase label: this sheet earns emphasis
+   with the serif scale, a hairline and whitespace (see the header note, and the
+   .pl-kicker remit above). What must survive a skim is the lead sentence, so
+   that is what is set in body size and semibold. */
+.pl-acc-quotes {
+  border-top: 1px solid var(--rule);
+  padding-top: var(--space-3);
+  margin-bottom: var(--space-6);
+  max-width: 80ch;
+}
+.pl-acc-lead { line-height: 1.5; margin-bottom: 6px; }
+.pl-acc-lead strong { font-weight: 600; }
+.pl-acc-held { color: var(--ink-70); }
+.pl-acc-flag { color: var(--mag-2); font-weight: 600; }
+
 .pl-mix-bar { display: flex; height: 9px; margin-bottom: 8px; }
 .pl-mix-bar > span { display: block; height: 100%; }
 .pl-mix-calm { background: var(--ink-25); }
