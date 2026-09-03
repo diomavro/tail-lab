@@ -110,6 +110,25 @@ attempts.
 - **Until the secret exists, nothing changes.** The job reviews and blocks as
   before, and says in the log that the loop is disabled and why — the same
   no-op-until-provisioned pattern `deploy.yml` uses for `FLY_API_TOKEN`.
+- **First live run, 2026-09-03: the loop worked and the credential did not.**
+  A probe PR carrying deliberate duplication was reviewed, graded `FINDINGS`,
+  had the toolchain installed and **the fix computed and applied** — steps 3
+  through 7 all succeeded. Step 8 then failed with
+  `remote: Invalid username or token`, and the fix was discarded.
+
+  Two lessons, and the second is the one worth keeping. First: a stored
+  credential that GitHub rejects looks exactly like a working one until
+  something tries to use it, so `gh secret list` showing the name is not
+  evidence. Second, and structural: **step 9 was skipped**, because a failing
+  step aborts the job before the steps after it. So a *credential fault*
+  surfaced as a bare red `agent-review`, indistinguishable from *the reviewer
+  blocking the PR* — opposite problems with opposite fixes, reported
+  identically.
+
+  That is the same error as the fallback in `docs/adr/0023` that shared a
+  failure domain with the thing it backed up, made twice in three days. The
+  push step is now `continue-on-error` and the verdict step `if: always()`, so
+  the gate always states which of the two it hit.
 - **A second risk, now that FINDINGS merges: a reviewer that inflates.** If
   every duplicated helper gets called a DEFECT, the stall comes back wearing a
   new label. The prompt spends its severity guidance almost entirely on holding

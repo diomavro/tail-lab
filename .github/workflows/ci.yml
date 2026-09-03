@@ -381,9 +381,16 @@ jobs:
 
       - name: Push the fix and hand off to a fresh review
         id: pushed
+        # continue-on-error so a push failure cannot skip the verdict step below.
+        # It could, and did, on the very first live run (2026-09-03): the token
+        # in AGENT_FIX_TOKEN was rejected, step 8 failed, and step 9 never ran --
+        # so the job reported a bare failure indistinguishable from the reviewer
+        # blocking the PR. A credential fault and a design objection are opposite
+        # problems with opposite fixes, and the gate must say which it hit.
+        continue-on-error: true
         if: steps.verdict.outputs.value == 'FINDINGS' && steps.rounds.outputs.can_fix == 'true'
         run: |
-          set -euo pipefail
+          set -uo pipefail
           if [ -z "$(git status --porcelain)" ]; then
             echo "::warning::the fixer changed nothing — treating the block as standing."
             echo "did=false" >> "$GITHUB_OUTPUT"; exit 0
@@ -396,10 +403,19 @@ jobs:
           Automated response to the adversarial review on PR #${{ github.event.pull_request.number }}.
           Pushed with AGENT_FIX_TOKEN so this triggers a fresh CI run and a fresh,
           independent review of the fixed code (docs/adr/0024)."
-          git push origin "HEAD:${{ github.head_ref }}"
-          echo "did=true" >> "$GITHUB_OUTPUT"
+          if git push origin "HEAD:${{ github.head_ref }}"; then
+            echo "did=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "::error::AGENT_FIX_TOKEN could not push. The fix was computed and is"
+            echo "being discarded. Check the secret holds a LIVE fine-grained PAT with"
+            echo "Contents: read & write on this repo — a revoked or truncated value"
+            echo "gives exactly this. Until then the loop cannot close and blocked PRs"
+            echo "need a human."
+            echo "did=push_failed" >> "$GITHUB_OUTPUT"
+          fi
 
       - name: Enforce the verdict
+        if: always()
         run: |
           set -uo pipefail
           v="${{ steps.verdict.outputs.value }}"
@@ -422,6 +438,12 @@ jobs:
             echo "breakage (build/tooling broken, a test weakened to get green, an auth"
             echo "or data-integrity fault, or a constitution violation). This never"
             echo "auto-merges at any number of rounds. A human must read the review."
+            exit 1
+          fi
+          if [ "${{ steps.pushed.outputs.did }}" = "push_failed" ]; then
+            echo "::error::The reviewer found FINDINGS and the fixer resolved them, but the"
+            echo "push was rejected — so this is a CREDENTIAL fault, not a design objection."
+            echo "Fix AGENT_FIX_TOKEN; do not go looking for a problem in the diff."
             exit 1
           fi
           if [ "${{ steps.pushed.outputs.did }}" = "true" ]; then
