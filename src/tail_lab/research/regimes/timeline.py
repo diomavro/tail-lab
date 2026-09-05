@@ -142,6 +142,10 @@ def compute_regime_timeline(store: LakeStore, *, as_of: dt.date) -> pd.Series:
     # that as "calm" (the least severe) so combination stays total.
     aligned = credit_labels.reindex(vix_labels.index, method="ffill").fillna("calm")
 
+    # combine_regime_labels is variadic but only two labels are passed today
+    # (VIX, credit); docs/END_STATE.md §1.3 names rates as the third planned
+    # input to this same widened regime view, which is why it isn't `(v, c)`
+    # positional params instead.
     combined = [combine_regime_labels(v, c) for v, c in zip(vix_labels, aligned, strict=True)]
     return pd.Series(combined, index=vix_labels.index, name="regime")
 
