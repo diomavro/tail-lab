@@ -44,15 +44,24 @@ def _unit(name: str) -> str:
     return _TOKEN.sub("", rest).replace(".7z", "")
 
 
-def scan(vendor_dir: Path) -> list[dict[str, str]]:
+def scan(vendor_dir: Path) -> tuple[list[dict[str, str]], dict[str, list[str]]]:
+    """Describe every archive, and return the months each one holds.
+
+    Returns both because the caller needs both and neither is derivable from
+    the other: the TSV row carries a month COUNT, while the coverage summary
+    needs the month LIST to union overlapping archives. Returned rather than
+    stashed in a module global, so reading `scan` tells you everything it
+    produces.
+    """
     import py7zr
 
     rows: list[dict[str, str]] = []
+    months_by_file: dict[str, list[str]] = {}
     for path in sorted(vendor_dir.glob("*_eod_*.7z")):
         with py7zr.SevenZipFile(path, "r") as handle:
             names = handle.getnames()
         months = sorted(f"{m.group(1)}{m.group(2)}" for n in names if (m := _MONTH.search(n)))
-        _MONTHS_BY_FILE[path.name] = months
+        months_by_file[path.name] = months
         digest = hashlib.md5(path.read_bytes(), usedforsecurity=False).hexdigest()
         rows.append(
             {
@@ -66,18 +75,10 @@ def scan(vendor_dir: Path) -> list[dict[str, str]]:
                 "filename": path.name,
             }
         )
-    return rows
+    return rows, months_by_file
 
 
 _FIELDS = ("symbol", "unit", "months", "first", "last", "bytes", "md5", "filename")
-
-#: Filled by `scan`, so the summary can count DISTINCT months without a second
-#: pass over the archives.
-_MONTHS_BY_FILE: dict[str, list[str]] = {}
-
-
-def _months_of(filename: str) -> list[str]:
-    return _MONTHS_BY_FILE.get(filename, [])
 
 
 def _gaps(months: list[str]) -> list[str]:
@@ -88,7 +89,7 @@ def _gaps(months: list[str]) -> list[str]:
     return [m for m in months_in_span(months[0], months[-1]) if m not in held]
 
 
-def write(rows: list[dict[str, str]]) -> None:
+def write(rows: list[dict[str, str]], months_by_file: dict[str, list[str]]) -> None:
     MANIFEST.parent.mkdir(parents=True, exist_ok=True)
     lines = ["\t".join(_FIELDS)]
     lines += [
@@ -103,7 +104,7 @@ def write(rows: list[dict[str, str]]) -> None:
     # exactly the kind this dataset cannot afford.
     covered: dict[str, set[str]] = collections.defaultdict(set)
     for r in rows:
-        for path in _months_of(r["filename"]):
+        for path in months_by_file.get(r["filename"], []):
             covered[r["symbol"]].add(path)
     print(f"wrote {MANIFEST} — {len(rows)} archives")
     for sym in sorted(covered):
@@ -152,9 +153,9 @@ def main(argv: list[str] | None = None) -> int:
     if not args.vendor_dir.is_dir():
         print(f"{args.vendor_dir} does not exist — nothing to describe", file=sys.stderr)
         return 2
-    rows = scan(args.vendor_dir)
+    rows, months_by_file = scan(args.vendor_dir)
     if args.write:
-        write(rows)
+        write(rows, months_by_file)
         return 0
     return verify(rows)
 

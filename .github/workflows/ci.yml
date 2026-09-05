@@ -426,9 +426,13 @@ jobs:
             # deploy.yml looks like a workflow edit (and passes), and a
             # reviewer that ran but wrote no verdict looks stale (and is told
             # to rebase, which cannot help).
-            if ! main_ci=$(gh api "repos/${GITHUB_REPOSITORY}/contents/.github/workflows/ci.yml" \
-                             --jq '.sha' --header 'Accept: application/vnd.github+json' \
-                             -f ref=main 2>/dev/null); then
+            # `?ref=` in the URL, NOT `-f ref=main`: `-f` adds a POST field and
+            # flips the method, which answers 404 for a contents read. Verified
+            # both forms; the URL form returns the blob sha and it matches
+            # `git hash-object` on the same content exactly.
+            if ! main_ci=$(gh api \
+                 "repos/${GITHUB_REPOSITORY}/contents/.github/workflows/ci.yml?ref=main" \
+                 --jq '.sha' 2>/dev/null); then
               reason="classify_failed"
             else
               here_ci=$(git hash-object .github/workflows/ci.yml)

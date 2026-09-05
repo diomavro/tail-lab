@@ -109,6 +109,14 @@ now that the branch gate is gone:
   `DEFECT` blocks unconditionally. An earlier draft of this ADR said
   `FINDINGS` merges only after "up to three fix-and-re-review rounds"; that
   overstated the guarantee and is corrected here.
+- **"Every pull request" is now literal, including forks.** A fork PR gets no
+  secrets (this is `pull_request`, not `pull_request_target`), so
+  `CLAUDE_CODE_OAUTH_TOKEN` is empty and the checkout of `github.head_ref`
+  refers to a branch that does not exist in the base repo — the job fails
+  rather than skipping, and the PR cannot merge. For a private single-author
+  repo with no forks that is academic, and failing closed is the right
+  direction, but it is a real behaviour change from the `agent/*` scope and is
+  recorded so it is not rediscovered as a bug.
 - **Cost rises with PR volume.** One review per pull request, plus fix rounds
   on any PR the reviewer blocks. Previously only agent PRs could incur rounds.
 - **A reviewer outage now blocks, and that is deliberate.** `docs/adr/0023`

@@ -167,7 +167,7 @@ def _read_csv_counting_bad_rows(source: Path | io.StringIO) -> tuple[pd.DataFram
     return frame, malformed
 
 
-def _slice_frame(symbol: str, raw: pd.DataFrame, malformed: int = 0) -> tuple[pd.DataFrame, int]:
+def _slice_frame(symbol: str, raw: pd.DataFrame, malformed: int) -> tuple[pd.DataFrame, int]:
     """Slice a whole month's frame to the put wing, vectorised.
 
     Pure, and the single place the filters live so the streaming path and the

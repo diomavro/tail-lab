@@ -147,6 +147,14 @@ class QuoteCoverage(BaseModel):
     """
 
     #: What produced the premiums behind the figures on screen.
+    #:
+    #: Only ``"model"`` is emitted today, and that is the point rather than an
+    #: oversight: the whole reason this field exists is to say so out loud
+    #: while a market-priced panel sits unused in the lake. ``"market"``
+    #: becomes reachable when the roll engine reads those quotes
+    #: (`docs/adr/0004`, queued in `AGENT_TODO.md`), and the two-valued type is
+    #: what makes that switch a one-line change rather than a new contract.
+    #: Do not "simplify" it away because one arm is currently unreachable.
     priced_from: Literal["model", "market"]
     #: Whether a real-quote panel exists in the lake for this underlying *at
     #: all* -- independent of whether it overlaps this report's window.
