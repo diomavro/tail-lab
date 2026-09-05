@@ -54,20 +54,38 @@ def test_a_transient_500_is_retried_and_the_session_is_saved(
     assert len(calls) == 2
 
 
-def test_a_422_is_not_retried(monkeypatch: pytest.MonkeyPatch) -> None:
-    """A 4xx means the app understood the body and refused it. Re-sending the
-    SAME body cannot change that answer, and each attempt burns part of the
-    window in which Cboe still serves this session."""
+@pytest.mark.parametrize(
+    ("code", "expected_calls"),
+    [
+        # A 4xx means the app understood the body and refused it. Re-sending the
+        # SAME bytes cannot change that answer, and each attempt burns part of
+        # the window in which Cboe still serves this session.
+        (422, 1),
+        (401, 1),
+        # A 5xx means it failed to handle a request it might handle next time.
+        (500, chain_snapshot.POST_ATTEMPTS),
+    ],
+)
+def test_only_faults_a_retry_could_fix_are_retried(
+    monkeypatch: pytest.MonkeyPatch, code: int, expected_calls: int
+) -> None:
+    """Asserted as a CONTRAST, deliberately.
+
+    Testing "a 422 is sent once" on its own passes just as happily when there
+    is no retry loop at all, so it cannot detect the regression it is named
+    for. Pinning 1-vs-4 against the same call counter is what makes the loop's
+    presence observable.
+    """
     calls: list[int] = []
 
     def fake(*_a: Any, **_k: Any) -> dict[str, Any]:
         calls.append(1)
-        raise _http_error(422)
+        raise _http_error(code)
 
     monkeypatch.setattr(chain_snapshot, "_post_once", fake)
     with pytest.raises(urllib.error.HTTPError):
         chain_snapshot._post("http://x", "t", {"rows": []}, 30)
-    assert len(calls) == 1, "a rejected body was re-sent"
+    assert len(calls) == expected_calls
 
 
 def test_429_is_retried_even_though_it_is_a_4xx() -> None:
@@ -91,3 +109,26 @@ def test_it_gives_up_rather_than_retrying_forever(monkeypatch: pytest.MonkeyPatc
     with pytest.raises(urllib.error.HTTPError):
         chain_snapshot._post("http://x", "t", {"rows": []}, 30)
     assert len(calls) == chain_snapshot.POST_ATTEMPTS
+
+
+def test_a_wedged_app_reports_a_failure_rather_than_a_traceback(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """`TimeoutError` is a sibling of `URLError` under `OSError`, not a
+    subclass, so it escaped both of main()'s handlers and surfaced as a raw
+    traceback. The exit code was still non-zero -- no session was lost -- but
+    the whole premise of this workflow is that a red run is legible at a
+    glance, and a traceback in the Actions log is not."""
+
+    def fake(*_a: Any, **_k: Any) -> dict[str, Any]:
+        raise TimeoutError
+
+    monkeypatch.setattr(chain_snapshot, "_post_once", fake)
+    monkeypatch.setattr(
+        chain_snapshot, "sweep_to_records", lambda _s: [{"underlying": "SPY"}] * 20_000
+    )
+
+    rc = chain_snapshot.main(["--post", "http://x", "--token", "t", "--symbols", "spy"])
+
+    assert rc == 1
+    assert "::error::" in capsys.readouterr().err

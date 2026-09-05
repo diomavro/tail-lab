@@ -112,7 +112,6 @@ def _post(base_url: str, token: str, payload: dict[str, Any], timeout: int) -> d
         try:
             return _post_once(base_url, token, payload, timeout)
         except (urllib.error.URLError, TimeoutError) as exc:
-            last = exc
             if not _retryable(exc) or attempt == POST_ATTEMPTS:
                 raise
             detail = getattr(exc, "code", None) or getattr(exc, "reason", exc)
@@ -123,7 +122,13 @@ def _post(base_url: str, token: str, payload: dict[str, Any], timeout: int) -> d
                 file=sys.stderr,
             )
             time.sleep(wait)
-    raise last  # unreachable: the loop either returns or raises
+    # Unreachable while POST_ATTEMPTS >= 1: the last iteration either returns
+    # or re-raises. Stated as an assertion rather than left to fall off the end,
+    # because setting POST_ATTEMPTS = 0 to "turn retries off" would otherwise
+    # return None into a caller that expects a dict -- and `scripts/` is linted
+    # but never type-checked (`make typecheck` covers src/tail_lab only), so
+    # nothing else would catch it.
+    raise AssertionError("POST_ATTEMPTS must be >= 1")
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -176,6 +181,19 @@ def main(argv: list[str] | None = None) -> int:
         return 1
     except urllib.error.URLError as exc:
         print(f"::error::could not reach {args.post}: {exc.reason}", file=sys.stderr)
+        return 1
+    except TimeoutError:
+        # NOT caught by the clause above: TimeoutError is a sibling of URLError
+        # under OSError, not a subclass. `_post` now models timeouts as a
+        # first-class retryable outcome, so this is the shape a fully wedged
+        # app arrives in -- and it has to read as an annotated failure rather
+        # than a raw traceback, because the premise of this workflow is that a
+        # red run is legible at a glance.
+        print(
+            f"::error::{args.post} did not answer within {args.timeout}s "
+            f"across {POST_ATTEMPTS} attempts",
+            file=sys.stderr,
+        )
         return 1
 
     quarantined = result_json.get("quarantined", 0)
