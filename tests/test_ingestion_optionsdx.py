@@ -102,6 +102,29 @@ def test_truncated_rows_are_counted_not_silently_dropped(sample: str) -> None:
     assert unparsable == 1
 
 
+def test_an_empty_archive_member_costs_that_month_and_not_the_whole_symbol(
+    tmp_path: Path,
+) -> None:
+    """Asserted on the FILE path, which is the one the ingest actually uses.
+
+    The empty-input guard used to live on `parse_optionsdx_month`, the string
+    entry point that only tests call. The ingest reads files, and the member
+    loop in `ingest_optionsdx` has no `try` -- so an empty `.7z` member raised
+    `EmptyDataError` and killed every month of that symbol. The same
+    all-or-nothing failure the malformed-row handling exists to prevent,
+    reintroduced by moving the reader and leaving the guard behind, and
+    invisible because the tested path and the shipped path had diverged.
+    """
+    from tail_lab.ingestion.optionsdx import _read_month_file
+
+    for name, content in (("empty.txt", ""), ("blank.txt", "\n\n")):
+        path = tmp_path / name
+        path.write_text(content)
+        frame, unparsable = _read_month_file("spy", path)
+        assert frame.empty, name
+        assert unparsable == 0, name
+
+
 def test_an_over_long_row_costs_that_row_and_not_the_whole_symbol(sample: str) -> None:
     """A row with MORE fields than the header used to abort the entire symbol.
 

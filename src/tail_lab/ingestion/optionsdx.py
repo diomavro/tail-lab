@@ -39,7 +39,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 import pandas as pd
-from pandas.errors import ParserWarning
+from pandas.errors import EmptyDataError, ParserWarning
 from pandera.errors import SchemaErrors
 
 from tail_lab.contracts.optionsdx import (
@@ -121,7 +121,11 @@ class IngestResult:
     archives_read: int = 0
     unparsable_rows: int = 0
     duplicate_rows: int = 0
-    #: Rows kept, but with their greek block voided as physically impossible.
+    #: Rows kept whose greek block is absent: either the vendor left it blank
+    #: or the physical check voided it as impossible. Counted together because
+    #: the stored value is the same (NA) and the count comes off `iv.isna()`,
+    #: which cannot tell them apart -- so read this as "rows with no usable
+    #: greeks", not as "rows we rejected".
     voided_greek_rows: int = 0
     missing_months: tuple[str, ...] = field(default_factory=tuple)
 
@@ -244,6 +248,27 @@ def _slice_frame(symbol: str, raw: pd.DataFrame, malformed: int = 0) -> tuple[pd
     return out, unparsable
 
 
+def _slice_source(symbol: str, source: Path | io.StringIO) -> tuple[pd.DataFrame, int]:
+    """Read one month from a path or a string, and slice it to the put wing.
+
+    Both entry points go through here so the shipped path and the tested path
+    cannot diverge -- which they had. The empty-input guard used to sit on
+    ``parse_optionsdx_month`` (tests only); the ingest reads files, so an empty
+    ``.7z`` member raised ``EmptyDataError`` out of ``ingest_optionsdx``'s
+    member loop and killed the WHOLE symbol. The same all-or-nothing failure
+    the malformed-row handling exists to prevent, reintroduced one refactor
+    later by moving the reader and leaving the guard behind.
+
+    An empty member is a vendor artefact, not a corpus fault: it contributes no
+    rows and no months, and `month_coverage` reports the resulting gap.
+    """
+    try:
+        raw, malformed = _read_csv_counting_bad_rows(source)
+    except EmptyDataError:
+        return pd.DataFrame(columns=_OUT_COLUMNS), 0
+    return _slice_frame(symbol, raw, malformed)
+
+
 def parse_optionsdx_month(symbol: str, text: str) -> tuple[pd.DataFrame, int]:
     """Slice one month's file text to the put wing. Pure: no clock, no disk.
 
@@ -251,9 +276,7 @@ def parse_optionsdx_month(symbol: str, text: str) -> tuple[pd.DataFrame, int]:
     directly (:func:`_read_month_file`) because materialising a 66 MB member as
     a Python string cost 258 MB of RSS on its own.
     """
-    if not text.strip():
-        return pd.DataFrame(columns=_OUT_COLUMNS), 0
-    return _slice_frame(symbol, *_read_csv_counting_bad_rows(io.StringIO(text)))
+    return _slice_source(symbol, io.StringIO(text))
 
 
 def _read_month_file(symbol: str, path: Path) -> tuple[pd.DataFrame, int]:
@@ -266,7 +289,7 @@ def _read_month_file(symbol: str, path: Path) -> tuple[pd.DataFrame, int]:
     machine, having ingested the five smaller symbols without complaint.
     pandas' C reader does the same work without the per-field Python objects.
     """
-    return _slice_frame(symbol, *_read_csv_counting_bad_rows(path))
+    return _slice_source(symbol, path)
 
 
 def read_archive_months(archive: Path) -> Iterator[tuple[str, Path]]:

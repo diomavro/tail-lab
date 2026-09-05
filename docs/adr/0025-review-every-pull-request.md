@@ -81,8 +81,11 @@ auto-merges.
 now that the branch gate is gone:
 
 - **A draft PR.** A draft is a proposal, not a request to merge.
-- **A PR touching the constitution** — `docs/adr/**`, `.github/workflows/**`,
-  `README.md`, `ARCHITECTURE.md`, `docs/STANDARDS.md`, `docs/AGENT_MISSION.md`,
+- **A PR touching the constitution** — `docs/adr/**`, all of `.github/**`
+  (not just `workflows/`: a composite action or a dependabot config changes
+  what CI does too), `pyproject.toml` (it holds the mypy strictness, the ruff
+  rules, the import-linter contracts and the coverage floor), `README.md`,
+  `ARCHITECTURE.md`, `docs/STANDARDS.md`, `docs/AGENT_MISSION.md`,
   `docs/END_STATE.md`. The rules governing the agents must not be changeable by
   the agents (`docs/adr/0022`). Note *where* this is enforced: the
   `constitution-guard` CI job only inspects `agent/*` branches, so for every
@@ -108,11 +111,15 @@ now that the branch gate is gone:
   overstated the guarantee and is corrected here.
 - **Cost rises with PR volume.** One review per pull request, plus fix rounds
   on any PR the reviewer blocks. Previously only agent PRs could incur rounds.
-- **A reviewer outage now affects everyone.** `docs/adr/0024`'s no-verdict rule
-  (`NONE` is treated as `PASS`, with a warning) is what keeps this from
-  becoming a repo-wide stall, and it matters more under this ADR than it did
-  before. A repeated no-verdict must be fixed or the job removed; a green check
-  standing for a review that never happened is worse than no check.
+- **A reviewer outage now blocks, and that is deliberate.** `docs/adr/0023`
+  originally treated a missing verdict as a pass, so that a reviewer which
+  could not run never became a gate that could not open. Under this ADR that
+  rule is too permissive: the same leniency that keeps a workflow-editing PR
+  moving would, on an expired token, wave through every PR in the repo
+  unreviewed. So a missing verdict is now classified by cause and only the
+  workflow-edit case passes (see the table below). The original concern stands
+  — a stalled pipeline is a real cost — but the answer is to fix the reviewer,
+  not to let a green check stand for a review that never happened.
 - **This ADR edits the constitution and therefore cannot be made by the daily
   agent** (`docs/adr/0022`). It was made by a human decision, recorded here so
   that a future session finding a reviewed human PR does not read it as a

@@ -178,13 +178,23 @@ so it is reviewed and merged by exactly the same path as everything else.
   The warning text now says, in the log, that a repeated no-verdict means the
   reviewer is silently reviewing nothing — because the failure mode that
   followed the fix would be worse than the outage: a green check standing for a
-  review that never happened.
+  review that never happened. *(Amended 2026-09-05: that is now an error rather
+  than a warning for every cause except a workflow-editing PR — `docs/adr/0025`.)*
 - **A new failure mode: the stalled pipeline.** If the reviewer becomes
   trigger-happy the daily increment stops, and the collection in
-  `docs/adr/0020` is the one thing that cannot wait. The high blocking bar, the
-  pass-on-uncertainty instruction and the pass-on-missing-verdict fallback all
-  exist for that reason. If it blocks more than occasionally, loosen it — do not
-  let it sit red.
+  `docs/adr/0020` is the one thing that cannot wait. The high blocking bar and
+  the pass-on-uncertainty instruction exist for that reason.
+
+  *(Amended 2026-09-05, `docs/adr/0025`.)* **The pass-on-missing-verdict
+  fallback described here and above no longer exists, and must not be
+  reinstated.** It was safe while this job ran only on `agent/*` branches;
+  once the review covers every PR, the same leniency means an expired token
+  silently returns the repo to auto-merging everything unreviewed. A missing
+  verdict is now classified by cause and only the workflow-edit case passes.
+  The advice "if it blocks more than occasionally, loosen it" still applies to
+  the *blocking bar* — what the reviewer chooses to call a defect — and no
+  longer to the missing-verdict path, where the correct response is to fix the
+  reviewer.
 - **What this does not fix.** None of these gates can tell whether the
   *architecture* is right, only whether it is degrading. A wrong abstraction
   introduced cleanly and extended consistently will pass all three forever.

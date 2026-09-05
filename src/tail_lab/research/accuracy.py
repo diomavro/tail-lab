@@ -34,7 +34,7 @@ from pydantic import BaseModel
 from tail_lab.contracts.cboe_strategy import DATASET as CBOE_STRATEGY_DATASET
 from tail_lab.contracts.cboe_strategy import STRATEGY_INDEX_CATALOGUE
 from tail_lab.contracts.optionsdx import DATASET as OPTIONSDX_DATASET
-from tail_lab.contracts.optionsdx import month_coverage
+from tail_lab.contracts.optionsdx import month_coverage, months_in_span
 from tail_lab.contracts.regime import REGIME_LABELS, RegimeLabel
 from tail_lab.lake.store import LakeStore
 from tail_lab.research.backtest.index_replication import (
@@ -418,16 +418,6 @@ def standing_assumptions(*, rate: float, expected_optimism: float | None) -> lis
     ]
 
 
-def _months_between(start: dt.date, end: dt.date) -> list[str]:
-    """Every ``YYYYMM`` from ``start``'s month to ``end``'s month, inclusive."""
-    months: list[str] = []
-    year, month = start.year, start.month
-    while (year, month) <= (end.year, end.month):
-        months.append(f"{year}{month:02d}")
-        year, month = (year + 1, 1) if month == 12 else (year, month + 1)
-    return months
-
-
 def quote_coverage(
     store: LakeStore, *, asset: str, window_start: dt.date, as_of: dt.date
 ) -> QuoteCoverage:
@@ -447,7 +437,9 @@ def quote_coverage(
     deduplicates to days (~3.5k values over fourteen years) before any Python
     objects are built.
     """
-    window = _months_between(window_start, as_of)
+    window = months_in_span(
+        f"{window_start.year}{window_start.month:02d}", f"{as_of.year}{as_of.month:02d}"
+    )
     dataset = f"{OPTIONSDX_DATASET}_{asset.lower()}"
     absent_note = (
         "No real option quotes cover this window. Every premium behind these "

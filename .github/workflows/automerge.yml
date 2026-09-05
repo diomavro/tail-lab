@@ -17,8 +17,9 @@ name: Auto-merge reviewed PRs
 #
 # TWO things still stop an auto-merge, deliberately:
 #   * a DRAFT PR, which is a proposal and not a request to merge;
-#   * a PR touching the constitution (`docs/adr/**`, `.github/workflows/**`,
-#     README/ARCHITECTURE/STANDARDS/AGENT_MISSION/END_STATE) — the rules that
+#   * a PR touching the constitution (`docs/adr/**`, all of `.github/**`,
+#     `pyproject.toml`, README/ARCHITECTURE/STANDARDS/AGENT_MISSION/END_STATE)
+#     — the rules that
 #     govern the agents cannot be changed by the agents, so a human merges
 #     those by hand (`docs/adr/0022`). The check below is the enforcement
 #     point for EVERY author; `constitution-guard` in CI only covers `agent/*`.

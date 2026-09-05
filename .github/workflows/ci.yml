@@ -368,10 +368,24 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
         run: |
-          v="$(tr -d '[:space:]' < /tmp/verdict 2>/dev/null || true)"
-          [ -z "$v" ] && v="NONE"
+          raw="$(tr -d '[:space:]' < /tmp/verdict 2>/dev/null || true)"
+          # Normalise before matching. The reviewer is an LLM told to write one
+          # bare word; it may write `**DEFECT**`, `Defect`, or `DEFECT.` — all
+          # natural outputs that an exact string comparison misses. Every miss
+          # used to fall through the enforce step's final `exit 0`, i.e. the
+          # MERGE path, so the most emphatic way to write the one unconditional
+          # block was also the way to get it ignored. Strip to letters, upcase,
+          # and treat anything still unrecognised as a block, not a pass.
+          norm="$(printf '%s' "$raw" | tr -cd '[:alpha:]' | tr '[:lower:]' '[:upper:]')"
+          case "$norm" in
+            PASS)     v=PASS ;;
+            FINDINGS) v=FINDINGS ;;
+            DEFECT)   v=DEFECT ;;
+            "")       v=NONE ;;
+            *)        v=UNRECOGNISED ;;
+          esac
           echo "value=$v" >> "$GITHUB_OUTPUT"
-          echo "verdict: $v"
+          echo "verdict: $v (raw: ${raw:-<empty>})"
 
           # WHY a missing verdict happened, which decides whether it is safe.
           #
@@ -386,7 +400,6 @@ jobs:
           # PR is then unreviewed AND mergeable. Conflating the two is exactly
           # the mistake docs/adr/0025 shipped with: it claimed unreviewable
           # implied unmergeable, which holds only for the first case.
-          reason="unknown"
           if [ -f /tmp/claude-review-ran ]; then
             reason="ran"
           elif [ "${REVIEW_OUTCOME}" = "success" ]; then
@@ -406,11 +419,28 @@ jobs:
             #
             # (b) is the dangerous one and it is the COMMON one: every branch
             # older than the last ci.yml change is in it.
-            if gh api --paginate "repos/${GITHUB_REPOSITORY}/pulls/${PR_NUMBER}/files" \
-                 --jq '.[].filename' | grep -q '^\.github/workflows/'; then
-              reason="workflow_edit_skip"
+            # Ask the question the action actually asks -- does THIS branch's
+            # ci.yml differ from the default branch's? -- rather than proxying
+            # it with "did the PR touch a workflow file". The proxy gets the
+            # common case wrong in both directions: a stale branch that edits
+            # deploy.yml looks like a workflow edit (and passes), and a
+            # reviewer that ran but wrote no verdict looks stale (and is told
+            # to rebase, which cannot help).
+            if ! main_ci=$(gh api "repos/${GITHUB_REPOSITORY}/contents/.github/workflows/ci.yml" \
+                             --jq '.sha' --header 'Accept: application/vnd.github+json' \
+                             -f ref=main 2>/dev/null); then
+              reason="classify_failed"
             else
-              reason="stale_branch_skip"
+              here_ci=$(git hash-object .github/workflows/ci.yml)
+              if [ "$here_ci" = "$main_ci" ]; then
+                # Identical to main, so validation did not fail on this file.
+                reason="outage"
+              elif gh api --paginate "repos/${GITHUB_REPOSITORY}/pulls/${PR_NUMBER}/files" \
+                     --jq '.[].filename' 2>/dev/null | grep -q '^\.github/workflows/'; then
+                reason="workflow_edit_skip"
+              else
+                reason="stale_branch_skip"
+              fi
             fi
           else
             reason="outage"
@@ -484,6 +514,10 @@ jobs:
         if: steps.verdict.outputs.value == 'FINDINGS' && steps.rounds.outputs.can_fix == 'true'
         env:
           PUSH_TOKEN: ${{ secrets.AGENT_FIX_TOKEN || github.token }}
+          # Via env, not `${{ }}` inlined into the script: a branch name may
+          # contain `$`, backticks or `$(...)`, and expression interpolation
+          # pastes it into the shell source before bash ever sees it.
+          HEAD_REF: ${{ github.head_ref }}
         run: |
           set -uo pipefail
           if [ -z "$(git status --porcelain)" ]; then
@@ -508,7 +542,7 @@ jobs:
           # and never written to disk where the reviewer's Bash could read it.
           if git push \
                "https://x-access-token:${PUSH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" \
-               "HEAD:${{ github.head_ref }}"; then
+               "HEAD:${HEAD_REF}"; then
             echo "did=true" >> "$GITHUB_OUTPUT"
           else
             echo "::error::AGENT_FIX_TOKEN could not push. The fix was computed and is"
@@ -554,6 +588,21 @@ jobs:
               echo "will run. Do not override this."
               exit 1
             fi
+            if [ "$reason" = "ran" ]; then
+              echo "::error::The reviewer RAN but wrote no verdict — the sentinel it"
+              echo "writes on entry is present, so this is not an outage. Read its"
+              echo "comment on this PR: the review exists, only the one-word verdict"
+              echo "is missing. Merge by hand if the review is clean."
+              exit 1
+            fi
+            if [ "$reason" = "classify_failed" ]; then
+              echo "::error::The reviewer produced no verdict AND the cause could not be"
+              echo "determined — the GitHub API call that distinguishes them failed."
+              echo "This is most likely a rate limit or a transport blip, NOT anything"
+              echo "about your branch. RE-RUN THIS JOB. Do not rebase; that is the fix"
+              echo "for a different cause and will not help here."
+              exit 1
+            fi
             echo "::error::The design reviewer did not run (reason: $reason). That points"
             echo "at an expired CLAUDE_CODE_OAUTH_TOKEN, an API outage, a usage limit or"
             echo "an action regression — leaving this PR unreviewed but otherwise"
@@ -561,6 +610,14 @@ jobs:
             echo
             echo "A human should review and merge this one, and the reviewer must be"
             echo "fixed before the loop is relied on again."
+            exit 1
+          fi
+          if [ "$v" = "UNRECOGNISED" ]; then
+            echo "::error::The reviewer's verdict could not be read. Blocking, because"
+            echo "an unreadable verdict is not a clean one — and the failure mode this"
+            echo "guards is specific: the reviewer writes the one word that must always"
+            echo "block, decorated (\`**DEFECT**\`), and an exact match misses it."
+            echo "Read the review comment on this PR and merge by hand if it is fine."
             exit 1
           fi
           if [ "$v" = "PASS" ]; then
@@ -594,11 +651,19 @@ jobs:
           # not lost -- the daily agent reads review comments on merged PRs (its step
           # 2b) and either fixes or files them, so the cost of merging is a delay,
           # while the cost of stalling is the increment.
-          echo "::warning::Design review left unresolved FINDINGS after $rounds fix round(s)."
-          echo "Merging anyway, by design (docs/adr/0024): a working increment does not sit"
-          echo "unmerged over a quality finding. The findings stay in the review comment and"
-          echo "the daily agent picks them up on its next run."
-          exit 0
+          if [ "$v" = "FINDINGS" ]; then
+            echo "::warning::Design review left unresolved FINDINGS after $rounds fix round(s)."
+            echo "Merging anyway, by design (docs/adr/0024): a working increment does not sit"
+            echo "unmerged over a quality finding. The findings stay in the review comment and"
+            echo "the daily agent picks them up on its next run."
+            exit 0
+          fi
+          # Every verdict is handled above. Reaching here means one was added
+          # without a branch, and the safe answer to "a state nobody wrote a
+          # rule for" is to stop. This used to be a bare `exit 0`, which made
+          # the merge path the default for anything unmatched.
+          echo "::error::Unhandled verdict '$v' — blocking rather than assuming it is safe."
+          exit 1
 
   trigger-deploy:
     needs: [backend, hygiene, frontend, e2e, constitution-guard]  # not agent-review: it is pull_request-only, so it never runs on this push-to-main

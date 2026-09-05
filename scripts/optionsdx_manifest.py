@@ -30,6 +30,8 @@ import re
 import sys
 from pathlib import Path
 
+from tail_lab.contracts.optionsdx import months_in_span
+
 VENDOR_DIR = Path("data/vendor/optionsdx")
 MANIFEST = Path("docs/OPTIONSDX_MANIFEST.tsv")
 _MONTH = re.compile(r"_eod_(\d{4})(\d{2})\.txt$")
@@ -82,15 +84,8 @@ def _gaps(months: list[str]) -> list[str]:
     """Months absent between the first and last held, as YYYYMM."""
     if not months:
         return []
-    lo, hi = months[0], months[-1]
-    span = [
-        f"{y}{m:02d}"
-        for y in range(int(lo[:4]), int(hi[:4]) + 1)
-        for m in range(1, 13)
-        if lo <= f"{y}{m:02d}" <= hi
-    ]
     held = set(months)
-    return [m for m in span if m not in held]
+    return [m for m in months_in_span(months[0], months[-1]) if m not in held]
 
 
 def write(rows: list[dict[str, str]]) -> None:
