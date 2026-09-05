@@ -187,9 +187,12 @@ cross-asset sensitivity metrics.
 `ingestion/credit.py` + `make ingest-credit` (`SERIES=` override) ship the
 adapter, requesting FRED's ALFRED-style full vintage history exactly as
 `ingestion/rates.py` does. **Not yet run against prod** — no `credit`
-bronze partition exists yet; that live run, and wiring a `research/`
-consumer (starting with widening `research/regimes/timeline.py` beyond
-VIX-complex-only), are follow-ups (`AGENT_TODO.md`).
+bronze partition exists yet. `research/regimes/timeline.py` now reads HY OAS
+(`load_credit_oas`) and escalates the VIX-only regime label with it
+(`compute_regime_timeline`) whenever a credit snapshot exists, falling back
+to the VIX-only label until then — so this dataset goes live for the
+cockpit's regime panel the moment the live run above happens, with no
+further code change.
 
 **Cadence.** Daily.
 

@@ -1,9 +1,13 @@
-"""Point-in-time market-regime timeline from the VIX complex.
+"""Point-in-time market-regime timeline from the volatility complex, widened
+by credit spreads when they are available (`docs/END_STATE.md` §1.3 --
+"volatility complex + credit spreads + rates").
 
-``label_vix_series`` is pure (VIX closes in, regime labels out);
-``compute_regime_timeline`` reads the bronze VIX snapshot known on or before
-``as_of`` and labels every date in it. The memory layer (phase 2) maps each
-backtest cycle's entry date onto this timeline to key its verdict by regime.
+``label_vix_series``/``label_credit_series`` are pure (a level series in,
+regime labels out); ``compute_regime_timeline`` reads the bronze snapshots
+known on or before ``as_of`` and labels every VIX date, escalated by credit
+stress where a credit snapshot exists (`combine_regime_labels`). The memory
+layer (phase 2) maps each backtest cycle's entry date onto this timeline to
+key its verdict by regime.
 """
 
 from __future__ import annotations
@@ -13,10 +17,21 @@ import datetime as dt
 import pandas as pd
 from pydantic import BaseModel
 
-from tail_lab.contracts.regime import RegimeLabel, classify_vix_series
+from tail_lab.contracts.credit import DATASET as CREDIT_DATASET
+from tail_lab.contracts.regime import (
+    RegimeLabel,
+    classify_credit_series,
+    classify_vix_series,
+    combine_regime_labels,
+)
 from tail_lab.lake.store import LakeStore
 
 VIX_DATASET = "vix"
+
+#: The FRED series id read out of the shared ``credit`` bronze dataset for
+#: the widened regime classifier -- HY OAS only (`docs/DATA_CONTRACTS.md`
+#: #4); IG OAS lands in the same dataset but is not used here.
+HY_OAS_SERIES_ID = "BAMLH0A0HYM2"
 
 
 def label_vix_series(vix_close: pd.Series) -> pd.Series:
@@ -29,6 +44,13 @@ def label_vix_series(vix_close: pd.Series) -> pd.Series:
     """
     labels = classify_vix_series(vix_close.to_numpy().tolist())
     return pd.Series(labels, index=vix_close.index, name="regime")
+
+
+def label_credit_series(hy_oas: pd.Series) -> pd.Series:
+    """Regime label for each HY OAS print, preserving the input index. Same
+    shape as :func:`label_vix_series`, over the credit hysteresis classifier."""
+    labels = classify_credit_series(hy_oas.to_numpy().tolist())
+    return pd.Series(labels, index=hy_oas.index, name="credit_regime")
 
 
 def load_vix_close(store: LakeStore, *, as_of: dt.date) -> pd.Series:
@@ -56,15 +78,72 @@ def load_vix_close(store: LakeStore, *, as_of: dt.date) -> pd.Series:
     )
 
 
-def compute_regime_timeline(store: LakeStore, *, as_of: dt.date) -> pd.Series:
-    """Date-indexed regime labels from the VIX snapshot known as of ``as_of``.
+def load_credit_oas(store: LakeStore, *, as_of: dt.date) -> pd.Series:
+    """Date-indexed HY OAS series known as of ``as_of``, one point-in-time
+    value per ``obs_date``.
 
-    Reads only the bronze VIX known on or before ``as_of``
-    (:meth:`LakeStore.read_bronze_as_of` enforces no-look-ahead), sorted and
-    de-duplicated by date. Raises ``LookupError`` if no VIX snapshot exists as
-    of that date.
+    Reads the bronze credit snapshot known on or before ``as_of``
+    (:meth:`LakeStore.read_bronze_as_of` enforces no-look-ahead), then
+    resolves FRED's ALFRED vintage history to the value actually known at
+    that time: for each ``obs_date``, keeps the row with the latest
+    ``vintage_date`` (`docs/DATA_CONTRACTS.md` #4). No further filtering is
+    needed -- every ``vintage_date`` in the resolved partition was already
+    published on or before that partition's own ``ingest_date``, which is
+    itself <= ``as_of``, so "latest vintage in the partition" already means
+    "latest vintage known as of the query date". Raises ``LookupError`` if no
+    credit snapshot, or no HY OAS row within it, exists as of that date.
     """
-    return label_vix_series(load_vix_close(store, as_of=as_of))
+    try:
+        bronze = store.read_bronze_as_of(CREDIT_DATASET, as_of)
+    except LookupError as exc:
+        raise LookupError(f"no credit snapshot known as of {as_of.isoformat()}") from exc
+
+    hy = bronze.loc[bronze["series_id"] == HY_OAS_SERIES_ID]
+    if hy.empty:
+        raise LookupError(f"no {HY_OAS_SERIES_ID} known as of {as_of.isoformat()}")
+
+    latest_vintage = hy.sort_values("vintage_date").drop_duplicates(subset="obs_date", keep="last")
+    ordered = latest_vintage.sort_values("obs_date")
+    return pd.Series(
+        ordered["value"].to_numpy(dtype=float),
+        index=pd.DatetimeIndex(ordered["obs_date"]),
+        name="hy_oas",
+    )
+
+
+def compute_regime_timeline(store: LakeStore, *, as_of: dt.date) -> pd.Series:
+    """Date-indexed regime labels from the VIX snapshot known as of
+    ``as_of``, escalated by credit-spread stress wherever a credit snapshot
+    is also available (`combine_regime_labels`: credit can only make a day
+    look more severe, never less).
+
+    Reads only bronze known on or before ``as_of``
+    (:meth:`LakeStore.read_bronze_as_of` enforces no-look-ahead). Falls back
+    to the VIX-only label whenever no credit snapshot exists yet -- as of
+    this writing, no environment has ever run `make ingest-credit`, so this
+    is the live behaviour everywhere today, and becomes credit-aware with no
+    further code change the moment a credit partition exists (same
+    graceful-fallback precedent `research/cadence.py` follows for the
+    options-expiry dataset). Raises ``LookupError`` if no VIX snapshot exists
+    as of that date -- VIX is the mandatory half, credit is an optional
+    escalation.
+    """
+    vix_labels = label_vix_series(load_vix_close(store, as_of=as_of))
+    try:
+        credit = load_credit_oas(store, as_of=as_of)
+    except LookupError:
+        return vix_labels
+
+    credit_labels = label_credit_series(credit)
+    # ffill: a VIX date's credit opinion is whatever HY OAS last printed on or
+    # before it -- still causal, since only values dated <= that VIX date
+    # (already <= as_of, per load_credit_oas) are ever used. A VIX date
+    # earlier than the first known credit print has no opinion yet; treat
+    # that as "calm" (the least severe) so combination stays total.
+    aligned = credit_labels.reindex(vix_labels.index, method="ffill").fillna("calm")
+
+    combined = [combine_regime_labels(v, c) for v, c in zip(vix_labels, aligned, strict=True)]
+    return pd.Series(combined, index=vix_labels.index, name="regime")
 
 
 def regime_on_or_before(timeline: pd.Series, when: dt.date) -> RegimeLabel:

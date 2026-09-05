@@ -28,11 +28,12 @@ flowchart LR
         CBOE["Cboe CDN<br/>VIX · strategy indices"]
         NDQ["Nasdaq / Yahoo<br/>daily OHLCV"]
         CHAIN["Cboe delayed chains<br/>expiration dates"]
+        FRED["FRED (keyed)<br/>rates · credit"]
         LOCAL["Local vendor file<br/>real option quotes<br/>(licence-limited)"]
         STATIC["Static catalogue<br/>in contracts/"]
     end
     subgraph L["② Lake — immutable, partitioned by ingest_date"]
-        BRONZE["bronze/<br/>vix · ohlcv_* · cboe_strategy<br/>options_expiry_* · option_quotes"]
+        BRONZE["bronze/<br/>vix · ohlcv_* · cboe_strategy<br/>options_expiry_* · credit · option_quotes"]
         SG["silver / gold<br/>derived, rebuildable"]
     end
     subgraph R["③ Research — pure, point-in-time"]
@@ -48,6 +49,7 @@ flowchart LR
     CBOE --> BRONZE
     NDQ --> BRONZE
     CHAIN --> BRONZE
+    FRED -.optional, not yet ingested in prod.-> BRONZE
     LOCAL -.optional.-> BRONZE
     STATIC --> ROUTES
     BRONZE --> SG
@@ -85,7 +87,7 @@ Screen tab's deeper "is the screen any good?" question moved to its own
 | **Recommendations** | Of every name's *best* strategy, which are the best? | `/api/putlab/leaderboard` (same read as the ranking strip — one strike x tenor sweep per name, bounded to the priced band per `docs/adr/0018`) | `ohlcv_*`, `vix` |
 | **Portfolio** | What does a blend of legs do? | `/api/putlab/portfolio`, `/api/putlab/leaderboard` | `ohlcv_*` |
 | **Bake-off** | Which screen actually picks winners? | `/api/putlab/metric-screen` (explicit action — one backtest per screened name) | `ohlcv_*` |
-| **Regime** | What market are we in? | `/api/putlab/regimes`, `/api/vix/stretch`, `/accuracy` (the per-regime residual) | `vix`, `cboe_strategy` |
+| **Regime** | What market are we in? | `/api/putlab/regimes`, `/api/vix/stretch`, `/accuracy` (the per-regime residual) | `vix`, `cboe_strategy`, `credit` (widening, §3.2 — falls back to VIX-only until ingested) |
 | **Glossary** | — (renders `content/concepts.ts`, no network) | none | none |
 | **Roll schedule** (export, not a tab) | What would I actually place? | `/api/putlab/roll-schedule` (the ranking's read, reused from cache) | `ohlcv_*`, `vix` |
 | **Control rail** (every tab) | What position am I asking about, and where did the data come from? | `/api/putlab/universe`, `/cadence`, `/data-quality` | `ohlcv_<asset>`, the options calendar |
@@ -129,6 +131,7 @@ account, no API key, no money — the constitution's free-data-first rule.
 | **Cboe CDN** — `{TICKER}_History.csv` | `cboe_strategy` (11 indices, 1975→) | daily | ✅ | none | `make ingest-cboe-strategy` |
 | **Nasdaq** historical | `ohlcv_<symbol>` | daily | ✅ | Yahoo | `make ingest-ohlcv SYMBOL=…` |
 | **Cboe** delayed quote chain | `options_expiry_<symbol>` | daily | ✅ | Yahoo (cookie+crumb) | `make ingest-options-expiry SYMBOL=…` |
+| **FRED** — ALFRED vintage history | `credit` (HY + IG OAS) | daily | 🔑 `FRED_API_KEY` | none | `make ingest-credit` |
 | **Local vendor file** — lambdaclass `data-v1` | `option_quotes` (42,131 real SPY quotes, 2008→2025) | one-shot | ✅ (manual download) | none | `make ingest-option-quotes` |
 | **Static catalogue** | screening universe, options-cadence fallback | n/a | ✅ | n/a | none — it is code |
 
@@ -153,6 +156,29 @@ The moment a symbol has a snapshot, its cadence label switches from
 `"Weeklies/Monthlies (assumed)"` to `"Weeklies/Monthlies (live)"` with no
 further code change.
 
+### 3.2 `credit` — widening wired 2026-09-03, still waiting on its first ingest
+
+Same shape as §3.1, one dataset later. `ingestion/credit.py` and
+`contracts/credit.py` existed and were tested, but nothing read the result —
+`research/regimes/timeline.py` labelled market regime from VIX alone despite
+`docs/END_STATE.md` §1.3 specifying "volatility complex + credit spreads +
+rates". Fixed on the code side: `research/regimes/timeline.py:load_credit_oas`
+reads the `credit` bronze partition as-of-date, resolves FRED's ALFRED
+vintage history to the value known at that time, classifies it with
+`contracts/regime.classify_credit_series` (same hysteresis engine as VIX,
+different thresholds), and `compute_regime_timeline` takes the more severe of
+the VIX and credit labels for each day (`contracts/regime.combine_regime_labels`)
+— credit stress can only escalate the regime shown, never talk a crisis-VIX
+day down.
+
+**Still true today:** no `credit` partition exists in production bronze —
+running the ingest target is a human action (`AGENT_MISSION.md`'s "data
+changes" rule), not one the daily agent takes. Until Dio runs it,
+`compute_regime_timeline` falls back to the VIX-only label exactly as it
+always has, so production behavior is unchanged for now. The moment a credit
+snapshot exists, every regime read becomes credit-aware with no further code
+change.
+
 **Sources do not depend on each other.** Every arrow in §1 runs source →
 lake; there is no source that must be fetched before another. What *is*
 coupled is downstream: several research functions need **two or three
@@ -165,9 +191,11 @@ flowchart TB
     STRAT[("cboe_strategy")]
     OHLCV[("ohlcv_*")]
     EXP[("options_expiry_*<br/>⚠ not yet ingested in prod")]
+    CREDIT[("credit<br/>⚠ not yet ingested in prod")]
     QUOTES[("option_quotes<br/>optional")]
 
     VIX --> REGIME["regimes/timeline<br/>vix_stretch"]
+    CREDIT -.escalates only.-> REGIME
     VIX --> REPL["backtest/index_replication<br/>the residual"]
     STRAT --> REPL
     OHLCV --> ROLL["backtest/put_roll<br/>portfolio · ranking · sweep"]
@@ -205,6 +233,7 @@ free source here has already degraded at least once: Yahoo went from "works" to
 | **Cboe strategy indices** | the residual, the benchmark table in the accuracy panel | everything else; the panel drops two blocks and says so | nothing yet |
 | **OHLCV (Nasdaq + Yahoo both)** | **everything** — no price path, no backtest, no ranking | the Regime tab | the backtest 404s loudly |
 | **Cboe chains + Yahoo** | nothing yet — no production partition exists to lose (§3.1) | everything, including the cadence panel (fallback to the static catalogue) | n/a |
+| **FRED credit** | nothing yet — no production partition exists to lose (§3.2) | everything, including the Regime tab (fallback to the VIX-only label) | n/a |
 | **`option_quotes`** (licence-limited) | `make skew` only | **everything** — by construction | raises `LookupError` |
 
 **The asymmetry is deliberate.** The licence-limited source is the one whose
