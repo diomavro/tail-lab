@@ -30,6 +30,7 @@ from __future__ import annotations
 import argparse
 import json
 import sys
+import time
 import urllib.error
 import urllib.request
 from typing import Any
@@ -58,7 +59,28 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     return parser.parse_args(argv)
 
 
-def _post(base_url: str, token: str, payload: dict[str, Any], timeout: int) -> dict[str, Any]:
+#: How many times to hand the sweep to the app before giving up, and how long
+#: to wait between attempts.
+#:
+#: This retries because of what a lost attempt COSTS here, not because the app
+#: is flaky. Every other source in this repo serves history on demand; nobody
+#: sells a retroactive option chain, so an attempt abandoned on a transient
+#: fault costs that session permanently.
+#:
+#: Measured 2026-09-04: the sweep fetched all 24 chains (20,113 quotes) and the
+#: app answered HTTP 500. The identical sweep, re-posted by hand hours later,
+#: was accepted with no change to either side — so the failure was transient
+#: and a single immediate retry would have saved the session. It was instead
+#: recovered by a human noticing a red run, which is not a control.
+#:
+#: Backoff is generous because the plausible causes are a cold start and memory
+#: pressure on a 1 GB machine parsing a ~5 MB body; both want seconds, not
+#: milliseconds.
+POST_ATTEMPTS = 4
+POST_BACKOFF_S = (5, 20, 60)
+
+
+def _post_once(base_url: str, token: str, payload: dict[str, Any], timeout: int) -> dict[str, Any]:
     request = urllib.request.Request(
         url=f"{base_url.rstrip('/')}/api/ingest/option-chain",
         data=json.dumps(payload).encode(),
@@ -68,6 +90,40 @@ def _post(base_url: str, token: str, payload: dict[str, Any], timeout: int) -> d
     with urllib.request.urlopen(request, timeout=timeout) as response:
         result: dict[str, Any] = json.loads(response.read())
     return result
+
+
+def _retryable(exc: Exception) -> bool:
+    """Whether re-sending the SAME body could plausibly succeed.
+
+    A 5xx or a transport error says the app failed to handle a request it
+    might handle next time. A 4xx says the app understood and refused: 401 is
+    a bad token, 422 is a body this contract rejects, and re-sending either
+    just burns the window. The one exception is 429, which explicitly means
+    "later".
+    """
+    if isinstance(exc, urllib.error.HTTPError):
+        return exc.code >= 500 or exc.code == 429
+    return isinstance(exc, urllib.error.URLError | TimeoutError)
+
+
+def _post(base_url: str, token: str, payload: dict[str, Any], timeout: int) -> dict[str, Any]:
+    """POST the sweep, retrying only faults that a retry could fix."""
+    for attempt in range(1, POST_ATTEMPTS + 1):
+        try:
+            return _post_once(base_url, token, payload, timeout)
+        except (urllib.error.URLError, TimeoutError) as exc:
+            last = exc
+            if not _retryable(exc) or attempt == POST_ATTEMPTS:
+                raise
+            detail = getattr(exc, "code", None) or getattr(exc, "reason", exc)
+            wait = POST_BACKOFF_S[min(attempt - 1, len(POST_BACKOFF_S) - 1)]
+            print(
+                f"::warning::attempt {attempt}/{POST_ATTEMPTS} failed ({detail}); "
+                f"retrying in {wait}s — an abandoned session cannot be re-collected",
+                file=sys.stderr,
+            )
+            time.sleep(wait)
+    raise last  # unreachable: the loop either returns or raises
 
 
 def main(argv: list[str] | None = None) -> int:
