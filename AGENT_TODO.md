@@ -774,6 +774,17 @@ item 2 is time-sensitive in a way nothing else in this file is.
       Note `write_bronze` is currently a no-op if the `ingest_date` partition
       exists (immutable bronze), so a chunked writer needs an explicit
       append-within-one-ingest mode rather than repeated `write_bronze` calls.
+- [ ] **Retry a failed chain FETCH, not just the failed POST.** The POST now
+      retries (2026-09-04, a transient 500 cost a session). `sweep_to_records`
+      still does not: a per-symbol Cboe blip is caught, logged and skipped, and
+      the sweep continues. That is partly deliberate — per-symbol fault
+      tolerance, with `MIN_PLAUSIBLE_ROWS` catching a mass failure — but by the
+      same argument that motivated the POST retry, a silently-dropped chain
+      costs that symbol's session permanently and nobody sells it back. The
+      floor only catches a wholesale failure; losing 1 of 24 names passes it.
+      Wanted: retry each symbol a couple of times, and make the count of
+      symbols that ended up missing a loud output rather than a `::warning::`
+      nobody reads.
 
 ## Position sizing / optimal leverage (2026-09-01 — Dio; `docs/END_STATE.md` §4 Q8)
 
