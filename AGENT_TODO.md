@@ -222,6 +222,37 @@ a large one strictly in order.
       same ship-the-adapter-first precedent every other dataset here has
       followed. No `research/` consumer wired yet and not yet run against
       prod (no live-run credential in this workflow).
+- [x] **The `transforms/` constant-maturity curve, done 2026-09-05** —
+      `transforms/vix_futures.py` (`bronze_to_silver` + `silver_to_gold`).
+      Interpolates the listed VX curve to one constant-30-calendar-day
+      settlement per `trade_date`, bracketing the target maturity between
+      the nearest listed contract expiring on/before it and the nearest
+      expiring on/after it (linear interpolation on `settle` by
+      days-to-expiry — the standard constant-maturity convention, not the
+      variance-interpolation formula the VIX index itself uses, since this
+      curve is over futures prices, not implied vols). A `trade_date` where
+      every listed contract falls on the same side of the target is
+      dropped rather than extrapolated — same "don't guess past what's
+      honestly known" stance the adapter's own pre-2013-archive deferral
+      takes. Also carries `front_settle`/`front_days_to_expiry` (the
+      single nearest contract) alongside the interpolated value, since
+      "how far the curve had to reach" is exactly the context a bare
+      number hides — this is the first piece of the contango/backwardation
+      read the module docstring and `docs/DATA_CONTRACTS.md` #11 promise.
+      Pinned by hand-computable interpolation cases (including an
+      exact-match case that must not divide by zero) in
+      `tests/test_transforms_vix_futures.py`; pure function, no
+      network/filesystem, mirrors `transforms/vix.py`'s shape exactly.
+      **Not yet wired**: no `research/` orchestrator reads it (nothing has
+      live VX futures bronze data yet — ingestion still needs a live run,
+      which this workflow has no credential for) and it isn't yet fed into
+      the regime panel (`docs/END_STATE.md` §1.3) as a term-structure
+      signal alongside the VIX/credit classifier `research/regimes/
+      timeline.py` already widened (`combine_regime_labels`) — a
+      contango/backwardation-based escalation is the natural next
+      increment once real bronze data exists to validate thresholds
+      against, same as credit's `CREDIT_CALM_MAX`/`CREDIT_ELEVATED_MAX`
+      were picked from real history.
 - [x] **Point-in-time S&P 500 constituents ingestion** from
       `github.com/fja05680/sp500` (MIT, maintained, 1996→present; raw CSV
       over HTTPS, keyless) — closes `docs/adr/0010` at membership
@@ -421,6 +452,40 @@ a large one strictly in order.
       here rather than deleting the orphaned files unprompted; a future
       increment should either wire `LeaderboardTile.tsx` back in or remove
       the now-dead `research/leaderboard.py` stack deliberately.
+- [ ] **Delete the orphaned `research/leaderboard.py` stack** (the decision
+      flagged directly above, still unresolved 2026-09-05). Audited today:
+      deletion is safe and complete, no ADR needed. Delete
+      `src/tail_lab/research/leaderboard.py`,
+      `src/tail_lab/api/leaderboard_routes.py`,
+      `src/tail_lab/transforms/marts/sensitivity_leaderboard.py`,
+      `frontend/src/components/LeaderboardTile.tsx`, and their three test
+      files (`tests/test_research_leaderboard.py`,
+      `tests/test_api_leaderboard.py`,
+      `tests/test_transforms_marts_sensitivity_leaderboard.py`); remove the
+      `leaderboard_routes` import + `app.include_router(leaderboard_router)`
+      from `api/main.py`; remove `fetchLeaderboard`/`LeaderboardRow`/
+      `LeaderboardResponse`/`LeaderboardMetric` from `frontend/src/api/
+      client.ts` and the now-orphaned `.leaderboard-tile`/
+      `.leaderboard-metric-tabs`/`.leaderboard-table` rules from
+      `frontend/src/App.css`. Nothing else in `src/` or the frontend
+      imports any of it (`api/putlab_routes.py`'s `GET
+      /api/putlab/leaderboard` is unrelated, backed by
+      `research/backtest/ranking.py`); no e2e fixture mocks `/api/leaderboard`;
+      `docs/adr/0017` (lines 105-108) already documents the route as dead
+      and defers only the literal deletion. `README.md`/`ARCHITECTURE.md`/
+      `docs/END_STATE.md` need no edit (§1.1's "sensitivity leaderboard" is
+      the aspirational concept, still served — better — by
+      `research/backtest/ranking.py` + `RankingStrip.tsx`); do update
+      `docs/DATA_FLOW.md` (drop `/api/leaderboard` from the routes diagram
+      and the lines 95-98 "orphaned" callout), `docs/DATA_CONTRACTS.md`
+      line 60's `research/leaderboard.py` mention, and `CLAUDE.md`'s
+      `research/` file list, none of which are constitution-guarded. One
+      accepted, deliberate capability loss: the old `?metric=...` param let
+      a caller sort the whole list by one raw metric alone; the new
+      composite `fragility_score` always sorts by the blend (each raw
+      metric is still visible per-row in `RankingStrip`'s expanded table,
+      just not independently sortable) — this is `ranking.py`'s intended
+      reframing, not a regression to work around.
 - [x] The first cross-metric backtest comparison answering research question 1
       (`docs/END_STATE.md` §1.5, §4 Q1) -- **done 2026-08-20** as
       `research/backtest/metric_screen.py` (PR #27, "the metric bake-off"),
