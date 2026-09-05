@@ -1,11 +1,28 @@
-name: Auto-merge agent PRs
+name: Auto-merge reviewed PRs
 
-# Merges the daily agent's PRs automatically once CI is fully green — no human
-# in the loop for ordinary increments. Fires when the CI workflow completes;
-# only acts on `agent/*` branches, and only when CI *succeeded* (so a failed
-# constitution-guard / test / lint job leaves the PR open for a human). This
-# is the free-plan stand-in for branch-protection-gated auto-merge (private
-# repos need GitHub Pro for required-status-check protection).
+# Merges a PR automatically once CI is fully green — no human in the loop for
+# ordinary increments. Fires when the CI workflow completes, and only when CI
+# *succeeded*, so a failed test, lint, constitution-guard or adversarial-review
+# job leaves the PR open. This is the free-plan stand-in for
+# branch-protection-gated auto-merge (private repos need GitHub Pro for
+# required-status-check protection).
+#
+# Every branch, not only `agent/*` (`docs/adr/0025`). The loop this closes is:
+# an agent writes the PR, an adversarial reviewer reads it, a fixer judges
+# whether the critique is fair and either applies it or records a reasoned
+# disagreement, and that repeats until the review has nothing important left --
+# then it merges. Scoping the merge to agent branches while the review ran on
+# everything left every other PR stuck at step 2 forever, which is the alarm
+# `docs/adr/0024` was written to replace.
+#
+# TWO things still stop an auto-merge, deliberately:
+#   * a DRAFT PR, which is a proposal and not a request to merge;
+#   * a PR touching the constitution (`docs/adr/**`, all of `.github/**`,
+#     `pyproject.toml`, README/ARCHITECTURE/STANDARDS/AGENT_MISSION/END_STATE)
+#     — the rules that
+#     govern the agents cannot be changed by the agents, so a human merges
+#     those by hand (`docs/adr/0022`). The check below is the enforcement
+#     point for EVERY author; `constitution-guard` in CI only covers `agent/*`.
 
 on:
   workflow_run:
@@ -19,33 +36,98 @@ permissions:
 
 jobs:
   merge:
-    # Only agent branches, only when the whole CI run passed.
-    if: >
-      github.event.workflow_run.conclusion == 'success' &&
-      startsWith(github.event.workflow_run.head_branch, 'agent/')
+    # Any branch, as long as the whole CI run passed (which now includes the
+    # adversarial review's verdict — see `agent-review` in ci.yml).
+    if: github.event.workflow_run.conclusion == 'success'
     runs-on: ubuntu-latest
     steps:
-      - name: Squash-merge the agent PR
+      - name: Squash-merge the reviewed PR
         env:
           GH_TOKEN: ${{ github.token }}
           BRANCH: ${{ github.event.workflow_run.head_branch }}
+          HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
           REPO: ${{ github.repository }}
         run: |
+          if [ "$BRANCH" = "main" ]; then
+            echo "CI on main — nothing to merge."
+            exit 0
+          fi
           pr=$(gh pr list --repo "$REPO" --head "$BRANCH" --state open \
                  --json number -q '.[0].number')
           if [ -z "$pr" ]; then
             echo "No open PR for $BRANCH — nothing to merge."
             exit 0
           fi
-          # Belt-and-suspenders: the constitution-guard CI job already fails
-          # (→ this workflow never runs) for such PRs, but re-check here too.
-          files=$(gh pr view "$pr" --repo "$REPO" --json files -q '.files[].path')
-          if echo "$files" | grep -qE '^docs/adr/|^\.github/workflows/|^ARCHITECTURE\.md$|^docs/STANDARDS\.md$|^README\.md$|^docs/AGENT_MISSION\.md$|^docs/END_STATE\.md$'; then
+          # Fail CLOSED on every check below. Each reads a value first and
+          # then requires an explicit safe answer, rather than testing a
+          # command substitution inline: `bash -e` does not abort on a failed
+          # substitution inside an `if [ ... ]`, so `if [ "$(gh ...)" = "true" ]`
+          # treats a rate-limited gh as "not a draft" and merges. Assigning
+          # first makes the same failure abort the job.
+          draft=$(gh pr view "$pr" --repo "$REPO" --json isDraft -q .isDraft)
+          if [ "$draft" != "false" ]; then
+            echo "PR #$pr: isDraft='$draft' — merging only on an explicit false."
+            exit 0
+          fi
+
+          # The enforcement point for EVERY author. `constitution-guard` in CI
+          # only fires on `agent/*`, so for any other branch this check is not
+          # belt-and-suspenders: it is the belt.
+          #
+          # `gh pr view --json files` is NOT usable here: it issues a fixed
+          # GraphQL `files(first: 100)` with no cursor loop, so on a PR with
+          # more than 100 changed files it returns 100 paths and no warning.
+          # A constitution edit sorting past position 100 would have been
+          # invisible and auto-merged. `gh api --paginate` walks every page.
+          files=$(gh api --paginate "repos/$REPO/pulls/$pr/files" --jq '.[].filename')
+          n_files=$(printf '%s\n' "$files" | grep -c . || true)
+          n_expected=$(gh pr view "$pr" --repo "$REPO" --json changedFiles -q .changedFiles)
+          if [ "$n_files" != "$n_expected" ]; then
+            echo "::error::Read $n_files of $n_expected changed files for PR #$pr."
+            echo "The constitution check would be inspecting a partial list, so this"
+            echo "fails closed rather than merging on an incomplete read."
+            exit 1
+          fi
+
+          # -i because the paths are case-insensitive on the platforms that
+          # matter and `git mv README.md Readme.md` in the same PR that rewrites
+          # it would otherwise slip past. `^\.github/` rather than
+          # `^\.github/workflows/` because composite actions and dependabot
+          # config are equally able to change what CI does. pyproject.toml is on
+          # the list because it holds the mypy strictness, the ruff rule set,
+          # the import-linter contracts and the coverage floor -- flipping
+          # `strict = false` turns three gates green by removing them.
+          if printf '%s\n' "$files" | grep -qiE '^docs/adr/|^\.github/|^ARCHITECTURE\.md$|^docs/STANDARDS\.md$|^README\.md$|^docs/AGENT_MISSION\.md$|^docs/END_STATE\.md$|^pyproject\.toml$'; then
             echo "PR #$pr edits the constitution — leaving it for a human."
             exit 0
           fi
-          echo "Merging PR #$pr (CI green)…"
-          gh pr merge "$pr" --repo "$REPO" --squash --delete-branch
+
+          # Merge the commit CI actually validated, and nothing else. Without
+          # this: push A starts CI-A, push B starts CI-B, CI-A goes green and
+          # merges a head that now contains B -- code that was never tested and
+          # never reviewed. CI declares no `concurrency` group, so the
+          # superseded run is not cancelled and this race is reachable.
+          head_now=$(gh pr view "$pr" --repo "$REPO" --json headRefOid -q .headRefOid)
+          if [ "$head_now" != "$HEAD_SHA" ]; then
+            echo "PR #$pr moved on: CI validated $HEAD_SHA, head is now $head_now."
+            echo "Leaving it for the CI run of the newer commit to merge."
+            exit 0
+          fi
+
+          # The check above still leaves a window between reading the head and
+          # merging it. `--match-head-commit` closes that server-side, but it
+          # postdates gh 2.14 and this must not break if a runner ships older.
+          # Probed rather than assumed: absent, the comparison above still
+          # covers everything but the last few hundred milliseconds.
+          merge_args=(--repo "$REPO" --squash --delete-branch)
+          if gh pr merge --help 2>&1 | grep -q -- '--match-head-commit'; then
+            merge_args+=(--match-head-commit "$HEAD_SHA")
+          else
+            echo "::warning::this gh has no --match-head-commit; merging on the"
+            echo "pre-check alone. Small TOCTOU window remains."
+          fi
+          echo "Merging PR #$pr at $HEAD_SHA (CI green)…"
+          gh pr merge "$pr" "${merge_args[@]}"
           # The squash-merge above is pushed with GITHUB_TOKEN, and GitHub
           # suppresses workflow triggers from GITHUB_TOKEN pushes (recursion
           # prevention) — so the merge commit would get no push-CI and hence

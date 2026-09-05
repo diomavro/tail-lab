@@ -496,3 +496,142 @@ def test_losing_one_reference_still_leaves_an_error_bar() -> None:
 
     assert acc.expected_optimism is not None
     assert acc.applicability == "indicative"  # PPUT3M does not describe a 5%/4wk run
+
+
+# ---- quote provenance -------------------------------------------------------
+
+
+def test_quote_coverage_reports_no_panel_as_model_priced(tmp_path: Path) -> None:
+    """The default state, and it must not be silent: a name with no real quotes
+    is priced entirely by the model, and the reader has to be told so."""
+    from tail_lab.research.accuracy import quote_coverage
+
+    store = DeltaLakeStore(tmp_path)
+    cov = quote_coverage(
+        store, asset="aapl", window_start=dt.date(2022, 9, 3), as_of=dt.date(2026, 9, 3)
+    )
+    assert cov.real_quotes_available is False
+    # The whole window is uncovered, and says so numerically rather than as a 0.
+    assert cov.months_missing == cov.window_months == 49
+    assert cov.priced_from == "model"
+    assert "Black-Scholes" in cov.note
+
+
+def test_quote_coverage_never_claims_the_result_is_market_priced(tmp_path: Path) -> None:
+    """The misreading this block exists to prevent. Ingesting a fourteen-year
+    market-priced panel does NOT make a displayed backtest market-priced — the
+    roll engine still prices every leg at a flat vol. `priced_from` describes
+    the RESULT, `months_present` describes the DATA, and today they disagree.
+    A surface showing only "real quotes: yes" would make a number look more
+    trustworthy than it is, which is the exact failure the constitution's
+    "accuracy is surfaced, not filed" exists to stop."""
+    from tail_lab.contracts.optionsdx import DATASET as OPTIONSDX_DATASET
+    from tail_lab.research.accuracy import quote_coverage
+
+    store = DeltaLakeStore(tmp_path)
+    days = pd.date_range("2020-01-06", "2020-12-28", freq="7D")
+    # Ingested before the as-of below: a partition written later is invisible
+    # to an earlier as-of, which is the point-in-time rule (docs/adr/0009)
+    # doing its job, not a fixture detail to work around.
+    store.write_bronze(
+        f"{OPTIONSDX_DATASET}_spy",
+        dt.date(2020, 1, 1),
+        pd.DataFrame({"quote_date": days, "strike": 1.0}),
+    )
+    # Window chosen to sit exactly on the panel, so coverage really is total.
+    cov = quote_coverage(
+        store, asset="spy", window_start=dt.date(2020, 1, 1), as_of=dt.date(2020, 12, 31)
+    )
+
+    assert cov.real_quotes_available is True
+    assert cov.complete is True and cov.months_present == cov.window_months == 12
+    assert cov.months_missing == 0
+    # ...and yet:
+    assert cov.priced_from == "model"
+    assert "do NOT use them" in cov.note
+
+
+def test_quote_coverage_reports_holes_rather_than_a_bare_yes(tmp_path: Path) -> None:
+    """A partial panel is the dangerous case: it looks like coverage. SPY held
+    63 of 168 months at one point, and a backtest across it would have skipped
+    the holes silently."""
+    from tail_lab.contracts.optionsdx import DATASET as OPTIONSDX_DATASET
+    from tail_lab.research.accuracy import quote_coverage
+
+    store = DeltaLakeStore(tmp_path)
+    days = pd.to_datetime(["2020-01-06", "2020-02-03", "2020-06-01"])
+    store.write_bronze(
+        f"{OPTIONSDX_DATASET}_qqq",
+        dt.date(2020, 1, 1),
+        pd.DataFrame({"quote_date": days, "strike": 1.0}),
+    )
+    cov = quote_coverage(
+        store, asset="qqq", window_start=dt.date(2020, 1, 1), as_of=dt.date(2020, 6, 30)
+    )
+
+    assert cov.real_quotes_available is True
+    assert cov.complete is False
+    # Jan/Feb/Jun held out of Jan-Jun: Mar, Apr and May are the holes.
+    assert (cov.months_present, cov.months_missing, cov.window_months) == (3, 3, 6)
+    assert "MISSING" in cov.note
+
+
+def test_quote_coverage_is_scoped_to_the_window_not_the_whole_panel(tmp_path: Path) -> None:
+    """A panel that ends before the window starts is ZERO coverage of this
+    result, however many months it holds. Reporting the panel's own size here
+    would put a reassuring number next to a backtest it says nothing about --
+    which is worse than no number, because it looks like an answer."""
+    from tail_lab.contracts.optionsdx import DATASET as OPTIONSDX_DATASET
+    from tail_lab.research.accuracy import quote_coverage
+
+    store = DeltaLakeStore(tmp_path)
+    store.write_bronze(
+        f"{OPTIONSDX_DATASET}_iwm",
+        dt.date(2013, 1, 1),
+        pd.DataFrame({"quote_date": pd.date_range("2010-01-06", "2012-12-28", freq="7D")}),
+    )
+    cov = quote_coverage(
+        store, asset="iwm", window_start=dt.date(2022, 1, 1), as_of=dt.date(2022, 12, 31)
+    )
+
+    assert cov.months_present == 0
+    assert cov.months_missing == cov.window_months == 12
+    assert cov.complete is False
+    # The panel is still reported, because "held but elsewhere" and "never
+    # collected" call for different next actions.
+    assert cov.real_quotes_available is True
+    assert (cov.panel_first_month, cov.panel_last_month) == ("201001", "201212")
+    assert "entirely outside this window" in cov.note
+
+
+def test_quote_coverage_never_takes_the_whole_panel_down_with_it(tmp_path: Path) -> None:
+    """An accuracy panel that 500s is worse than an incomplete one: the reader
+    sees nothing at all, and nothing reads as "no concerns". A quote panel whose
+    dates are unreadable must degrade to a report, not an exception."""
+    from tail_lab.contracts.optionsdx import DATASET as OPTIONSDX_DATASET
+    from tail_lab.research.accuracy import compute_accuracy_report, quote_coverage
+
+    store = DeltaLakeStore(tmp_path)
+    store.write_bronze(
+        f"{OPTIONSDX_DATASET}_spy",
+        dt.date(2026, 9, 3),
+        pd.DataFrame({"quote_date": pd.to_datetime([None, None]), "strike": [1.0, 2.0]}),
+    )
+
+    cov = quote_coverage(
+        store, asset="spy", window_start=dt.date(2022, 9, 3), as_of=dt.date(2026, 9, 3)
+    )
+    assert cov.real_quotes_available is False
+    assert "Black-Scholes" in cov.note
+
+    # And the report as a whole still builds.
+    report = compute_accuracy_report(
+        store,
+        asset="spy",
+        as_of=dt.date(2026, 9, 3),
+        years=4.0,
+        moneyness_pct=5.0,
+        tenor_weeks=4.0,
+        replications=[],
+    )
+    assert report.quote_coverage.priced_from == "model"

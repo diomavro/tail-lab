@@ -161,6 +161,30 @@ export interface Assumption {
   leverage: string | null
 }
 
+/**
+ * Whether REAL option quotes exist for this name, and whether the figures on
+ * screen actually used them. Two different questions, and the second is the
+ * one that misleads: holding a fourteen-year market-priced panel does not make
+ * a displayed backtest market-priced.
+ */
+export interface QuoteCoverage {
+  /** What produced the premiums behind the figures shown. */
+  priced_from: 'model' | 'market'
+  /** Whether a panel exists for this underlying AT ALL — it may lie entirely
+   *  outside the window below. */
+  real_quotes_available: boolean
+  /** Counts are scoped to the report's window, not to the whole panel:
+   *  months_present + months_missing === window_months. */
+  window_months: number
+  months_present: number
+  months_missing: number
+  complete: boolean
+  /** Full extent of the stored panel, "YYYYMM". */
+  panel_first_month: string | null
+  panel_last_month: string | null
+  note: string
+}
+
 export interface AccuracyResponse {
   asset: string
   as_of: string
@@ -171,6 +195,7 @@ export interface AccuracyResponse {
   data_quality_flags: number | null
   data_quality_note: string
   assumptions: Assumption[]
+  quote_coverage: QuoteCoverage
 }
 
 export interface AccuracyParams {

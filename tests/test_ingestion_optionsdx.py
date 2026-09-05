@@ -102,6 +102,55 @@ def test_truncated_rows_are_counted_not_silently_dropped(sample: str) -> None:
     assert unparsable == 1
 
 
+def test_an_empty_archive_member_costs_that_month_and_not_the_whole_symbol(
+    tmp_path: Path,
+) -> None:
+    """Asserted on the FILE path, which is the one the ingest actually uses.
+
+    The empty-input guard used to live on `parse_optionsdx_month`, the string
+    entry point that only tests call. The ingest reads files, and the member
+    loop in `ingest_optionsdx` has no `try` -- so an empty `.7z` member raised
+    `EmptyDataError` and killed every month of that symbol. The same
+    all-or-nothing failure the malformed-row handling exists to prevent,
+    reintroduced by moving the reader and leaving the guard behind, and
+    invisible because the tested path and the shipped path had diverged.
+    """
+    from tail_lab.ingestion.optionsdx import _read_month_file
+
+    for name, content in (("empty.txt", ""), ("blank.txt", "\n\n")):
+        path = tmp_path / name
+        path.write_text(content)
+        frame, unparsable = _read_month_file("spy", path)
+        assert frame.empty, name
+        assert unparsable == 0, name
+
+
+def test_an_over_long_row_costs_that_row_and_not_the_whole_symbol(sample: str) -> None:
+    """A row with MORE fields than the header used to abort the entire symbol.
+
+    `pd.read_csv` raises on an over-long row by default, so one stray comma in
+    one member of one archive lost every month of that symbol -- while the
+    comment three lines above the parse promised the opposite, that an
+    unreadable row is counted rather than quietly dropped. A 6.6M-row corpus
+    cannot be all-or-nothing on one malformed line, and it must not be silent
+    about the line either.
+    """
+    lines = sample.splitlines()
+    # Placed after the first data row on purpose: pandas reads the FIRST data
+    # row to decide whether the file has an index column, so an over-long row
+    # in that position is silently reinterpreted rather than rejected. The
+    # real-world case is a stray comma somewhere in the middle of the month.
+    over_long = lines[1] + ",999,999"
+    damaged = "\n".join([*lines, over_long]) + "\n"
+
+    frame, unparsable = parse_optionsdx_month("spy", damaged)
+
+    assert unparsable == 1
+    # The good rows still made it: this is the part that used to be lost.
+    clean_frame, _ = parse_optionsdx_month("spy", sample)
+    assert len(frame) == len(clean_frame)
+
+
 # ---- coverage, which is the point of this dataset's contract ---------------
 
 

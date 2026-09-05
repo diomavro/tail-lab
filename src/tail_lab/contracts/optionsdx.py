@@ -116,6 +116,27 @@ class OptionsDxQuoteSchema(pa.DataFrameModel):
         unique: ClassVar[list[str]] = ["underlying", "quote_date", "expiration", "strike"]
 
 
+def months_in_span(lo: str, hi: str) -> list[str]:
+    """Every ``YYYYMM`` from ``lo`` to ``hi`` inclusive.
+
+    The one place this enumeration lives. It had been written three times --
+    here, in ``research/accuracy``, and in ``scripts/optionsdx_manifest`` --
+    which is the duplication the design reviewer's own first criterion names,
+    and it matters beyond tidiness: these three answers are compared against
+    each other (the manifest audits the corpus, the accuracy panel reports the
+    gaps to a reader), so three implementations of "which months should exist"
+    is three chances for the audit and the surface to disagree about a hole.
+    """
+    lo_y, lo_m = int(lo[:4]), int(lo[4:])
+    hi_y, hi_m = int(hi[:4]), int(hi[4:])
+    months: list[str] = []
+    year, month = lo_y, lo_m
+    while (year, month) <= (hi_y, hi_m):
+        months.append(f"{year}{month:02d}")
+        year, month = (year + 1, 1) if month == 12 else (year, month + 1)
+    return months
+
+
 def month_coverage(quote_dates: list[dt.date]) -> tuple[list[str], list[str]]:
     """Split a symbol's span into ``(present_months, missing_months)``.
 
@@ -127,11 +148,5 @@ def month_coverage(quote_dates: list[dt.date]) -> tuple[list[str], list[str]]:
     if not quote_dates:
         return [], []
     present = sorted({f"{d.year}{d.month:02d}" for d in quote_dates})
-    lo, hi = present[0], present[-1]
-    span = [
-        f"{y}{m:02d}"
-        for y in range(int(lo[:4]), int(hi[:4]) + 1)
-        for m in range(1, 13)
-        if lo <= f"{y}{m:02d}" <= hi
-    ]
-    return present, [m for m in span if m not in set(present)]
+    held = set(present)
+    return present, [m for m in months_in_span(present[0], present[-1]) if m not in held]

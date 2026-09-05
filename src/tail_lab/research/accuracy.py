@@ -24,13 +24,17 @@ change a decision.
 from __future__ import annotations
 
 import datetime as dt
+import logging
 from collections.abc import Sequence
+from typing import Literal
 
 import pandas as pd
 from pydantic import BaseModel
 
 from tail_lab.contracts.cboe_strategy import DATASET as CBOE_STRATEGY_DATASET
 from tail_lab.contracts.cboe_strategy import STRATEGY_INDEX_CATALOGUE
+from tail_lab.contracts.optionsdx import DATASET as OPTIONSDX_DATASET
+from tail_lab.contracts.optionsdx import month_coverage, months_in_span
 from tail_lab.contracts.regime import REGIME_LABELS, RegimeLabel
 from tail_lab.lake.store import LakeStore
 from tail_lab.research.backtest.index_replication import (
@@ -40,6 +44,8 @@ from tail_lab.research.backtest.index_replication import (
 from tail_lab.research.backtest.put_roll import DEFAULT_RATE, IV_CAP, IV_FLOOR, IV_WINDOW
 from tail_lab.research.data_quality import assess_asset_quality
 from tail_lab.research.regimes.timeline import compute_regime_timeline
+
+logger = logging.getLogger("tail_lab.research.accuracy")
 
 #: The published programs whose replication residuals serve as the model's
 #: error bar, and the (moneyness %, tenor weeks) each one measures the model at.
@@ -114,6 +120,59 @@ class Assumption(BaseModel):
     leverage: str | None = None
 
 
+class QuoteCoverage(BaseModel):
+    """Whether REAL option quotes exist for this name, and whether the number
+    on screen actually used them.
+
+    Those are two different questions and the second is the one that can
+    mislead. Ingesting a fourteen-year market-priced panel does not make a
+    displayed backtest market-priced: the roll engine still prices every leg
+    with Black-Scholes at a flat vol (`docs/adr/0004`). A surface that showed
+    only "real quotes: yes" would invite exactly the reading the constitution
+    forbids -- a number looking more trustworthy than it is.
+
+    So ``priced_from`` describes the RESULT and ``months_present`` describes the
+    DATA, and they are reported side by side precisely because they disagree
+    today.
+
+    **Counts are scoped to the report's own window**, like every other block in
+    :class:`AccuracyReport` (``regime_mix`` and ``benchmark_comparisons`` are
+    both windowed). Whole-panel counts next to a windowed result would be a
+    plausible number answering a question nobody asked: a 2010-2023 panel is
+    total coverage of a 2015 backtest and *zero* coverage of a one-year window
+    ending today, and only the windowed number tells the reader which. The
+    panel's full extent is still reported, as ``panel_first_month`` /
+    ``panel_last_month``, because "held, but not here" and "not held at all"
+    call for different next actions.
+    """
+
+    #: What produced the premiums behind the figures on screen.
+    #:
+    #: Only ``"model"`` is emitted today, and that is the point rather than an
+    #: oversight: the whole reason this field exists is to say so out loud
+    #: while a market-priced panel sits unused in the lake. ``"market"``
+    #: becomes reachable when the roll engine reads those quotes
+    #: (`docs/adr/0004`, queued in `AGENT_TODO.md`), and the two-valued type is
+    #: what makes that switch a one-line change rather than a new contract.
+    #: Do not "simplify" it away because one arm is currently unreachable.
+    priced_from: Literal["model", "market"]
+    #: Whether a real-quote panel exists in the lake for this underlying *at
+    #: all* -- independent of whether it overlaps this report's window.
+    real_quotes_available: bool
+    #: Months in the report's window, and how many of them are held/absent.
+    #: ``months_present + months_missing == window_months``.
+    window_months: int = 0
+    months_present: int = 0
+    months_missing: int = 0
+    #: Every month of the window is held.
+    complete: bool = False
+    #: Full extent of the stored panel (``YYYYMM``), which may lie entirely
+    #: outside the window above.
+    panel_first_month: str | None = None
+    panel_last_month: str | None = None
+    note: str = ""
+
+
 class AccuracyReport(BaseModel):
     """Everything a reader needs to know how far this result sits from truth."""
 
@@ -126,6 +185,7 @@ class AccuracyReport(BaseModel):
     data_quality_flags: int | None
     data_quality_note: str
     assumptions: list[Assumption]
+    quote_coverage: QuoteCoverage
 
 
 def regime_mix(timeline: pd.Series, *, start: dt.date, end: dt.date) -> list[RegimeShare]:
@@ -366,6 +426,92 @@ def standing_assumptions(*, rate: float, expected_optimism: float | None) -> lis
     ]
 
 
+def quote_coverage(
+    store: LakeStore, *, asset: str, window_start: dt.date, as_of: dt.date
+) -> QuoteCoverage:
+    """What real-quote data covers this report's window, and what priced it.
+
+    Degrades like every other block here: a missing panel is reported, never
+    raised, so the surface cannot go silent (which would be indistinguishable
+    from "no problem"). The caller wraps this too -- belt and braces, because
+    an exception escaping here would take down the whole panel rather than
+    this block.
+
+    **Reads one column, not the panel.** ``read_bronze_as_of`` materialises and
+    caches the entire partition, which is fine for the ~1k-row datasets it was
+    written for and ruinous here: the SPY panel is 3.3M rows and the app runs
+    on a 1 GB machine (``fly.toml``). Coverage needs the distinct *months* of
+    ``quote_date`` and nothing else, so it projects to that one column and
+    deduplicates to days (~3.5k values over fourteen years) before any Python
+    objects are built.
+    """
+    window = months_in_span(
+        f"{window_start.year}{window_start.month:02d}", f"{as_of.year}{as_of.month:02d}"
+    )
+    dataset = f"{OPTIONSDX_DATASET}_{asset.lower()}"
+    absent_note = (
+        "No real option quotes cover this window. Every premium behind these "
+        "figures is a Black-Scholes price at a flat volatility, and the "
+        "returns are a relative ranking rather than P&L."
+    )
+    try:
+        column = store.read_bronze_column_as_of(dataset, as_of, "quote_date")
+    except (LookupError, KeyError):
+        return QuoteCoverage(
+            priced_from="model",
+            real_quotes_available=False,
+            window_months=len(window),
+            months_missing=len(window),
+            note=absent_note,
+        )
+
+    # Deduplicate to distinct DAYS in pandas first. Building a date object per
+    # row would be millions of allocations to answer a question with at most a
+    # few hundred distinct answers.
+    unique_days = pd.to_datetime(pd.Series(column).dropna().unique())
+    present_all, _ = month_coverage([ts.date() for ts in unique_days])
+    if not present_all:
+        return QuoteCoverage(
+            priced_from="model",
+            real_quotes_available=False,
+            window_months=len(window),
+            months_missing=len(window),
+            note=absent_note,
+        )
+
+    held = set(present_all)
+    in_window = [m for m in window if m in held]
+    missing = [m for m in window if m not in held]
+    complete = bool(window) and not missing
+
+    if not in_window:
+        gap_note = (
+            f"held for {present_all[0]} to {present_all[-1]}, which lies "
+            "entirely outside this window"
+        )
+    elif complete:
+        gap_note = f"complete across all {len(window)} months of this window"
+    else:
+        gap_note = f"{len(missing)} of the {len(window)} months in this window MISSING"
+
+    return QuoteCoverage(
+        priced_from="model",
+        real_quotes_available=True,
+        window_months=len(window),
+        months_present=len(in_window),
+        months_missing=len(missing),
+        complete=complete,
+        panel_first_month=present_all[0],
+        panel_last_month=present_all[-1],
+        note=(
+            f"Real quotes for this name are {gap_note}. "
+            "The figures on screen do NOT use them either way — the roll engine "
+            "still prices every leg with Black-Scholes at a flat volatility "
+            "(docs/adr/0004). Holding the data is not the same as using it."
+        ),
+    )
+
+
 def compute_accuracy_report(
     store: LakeStore,
     *,
@@ -425,6 +571,27 @@ def compute_accuracy_report(
     except LookupError:
         flags, note = None, "no price snapshot to scan"
 
+    # Broad except, deliberately. The sibling blocks above catch LookupError
+    # because that is the only way their inputs go missing; this one reads a
+    # multi-million-row vendor panel over S3, so it can also fail on memory, a
+    # transport error, or a schema drift in a dataset no test fixture covers.
+    # Whatever goes wrong, the panel must still render saying the result is
+    # model-priced -- an accuracy panel that 500s is the one outcome worse than
+    # an incomplete one, because the surface then shows nothing at all.
+    try:
+        coverage = quote_coverage(store, asset=asset, window_start=window_start, as_of=as_of)
+    except Exception:
+        logger.exception("accuracy.quote_coverage_failed", extra={"asset": asset})
+        coverage = QuoteCoverage(
+            priced_from="model",
+            real_quotes_available=False,
+            note=(
+                "Could not determine what real quote data is held for this name. "
+                "The figures on screen are Black-Scholes prices at a flat "
+                "volatility either way (docs/adr/0004)."
+            ),
+        )
+
     model = model_accuracy(
         replications, mix, asset=asset, moneyness_pct=moneyness_pct, tenor_weeks=tenor_weeks
     )
@@ -438,4 +605,5 @@ def compute_accuracy_report(
         data_quality_flags=flags,
         data_quality_note=note,
         assumptions=standing_assumptions(rate=rate, expected_optimism=model.expected_optimism),
+        quote_coverage=coverage,
     )

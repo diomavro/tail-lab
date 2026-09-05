@@ -15,7 +15,13 @@ env:
 on:
   push:
     branches: [main]
+  # `ready_for_review` is NOT in the default activity set (opened, synchronize,
+  # reopened). Without it a PR opened as a draft runs CI, goes green, is
+  # declined by automerge's draft check, and then never runs CI again when it
+  # is marked ready -- so no `workflow_run` fires and it can never merge. It
+  # would sit green and stuck until someone pushed an empty commit.
   pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
   # Dispatched by the automerge workflow after it squash-merges an agent PR:
   # pushes made with GITHUB_TOKEN do not trigger `push` workflows (GitHub's
   # recursion prevention), but workflow_dispatch is exempt — so this is how
@@ -193,11 +199,18 @@ jobs:
   # layered and tested; none of them can see duplication, dead abstraction, or
   # a function quietly growing its fourteenth parameter.
   #
-  # That blindness matters because 75% of merged PRs in this repo are written
-  # by an unattended agent that auto-merges on green CI, and whose charter
-  # (rightly) forbids it from cleaning up anything unrelated to its task.
-  # Measured 2026-08-28: the agent adds 15.8 lines for every 1 it deletes;
-  # humans on this same repo run 2.4:1. Nothing was watching that number.
+  # That blindness matters most for the unattended agent, which writes 75% of
+  # merged PRs here, auto-merges on green CI, and whose charter (rightly)
+  # forbids it from cleaning up anything unrelated to its task. Measured
+  # 2026-08-28: the agent adds 15.8 lines for every 1 it deletes; humans on
+  # this same repo run 2.4:1. Nothing was watching that number.
+  #
+  # It is not only for the agent, though, and scoping it that way was a
+  # mistake worth recording: for a month this job ran on `agent/` branches
+  # alone, so every PR from a human or a human's assistant showed
+  # `agent-review=SKIPPED`. An assistant-written PR is unattended code too --
+  # it is simply unattended at a different moment -- and the author is the one
+  # party who cannot review it. Now every pull request gets read.
   #
   # Runs as a JOB IN CI rather than a workflow_run listener on purpose:
   # workflow_run events from bot-initiated runs are suppressed by GitHub
@@ -205,7 +218,15 @@ jobs:
   # to review. As a CI job it also blocks auto-merge for free -- automerge.yml
   # only acts when the whole CI run succeeded.
   agent-review:
-    if: startsWith(github.head_ref, 'agent/')
+    # EVERY pull request, not just the daily agent's. The job was scoped to
+    # `agent/` branches on the theory that unattended code is what needs an
+    # adversarial reader -- which got it backwards: the reviewer was built here
+    # and then every human PR was routed around it, so the checks reported
+    # `agent-review=SKIPPED` on exactly the changes nobody else was reviewing.
+    # A review that only inspects the author who already has a second reader is
+    # not a gate. Gated to `pull_request` because every step below reads
+    # `github.event.pull_request.*`, which is null on push and dispatch.
+    if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
     env:
       # The `secrets` context is not available in a step-level `if:`, so the
@@ -228,6 +249,12 @@ jobs:
           token: ${{ secrets.AGENT_FIX_TOKEN || github.token }}
           ref: ${{ github.head_ref }}
           fetch-depth: 0
+          # The review step runs Bash over a diff the PR author wrote. With
+          # persist-credentials (the default) the PAT is written into
+          # .git/config as an http.extraheader, where `git config --get` reads
+          # it back -- so prompt-injected text in the diff could exfiltrate it
+          # or push with it. The push step re-supplies the token explicitly.
+          persist-credentials: false
 
       - name: How many fix rounds has this branch already had?
         id: rounds
@@ -236,16 +263,22 @@ jobs:
         run: |
           n=$(git log --oneline "$BASE_SHA..HEAD" --grep='^\[review-fix\]' | wc -l | tr -d ' ')
           echo "count=$n" >> "$GITHUB_OUTPUT"
+          # Every branch, not just the agent's: the loop is review -> fix ->
+          # re-review -> merge, and a PR that gets the review but not the fixer
+          # is back to being an alarm rather than a control loop. The fixer is
+          # told to push back on findings it thinks are wrong rather than
+          # contort the code, so a disagreement terminates the loop honestly.
           if [ "$n" -lt "${MAX_FIX_ROUNDS}" ] && [ "${HAS_FIX_TOKEN}" = "true" ]; then
             echo "can_fix=true" >> "$GITHUB_OUTPUT"
           else
             echo "can_fix=false" >> "$GITHUB_OUTPUT"
           fi
-          echo "prior fix rounds: $n (max ${MAX_FIX_ROUNDS}); fix token present: ${HAS_FIX_TOKEN}"
+          echo "prior fix rounds: $n (max ${MAX_FIX_ROUNDS}); fix token: ${HAS_FIX_TOKEN}"
         # A bound, because "loop until the review is clean" and "loop forever"
         # are the same program when the reviewer and the fixer disagree.
 
       - name: Adversarial design review
+        id: review
         continue-on-error: true
         env:
           GH_TOKEN: ${{ github.token }}
@@ -257,11 +290,22 @@ jobs:
           allowed_bots: 'claude'
           claude_args: '--allowedTools Bash,Read,Grep,Glob'
           prompt: |
-            You are the adversarial design reviewer for an autonomous agent's pull request.
-            You did not write this change and have no stake in it landing. If earlier commits
-            on this branch are prefixed `[review-fix]`, a previous round of this same review
-            asked for them — review them as critically as anything else; a fix that missed the
-            point is a finding, not a resolution.
+            You are the adversarial design reviewer for this pull request. You did not write
+            the change and have no stake in it landing. Review it the same way whoever opened
+            it — the daily agent, a human, or a human's assistant — because the point of this
+            job is that no author reviews their own work. Do not soften a finding because the
+            author looks careful, and do not manufacture one to look useful.
+
+            If earlier commits on this branch are prefixed `[review-fix]`, a previous round of
+            this same review asked for them — review them as critically as anything else; a fix
+            that missed the point is a finding, not a resolution.
+
+            FIRST, before anything else, record that you ran at all:
+
+              touch /tmp/claude-review-ran
+
+            That file is how CI tells "the reviewer ran and reached no verdict"
+            apart from "the reviewer never started". Do not skip it.
 
             Read the diff first:  git diff "$BASE_SHA...HEAD"
 
@@ -319,11 +363,94 @@ jobs:
 
       - name: Read the verdict
         id: verdict
+        env:
+          REVIEW_OUTCOME: ${{ steps.review.outcome }}
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
         run: |
-          v="$(tr -d '[:space:]' < /tmp/verdict 2>/dev/null || true)"
-          [ -z "$v" ] && v="NONE"
+          raw="$(tr -d '[:space:]' < /tmp/verdict 2>/dev/null || true)"
+          # Normalise before matching. The reviewer is an LLM told to write one
+          # bare word; it may write `**DEFECT**`, `Defect`, or `DEFECT.` — all
+          # natural outputs that an exact string comparison misses. Every miss
+          # used to fall through the enforce step's final `exit 0`, i.e. the
+          # MERGE path, so the most emphatic way to write the one unconditional
+          # block was also the way to get it ignored. Strip to letters, upcase,
+          # and treat anything still unrecognised as a block, not a pass.
+          norm="$(printf '%s' "$raw" | tr -cd '[:alpha:]' | tr '[:lower:]' '[:upper:]')"
+          case "$norm" in
+            PASS)     v=PASS ;;
+            FINDINGS) v=FINDINGS ;;
+            DEFECT)   v=DEFECT ;;
+            "")       v=NONE ;;
+            *)        v=UNRECOGNISED ;;
+          esac
           echo "value=$v" >> "$GITHUB_OUTPUT"
-          echo "verdict: $v"
+          echo "verdict: $v (raw: ${raw:-<empty>})"
+
+          # WHY a missing verdict happened, which decides whether it is safe.
+          #
+          # claude-code-action refuses to run when the calling workflow differs
+          # from the copy on the default branch -- so a PR cannot rewrite the
+          # reviewer that judges it. That is benign AND self-limiting: such a
+          # PR touches .github/**, which automerge.yml refuses to merge, so a
+          # human reads it regardless.
+          #
+          # Every OTHER cause -- an expired CLAUDE_CODE_OAUTH_TOKEN, an API
+          # 5xx, a usage limit, an action regression -- is an outage, and the
+          # PR is then unreviewed AND mergeable. Conflating the two is exactly
+          # the mistake docs/adr/0025 shipped with: it claimed unreviewable
+          # implied unmergeable, which holds only for the first case.
+          if [ -f /tmp/claude-review-ran ]; then
+            reason="ran"
+          elif [ "${REVIEW_OUTCOME}" = "success" ]; then
+            # The action exits 0 when it self-skips on workflow validation:
+            # "the workflow file must ... have identical content to the version
+            # on the default branch". TWO very different situations produce
+            # that, and only one is safe:
+            #
+            #   a) this PR EDITS .github/workflows -- benign, because such a
+            #      PR cannot auto-merge anyway (automerge.yml refuses it), so a
+            #      human reads it regardless;
+            #   b) this branch is merely STALE -- main changed ci.yml after the
+            #      branch was cut. The PR touches no workflow, is perfectly
+            #      mergeable, and gets NO review. Observed on PR #76, which
+            #      changed two Python files, was skipped because main had moved
+            #      on via #77, and auto-merged unreviewed.
+            #
+            # (b) is the dangerous one and it is the COMMON one: every branch
+            # older than the last ci.yml change is in it.
+            # Ask the question the action actually asks -- does THIS branch's
+            # ci.yml differ from the default branch's? -- rather than proxying
+            # it with "did the PR touch a workflow file". The proxy gets the
+            # common case wrong in both directions: a stale branch that edits
+            # deploy.yml looks like a workflow edit (and passes), and a
+            # reviewer that ran but wrote no verdict looks stale (and is told
+            # to rebase, which cannot help).
+            # `?ref=` in the URL, NOT `-f ref=main`: `-f` adds a POST field and
+            # flips the method, which answers 404 for a contents read. Verified
+            # both forms; the URL form returns the blob sha and it matches
+            # `git hash-object` on the same content exactly.
+            if ! main_ci=$(gh api \
+                 "repos/${GITHUB_REPOSITORY}/contents/.github/workflows/ci.yml?ref=main" \
+                 --jq '.sha' 2>/dev/null); then
+              reason="classify_failed"
+            else
+              here_ci=$(git hash-object .github/workflows/ci.yml)
+              if [ "$here_ci" = "$main_ci" ]; then
+                # Identical to main, so validation did not fail on this file.
+                reason="outage"
+              elif gh api --paginate "repos/${GITHUB_REPOSITORY}/pulls/${PR_NUMBER}/files" \
+                     --jq '.[].filename' 2>/dev/null | grep -q '^\.github/workflows/'; then
+                reason="workflow_edit_skip"
+              else
+                reason="stale_branch_skip"
+              fi
+            fi
+          else
+            reason="outage"
+          fi
+          echo "reason=$reason" >> "$GITHUB_OUTPUT"
+          echo "no-verdict reason: $reason (review step outcome: ${REVIEW_OUTCOME})"
 
       # Only pay for the toolchain when there is actually something to fix.
       - name: Install the full toolchain
@@ -389,10 +516,21 @@ jobs:
         # problems with opposite fixes, and the gate must say which it hit.
         continue-on-error: true
         if: steps.verdict.outputs.value == 'FINDINGS' && steps.rounds.outputs.can_fix == 'true'
+        env:
+          PUSH_TOKEN: ${{ secrets.AGENT_FIX_TOKEN || github.token }}
+          # Via env, not `${{ }}` inlined into the script: a branch name may
+          # contain `$`, backticks or `$(...)`, and expression interpolation
+          # pastes it into the shell source before bash ever sees it.
+          HEAD_REF: ${{ github.head_ref }}
         run: |
           set -uo pipefail
           if [ -z "$(git status --porcelain)" ]; then
-            echo "::warning::the fixer changed nothing — treating the block as standing."
+            echo "::warning::the fixer changed nothing. Either it judged the findings"
+            echo "wrong and said so in a comment — a legitimate way for this loop to"
+            echo "end — or it could not act on them. Either way there is nothing to"
+            echo "re-review, so the verdict below MERGES with the findings unresolved"
+            echo "(docs/adr/0024: a working increment does not sit unmerged over a"
+            echo "quality nit). This is not a block; do not read the wording as one."
             echo "did=false" >> "$GITHUB_OUTPUT"; exit 0
           fi
           git config user.name  "tail-lab review loop"
@@ -403,7 +541,12 @@ jobs:
           Automated response to the adversarial review on PR #${{ github.event.pull_request.number }}.
           Pushed with AGENT_FIX_TOKEN so this triggers a fresh CI run and a fresh,
           independent review of the fixed code (docs/adr/0024)."
-          if git push origin "HEAD:${{ github.head_ref }}"; then
+          # Credentials are no longer persisted in .git/config (see the
+          # checkout step), so the token is supplied here, for this one push,
+          # and never written to disk where the reviewer's Bash could read it.
+          if git push \
+               "https://x-access-token:${PUSH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" \
+               "HEAD:${HEAD_REF}"; then
             echo "did=true" >> "$GITHUB_OUTPUT"
           else
             echo "::error::AGENT_FIX_TOKEN could not push. The fix was computed and is"
@@ -421,13 +564,65 @@ jobs:
           v="${{ steps.verdict.outputs.value }}"
           rounds="${{ steps.rounds.outputs.count }}"
           if [ "$v" = "NONE" ]; then
-            echo "::warning::reviewer produced no verdict — treating as PASS."
-            echo "A reviewer that cannot run must not become a gate that cannot open;"
-            echo "that outage halted this repo for four days from 2026-08-29. But a"
-            echo "REPEATED no-verdict means the reviewer is silently reviewing nothing:"
-            echo "fix it or remove the job, do not leave a green check standing for a"
-            echo "review that never happened."
-            exit 0
+            reason="${{ steps.verdict.outputs.reason }}"
+            if [ "$reason" = "workflow_edit_skip" ]; then
+              echo "::warning::reviewer skipped: this PR edits .github/workflows."
+              echo "claude-code-action refuses to run when the calling workflow differs"
+              echo "from the copy on the default branch, so a PR cannot rewrite the"
+              echo "reviewer that judges it. Such a PR is on automerge.yml's"
+              echo "constitution list and will not auto-merge — a human reads it"
+              echo "regardless, so this check passes rather than blocking every"
+              echo "workflow change. See docs/adr/0025."
+              exit 0
+            fi
+            if [ "$reason" = "stale_branch_skip" ]; then
+              echo "::error::The design reviewer did not run because this BRANCH IS STALE."
+              echo
+              echo "claude-code-action requires the workflow file to match the copy on"
+              echo "the default branch. This PR touches no workflow — but main changed"
+              echo "ci.yml after the branch was cut, so the check fails anyway and the"
+              echo "review is skipped."
+              echo
+              echo "That combination is the dangerous one: the PR is unreviewed AND"
+              echo "perfectly mergeable. It is also the COMMON one — every branch older"
+              echo "than the last ci.yml change is in it. PR #76 merged this way on"
+              echo "2026-09-03 with no review at all."
+              echo
+              echo "FIX: rebase or merge main into this branch, then push. The review"
+              echo "will run. Do not override this."
+              exit 1
+            fi
+            if [ "$reason" = "ran" ]; then
+              echo "::error::The reviewer RAN but wrote no verdict — the sentinel it"
+              echo "writes on entry is present, so this is not an outage. Read its"
+              echo "comment on this PR: the review exists, only the one-word verdict"
+              echo "is missing. Merge by hand if the review is clean."
+              exit 1
+            fi
+            if [ "$reason" = "classify_failed" ]; then
+              echo "::error::The reviewer produced no verdict AND the cause could not be"
+              echo "determined — the GitHub API call that distinguishes them failed."
+              echo "This is most likely a rate limit or a transport blip, NOT anything"
+              echo "about your branch. RE-RUN THIS JOB. Do not rebase; that is the fix"
+              echo "for a different cause and will not help here."
+              exit 1
+            fi
+            echo "::error::The design reviewer did not run (reason: $reason). That points"
+            echo "at an expired CLAUDE_CODE_OAUTH_TOKEN, an API outage, a usage limit or"
+            echo "an action regression — leaving this PR unreviewed but otherwise"
+            echo "mergeable, the one combination that must not pass silently."
+            echo
+            echo "A human should review and merge this one, and the reviewer must be"
+            echo "fixed before the loop is relied on again."
+            exit 1
+          fi
+          if [ "$v" = "UNRECOGNISED" ]; then
+            echo "::error::The reviewer's verdict could not be read. Blocking, because"
+            echo "an unreadable verdict is not a clean one — and the failure mode this"
+            echo "guards is specific: the reviewer writes the one word that must always"
+            echo "block, decorated (\`**DEFECT**\`), and an exact match misses it."
+            echo "Read the review comment on this PR and merge by hand if it is fine."
+            exit 1
           fi
           if [ "$v" = "PASS" ]; then
             echo "review clean after $rounds fix round(s) — the loop has terminated."
@@ -460,14 +655,22 @@ jobs:
           # not lost -- the daily agent reads review comments on merged PRs (its step
           # 2b) and either fixes or files them, so the cost of merging is a delay,
           # while the cost of stalling is the increment.
-          echo "::warning::Design review left unresolved FINDINGS after $rounds fix round(s)."
-          echo "Merging anyway, by design (docs/adr/0024): a working increment does not sit"
-          echo "unmerged over a quality finding. The findings stay in the review comment and"
-          echo "the daily agent picks them up on its next run."
-          exit 0
+          if [ "$v" = "FINDINGS" ]; then
+            echo "::warning::Design review left unresolved FINDINGS after $rounds fix round(s)."
+            echo "Merging anyway, by design (docs/adr/0024): a working increment does not sit"
+            echo "unmerged over a quality finding. The findings stay in the review comment and"
+            echo "the daily agent picks them up on its next run."
+            exit 0
+          fi
+          # Every verdict is handled above. Reaching here means one was added
+          # without a branch, and the safe answer to "a state nobody wrote a
+          # rule for" is to stop. This used to be a bare `exit 0`, which made
+          # the merge path the default for anything unmatched.
+          echo "::error::Unhandled verdict '$v' — blocking rather than assuming it is safe."
+          exit 1
 
   trigger-deploy:
-    needs: [backend, hygiene, frontend, e2e, constitution-guard]  # not agent-review: it is skipped on non-agent branches
+    needs: [backend, hygiene, frontend, e2e, constitution-guard]  # not agent-review: it is pull_request-only, so it never runs on this push-to-main
     if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     permissions:

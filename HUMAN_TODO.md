@@ -85,17 +85,26 @@ acts on, removes, or reorders anything in this file.**
 
 Phase 1 — free accounts (~30 min total, all $0):
 
-- [ ] Get a free **Tiingo** API key (tiingo.com) → repo secret
-      `TIINGO_API_KEY` + local `.env`. Unblocks replacing the throttled
-      Yahoo chart endpoint as OHLCV primary (500 unique symbols/month,
-      30+ yrs history) and the delisted-name backfill (`docs/adr/0010`).
-      **Also unblocks the cross-source price validation Dio asked for**
-      (2026-08-20): a true independent second source to reconcile against
-      Yahoo. Keyless second sources are now walled (Stooq gates behind a JS
-      proof-of-work); until Tiingo, the single-source guard is the bad-tick /
-      stale-feed detector in `research/data_quality.py` +
-      `GET /api/putlab/data-quality`, which catches print errors without
-      flagging real crashes.
+- [x] **Done 2026-09-03.** Free **Tiingo** API key in the `TIINGO_API_KEY`
+      repo secret + local `.env`, verified live (`/api/test` → 200).
+      Unblocks replacing the throttled Yahoo chart endpoint as OHLCV primary
+      and the cross-source price validation Dio asked for (2026-08-20) — a
+      true independent second source to reconcile against Yahoo, which
+      matters because the keyless alternatives are now walled (Stooq gates
+      behind a JS proof-of-work).
+      **Verified working:** SPY 1993-01-29 → 2026-09-02, with `adjClose`
+      and `divCash` (2008-09-15 close 120.09 vs adjClose 86.33).
+      **Does NOT unblock the delisted-name backfill** (`docs/adr/0010`) —
+      see the measured spot-check under "Switch OHLCV primary to Tiingo" in
+      `AGENT_TODO.md`. That still needs a paid or different source, so it
+      stays open below.
+- [ ] **A source for delisted names**, because Tiingo is not one. Needed for
+      the survivorship-bias-free backfill (`docs/adr/0010`) and therefore for
+      any honest crisis-period backtest: a universe screened only on names
+      that still exist in 2026 cannot see 2008. Candidates to price up:
+      Sharadar SEP (Nasdaq Data Link, ~$50/mo, explicitly survivorship-free),
+      Norgate (~$70/mo, US equities incl. delisted), or CRSP via an academic
+      affiliation (free at some institutions — worth asking Milestone).
 - [x] **Done 2026-09-03.** optionsDX corpus downloaded (83 archives, 1.1 GB)
       and moved to `data/vendor/optionsdx/`; adapter, contract, tests and
       `make ingest-optionsdx` shipped (`docs/DATA_CONTRACTS.md` #12). VIX is
@@ -106,14 +115,37 @@ Phase 1 — free accounts (~30 min total, all $0):
       (b) 18 byte-identical `(1)` duplicates are still sitting in `~/Downloads`
       (226 MB) and one `(2)` copy is in the vendor dir, all safe to delete —
       left alone rather than deleting your files unasked.
-- [ ] Create a free **optionsDX** account (optionsdx.com) and download
-      the free SPY/SPX/QQQ EOD option-chain zips (2010–2023, bid/ask +
-      IV + greeks); drop them somewhere the agent can ingest from (e.g.
-      upload to Tigris under `raw-drops/optionsdx/`). Unblocks validating
-      a real-quote `OptionPricer` v2 against the BS proxy at $0.
-- [ ] Create a free **Alpaca** account (data-only, no funding) → API
-      keys as repo secrets. Free historical SIP equity bars (~2016+) and
-      OPRA option history (Feb 2024+); second forward-collection source.
+- [x] **Done 2026-09-03** — the optionsDX account and corpus. Superseded by
+      the entry above, which carries the outcome; kept only as a pointer so
+      the phase reads completely.
+- [~] **Account created 2026-09-03 (Dio). Credentials NOT yet provisioned** —
+      checked, and neither `.env` nor the repo secrets hold an Alpaca key.
+      Two values, key id and secret, from the Alpaca dashboard. Paste each
+      ONCE at the hidden prompt (a repeated paste is what corrupted the
+      Tiingo entry — it landed as the token three times over):
+
+      ```bash
+      cd ~/Documents/apps/tail-lab
+      read -rsp 'Alpaca key id: '  K && printf 'ALPACA_API_KEY_ID=%s\n'     "$K" >> .env && unset K
+      read -rsp 'Alpaca secret: '  K && printf 'ALPACA_API_SECRET_KEY=%s\n' "$K" >> .env && unset K
+      gh secret set ALPACA_API_KEY_ID     --repo diomavro/tail-lab
+      gh secret set ALPACA_API_SECRET_KEY --repo diomavro/tail-lab
+      ```
+
+      What it buys: free historical SIP equity bars (~2016+) as a THIRD
+      price source, and — the part nothing else here has — **OPRA option
+      history from Feb 2024**, i.e. real expired-contract quotes. That is a
+      forward-collection source that does not depend on the daily Cboe
+      snapshot never missing a day (`docs/adr/0020`), and the only free way
+      to check a snapshot after the fact.
+
+      **Test this first, before any adapter is built** (`docs/DATA_SOURCING.md`
+      §10): do the historical option endpoints actually return contracts that
+      have since EXPIRED, or only live ones? The whole value is the former,
+      it is trivial to check with a key, and the Tiingo probe today is the
+      argument for checking: that source also looked fine until the specific
+      question was asked, and then returned HTTP 200 with zero rows for the
+      exact names the feature needed.
 
 Phase 2/3 — paid decisions (small):
 
@@ -142,15 +174,9 @@ $99/mo and the $945/$1,495 one-offs are no longer on the critical path.
 Two free Cboe taps need no account at all and are queued for the agent
 (`AGENT_TODO.md`); only these two items need you.
 
-- [ ] Create the free **optionsDX** account (as already listed above) —
-      now higher priority, because it is the validation set for the
-      skew-aware pricer, not just a nice-to-have. All ten of their
-      datasets list at **$0.00** (SPY, SPX, VIX, QQQ, TSLA, AAPL, NVDA,
-      UVXY, SLV, BTC); SPX is stated as **2010–2023** EOD with bid/ask,
-      IV and greeks. **While you are logged in, check which years are
-      actually free** — the shop shows a "$0.00 – $50.00" range per
-      product and the per-year split is only visible in the variant
-      selector (`docs/DATA_SOURCING.md` §9.6).
+- [x] **Done 2026-09-03** — optionsDX account created and the corpus
+      ingested; all ten datasets were indeed $0.00. Outcome and what is
+      still open are recorded once, in the phase-1 entry above.
 - [ ] Request the **historicaloptiondata.com free data** (name + email at
       `historicaloptiondata.com/free-data/`, files land at
       dnfilevault.com). Full-format L2 EOD chains, **January 2003 →

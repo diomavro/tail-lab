@@ -20,6 +20,21 @@ test('states the error bar beside the result, not behind a toggle', async ({ pag
   await expect(acc.locator('.pl-acc-badge')).toContainText('PPUT')
 })
 
+test('says the result is model-priced even while real quotes are held', async ({ page }) => {
+  // The misreading this block exists to prevent. The fixture holds a real
+  // quote panel for SPY, and the displayed backtest still does not use it --
+  // the roll engine prices every leg with Black-Scholes at a flat vol
+  // (docs/adr/0004). A surface that showed only "real quotes: yes" would make
+  // the number look more trustworthy than it is.
+  const prov = page.getByRole('region', { name: 'Quote provenance' })
+  await expect(prov).toBeVisible()
+  await expect(prov).toContainText('Priced from the model')
+  // Coverage is stated against THIS result's window, not the whole panel:
+  // the same panel is total coverage of a 2015 backtest and 16/49 of this one.
+  await expect(prov).toContainText('16 of this window’s 49 months')
+  await expect(prov.locator('.pl-acc-flag')).toContainText('33 missing')
+})
+
 test('lets the per-regime residual flip sign instead of ramping', async ({ page }) => {
   // MODEL_RESIDUAL.md's headline finding is that the residual FLIPS SIGN in a
   // crisis rather than ramping monotonically from calm. A UI that only ever
