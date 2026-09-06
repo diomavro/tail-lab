@@ -40,7 +40,7 @@ flowchart LR
         CALC["backtests · metrics · regimes<br/>replication · skew · quality"]
     end
     subgraph A["④ API — thin"]
-        ROUTES["/api/putlab/*<br/>/api/leaderboard"]
+        ROUTES["/api/putlab/*"]
     end
     subgraph U["⑤ Pages"]
         PAGES["Workspace · Portfolio · Bake-off<br/>Regime · Glossary"]
@@ -91,11 +91,6 @@ Screen tab's deeper "is the screen any good?" question moved to its own
 | **Glossary** | — (renders `content/concepts.ts`, no network) | none | none |
 | **Roll schedule** (export, not a tab) | What would I actually place? | `/api/putlab/roll-schedule` (the ranking's read, reused from cache) | `ohlcv_*`, `vix` |
 | **Control rail** (every tab) | What position am I asking about, and where did the data come from? | `/api/putlab/universe`, `/cadence`, `/data-quality` | `ohlcv_<asset>`, the options calendar |
-
-`/api/leaderboard` — the *sensitivity* leaderboard, unrelated to
-`/api/putlab/leaderboard` — no longer has a caller: the home dashboard it fed
-was superseded by the Put Lab's own fragility ranking. `LeaderboardTile.tsx` is
-still in the tree, unused.
 
 **The accuracy panel is the densest node in the graph.** It renders under every
 backtest result and, alone in the app, reads *four* datasets at once — the

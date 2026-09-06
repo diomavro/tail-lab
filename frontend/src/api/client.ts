@@ -303,37 +303,6 @@ export async function fetchUniverse(signal?: AbortSignal): Promise<UniverseMembe
   return (await resp.json()) as UniverseMember[]
 }
 
-// --- Sensitivity leaderboard (src/tail_lab/api/leaderboard_routes.py,
-// .../research/leaderboard.py, docs/END_STATE.md §1.1) ---
-
-export interface LeaderboardRow {
-  rank: number
-  symbol: string
-  score: number
-  metric: string
-}
-
-export interface LeaderboardResponse {
-  as_of: string
-  metric: string
-  benchmark: string
-  rows: LeaderboardRow[]
-}
-
-export type LeaderboardMetric = 'downside_beta' | 'co_skewness'
-
-export async function fetchLeaderboard(
-  signal?: AbortSignal,
-  metric?: LeaderboardMetric,
-): Promise<LeaderboardResponse> {
-  const qs = metric ? `?metric=${encodeURIComponent(metric)}` : ''
-  const resp = await fetch(`/api/leaderboard${qs}`, { signal })
-  if (!resp.ok) {
-    throw new ApiError(`GET /api/leaderboard failed: ${resp.status}`, resp.status)
-  }
-  return (await resp.json()) as LeaderboardResponse
-}
-
 // Public, unauthenticated write (see api/feedback_routes.py) -- the
 // token-gated GET/resolve routes are for the daily agent only and are
 // deliberately not called from the browser.
@@ -393,8 +362,7 @@ export async function fetchRegimeVerdict(
 
 // --- Put Lab universe leaderboard (research/backtest/ranking.py) --
 // "which names' OOM puts got the best results at this strike/tenor," ranked
-// server-side. NOT `fetchLeaderboard` above -- that's the unrelated
-// sensitivity leaderboard at /api/leaderboard.
+// server-side.
 
 export interface RankedAsset {
   asset: string

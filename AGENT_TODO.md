@@ -452,9 +452,9 @@ a large one strictly in order.
       here rather than deleting the orphaned files unprompted; a future
       increment should either wire `LeaderboardTile.tsx` back in or remove
       the now-dead `research/leaderboard.py` stack deliberately.
-- [ ] **Delete the orphaned `research/leaderboard.py` stack** (the decision
-      flagged directly above, still unresolved 2026-09-05). Audited today:
-      deletion is safe and complete, no ADR needed. Delete
+- [x] **Delete the orphaned `research/leaderboard.py` stack** (the decision
+      flagged directly above). **Done 2026-09-06** by the weekly cleanup
+      agent, exactly as audited below. Delete
       `src/tail_lab/research/leaderboard.py`,
       `src/tail_lab/api/leaderboard_routes.py`,
       `src/tail_lab/transforms/marts/sensitivity_leaderboard.py`,

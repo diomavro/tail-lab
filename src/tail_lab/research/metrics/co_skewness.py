@@ -9,10 +9,10 @@ asset swings hardest in the same periods the benchmark itself swings
 hardest, regardless of the benchmark's own direction. A *negative*
 co-skewness means the asset tends to fall precisely when the benchmark is
 already whipping around -- crash-prone in exactly the sense a downside
-put-buying screen cares about. The leaderboard orchestrator
-(`research/leaderboard.py`) is responsible for flipping the sign into a
-"higher score = more sensitive" convention consistent with downside beta;
-this module returns the raw (signed) statistic.
+put-buying screen cares about. A consumer that ranks "higher score = more
+sensitive" (e.g. `research/backtest/ranking.py`) is responsible for
+flipping the sign into that convention; this module returns the raw
+(signed) statistic.
 
 Pure numeric function, like `downside_beta.py`: return series in, float
 out. No lake/transforms dependency.
