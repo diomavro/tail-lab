@@ -278,11 +278,53 @@ a large one strictly in order.
       is still current-constituents-only — wiring the survivorship caveat
       into any result that uses it is a separate, later increment, same
       ship-the-adapter-first precedent `rates.py`/`credit.py` followed.
-- [ ] **Earnings-calendar adapter** via Nasdaq's keyless endpoint
-      (`api.nasdaq.com/api/calendar/earnings?date=YYYY-MM-DD`, browser UA
-      + JSON Accept header; verified back to 2010) → `EARNINGS` rows in
-      dataset #5. Unofficial endpoint: throttle, cache, and treat errors
-      as "retry tomorrow", not hard failures.
+- [x] **Earnings-calendar adapter** via Nasdaq's keyless endpoint. **Done
+      2026-09-06**: `ingestion/earnings.py` + `make ingest-earnings`,
+      `EARNINGS` rows into the shared `event_calendar` dataset (#5),
+      mirroring `ingestion/fomc.py`'s shape (pure parse / network fetch /
+      orchestrate split, same conservative `announced_at` = ingestion
+      timestamp treatment, tests pinned against a real fixture fetched live
+      2026-09-06 — `tests/fixtures/nasdaq_earnings_sample.json`, 29 rows
+      spanning all three `time` codes, plus a real weekend
+      `rows: null` response). **Scoped narrower than the item as written**:
+      the endpoint answers one calendar date per call, so this adapter
+      sweeps a rolling 30-day-forward window per run (`DEFAULT_LOOKAHEAD_DAYS`)
+      rather than the source's full 2010+ history — a deep historical
+      backfill for research questions 3/5 is a separate follow-up (still
+      open, see below), not built here; the forward window is what the
+      cockpit's proximity flags (`docs/END_STATE.md` §1.4) need day-to-day.
+      A single date's fetch failure is caught and skipped, not fatal
+      ("retry tomorrow", per the sourcing note). One deliberate addition
+      beyond the item's literal scope: `event_calendar` bronze is a shared
+      dataset immutable per `(dataset, ingest_date)`, and `ingestion/fomc.py`'s
+      docstring had already flagged that a second producer writing
+      independently on a day the first already ran would silently no-op and
+      lose its own rows — since this ships as that second producer for real,
+      `ingest_earnings_calendar` now refuses (raises `RuntimeError`) rather
+      than risk that silently; see the module docstring and
+      `docs/DATA_CONTRACTS.md` #5. Also, following the note left on
+      `contracts/event_calendar.py`'s `EVENT_TYPES` docstring ("the first
+      EARNINGS adapter owns making this true"): `EventRowSchema` now has a
+      `dataframe_check` enforcing that every `EARNINGS` row carries a
+      `symbol`, closing a gap that was previously only documented, not
+      checked (design review, PR #63). **Not yet done**: historical
+      backfill (2010+, for research questions 3/5's pattern-library use);
+      no `research/`/`api` consumer wired yet — same ship-the-adapter-first
+      precedent every other event-calendar producer here has followed; the
+      BLS CPI adapter should carry the same same-day-collision guard once
+      it ships (still blocked on Akamai, see above).
+- [ ] **`transforms/vix_futures.py`'s empty-output branch has an
+      untyped/object-dtype frame** — design-review advisory on PR #84
+      (2026-09-05), not yet fixed: `silver_to_gold`'s
+      `if not rows: return pd.DataFrame(columns=[...])` path (line ~65)
+      builds a frame without matching the non-empty path's dtypes. Harmless
+      today (nothing consumes this module yet), but exactly the kind of
+      thing that passes in tests and breaks on the first all-extrapolated
+      `trade_date` once a `research/` consumer reads it. Fix by building the
+      empty frame with the same explicit dtypes the non-empty path produces
+      (mirroring `ingestion/fomc.py`'s/`ingestion/earnings.py`'s
+      `_empty_frame()` pattern), before or alongside wiring this module into
+      a consumer.
 - [ ] **Switch OHLCV primary to Tiingo** — the key now exists and is
       verified (`HUMAN_TODO.md`, 2026-09-03). New adapter (500 unique
       symbols/month budget — plan symbol rotation), demote Yahoo to

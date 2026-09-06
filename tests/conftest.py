@@ -40,6 +40,25 @@ def fomc_calendar_sample() -> str:
 
 
 @pytest.fixture
+def nasdaq_earnings_sample() -> dict[str, Any]:
+    """Real payload from api.nasdaq.com/api/calendar/earnings, fetched live
+    2026-09-06 for a weekday with a full slate: 29 rows spanning all three
+    ``time`` codes (pre-market, after-hours, not-supplied)."""
+    raw: dict[str, Any] = json.loads((FIXTURES_DIR / "nasdaq_earnings_sample.json").read_text())
+    return raw
+
+
+@pytest.fixture
+def nasdaq_earnings_empty_sample() -> dict[str, Any]:
+    """Real payload for a date with no scheduled earnings (a weekend,
+    fetched live 2026-09-06): ``data.rows`` comes back ``null``, not ``[]``."""
+    raw: dict[str, Any] = json.loads(
+        (FIXTURES_DIR / "nasdaq_earnings_empty_sample.json").read_text()
+    )
+    return raw
+
+
+@pytest.fixture
 def cboe_pput_sample() -> str:
     """Real PPUT rows straight from Cboe's CDN: the 1986 inception days plus
     the Sep-Oct 2008 crisis window, so the parser is pinned against actual

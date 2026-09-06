@@ -49,6 +49,16 @@ def test_unknown_source_id_is_rejected() -> None:
         EventSchema.validate(_row(source_id=["twitter_rumor"]), lazy=True)
 
 
+def test_earnings_row_without_a_symbol_is_rejected() -> None:
+    """The invariant `EVENT_TYPES` used to only document -- an EARNINGS row
+    is not a legitimate event without the symbol it's about."""
+    with pytest.raises((SchemaError, SchemaErrors)):
+        EventSchema.validate(
+            _row(event_id=["earnings_x_2026-01-28"], event_type=["EARNINGS"], symbol=[None]),
+            lazy=True,
+        )
+
+
 def test_null_event_date_is_rejected() -> None:
     with pytest.raises((SchemaError, SchemaErrors)):
         EventSchema.validate(_row(event_date=[pd.NaT]), lazy=True)
@@ -88,7 +98,7 @@ def test_event_types_and_source_ids_match_the_data_contract() -> None:
     """docs/DATA_CONTRACTS.md #5 names these exact values -- drifting either
     list here silently changes what a consumer can rely on."""
     assert set(EVENT_TYPES) == {"FOMC", "CPI", "EARNINGS", "MANUAL"}
-    assert set(SOURCE_IDS) == {"fed_calendar", "bls_calendar", "manual"}
+    assert set(SOURCE_IDS) == {"fed_calendar", "bls_calendar", "manual", "nasdaq_earnings"}
 
 
 def test_dataset_id_is_stable() -> None:

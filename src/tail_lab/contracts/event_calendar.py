@@ -22,27 +22,22 @@ project has documented (`docs/DATA_CONTRACTS.md` #5).
 
 from __future__ import annotations
 
-from typing import ClassVar
+from typing import ClassVar, cast
 
+import pandas as pd
 import pandera.pandas as pa
 from pandera.typing import Series
 
-#: The event types this schema accepts. ``EARNINGS`` is meant to require
-#: ``symbol`` while every other type leaves it null -- a cross-column
-#: conditional pandera cannot express as a single ``Field`` constraint.
-#:
-#: **Nothing enforces that today.** The rule was written as "enforced by the
-#: ingestion adapter", but no EARNINGS producer has shipped, so there is no
-#: adapter to enforce it and the sentence described a guarantee that did not
-#: exist (design review, PR #63). A documented invariant nobody checks is worse
-#: than an absent one, because the next reader budgets for a safety that is not
-#: there. **The first EARNINGS adapter owns making this true**, and should
-#: delete this note when it does.
+#: The event types this schema accepts. ``EARNINGS`` requires ``symbol``
+#: while every other type leaves it null -- enforced below by
+#: ``earnings_rows_carry_a_symbol`` (``ingestion/earnings.py``, the first
+#: EARNINGS producer, made this real; it used to be a documented-but-unchecked
+#: aspiration, design review PR #63).
 EVENT_TYPES: tuple[str, ...] = ("FOMC", "CPI", "EARNINGS", "MANUAL")
 
 #: Which producer wrote a given row. One value per adapter plus the manual
 #: table, so a consumer can trace any row back to its source.
-SOURCE_IDS: tuple[str, ...] = ("fed_calendar", "bls_calendar", "manual")
+SOURCE_IDS: tuple[str, ...] = ("fed_calendar", "bls_calendar", "manual", "nasdaq_earnings")
 
 #: The single bronze dataset every event producer commits into.
 DATASET = "event_calendar"
@@ -63,6 +58,15 @@ class EventRowSchema(pa.DataFrameModel):
         coerce = True
         strict = True
         unique: ClassVar[list[str]] = ["event_id"]
+
+    @pa.dataframe_check
+    @classmethod
+    def earnings_rows_carry_a_symbol(cls, df: pd.DataFrame) -> Series[bool]:
+        """Every ``EARNINGS`` row must name the company it's about -- a
+        symbol-less earnings row is not a legitimate event, it's a parse
+        failure that belongs in quarantine, not bronze."""
+        mask = (df["event_type"] != "EARNINGS") | df["symbol"].notna()
+        return cast(Series[bool], mask)
 
 
 EventSchema = EventRowSchema.to_schema()
