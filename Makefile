@@ -11,7 +11,7 @@ VENV := .venv
 PY := env -u PYTHONPATH $(VENV)/bin/python
 PIP := env -u PYTHONPATH $(VENV)/bin/pip
 
-.PHONY: setup lint format typecheck import-lint test check cov-floors ingest-vix ingest-ohlcv ingest-cboe-strategy ingest-rates ingest-credit ingest-fomc ingest-option-quotes residual skew api frontend clean ingest-mpd ingest-options-expiry ingest-sp500-constituents ingest-vix-futures
+.PHONY: setup lint format typecheck import-lint test check cov-floors ingest-vix ingest-ohlcv ingest-cboe-strategy ingest-rates ingest-credit ingest-fomc ingest-earnings ingest-option-quotes residual skew api frontend clean ingest-mpd ingest-options-expiry ingest-sp500-constituents ingest-vix-futures
 
 help:
 	@echo "Targets:"
@@ -149,6 +149,9 @@ ingest-credit:
 
 ingest-fomc:
 	env -u PYTHONPATH $(VENV)/bin/python -c "from tail_lab.ingestion.fomc import ingest_fomc_calendar; from tail_lab.config import get_lake_store; from tail_lab.observability import configure_logging; configure_logging(); r = ingest_fomc_calendar(get_lake_store()); print(f'committed {r.valid_rows} rows -> {r.bronze_path} ({r.quarantined_rows} quarantined)')"
+
+ingest-earnings:
+	env -u PYTHONPATH $(VENV)/bin/python -c "from tail_lab.ingestion.earnings import ingest_earnings_calendar; from tail_lab.config import get_lake_store; from tail_lab.observability import configure_logging; configure_logging(); r = ingest_earnings_calendar(get_lake_store()); print(f'committed {r.valid_rows} rows ({r.dates_fetched} dates fetched, {r.dates_failed} failed) -> {r.bronze_path} ({r.quarantined_rows} quarantined)')"
 
 ingest-sp500-constituents:
 	env -u PYTHONPATH $(VENV)/bin/python -c "from tail_lab.ingestion.sp500_constituents import ingest_sp500_constituents; from tail_lab.config import get_lake_store; from tail_lab.observability import configure_logging; configure_logging(); r = ingest_sp500_constituents(get_lake_store()); print(f'committed {r.valid_rows} rows -> {r.bronze_path} ({r.quarantined_rows} quarantined)')"

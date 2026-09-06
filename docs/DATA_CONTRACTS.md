@@ -215,8 +215,8 @@ spread series are revised too.
 `docs/END_STATE.md`) and is a required input to research question 3/5
 (IV behavior around FOMC/CPI/crises).
 
-**Source (free, keyless, two parts).**
-- *Scheduled*: Federal Reserve FOMC meeting calendar
+**Source (free, keyless, three parts).**
+- *Scheduled — macro*: Federal Reserve FOMC meeting calendar
   (`federalreserve.gov`, public HTML/ICS), BLS CPI release schedule
   (`bls.gov`, public), both keyless. **The FOMC half ships**
   (`ingestion/fomc.py` + `make ingest-fomc`, done 2026-09-01) — HTML-only
@@ -224,21 +224,36 @@ spread series are revised too.
   `announced_at` is set to the ingestion timestamp for every row rather than
   the true historical announcement date (conservative and point-in-time-safe,
   not a look-ahead risk, but under-informative for pre-ingest simulation
-  dates — see the module docstring). BLS CPI is not yet built.
+  dates — see the module docstring). BLS CPI is not yet built (blocked on an
+  Akamai bot-block, `AGENT_TODO.md`).
+- *Scheduled — earnings*: Nasdaq's unofficial calendar endpoint
+  (`api.nasdaq.com/api/calendar/earnings?date=YYYY-MM-DD`, browser UA + JSON
+  Accept header, keyless). **Ships 2026-09-06** (`ingestion/earnings.py` +
+  `make ingest-earnings`) — one JSON page per calendar date, so this adapter
+  sweeps a rolling 30-day-forward window per run rather than the source's
+  full 2010+ history (a deep backfill would be thousands of sequential
+  requests to an endpoint the sourcing note already flags as
+  "unofficial: pace and cache"; the forward window is what the cockpit's
+  proximity flags need day-to-day). Same conservative `announced_at`
+  treatment as FOMC, for the same reason. Historical backfill is a
+  follow-up, tracked in `AGENT_TODO.md`.
 - *Manual*: a hand-maintained table (YAML/CSV under version control, not
   fetched) for unscheduled events — crises, surprise announcements,
   anything without a published future date. Not yet built.
 
 **A second producer must not write its own bronze snapshot on a day the
 first one already has.** Bronze immutability is keyed on `(dataset,
-ingest_date)`, not on which producer wrote it (`docs/adr/0013`) — so if the
-BLS or manual writer above ever calls `write_bronze("event_calendar",
-today, ...)` independently on a day `ingestion/fomc.py` already committed,
-that write is a silent no-op and its rows are lost, not merged. The next
-producer must either combine all sources into one call before writing (the
-`ingestion/cboe_strategy.py`/`ingestion/rates.py` family-in-one-write
-pattern) or this shared-dataset design needs revisiting — not a footnote to
-discover by losing a day of CPI events.
+ingest_date)`, not on which producer wrote it (`docs/adr/0013`) — so a
+producer that calls `write_bronze("event_calendar", today, ...)`
+independently on a day another one already committed gets a silent no-op,
+losing its own rows rather than merging them. `ingestion/earnings.py` is the
+first producer to actually guard against this: it checks for an existing
+same-day partition before fetching anything and raises loudly rather than
+risk a silent loss (mirroring `docs/adr/0020`'s "loud failure over silent
+no-op" stance). The next producer into this dataset (BLS CPI) should carry
+the same guard, or combine writes with the others at the point of calling
+(the `ingestion/cboe_strategy.py`/`ingestion/rates.py` family-in-one-write
+pattern), until an ADR gives the shared dataset a real merge path.
 
 **Cadence.** Scheduled: weekly refresh (calendars change rarely, but do
 change). Manual: edited by commit, not on a cadence.
@@ -251,9 +266,9 @@ change). Manual: edited by commit, not on a cadence.
 | `event_type` | `str` | one of `"FOMC"`, `"CPI"`, `"EARNINGS"`, `"MANUAL"` |
 | `event_date` | `date` | non-null |
 | `announced_at` | `datetime` (UTC) | non-null; see point-in-time rule |
-| `symbol` | `str \| None` | required for `"EARNINGS"`, null otherwise |
+| `symbol` | `str \| None` | required for `"EARNINGS"`, null otherwise (enforced by a schema-level check, not just convention) |
 | `description` | `str` | non-null, non-empty |
-| `source_id` | `str` | `"fed_calendar"`, `"bls_calendar"`, or `"manual"` |
+| `source_id` | `str` | `"fed_calendar"`, `"bls_calendar"`, `"manual"`, or `"nasdaq_earnings"` |
 | `ingested_at` | `datetime` (UTC) | non-null |
 
 **Bronze partition key.** `source_id=<src>/event_type=<type>/ingested_at=<YYYY-MM-DD>/`.
