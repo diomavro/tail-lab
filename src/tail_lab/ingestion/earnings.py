@@ -67,9 +67,12 @@ from typing import Any
 
 import pandas as pd
 import requests
-from pandera.errors import SchemaErrors
 
-from tail_lab.contracts.event_calendar import DATASET, EventSchema
+from tail_lab.contracts.event_calendar import (
+    DATASET,
+    empty_event_frame,
+    validate_and_quarantine,
+)
 from tail_lab.lake.store import LakeStore
 from tail_lab.observability import log_event
 
@@ -145,7 +148,7 @@ def parse_earnings_calendar_json(raw: Any, event_date: dt.date) -> pd.DataFrame:
     """
     rows = ((raw or {}).get("data") or {}).get("rows") or []
     if not rows:
-        return _empty_frame()
+        return empty_event_frame()
 
     records = [_parse_row(row, event_date, idx) for idx, row in enumerate(rows)]
     return (
@@ -176,37 +179,6 @@ def _parse_row(row: dict[str, Any], event_date: dt.date, idx: int) -> dict[str, 
         "description": f"{name} earnings{suffix}",
         "source_id": SOURCE_ID,
     }
-
-
-def _empty_frame() -> pd.DataFrame:
-    """A correctly-typed zero-row frame, so a no-earnings date still validates."""
-    return pd.DataFrame(
-        {
-            "event_id": pd.Series([], dtype="object"),
-            "event_type": pd.Series([], dtype="object"),
-            "event_date": pd.Series([], dtype="datetime64[ns]"),
-            "symbol": pd.Series([], dtype="object"),
-            "description": pd.Series([], dtype="object"),
-            "source_id": pd.Series([], dtype="object"),
-        }
-    )
-
-
-def validate_and_quarantine(df: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame]:
-    """Split ``df`` into (valid, quarantined) against the event-calendar contract.
-
-    Bad rows are never silently dropped: they come back in the second frame
-    so the caller can persist them for inspection.
-    """
-    try:
-        valid = EventSchema.validate(df, lazy=True)
-        return valid, df.iloc[0:0]
-    except SchemaErrors as err:
-        bad_index = pd.Index(err.failure_cases["index"].dropna().unique())
-        quarantined = df.loc[df.index.isin(bad_index)]
-        valid = df.loc[~df.index.isin(bad_index)]
-        valid = EventSchema.validate(valid, lazy=True)
-        return valid, quarantined
 
 
 def _default_window(ingest_date: dt.date, lookahead_days: int) -> list[dt.date]:
@@ -264,7 +236,7 @@ def ingest_earnings_calendar(
             continue
         frames.append(parse_earnings_calendar_json(raw, event_date))
 
-    parsed = pd.concat(frames, ignore_index=True) if frames else _empty_frame()
+    parsed = pd.concat(frames, ignore_index=True) if frames else empty_event_frame()
     # See the module docstring: every row gets the same conservative
     # announced_at (the ingestion timestamp) since this adapter has no way
     # to recover the true historical announcement date from a single scrape.

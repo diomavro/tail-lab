@@ -26,6 +26,7 @@ from typing import ClassVar, cast
 
 import pandas as pd
 import pandera.pandas as pa
+from pandera.errors import SchemaErrors
 from pandera.typing import Series
 
 #: The event types this schema accepts. ``EARNINGS`` requires ``symbol``
@@ -70,3 +71,42 @@ class EventRowSchema(pa.DataFrameModel):
 
 
 EventSchema = EventRowSchema.to_schema()
+
+
+def empty_event_frame() -> pd.DataFrame:
+    """A correctly-typed zero-row frame, so an empty source still validates.
+
+    Shared by every ``event_calendar`` producer (``ingestion/fomc.py``,
+    ``ingestion/earnings.py``, ...) -- they all validate against the same
+    ``EventSchema``, so a per-producer copy would just be this frame typed
+    out again.
+    """
+    return pd.DataFrame(
+        {
+            "event_id": pd.Series([], dtype="object"),
+            "event_type": pd.Series([], dtype="object"),
+            "event_date": pd.Series([], dtype="datetime64[ns]"),
+            "symbol": pd.Series([], dtype="object"),
+            "description": pd.Series([], dtype="object"),
+            "source_id": pd.Series([], dtype="object"),
+        }
+    )
+
+
+def validate_and_quarantine(df: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame]:
+    """Split ``df`` into (valid, quarantined) against the event-calendar contract.
+
+    Bad rows are never silently dropped: they come back in the second frame
+    so the caller can persist them for inspection. Shared by every
+    ``event_calendar`` producer -- they all validate against the same
+    ``EventSchema``.
+    """
+    try:
+        valid = EventSchema.validate(df, lazy=True)
+        return valid, df.iloc[0:0]
+    except SchemaErrors as err:
+        bad_index = pd.Index(err.failure_cases["index"].dropna().unique())
+        quarantined = df.loc[df.index.isin(bad_index)]
+        valid = df.loc[~df.index.isin(bad_index)]
+        valid = EventSchema.validate(valid, lazy=True)
+        return valid, quarantined

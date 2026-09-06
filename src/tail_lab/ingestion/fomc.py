@@ -56,9 +56,12 @@ from dataclasses import dataclass
 
 import pandas as pd
 import requests
-from pandera.errors import SchemaErrors
 
-from tail_lab.contracts.event_calendar import DATASET, EventSchema
+from tail_lab.contracts.event_calendar import (
+    DATASET,
+    empty_event_frame,
+    validate_and_quarantine,
+)
 from tail_lab.lake.store import LakeStore
 from tail_lab.observability import log_event
 
@@ -150,7 +153,7 @@ def parse_fomc_calendar_html(html: str) -> pd.DataFrame:
             rows.append(_parse_meeting(year, month_text.strip(), date_text.strip()))
 
     if not rows:
-        return _empty_frame()
+        return empty_event_frame()
 
     df = pd.DataFrame(rows)
     return (
@@ -202,37 +205,6 @@ def _malformed_row(month_text: str, date_text: str) -> dict[str, object]:
         "description": f"unparsed FOMC row: {month_text} {date_text}",
         "source_id": SOURCE_ID,
     }
-
-
-def _empty_frame() -> pd.DataFrame:
-    """A correctly-typed zero-row frame, so an empty source still validates."""
-    return pd.DataFrame(
-        {
-            "event_id": pd.Series([], dtype="object"),
-            "event_type": pd.Series([], dtype="object"),
-            "event_date": pd.Series([], dtype="datetime64[ns]"),
-            "symbol": pd.Series([], dtype="object"),
-            "description": pd.Series([], dtype="object"),
-            "source_id": pd.Series([], dtype="object"),
-        }
-    )
-
-
-def validate_and_quarantine(df: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame]:
-    """Split ``df`` into (valid, quarantined) against the event-calendar contract.
-
-    Bad rows are never silently dropped: they come back in the second frame
-    so the caller can persist them for inspection.
-    """
-    try:
-        valid = EventSchema.validate(df, lazy=True)
-        return valid, df.iloc[0:0]
-    except SchemaErrors as err:
-        bad_index = pd.Index(err.failure_cases["index"].dropna().unique())
-        quarantined = df.loc[df.index.isin(bad_index)]
-        valid = df.loc[~df.index.isin(bad_index)]
-        valid = EventSchema.validate(valid, lazy=True)
-        return valid, quarantined
 
 
 def ingest_fomc_calendar(
