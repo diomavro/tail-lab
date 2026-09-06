@@ -57,8 +57,8 @@ Yahoo partition (2026-08-21):
 
 The raw price series cross-validates almost exactly; the gap is entirely
 the dividend stream. Every consumer of `adj_close` (`research/backtest/
-put_roll.py`, `research/leaderboard.py`, `research/data_quality.py`) is
-therefore basis-sensitive, and a Nasdaq partition must not be compared
+put_roll.py`, `research/data_quality.py`) is therefore basis-sensitive, and
+a Nasdaq partition must not be compared
 against a Yahoo one. `IngestResult.adjustment_basis` and the run log record
 which basis produced a given partition; a single partition is always
 internally consistent, since as-of resolution reads one partition.
