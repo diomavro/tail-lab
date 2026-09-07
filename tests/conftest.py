@@ -76,6 +76,35 @@ def cboe_vix_sample() -> str:
 
 
 @pytest.fixture
+def vix3m_sample() -> str:
+    """Real Cboe VIX3M_History.csv rows (full OHLC shape): the 2009 inception
+    window plus the latest 2026 rows, fetched live 2026-09-07."""
+    return (FIXTURES_DIR / "vix3m_sample.csv").read_text()
+
+
+@pytest.fixture
+def vix9d_sample() -> str:
+    """Real Cboe VIX9D_History.csv rows (full OHLC shape): the 2011 inception
+    window plus the latest 2026 rows, fetched live 2026-09-07."""
+    return (FIXTURES_DIR / "vix9d_sample.csv").read_text()
+
+
+@pytest.fixture
+def vvix_sample() -> str:
+    """Real Cboe VVIX_History.csv rows (bare ``DATE,VVIX`` shape, unlike
+    VIX3M/VIX9D): the 2006 inception window plus the latest 2026 rows,
+    fetched live 2026-09-07."""
+    return (FIXTURES_DIR / "vvix_sample.csv").read_text()
+
+
+@pytest.fixture
+def skew_sample() -> str:
+    """Real Cboe SKEW_History.csv rows (bare ``DATE,SKEW`` shape): the 1990
+    inception window plus the latest 2026 rows, fetched live 2026-09-07."""
+    return (FIXTURES_DIR / "skew_sample.csv").read_text()
+
+
+@pytest.fixture
 def nasdaq_ohlcv_sample() -> dict[str, Any]:
     """A real Nasdaq historical payload (SPY), kept intact down to the ``$``
     prefixes and thousands separators the parser has to strip."""

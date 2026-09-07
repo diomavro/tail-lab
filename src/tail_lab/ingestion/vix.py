@@ -45,7 +45,7 @@ import requests
 from pandera.errors import SchemaErrors
 
 from tail_lab.contracts.vix import VixSchema
-from tail_lab.ingestion.sources import Source, first_available
+from tail_lab.ingestion.sources import Source, find_header_line, first_available
 from tail_lab.lake.store import LakeStore
 from tail_lab.observability import log_event
 
@@ -122,7 +122,7 @@ def parse_cboe_vix_csv(raw: str) -> pd.DataFrame:
     else malformed survives as NaT/NaN for :func:`validate_and_quarantine`
     to catch, so bad data is never silently discarded.
     """
-    header_offset = _find_header_line(raw)
+    header_offset = find_header_line(raw)
     frame = pd.read_csv(io.StringIO(raw), skiprows=header_offset)
     if frame.empty:
         return _empty_frame()
@@ -154,14 +154,6 @@ def _empty_frame() -> pd.DataFrame:
             "close": pd.Series([], dtype="float64"),
         }
     )
-
-
-def _find_header_line(raw: str) -> int:
-    """Index of the ``DATE,...`` header line, so a preamble doesn't shift columns."""
-    for offset, line in enumerate(raw.splitlines()):
-        if line.strip().upper().startswith("DATE,"):
-            return offset
-    return 0
 
 
 def parse_yahoo_chart(raw: dict[str, Any]) -> pd.DataFrame:

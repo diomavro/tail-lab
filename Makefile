@@ -11,7 +11,7 @@ VENV := .venv
 PY := env -u PYTHONPATH $(VENV)/bin/python
 PIP := env -u PYTHONPATH $(VENV)/bin/pip
 
-.PHONY: setup lint format typecheck import-lint test check cov-floors ingest-vix ingest-ohlcv ingest-cboe-strategy ingest-rates ingest-credit ingest-fomc ingest-earnings ingest-option-quotes residual skew api frontend clean ingest-mpd ingest-options-expiry ingest-sp500-constituents ingest-vix-futures
+.PHONY: setup lint format typecheck import-lint test check cov-floors ingest-vix ingest-vix-complex ingest-ohlcv ingest-cboe-strategy ingest-rates ingest-credit ingest-fomc ingest-earnings ingest-option-quotes residual skew api frontend clean ingest-mpd ingest-options-expiry ingest-sp500-constituents ingest-vix-futures
 
 help:
 	@echo "Targets:"
@@ -23,6 +23,7 @@ help:
 	@echo "  test         pytest with coverage"
 	@echo "  check        lint + typecheck + import-lint + test (all CI gates)"
 	@echo "  ingest-vix   Live VIX fetch (Cboe, Yahoo fallback) -> bronze (network; not run in CI)"
+	@echo "  ingest-vix-complex  Live VIX3M/VIX9D/VVIX/SKEW fetch (Cboe) -> bronze (VIX_SERIES=... ; network; not run in CI)"
 	@echo "  ingest-ohlcv Live OHLCV fetch (Nasdaq, Yahoo fallback) -> bronze for SYMBOL (default AAPL; network; not run in CI)"
 	@echo "  ingest-options-expiry Live listed-expiry fetch (Cboe, Yahoo fallback) -> bronze for SYMBOL (default AAPL; network; not run in CI)"
 	@echo "  ingest-cboe-strategy  Live Cboe strategy-index fetch -> bronze (TICKERS=... ; network; not run in CI)"
@@ -76,6 +77,13 @@ check: lint typecheck import-lint test cov-floors
 
 ingest-vix:
 	env -u PYTHONPATH $(VENV)/bin/python -c "from tail_lab.ingestion.vix import ingest_vix; from tail_lab.config import get_lake_store; from tail_lab.observability import configure_logging; configure_logging(); r = ingest_vix(get_lake_store()); print(f'committed {r.valid_rows} rows from {r.source_id} -> {r.bronze_path} ({r.quarantined_rows} quarantined)')"
+
+# VIX_SERIES is an optional comma-separated override; empty means the
+# adapter's full SERIES_NAMES (VIX3M, VIX9D, VVIX, SKEW). Spot VIX itself is
+# ingest-vix above, not this target -- see contracts/vix_complex.py.
+VIX_SERIES ?=
+ingest-vix-complex:
+	env -u PYTHONPATH $(VENV)/bin/python -c "from tail_lab.ingestion.vix_complex import ingest_vix_complex; from tail_lab.config import get_lake_store; from tail_lab.observability import configure_logging; configure_logging(); s = '$(VIX_SERIES)'.split(',') if '$(VIX_SERIES)' else None; r = ingest_vix_complex(get_lake_store(), s); print(f'committed {r.valid_rows} rows for {len(r.series)} series -> {r.bronze_path} ({r.quarantined_rows} quarantined)')"
 
 # Reads a LOCAL, hash-verified vendor download (docs/DATA_VERDICTS.md), not the
 # network, and extracts ~42k rows of real put smile from its 632 MB. Optional

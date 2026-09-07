@@ -34,6 +34,7 @@ import requests
 from pandera.errors import SchemaErrors
 
 from tail_lab.contracts.mpd import DATASET, MpdSchema
+from tail_lab.ingestion.sources import find_header_line
 from tail_lab.lake.store import LakeStore
 from tail_lab.observability import log_event
 
@@ -111,7 +112,7 @@ def parse_mpd_csv(raw: str) -> pd.DataFrame:
     (``prob_large_decline``/``prob_large_increase``), which is what
     `AGENT_TODO.md` scoped this adapter to carry.
     """
-    header_offset = _find_header_line(raw)
+    header_offset = find_header_line(raw, header_prefix='"market"')
     frame = pd.read_csv(io.StringIO(raw), skiprows=header_offset)
     if frame.empty:
         return _empty_frame()
@@ -157,15 +158,6 @@ def _empty_frame() -> pd.DataFrame:
             "prob_large_increase": pd.Series([], dtype="float64"),
         }
     )
-
-
-def _find_header_line(raw: str) -> int:
-    """Index of the ``"market","idt",...`` header line, so the two preamble
-    lines don't shift columns."""
-    for offset, line in enumerate(raw.splitlines()):
-        if line.strip().lower().startswith('"market"'):
-            return offset
-    return 0
 
 
 def validate_and_quarantine(df: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame]:

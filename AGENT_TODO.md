@@ -612,6 +612,10 @@ item 2 is time-sensitive in a way nothing else in this file is.
       as with the Nasdaq earnings endpoint. Needs a new dataset entry in
       `docs/DATA_CONTRACTS.md` before the adapter lands.
 - [ ] **Skew-aware `OptionPricer` calibrated to VIX + SKEW.** `SKEW` is
+      now ingestable (`ingestion/vix_complex.py`, done 2026-09-07, see
+      the vol-complex item above) — this item was previously blocked purely
+      on having a source for it and no longer is, though a live run and a
+      `research/` consumer are still open. `SKEW` is
       free and daily from **1990** and is Cboe's implied third moment from
       real OTM SPX put prices; a Gram-Charlier/Corrado-Su expansion on
       VIX (2nd moment) + SKEW (3rd) prices OTM puts with the market's
@@ -631,7 +635,7 @@ item 2 is time-sensitive in a way nothing else in this file is.
       residual (**+1.6%/yr**) **and** the crisis flip (**-1.5%/yr**)
       *together*. If it fixes only one, skew is not the mechanism and the
       write-up must say so rather than shipping the half that worked.
-- [~] **Migrate the vol complex off Yahoo onto the Cboe CDN, and finish it.**
+- [x] **Migrate the vol complex off Yahoo onto the Cboe CDN, and finish it.**
       **Source migration done 2026-08-21** — `ingestion/vix.py` now resolves
       an ordered chain (Cboe primary, Yahoo fallback) via the new
       `ingestion/sources.py`, and the first live run committed **9,255 rows
@@ -639,12 +643,32 @@ item 2 is time-sensitive in a way nothing else in this file is.
       6-month default had been giving. `ingestion/ohlcv.py` (Nasdaq primary)
       and `ingestion/options_expiry.py` (Cboe chain primary) moved in the
       same change, so **no adapter has Yahoo as its primary any more**.
-      **Still open, and the reason this is `[~]` not `[x]`:** only `VIX` is
-      ingested, and only its `CLOSE`. `VIX3M`/`VIX9D`/`VVIX`/**`SKEW`** are
-      confirmed live on the same host and still unwired — and `SKEW` is the
-      hard blocker on the skew-aware pricer below. Widening the committed
-      shape to OHLC touches `transforms/vix.py`, `research/vix_stretch.py`
-      and the dashboard tile, so treat that as the real work here.
+      **The remaining four series shipped 2026-09-07**:
+      `ingestion/vix_complex.py` + `contracts/vix_complex.py` fetch VIX3M,
+      VIX9D, VVIX and SKEW from the same CDN host into a new, independent
+      `vix_complex` bronze dataset (`make ingest-vix-complex`) — deliberately
+      NOT merged into the existing `vix` dataset, so every current consumer
+      of spot VIX (`transforms/vix.py`, `research/vix_stretch.py`, the
+      regime timeline, the dashboard tile) is untouched. Confirmed live
+      2026-09-07 that VIX3M/VIX9D serve full OHLC like spot VIX but
+      VVIX/SKEW serve a bare `DATE,<TICKER>` (no OHLC at all) — the parser
+      handles both shapes, `open`/`high`/`low` land null where the source
+      never had them, and the schema validates `close` against a *per-series*
+      bound (VIX3M/VIX9D 0–200, VVIX 0–300, SKEW 50–250) since one shared
+      range can't honour a SKEW print (~100–170) and a VIX3M print an order
+      of magnitude smaller. **SKEW — the hard blocker on the skew-aware
+      pricer below — is now ingestable.** Also factored `find_header_line`
+      (the "locate the header row past a CDN file's preamble" helper) out of
+      `vix.py`/`cboe_strategy.py`/`mpd.py`'s three identical copies into
+      `ingestion/sources.py`, since this adapter would otherwise have been a
+      fourth. **Still open, and why the vol-complex item stays split from
+      this one:** merging `vix_complex` into `vix` and widening spot VIX
+      itself to full OHLC still touches `transforms/vix.py`,
+      `research/vix_stretch.py` and the dashboard tile — unchanged scope
+      note, now tracked as its own item directly below. **Not yet run
+      against prod** (no live-run credential in this workflow) and **no
+      `research/` consumer wired yet** — same ship-the-adapter-first
+      precedent every other dataset here has followed.
       *Original description follows.*
 - [ ] ~~**Migrate the vol complex off Yahoo onto the Cboe CDN.**~~
       Highest-value item in this section: `docs/DATA_CONTRACTS.md` #2
@@ -665,6 +689,16 @@ item 2 is time-sensitive in a way nothing else in this file is.
       path removed or explicitly demoted to fallback in both the code and
       contract #2's source section, in the same PR. This also unblocks the
       skew-aware pricer above, which cannot run without `SKEW` in the lake.
+- [ ] **Merge `vix_complex` into `vix` and widen spot VIX to full OHLC**,
+      once a `research/` consumer actually needs the two read together
+      (e.g. the skew-aware pricer, or a term-structure view alongside
+      `transforms/vix_futures.py`'s constant-maturity curve). Today spot
+      VIX (`vix`, close-only) and the rest of the complex (`vix_complex`,
+      OHLC-where-available) are two independent bronze datasets on purpose
+      (`AGENT_TODO.md`'s "Migrate the vol complex..." item above) — unifying
+      them means widening `vix`'s committed shape, which touches
+      `transforms/vix.py`, `research/vix_stretch.py` and the dashboard tile,
+      so it stays deferred until a consumer earns the migration risk.
 - [x] **PPUT replication harness — done 2026-08-22.**
       `research/backtest/index_replication.py`, `make residual`, results in
       `docs/MODEL_RESIDUAL.md`. Residual vs `PPUT` is **+1.34%/yr** over 438
@@ -839,6 +873,31 @@ item 2 is time-sensitive in a way nothing else in this file is.
       **Until this is decided, do not re-ingest prod OHLCV.** The existing
       Yahoo partitions are internally consistent and still readable; nothing
       is broken today.
+
+## Design-review advisories not yet acted on (found 2026-09-07)
+
+Two non-blocking findings from PR #86's round-2 review (the Nasdaq
+earnings-calendar adapter) that were never logged anywhere — exactly the
+gap `docs/adr/0023`'s step 2b exists to close. Neither was small enough to
+fold into today's unrelated PR, so they're queued here instead of being
+lost a second time.
+
+- [ ] **`_refuse_if_already_written_today` (`ingestion/earnings.py`)
+      string-parses `LakeStore.bronze_snapshot_id`'s output** to recover a
+      partition's resolved date, even though that method's docstring
+      (`lake/store.py:94-99`) describes it as an opaque citation string, not
+      a documented, parseable format — it happens to work only because
+      `DeltaLakeStore` builds it as `f"{dataset}@{date.isoformat()}#{digest}"`.
+      Add a real accessor to the `LakeStore` protocol (e.g.
+      `has_bronze_partition(dataset, date)` or `bronze_partition_date(...)`)
+      the next time a same-day-collision guard is needed on a shared
+      dataset (the BLS CPI adapter, still blocked on Akamai, will need
+      exactly this) — fix it there rather than adding a third string-parse.
+- [ ] **`lookahead_days` (`ingestion/earnings.py`) is never exercised with a
+      non-default value** — not by `make ingest-earnings`, not by any test.
+      Either add a test that calls `ingest_earnings_calendar` with a
+      non-default value, or trim the parameter if nothing is meant to use it
+      yet.
 
 ## Operational (2026-09-01)
 
