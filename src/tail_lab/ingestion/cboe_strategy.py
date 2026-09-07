@@ -51,6 +51,7 @@ from tail_lab.contracts.cboe_strategy import (
     DEFAULT_TICKERS,
     CboeStrategySchema,
 )
+from tail_lab.ingestion.sources import find_header_line
 from tail_lab.lake.store import LakeStore
 from tail_lab.observability import log_event
 
@@ -119,7 +120,7 @@ def parse_index_history_csv(ticker: str, raw: str) -> pd.DataFrame:
     NaT/NaN and is caught by :func:`validate_and_quarantine`, so bad data is
     never silently discarded.
     """
-    header_offset = _find_header_line(raw)
+    header_offset = find_header_line(raw)
     frame = pd.read_csv(io.StringIO(raw), skiprows=header_offset)
     if frame.empty:
         return _empty_frame()
@@ -160,14 +161,6 @@ def _empty_frame() -> pd.DataFrame:
             "close": pd.Series([], dtype="float64"),
         }
     )
-
-
-def _find_header_line(raw: str) -> int:
-    """Index of the ``DATE,...`` header line, so a preamble doesn't shift columns."""
-    for offset, line in enumerate(raw.splitlines()):
-        if line.strip().upper().startswith("DATE,"):
-            return offset
-    return 0
 
 
 def validate_and_quarantine(df: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame]:

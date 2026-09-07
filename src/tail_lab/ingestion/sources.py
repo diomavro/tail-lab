@@ -40,7 +40,24 @@ import pandas as pd
 
 from tail_lab.observability import log_event
 
-__all__ = ["AllSourcesFailed", "Source", "first_available"]
+__all__ = ["AllSourcesFailed", "Source", "find_header_line", "first_available"]
+
+
+def find_header_line(raw: str, *, header_prefix: str = "DATE,") -> int:
+    """Index of the line starting with ``header_prefix``, so a preamble above
+    it doesn't shift a CSV parse's columns.
+
+    Format-agnostic (no dataset schema involved), unlike the rest of this
+    module -- it lives here because three Cboe-CDN adapters
+    (``vix.py``, ``cboe_strategy.py``, ``mpd.py``) each carried an identical
+    copy before this one was extracted; the fourth (``vix_complex.py``) is
+    what made the duplication worth removing rather than repeating again.
+    """
+    prefix = header_prefix.upper()
+    for offset, line in enumerate(raw.splitlines()):
+        if line.strip().upper().startswith(prefix):
+            return offset
+    return 0
 
 
 @dataclass(frozen=True)

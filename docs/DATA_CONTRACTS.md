@@ -109,26 +109,38 @@ resolves through `ingestion/sources.py`:
    had been supplying.
 2. **Yahoo chart JSON** — fallback, for the 429 reason in dataset #1.
 
-The equivalent CSVs for VIX3M, VIX9D, VVIX and SKEW live on the same host
-and are confirmed live, but **only `VIX` is ingested today**, and only its
-`CLOSE`: widening the committed shape to OHLC across the whole complex
-would touch `transforms/vix.py`, `research/vix_stretch.py` and the
-dashboard tile, so it is queued separately (`AGENT_TODO.md`). Realized vol
-is **not fetched**; it's computed in `transforms/` from dataset #1.
+**The rest of the family, ingested 2026-09-07.** `ingestion/vix_complex.py`
+fetches VIX3M, VIX9D, VVIX and SKEW from the same CDN host into a second,
+independent bronze dataset (`vix_complex`) — deliberately not merged into
+`vix` above, since doing that (and widening spot VIX itself to OHLC) still
+touches `transforms/vix.py`, `research/vix_stretch.py` and the dashboard
+tile, and stays its own queued increment (`AGENT_TODO.md`). Confirmed live
+2026-09-07: VIX3M/VIX9D serve full `DATE,OPEN,HIGH,LOW,CLOSE` like spot VIX,
+but VVIX/SKEW serve a bare `DATE,<TICKER>` (no OHLC on the wire at all) —
+the parser tolerates both shapes, and `open`/`high`/`low` are null wherever
+the source never claimed them. SKEW is the hard blocker on the skew-aware
+pricer (`AGENT_TODO.md`); it is now ingestable, but no `research/` consumer
+reads it yet and it has not been run against prod (no live-run credential in
+the daily agent's workflow). Realized vol is **not fetched** by either
+dataset; it's computed in `transforms/` from dataset #1.
 
 **Cadence.** Daily, after CBOE publishes (~EOD).
 
-**Schema — `VolComplexRow`:**
+**Schema — `vix` (spot VIX only, `contracts/vix.py`):** `date` (non-null,
+unique), `close` (float, `0 <= close <= 200`).
+
+**Schema — `vix_complex` (`contracts/vix_complex.py`), long-format, keyed by
+`(series, trade_date)`:**
 
 | Column | Type | Constraints |
 |---|---|---|
-| `series` | `str` | one of `"VIX"`, `"VIX3M"`, `"VIX9D"`, `"VVIX"`, `"SKEW"` |
-| `trade_date` | `date` | non-null, ≤ ingestion date |
-| `open`, `high`, `low`, `close` | `float` | > 0 (SKEW is typically 100–170, VIX-family >0; check per-series bounds, not one shared range) |
-| `source_id` | `str` | `"cboe"` |
-| `ingested_at` | `datetime` (UTC) | non-null |
+| `series` | `str` | one of `"VIX3M"`, `"VIX9D"`, `"VVIX"`, `"SKEW"` — spot `"VIX"` is deliberately excluded, see above |
+| `trade_date` | `date` | non-null |
+| `open`, `high`, `low` | `float` | nullable — absent for VVIX/SKEW's bare-column source files |
+| `close` | `float` | non-null, per-series bound (VIX3M/VIX9D 0–200, VVIX 0–300, SKEW 50–250) — one shared range could not honour both a normal SKEW print (~100–170) and a VIX3M print an order of magnitude smaller |
 
-**Bronze partition key.** `source_id=cboe/series=<series>/trade_date=<YYYY-MM-DD>/`.
+**Bronze partition key.** `vix`: `source_id=cboe/trade_date=<YYYY-MM-DD>/`.
+`vix_complex`: `series=<series>/trade_date=<YYYY-MM-DD>/`.
 
 **Point-in-time rule.** Same shape as dataset #1 — as-of on `ingested_at`.
 CBOE's official closing values are not typically revised, so this is

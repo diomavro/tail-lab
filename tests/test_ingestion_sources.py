@@ -5,7 +5,7 @@ import logging
 import pandas as pd
 import pytest
 
-from tail_lab.ingestion.sources import AllSourcesFailed, Source, first_available
+from tail_lab.ingestion.sources import AllSourcesFailed, Source, find_header_line, first_available
 
 _LOGGER = logging.getLogger("tail_lab.ingestion.sources_test")
 
@@ -120,3 +120,32 @@ def test_healthy_primary_is_not_logged_as_a_fallback(
     with caplog.at_level(logging.INFO, logger="tail_lab.ingestion.sources_test"):
         first_available([Source("primary", lambda: _rows())], dataset="d", logger=_LOGGER)
     assert "fallback=true" not in "\n".join(caplog.messages)
+
+
+# --- find_header_line: shared by every Cboe-CDN adapter (vix, cboe_strategy,
+# mpd, vix_complex) so a preamble above the header doesn't shift a parse's
+# columns ------------------------------------------------------------------
+
+
+def test_find_header_line_with_no_preamble() -> None:
+    assert find_header_line("DATE,CLOSE\n01/02/2026,15.0\n") == 0
+
+
+def test_find_header_line_skips_a_preamble() -> None:
+    raw = "some vendor banner\nanother line\nDATE,CLOSE\n01/02/2026,15.0\n"
+    assert find_header_line(raw) == 2
+
+
+def test_find_header_line_is_case_insensitive() -> None:
+    assert find_header_line("date,close\n01/02/2026,15.0\n") == 0
+
+
+def test_find_header_line_with_a_custom_prefix() -> None:
+    """mpd.py's file opens with two free-text lines above a ``"market",...``
+    header -- a different prefix than the ``DATE,`` every other adapter uses."""
+    raw = 'preamble line one\npreamble line two\n"market","idt"\nsp12m,2026-01-02\n'
+    assert find_header_line(raw, header_prefix='"market"') == 2
+
+
+def test_find_header_line_defaults_to_zero_when_absent() -> None:
+    assert find_header_line("no header here\njust data\n") == 0
