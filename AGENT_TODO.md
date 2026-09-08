@@ -313,18 +313,16 @@ a large one strictly in order.
       precedent every other event-calendar producer here has followed; the
       BLS CPI adapter should carry the same same-day-collision guard once
       it ships (still blocked on Akamai, see above).
-- [ ] **`transforms/vix_futures.py`'s empty-output branch has an
+- [x] **`transforms/vix_futures.py`'s empty-output branch has an
       untyped/object-dtype frame** — design-review advisory on PR #84
-      (2026-09-05), not yet fixed: `silver_to_gold`'s
-      `if not rows: return pd.DataFrame(columns=[...])` path (line ~65)
-      builds a frame without matching the non-empty path's dtypes. Harmless
-      today (nothing consumes this module yet), but exactly the kind of
-      thing that passes in tests and breaks on the first all-extrapolated
-      `trade_date` once a `research/` consumer reads it. Fix by building the
-      empty frame with the same explicit dtypes the non-empty path produces
-      (mirroring `ingestion/fomc.py`'s/`ingestion/earnings.py`'s
-      `_empty_frame()` pattern), before or alongside wiring this module into
-      a consumer.
+      (2026-09-05). **Done 2026-09-08**: `silver_to_gold`'s empty path now
+      calls a new `_empty_gold_frame()` helper that builds the zero-row frame
+      with the same explicit dtypes (`datetime64[ns]`/`float64`/`float64`/
+      `int64`) the non-empty path produces, mirroring `ingestion/fomc.py`'s/
+      `ingestion/earnings.py`'s `_empty_frame()` pattern. Pinned by a new
+      `test_silver_to_gold_empty_and_non_empty_paths_share_dtypes` (asserts
+      the two paths' `.dtypes` are identical, not just the column names) plus
+      a dtype assertion added to the existing drop-unbracketable-dates test.
 - [ ] **Switch OHLCV primary to Tiingo** — the key now exists and is
       verified (`HUMAN_TODO.md`, 2026-09-03). New adapter (500 unique
       symbols/month budget — plan symbol rotation), demote Yahoo to
@@ -898,6 +896,16 @@ lost a second time.
       Either add a test that calls `ingest_earnings_calendar` with a
       non-default value, or trim the parameter if nothing is meant to use it
       yet.
+- [ ] **`ingest_vix_complex`'s `raw` mapping is looked up with the already-
+      uppercased `resolved` series name** — advisory from PR #87's review
+      (2026-09-07): `raw[one_series]` (`ingestion/vix_complex.py`, in the
+      `parsed = [...]` comprehension) is keyed by `resolved`'s uppercased
+      names, so a caller passing lowercase keys in `raw` silently misses the
+      injected payload and falls through to a live network call instead of
+      erroring. Only matters if `raw` injection is ever used outside tests
+      (e.g. a future backfill script) — fix with a
+      `{k.upper(): v for k, v in raw.items()}` normalization at the top of
+      `ingest_vix_complex` if/when that happens.
 
 ## Operational (2026-09-01)
 

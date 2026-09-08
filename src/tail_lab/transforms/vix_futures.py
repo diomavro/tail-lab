@@ -62,10 +62,28 @@ def silver_to_gold(df: pd.DataFrame, *, target_days: int = TARGET_MATURITY_DAYS)
         if (row := _interpolate(group, target_days=target_days)) is not None
     ]
     if not rows:
-        return pd.DataFrame(
-            columns=["trade_date", "cm_settle", "front_settle", "front_days_to_expiry"]
-        )
+        return _empty_gold_frame(df["trade_date"])
     return pd.DataFrame(rows).reset_index(drop=True)
+
+
+def _empty_gold_frame(trade_date: pd.Series) -> pd.DataFrame:
+    """A correctly-typed zero-row frame, matching the non-empty path's dtypes
+    (`AGENT_TODO.md`'s PR #84 design-review advisory) -- an object-dtype empty
+    frame passes every test today but breaks the first all-extrapolated
+    ``trade_date`` a downstream consumer hits, since pandas ops that assume a
+    numeric/datetime dtype fail silently or loudly differently on ``object``.
+
+    ``trade_date``'s dtype is sliced from the input frame rather than
+    hardcoded, since pandas' own datetime64 resolution (``ns`` vs. ``us``) is
+    a pandas version detail, not something this module should pin."""
+    return pd.DataFrame(
+        {
+            "trade_date": trade_date.iloc[0:0].reset_index(drop=True),
+            "cm_settle": pd.Series([], dtype="float64"),
+            "front_settle": pd.Series([], dtype="float64"),
+            "front_days_to_expiry": pd.Series([], dtype="int64"),
+        }
+    )
 
 
 def _interpolate(group: pd.DataFrame, *, target_days: int) -> dict[str, object] | None:

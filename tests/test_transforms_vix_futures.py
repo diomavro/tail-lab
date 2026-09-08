@@ -121,6 +121,29 @@ def test_silver_to_gold_drops_dates_that_cannot_be_bracketed() -> None:
         "front_settle",
         "front_days_to_expiry",
     ]
+    assert gold.dtypes.to_dict() == {
+        "trade_date": df["trade_date"].dtype,
+        "cm_settle": pd.Series([], dtype="float64").dtype,
+        "front_settle": pd.Series([], dtype="float64").dtype,
+        "front_days_to_expiry": pd.Series([], dtype="int64").dtype,
+    }
+
+
+def test_silver_to_gold_empty_and_non_empty_paths_share_dtypes() -> None:
+    """The empty-output branch must not diverge in dtype from the non-empty
+    path -- an object-dtype empty frame passes today's tests but breaks a
+    downstream consumer that concatenates across trade_dates spanning both
+    (`AGENT_TODO.md`'s PR #84 design-review advisory)."""
+    non_empty = silver_to_gold(
+        _curve([("2026-01-02", "2026-01-22", 18.0), ("2026-01-02", "2026-02-21", 22.0)]),
+        target_days=30,
+    )
+    empty = silver_to_gold(
+        _curve([("2026-01-02", "2026-01-07", 14.0), ("2026-01-02", "2026-01-17", 16.0)]),
+        target_days=30,
+    )
+    assert empty.empty and not non_empty.empty
+    assert dict(empty.dtypes) == dict(non_empty.dtypes)
 
 
 def test_silver_to_gold_handles_multiple_trade_dates_independently() -> None:
