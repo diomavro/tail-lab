@@ -1,0 +1,85 @@
+name: Check AGENT_FIX_TOKEN
+
+# Diagnoses the stored AGENT_FIX_TOKEN and says exactly what is wrong with it.
+#
+# Why this exists as a workflow rather than a local script: only CI can see the
+# secret's actual value. A local check tests whatever is pasted at a prompt,
+# which is not necessarily what is stored — and that gap is precisely what went
+# unnoticed while the review loop's fix step was rewritten twice.
+#
+# Prints only HTTP codes, booleans and length buckets. Never the token. (Actions
+# masks registered secrets in logs anyway, but nothing here relies on that.)
+#
+# Manual only. Delete once the loop has been observed pushing.
+
+on:
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: What is actually stored
+        env:
+          T: ${{ secrets.AGENT_FIX_TOKEN }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -uo pipefail
+          if [ -z "${T:-}" ]; then
+            echo "::error::AGENT_FIX_TOKEN is EMPTY or unset in Actions secrets."
+            exit 1
+          fi
+
+          n=${#T}
+          case "$T" in
+            github_pat_*) kind="fine-grained PAT"; want="~93" ;;
+            ghp_*)        kind="classic PAT";      want="40"  ;;
+            ghs_*)        kind="app token";        want="40"  ;;
+            *)            kind="UNRECOGNISED PREFIX (not a GitHub token)"; want="—" ;;
+          esac
+          echo "type        : $kind"
+          echo "length      : $n (expected $want)"
+          case "$T" in
+            *' '*|*$'\n'*|*$'\r'*) echo "::warning::value contains whitespace — likely a paste artefact" ;;
+          esac
+          # A repeated paste is the failure mode that corrupted the Tiingo key.
+          if [ "$kind" = "fine-grained PAT" ] && [ "$n" -gt 120 ]; then
+            echo "::error::far too long — this looks like the token pasted more than once."
+          fi
+
+          code=$(curl -s -o /tmp/u -w '%{http_code}' -H "Authorization: Bearer $T" \
+                   https://api.github.com/user)
+          echo "as a user   : HTTP $code  (200=valid; 401=expired/revoked/mistyped)"
+
+          code=$(curl -s -o /tmp/r -w '%{http_code}' -H "Authorization: Bearer $T" \
+                   "https://api.github.com/repos/$REPO")
+          echo "sees repo   : HTTP $code  (200=yes; 404=token cannot see this repo)"
+          if [ "$code" = "200" ]; then
+            perm=$(python3 -c "import json;d=json.load(open('/tmp/r'));print((d.get('permissions') or {}).get('push'))")
+            echo "push perm   : $perm   (needs True — Contents: Read and write)"
+          fi
+
+          # The decisive test: the exact operation the fixer performs.
+          echo "write test  : pushing a throwaway ref…"
+          REF=refs/heads/tmp-token-check-${{ github.run_id }}
+          if git push "https://x-access-token:${T}@github.com/${REPO}.git" \
+               "HEAD:${REF}" 2>/tmp/perr; then
+            echo "write test  : OK — THE TOKEN CAN PUSH. The loop should work."
+            git push "https://x-access-token:${T}@github.com/${REPO}.git" \
+              --delete "${REF}" >/dev/null 2>&1 && echo "cleanup     : ref deleted"
+          else
+            echo "::error::write test FAILED — this is what breaks the fixer."
+            grep -viE 'x-access-token|github_pat|ghp_' /tmp/perr | sed 's/^/            /' | head -5
+            echo "Fix: regenerate the PAT with Repository access = $REPO"
+            echo "     and Permissions -> Contents: Read and write."
+            echo "     Editing an existing PAT's permissions does NOT change the"
+            echo "     token you already hold — it must be regenerated."
+            exit 1
+          fi
