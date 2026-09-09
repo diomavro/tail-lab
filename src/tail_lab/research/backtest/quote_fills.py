@@ -139,6 +139,14 @@ class Fill:
     realized_moneyness_pct: float
     #: Calendar days from ``entry_date`` to the realized ``expiry``.
     realized_dte: int
+    #: panel_spot / caller_spot at entry, from guard 2. Carried because `mark`
+    #: needs it: `strike` above is in the CALLER's basis while the panel is
+    #: keyed in its own. For NVDA those differ by exactly 10 (the 2024 split),
+    #: so looking the contract up without converting back missed on 100% of
+    #: calls — not the rare mid-roll event `mark`'s docstring assumed, but a
+    #: permanent whole-panel offset that turned the whole mark-to-market tape
+    #: into a flat line at the entry ask.
+    basis: float = 1.0
 
 
 class QuoteSource(Protocol):
@@ -159,6 +167,7 @@ class QuoteSource(Protocol):
         entry_date: dt.date,
         strike: float,
         expiry: dt.date,
+        basis: float = 1.0,
     ) -> float | None:
         """The BID to close an already-open ``(strike, expiry)`` contract on
         the session dated ``entry_date`` (the day being marked -- not
@@ -269,6 +278,7 @@ class OptionsDxQuoteSource:
             expiry=expiry.date(),
             realized_moneyness_pct=realized_moneyness_pct,
             realized_dte=(expiry.date() - entry_date).days,
+            basis=basis,
         )
 
     def mark(
@@ -277,21 +287,26 @@ class OptionsDxQuoteSource:
         entry_date: dt.date,
         strike: float,
         expiry: dt.date,
+        basis: float = 1.0,
     ) -> float | None:
         """The BID of the already-filled contract (``strike``, ``expiry``) on
         the session dated ``entry_date`` — the sell-to-close price on one day
         of an OPEN position, not a new order.
 
-        Unlike ``fill``, this does not re-derive the split basis (guard 2):
-        it has no caller spot to compute one from, ``strike``/``expiry`` name
-        the SAME contract ``fill`` already basis-checked once at entry, and a
-        split occurring mid-roll is rare enough over a several-week hold that
-        re-deriving it here would trade real complexity for a guard against
-        an edge case the caller already handles safely -- a basis jump big
-        enough to matter moves ``strike`` far enough from anything listed
-        that the tight match just below misses, and this returns ``None``,
-        which ``_mark_to_market_curve`` already treats as "carry the last
-        mark forward" rather than trusting a wrong number.
+        ``basis`` is the ratio ``fill`` measured at entry, and it is REQUIRED
+        rather than re-derived: ``strike`` arrives in the caller's basis and
+        the panel is keyed in its own, so the lookup must convert back and the
+        returned bid must convert forward.
+
+        An earlier version omitted it, reasoning that a basis change mid-roll
+        is rare and that a miss fails safe by returning ``None``. Both halves
+        were wrong for a split-adjusted name. The offset is not an event during
+        the roll, it is a permanent property of the pair of sources — NVDA's is
+        exactly 10 — so the tight match below missed on EVERY call, and
+        "carry the last known real mark forward" degraded to "no real mark was
+        ever seen, so use the entry ask forever": a daily tape showing a hedge
+        with zero carry volatility for weeks and a step at expiry. Plausible,
+        smooth, and entirely an artefact.
 
         The strike match is intentionally TIGHT (``rel_tol=1e-3``), not
         ``fill``'s snap tolerance: this call must land on the exact contract
@@ -305,9 +320,10 @@ class OptionsDxQuoteSource:
         if session.empty:
             return None
 
-        row = _select_strike(session, strike)
-        if row is None or not math.isclose(float(row["strike"]), strike, rel_tol=1e-3):
+        panel_strike = strike * basis
+        row = _select_strike(session, panel_strike)
+        if row is None or not math.isclose(float(row["strike"]), panel_strike, rel_tol=1e-3):
             return None
 
-        bid = float(row["bid"])
+        bid = float(row["bid"]) / basis
         return bid if bid > 0.0 else None

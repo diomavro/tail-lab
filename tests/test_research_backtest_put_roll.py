@@ -107,8 +107,14 @@ def test_run_put_roll_pins_arithmetic_against_the_pricer() -> None:
     assert res.roi_on_premium == pytest.approx(
         (total_payoff - 2 * notional - total_cost) / (2 * notional)
     )
+    # Paced by the span actually on risk, not the window requested. Pinning
+    # `lookback_years` here re-asserts the flatterer fixed on 2026-09-09: on a
+    # real SPY run trading the same 20 cycles, `years=20` reported -2.52%/yr
+    # where the honest figure over the 4.79 years traded was -10.13%/yr.
+    assert res.traded_start is not None and res.traded_end is not None
+    traded_years = (res.traded_end - res.traded_start).days / 365.25
     assert res.annualized_return == pytest.approx(
-        annualized_return(res.roi_on_premium, res.lookback_years)
+        annualized_return(res.roi_on_premium, traded_years)
     )
     # cycle 1 pays off (dip to 70 << strike 95), cycle 2 expires worthless (98 > 66.5).
     assert res.hit_rate == pytest.approx(0.5)
@@ -268,10 +274,16 @@ def test_run_put_roll_threads_annualized_so_far_and_sharpe() -> None:
     elapsed_years = (last.date - first_entry).days / 365.25
     assert last.annualized == pytest.approx(annualized_return(res.roi_on_premium, elapsed_years))
 
-    # Sharpe matches the pure helper over the per-roll returns.
+    # Sharpe matches the pure helper over the per-roll returns — paced by the
+    # TRADED span, the same clock `annualized_return` uses nine lines above.
+    # These were on different clocks until 2026-09-09: `rolls_per_year` divided
+    # by the requested window while `annualized_so_far` used the elapsed one,
+    # an inconsistency visible inside this single test. On a real SPY market
+    # run that understated |Sharpe| by 1.7x — flattering, for a losing
+    # strategy.
     expected_sharpe = annualized_sharpe(
         [c.net / notional for c in res.cycles],
-        rolls_per_year=res.n_cycles / years,
+        rolls_per_year=res.n_cycles / elapsed_years,
         rate=res.rate,
     )
     assert res.sharpe_ratio == pytest.approx(expected_sharpe)

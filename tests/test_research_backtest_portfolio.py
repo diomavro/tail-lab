@@ -71,12 +71,23 @@ def test_portfolio_premium_matches_notional_and_nets_sum(tmp_path: Path) -> None
     assert res.roi_on_premium == pytest.approx(res.net_pnl / res.total_premium)
     # Combined annualized figure: geometric annualization of the combined ROI,
     # not a blend of the legs' own annualized figures.
+    # Paced by the span the basket was ON RISK for, not by the window asked
+    # for. Pinning `lookback_years` here would re-assert the bug fixed on
+    # 2026-09-09: bronze OHLCV is a rolling ~5-year window while the API allows
+    # `years` up to 20, so the requested window is routinely longer than the
+    # data, and dividing by it understated a real SPY bleed fourfold.
+    assert res.traded_start is not None and res.traded_end is not None
+    traded_years = (res.traded_end - res.traded_start).days / 365.25
+    assert traded_years < res.lookback_years  # the fixture cannot fill the window
     assert res.annualized_return == pytest.approx(
-        annualized_return(res.roi_on_premium, res.lookback_years)
+        annualized_return(res.roi_on_premium, traded_years)
     )
+    # The legs take their figure straight from the engine, so they must be on
+    # the same clock as the basket -- that agreement is the property that broke
+    # when only one of the two moved.
     for leg in res.legs:
         assert leg.annualized_return == pytest.approx(
-            annualized_return(leg.roi_on_premium, res.lookback_years)
+            annualized_return(leg.roi_on_premium, traded_years)
         )
     assert res.verdict in {"confirmed", "regime_only", "failed", "untested"}
     assert res.equity_curve

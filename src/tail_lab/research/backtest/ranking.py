@@ -59,12 +59,18 @@ BENCHMARK = "spy"
 
 #: How much of the asked-for window a name must actually cover to be ranked.
 #:
-#: ``annualized_return`` divides a total ROI by the *requested* lookback, not by
-#: the window really traded (see put_roll.annualized_return). So a name listed
-#: two years ago gets its two-year loss annualized as if over four, which
-#: shrinks it toward zero and floats it up a ranking sorted on that number. A
-#: recently-listed name would arrive looking like the best hedge on the board
-#: purely because it has not been around long enough to bleed.
+#: ``run_put_roll`` now paces ``annualized_return`` by the span actually traded
+#: (fixed 2026-09-09), so the specific distortion this was written for — a name
+#: listed two years ago getting its two-year loss annualized as if over four,
+#: shrinking it toward zero and floating it up a ranking sorted on that number —
+#: no longer happens.
+#:
+#: The floor stays, because coverage and pacing are different objections. A name
+#: with one year of history against a four-year request is now annualized
+#: honestly, and is still not comparable to names measured over four: it has not
+#: been through the same regimes, and one lucky or unlucky year annualizes into a
+#: confident-looking rate. Correct pacing removes the arithmetic flatterer, not
+#: the sampling problem.
 #:
 #: 0.9 rather than 1.0 because a real listing's first bars are ragged and the
 #: IV proxy needs a warm-up, so an exact match never happens.

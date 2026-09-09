@@ -112,6 +112,10 @@ class PutRollCycle(BaseModel):
     premium: float  # model price of one put at entry (the real ask, on the market path)
     contracts: float  # notional / premium
     cost: float  # entry brokerage (commission + bid-ask half-spread) for this roll
+    #: Quote-panel basis this leg was resolved under (1.0 on the model path).
+    #: The mark-to-market lookup needs it to find the same contract again; see
+    #: quote_fills.Fill.basis for what happens without it.
+    quote_basis: float = 1.0
     payoff: float  # contracts * max(strike - spot_at_expiry, 0)
     net: float  # payoff - notional - cost (premium budget + brokerage spent)
 
@@ -168,11 +172,26 @@ class PutBacktestResult(BaseModel):
     #: from BlackScholesPricer or from a real listed ask via quote_fills. See
     #: PricingBasis.
     priced_from: Literal["model", "market"] = "model"
-    #: Fraction of ATTEMPTED market fills that actually produced a Fill (this
-    #: run only attempts fills when priced_from == "market"); the rest were
-    #: skipped and counted in n_cycles_skipped, never priced by the model.
-    #: 0.0 on the model path.
+    #: How much of the REQUESTED window the run actually traded, 0..1.
+    #:
+    #: This used to be fills / attempts, which is not a coverage and could not
+    #: be read as one: a refusal advances one DAY while a fill advances one
+    #: CYCLE, so the ratio mixed units and moved with the tenor rather than
+    #: with data availability. Measured on the same SPY window and the same
+    #: quotes, only the tenor changing: 1w 0.098, 2w 0.052, 4w 0.027, 12w
+    #: 0.009 -- a 10x swing reporting 2.7% where the honest window coverage
+    #: was ~34%. A single scalar whose whole job is to qualify a "market"
+    #: label must not be off by 13x in the alarming direction while the label
+    #: is wrong in the reassuring one.
+    #:
+    #: Defined the same way `accuracy.QuoteCoverage` defines it -- span
+    #: traded over span requested -- so the two numbers in this codebase
+    #: called "coverage" mean one thing.
     quote_coverage_pct: float = 0.0
+    #: Fills over attempts. Kept because it says something different and
+    #: useful (how often a quotable contract existed at all) but it is NOT a
+    #: coverage; see above.
+    fill_rate: float = 0.0
     #: Cycles skipped because quote_fills.QuoteSource.fill(...) returned None
     #: (no guard satisfied) or the realized expiry ran past the end of the
     #: price series. Always 0 on the model path.
@@ -260,6 +279,13 @@ def annualized_so_far_curve(
     return points
 
 
+#: Below this fraction of |mean return|, the per-roll spread is treated as
+#: degenerate and no Sharpe is reported. 1% of the mean: wide enough to catch
+#: "every roll lost the whole premium", narrow enough that a genuinely
+#: low-variance strategy still gets a number.
+_DEGENERATE_SD_FRAC = 0.01
+
+
 def annualized_sharpe(
     returns: Sequence[float],
     *,
@@ -286,7 +312,13 @@ def annualized_sharpe(
         return None
     arr = np.asarray(returns, dtype=float)
     sd = float(arr.std(ddof=1))
-    if sd == 0.0:
+    # Degenerate dispersion, not just EXACTLY zero. On the market path every
+    # roll can be a near-identical total loss -- measured on real SPY 10% / 4
+    # weeks: 30 rolls, all with zero payoff, mean return -1.0085, sd 5.3e-3 --
+    # and dividing by that sd reported a Sharpe of -468. A Sharpe of -468 is not
+    # a number to show anyone; it is a division artefact of a strategy that did
+    # the same thing every time. Scaled to the mean so the test is unit-free.
+    if sd <= _DEGENERATE_SD_FRAC * max(abs(float(arr.mean())), 1e-12):
         return None
     rf_per_roll = rate / rolls_per_year
     excess = float(arr.mean()) - rf_per_roll
@@ -323,20 +355,37 @@ class _CycleAccumulation:
     n_cycles_skipped: int = 0
 
 
+@dataclass(frozen=True)
+class _CycleFacts:
+    """The economics of one completed roll.
+
+    Bundled rather than passed as nine keyword arguments: `_record_cycle`
+    reached 14 parameters against `pyproject.toml`'s `max-args = 13`, a ratchet
+    that "may only ever go down" (docs/adr/0023 — reshape the change, never
+    raise the number). These nine always travel together and are exactly the
+    fields `PutRollCycle` records, so the bundle is the shape the data already
+    had.
+    """
+
+    spot: float
+    strike: float
+    sigma: float
+    premium: float
+    contracts: float
+    cost: float
+    payoff: float
+    net: float
+    #: Quote-panel basis (1.0 on the model path); see PutRollCycle.quote_basis.
+    quote_basis: float = 1.0
+
+
 def _record_cycle(
     acc: _CycleAccumulation,
     *,
     entry_idx: int,
     expiry_idx: int,
     dates: list[dt.date],
-    spot: float,
-    strike: float,
-    sigma: float,
-    premium: float,
-    contracts: float,
-    cost: float,
-    payoff: float,
-    net: float,
+    facts: _CycleFacts,
     notional: float,
 ) -> None:
     """Append one settled cycle to ``acc`` and update its running bookkeeping.
@@ -347,13 +396,13 @@ def _record_cycle(
     """
     if not acc.equity:
         acc.equity.append(EquityPoint(date=dates[entry_idx], cum_pnl=0.0))
-    acc.cum += net
-    acc.total_payoff += payoff
-    acc.total_brokerage += cost
-    if net > 0:
+    acc.cum += facts.net
+    acc.total_payoff += facts.payoff
+    acc.total_brokerage += facts.cost
+    if facts.net > 0:
         acc.wins += 1
-    acc.biggest_mult = max(acc.biggest_mult, payoff / notional)
-    if net < 0:
+    acc.biggest_mult = max(acc.biggest_mult, facts.payoff / notional)
+    if facts.net < 0:
         acc.streak += 1
         acc.worst_streak = max(acc.worst_streak, acc.streak)
     else:
@@ -362,14 +411,15 @@ def _record_cycle(
         PutRollCycle(
             entry_date=dates[entry_idx],
             expiry_date=dates[expiry_idx],
-            spot=float(spot),
-            strike=float(strike),
-            sigma=sigma,
-            premium=float(premium),
-            contracts=float(contracts),
-            cost=float(cost),
-            payoff=float(payoff),
-            net=float(net),
+            spot=float(facts.spot),
+            strike=float(facts.strike),
+            sigma=facts.sigma,
+            premium=float(facts.premium),
+            contracts=float(facts.contracts),
+            cost=float(facts.cost),
+            payoff=float(facts.payoff),
+            net=float(facts.net),
+            quote_basis=facts.quote_basis,
         )
     )
     acc.equity.append(EquityPoint(date=dates[expiry_idx], cum_pnl=float(acc.cum)))
@@ -428,14 +478,16 @@ def _roll_model_cycles(
             entry_idx=i,
             expiry_idx=i + tenor_days,
             dates=dates,
-            spot=spot,
-            strike=strike,
-            sigma=sigma,
-            premium=premium,
-            contracts=contracts,
-            cost=cost,
-            payoff=payoff,
-            net=net,
+            facts=_CycleFacts(
+                spot=spot,
+                strike=strike,
+                sigma=sigma,
+                premium=premium,
+                contracts=contracts,
+                cost=cost,
+                payoff=payoff,
+                net=net,
+            ),
             notional=notional,
         )
         i += tenor_days
@@ -485,10 +537,27 @@ def _roll_market_cycles(
             continue
 
         expiry_idx = bisect.bisect_left(dates, fill.expiry, i)
-        if expiry_idx >= n:
-            # The listed expiry runs past the end of the price series -- the
-            # cycle cannot be settled, so it is a skip too, not a truncated
-            # payoff.
+        if expiry_idx >= n or expiry_idx <= i:
+            # Two ways a fill cannot become a settled cycle, and BOTH must
+            # advance `i` or the loop cannot terminate.
+            #
+            # `expiry_idx >= n`: the listed expiry runs past the end of the
+            # price series, so there is no settlement price. A skip, not a
+            # truncated payoff.
+            #
+            # `expiry_idx <= i`: the listed expiry is on or before the entry
+            # session, so `bisect_left(..., lo=i)` returns `i` itself and
+            # `i = expiry_idx` would leave the index exactly where it was --
+            # an unbounded loop appending a cycle every pass, measured leaking
+            # 90 MB/s and exhausting a 1 GB machine in ~10 seconds.
+            #
+            # That is reachable, not theoretical: `marks._select_expiry` takes
+            # the nearest expiry AT OR AFTER `entry + round(tenor_weeks * 7)`
+            # days, so any `tenor_weeks <= 1/14` rounds the target to zero days
+            # and a 0DTE listing on that session satisfies it. The real SPY
+            # panel has 100,956 rows on 1,509 sessions where `expiration ==
+            # quote_date`, and `/api/putlab/backtest` accepts `tenor_weeks`
+            # down to just above 0.
             acc.n_cycles_skipped += 1
             i += 1
             continue
@@ -512,14 +581,17 @@ def _roll_market_cycles(
             entry_idx=i,
             expiry_idx=expiry_idx,
             dates=dates,
-            spot=spot,
-            strike=strike,
-            sigma=sigma,
-            premium=premium,
-            contracts=contracts,
-            cost=cost,
-            payoff=payoff,
-            net=net,
+            facts=_CycleFacts(
+                spot=spot,
+                strike=strike,
+                sigma=sigma,
+                premium=premium,
+                contracts=contracts,
+                cost=cost,
+                payoff=payoff,
+                net=net,
+                quote_basis=fill.basis,
+            ),
             notional=notional,
         )
         i = expiry_idx
@@ -689,8 +761,15 @@ def run_put_roll(
     net_pnl = total_payoff - total_premium - total_brokerage
     roi_on_premium = net_pnl / total_premium
     # Annualized Sharpe over the per-roll returns (net/notional). rolls_per_year
-    # paces the annualization by how often the strategy actually rolled.
-    rolls_per_year = len(cycles) / lookback_years if lookback_years > 0 else 0.0
+    # paces the annualization by how often the strategy actually rolled -- which
+    # is what the traded span measures, and what `lookback_years` does not. This
+    # divided by the REQUESTED window until 2026-09-09; on a run trading 2.33
+    # years against `years=5` that overstated the pacing by 2.1x and reported a
+    # Sharpe of -468.
+    traded_start = cycles[0].entry_date
+    traded_end = cycles[-1].expiry_date
+    traded_years = (traded_end - traded_start).days / 365.25
+    rolls_per_year = len(cycles) / traded_years if traded_years > 0 else 0.0
     sharpe = annualized_sharpe(
         [c.net / notional for c in cycles], rolls_per_year=rolls_per_year, rate=rate
     )
@@ -700,17 +779,30 @@ def run_put_roll(
         notional=notional,
     )
 
-    traded_start = cycles[0].entry_date
-    traded_end = cycles[-1].expiry_date
-    if n_cycles_skipped > 0:
-        # See the "basis" docstring paragraph above: annualizing a truncated
-        # run over the nominal lookback_years understates its loss (measured
-        # -15.0%/yr nominal vs -26.2%/yr over the traded span, on a real SPY
-        # run) -- ranking.MIN_WINDOW_COVERAGE exists for the same bug class.
-        traded_years = (traded_end - traded_start).days / 365.25
-        final_annualized = annualized_return(roi_on_premium, traded_years)
-    else:
-        final_annualized = annualized_return(roi_on_premium, lookback_years)
+    # ALWAYS pace by what was actually traded, never by what was requested.
+    #
+    # This used to be conditional on `n_cycles_skipped > 0`, which tests the
+    # wrong thing: the commonest truncation is not a skipped cycle, it is the
+    # price series simply being shorter than the window asked for. Bronze OHLCV
+    # is a rolling ~5-year Tiingo window while `/api/putlab/backtest` accepts
+    # `years` up to 20, so that case is not exotic -- it is what any long
+    # lookback does today. Measured on real SPY 5% / 12 weeks, where all three
+    # runs trade the SAME 20 cycles over the SAME 4.79 years:
+    #
+    #     years=5   reported  -9.72%/yr
+    #     years=10  reported  -4.98%/yr
+    #     years=20  reported  -2.52%/yr     honest, all three: -10.13%/yr
+    #
+    # The bleed is understated fourfold at the top of the allowed range, and
+    # this is a bleed strategy: understating it is understating the whole cost
+    # of the hedge. `ranking.MIN_WINDOW_COVERAGE` guards the same bug class for
+    # cross-name ranking and its comment names the mechanism exactly.
+    #
+    # Pacing by the traded span also moves the fully-covered case slightly
+    # (-9.72% -> -10.13% above), because the first entry lands after the window
+    # opens and the last expiry before it closes. That is the correct number:
+    # the strategy was on risk for 4.79 years, not 5.
+    final_annualized = annualized_return(roi_on_premium, traded_years)
 
     return PutBacktestResult(
         asset=asset,
@@ -738,7 +830,8 @@ def run_put_roll(
         price_path=price_path,
         cycles=cycles,
         priced_from="market" if quotes is not None else "model",
-        quote_coverage_pct=(len(cycles) / n_attempted) if n_attempted > 0 else 0.0,
+        quote_coverage_pct=(min(1.0, traded_years / lookback_years) if lookback_years > 0 else 0.0),
+        fill_rate=(len(cycles) / n_attempted) if n_attempted > 0 else 0.0,
         n_cycles_skipped=n_cycles_skipped,
         traded_start=traded_start,
         traded_end=traded_end,
@@ -827,7 +920,10 @@ def _mark_to_market_curve(
                     mark = max(cyc.strike - float(px[k]), 0.0)  # intrinsic (guards T=0)
                 else:
                     bid = quotes.mark(
-                        entry_date=dates[k], strike=cyc.strike, expiry=cyc.expiry_date
+                        entry_date=dates[k],
+                        strike=cyc.strike,
+                        expiry=cyc.expiry_date,
+                        basis=cyc.quote_basis,
                     )
                     if bid is not None:
                         mark = bid

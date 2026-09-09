@@ -25,6 +25,7 @@ Design decisions from the v3 plan review:
 from __future__ import annotations
 
 import datetime as dt
+from collections.abc import Sequence
 
 from pydantic import BaseModel
 
@@ -33,6 +34,7 @@ from tail_lab.contracts.options_calendar import cadence_for
 from tail_lab.lake.store import LakeStore
 from tail_lab.research.backtest.put_roll import (
     EquityPoint,
+    PutBacktestResult,
     PutRollCycle,
     annualized_return,
     load_asof_series,
@@ -66,6 +68,13 @@ class PortfolioResult(BaseModel):
     as_of: dt.date
     notional: float
     lookback_years: float
+    #: What the basket was actually on risk for: earliest leg entry to latest
+    #: leg expiry. `annualized_return` is paced by THIS, not by
+    #: `lookback_years`, because a window the data could not fill is not a
+    #: window the strategy traded. Reported rather than kept internal so a
+    #: reader can see the two differ (README, "accuracy is surfaced").
+    traded_start: dt.date | None = None
+    traded_end: dt.date | None = None
     total_premium: float
     total_payoff: float
     net_pnl: float
@@ -77,6 +86,30 @@ class PortfolioResult(BaseModel):
     legs: list[LegResult]
     equity_curve: list[EquityPoint]
     snapshot_ids: list[str]
+
+
+def _traded_span(
+    units: Sequence[PutBacktestResult],
+) -> tuple[dt.date | None, dt.date | None]:
+    """Earliest leg entry and latest leg expiry across the basket."""
+    spans = [(u.traded_start, u.traded_end) for u in units if u.traded_start and u.traded_end]
+    if not spans:
+        return None, None
+    return min(s for s, _ in spans), max(e for _, e in spans)
+
+
+def _traded_years(units: Sequence[PutBacktestResult], fallback: float) -> float:
+    """Span from the earliest leg entry to the latest leg expiry, in years.
+
+    The union rather than an average: the basket was on risk from the moment
+    its first leg opened until its last one settled, and that is the period the
+    combined return has to be divided by. Falls back to the requested window
+    only when no leg traded at all, where there is nothing else to use.
+    """
+    start, end = _traded_span(units)
+    if start is None or end is None:
+        return fallback
+    return (end - start).days / 365.25
 
 
 def _max_drawdown(cum: list[float]) -> float:
@@ -136,6 +169,7 @@ def run_portfolio(
     timeline = compute_regime_timeline(store, as_of=as_of)
 
     leg_results: list[LegResult] = []
+    units: list[PutBacktestResult] = []
     pooled_cycles: list[PutRollCycle] = []
     per_leg_cum: list[list[tuple[dt.date, float]]] = []
     snapshot_ids: list[str] = [store.bronze_snapshot_id(VIX_DATASET, as_of)]
@@ -176,6 +210,7 @@ def run_portfolio(
         if snap not in snapshot_ids:
             snapshot_ids.append(snap)
 
+        units.append(unit)
         leg_results.append(
             LegResult(
                 asset=leg.asset,
@@ -220,11 +255,19 @@ def run_portfolio(
         as_of=as_of,
         notional=budget,
         lookback_years=years,
+        traded_start=_traded_span(units)[0],
+        traded_end=_traded_span(units)[1],
         total_premium=total_premium,
         total_payoff=total_payoff,
         net_pnl=net_pnl,
         roi_on_premium=combined_roi,
-        annualized_return=annualized_return(combined_roi, years),
+        # Paced by what the basket actually traded, not by the window asked
+        # for -- matching `run_put_roll`, which stopped pacing by the nominal
+        # window on 2026-09-09. Leaving this on `years` while the legs moved
+        # would make the combined figure disagree with its own components: the
+        # legs take `unit.annualized_return` directly, so they are already on
+        # the traded span. The basket's span is the union of its legs'.
+        annualized_return=annualized_return(combined_roi, _traded_years(units, years)),
         combined_max_drawdown=_max_drawdown(combined_cum_values),
         sum_individual_max_drawdown=sum_individual_dd,
         verdict=combined_verdict,
