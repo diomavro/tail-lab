@@ -128,8 +128,17 @@ test('shows the total-over-window figure the cell itself cannot print', async ({
   await cell.hover()
   const tip = page.getByRole('tooltip')
   await expect(tip).toBeVisible()
-  await expect(tip).toContainText('Total over window')
-  await expect(tip).toContainText('Rolls')
+
+  // Pin the VALUES, not the labels. Asserting only that the strings
+  // "Total over window" and "Rolls" appear passes even if the cell's own
+  // annualized figure is printed under the total-over-window label — which is
+  // precisely the confusion this popup exists to remove, so a test blind to it
+  // is worse than no test. Mutating that line survived the whole suite until
+  // these three assertions were added.
+  const rows = tip.locator('.pl-tip-rows')
+  await expect(rows).toContainText('−16%/yr') // annualized_return -0.1554
+  await expect(rows).toContainText('−48%') //    roi_on_premium   -0.4817, 3.1x the above
+  await expect(rows).toContainText('52') //      n_cycles
 })
 
 test('the popup is reachable by keyboard and dismissed by Escape', async ({ page }) => {

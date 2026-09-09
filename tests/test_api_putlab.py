@@ -80,7 +80,9 @@ def test_backtest_returns_full_result(client: TestClient) -> None:
     assert len(body["equity_curve"]) == body["n_cycles"] + 1  # one seed point + one per cycle
     assert isinstance(body["roi_on_premium"], float)
     assert body["total_premium"] == pytest.approx(body["n_cycles"] * 1000)
-    # A cycle carries the model premium and its realized payoff.
+    # A cycle carries the premium it was filled at and its realized payoff.
+    # `quote_basis` rides along so the mark-to-market lookup can find the same
+    # contract again on a split-adjusted name (1.0 on the model path).
     first = body["cycles"][0]
     assert set(first) == {
         "entry_date",
@@ -89,6 +91,7 @@ def test_backtest_returns_full_result(client: TestClient) -> None:
         "strike",
         "sigma",
         "premium",
+        "quote_basis",
         "contracts",
         "cost",
         "payoff",

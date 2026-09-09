@@ -69,7 +69,9 @@ class _FakeQuoteSource:
         self.fill_calls.append(entry_date)
         return self.fills.get(entry_date)
 
-    def mark(self, *, entry_date: dt.date, strike: float, expiry: dt.date) -> float | None:
+    def mark(
+        self, *, entry_date: dt.date, strike: float, expiry: dt.date, basis: float = 1.0
+    ) -> float | None:
         self.mark_calls.append((entry_date, strike, expiry))
         return self.marks.get((entry_date, strike, expiry))
 
@@ -143,7 +145,13 @@ def test_a_pinned_market_cycle_settles_at_hand_derived_numbers() -> None:
     assert result.net_pnl == pytest.approx(1397.4)
     assert result.roi_on_premium == pytest.approx(1.3974)
     assert result.n_cycles_skipped == 1
-    assert result.quote_coverage_pct == pytest.approx(0.5)  # 1 filled of 2 attempts
+    # fill_rate is fills/attempts. quote_coverage_pct is span traded over span
+    # requested — a different question, and the one the "market" label needs
+    # qualifying by. They were the same field until 2026-09-09, when the ratio
+    # was found to swing 10x with tenor on identical data because a refusal
+    # advances one DAY and a fill advances one CYCLE.
+    assert result.fill_rate == pytest.approx(0.5)  # 1 filled of 2 attempts
+    assert 0.0 < result.quote_coverage_pct <= 1.0
 
 
 # ---- 2. no silent fallback ---------------------------------------------------
@@ -207,7 +215,8 @@ def test_a_source_that_fills_only_half_never_falls_back_to_the_model() -> None:
     assert result.priced_from == "market"
     assert result.n_cycles == 2
     assert result.n_cycles_skipped == 2
-    assert result.quote_coverage_pct == pytest.approx(0.5)
+    assert result.fill_rate == pytest.approx(0.5)
+    assert 0.0 < result.quote_coverage_pct <= 1.0
     assert sorted(cyc.premium for cyc in result.cycles) == [pytest.approx(1.5), pytest.approx(2.0)]
     assert result.total_brokerage == pytest.approx(7.583333333333333)
     assert result.net_pnl == pytest.approx(-2007.583333333333)
@@ -559,3 +568,62 @@ def test_mtm_market_path_marks_at_the_bid_and_carries_forward() -> None:
     ]
     assert result.mtm_curve[-1].cum_pnl == pytest.approx(result.cycles[0].net)
     assert result.equity_curve[-1].cum_pnl == pytest.approx(result.cycles[0].net)
+
+
+def test_a_fill_expiring_on_its_own_entry_day_cannot_hang_the_roll() -> None:
+    """A listed expiry at or before the entry session must advance the loop.
+
+    `bisect_left(dates, fill.expiry, lo=i)` returns `i` itself when the expiry
+    is not after `dates[i]`, so `i = expiry_idx` left the index exactly where
+    it was -- an unbounded loop appending a cycle every pass. Measured leaking
+    90 MB/s, which exhausts the 1 GB production machine in about ten seconds.
+
+    Reachable rather than theoretical: `marks._select_expiry` takes the nearest
+    expiry AT OR AFTER `entry + round(tenor_weeks * 7)` days, so any
+    `tenor_weeks <= 1/14` rounds that target to zero days and a 0DTE listing on
+    the session satisfies it. The real SPY panel carries 100,956 rows across
+    1,509 sessions where `expiration == quote_date`, and
+    `/api/putlab/backtest` accepts `tenor_weeks` down to just above zero.
+
+    The assertion is simply that this RETURNS. A hang has no traceback, and a
+    test that hangs is indistinguishable from a slow one -- which is why the
+    pytest timeout matters more than the value checked.
+    """
+    import numpy as np
+
+    class _ZeroDteSource:
+        def fill(
+            self, *, entry_date: dt.date, spot: float, moneyness_pct: float, tenor_weeks: float
+        ) -> Fill | None:
+            return Fill(
+                premium=0.06,
+                strike=spot * 0.9,
+                expiry=entry_date,  # settles the day it is bought
+                realized_moneyness_pct=moneyness_pct,
+                realized_dte=0,
+            )
+
+        def mark(
+            self, *, entry_date: dt.date, strike: float, expiry: dt.date, basis: float = 1.0
+        ) -> float | None:
+            return None
+
+    idx = pd.bdate_range("2024-01-02", periods=120)
+    prices = pd.Series(np.linspace(100.0, 110.0, 120), index=idx)
+    iv = prices.pct_change().rolling(20).std() * np.sqrt(252)
+
+    with pytest.raises(LookupError):
+        # Every cycle is refused, so no roll completes and the engine reports
+        # that rather than returning an empty result -- but it TERMINATES.
+        run_put_roll(
+            prices,
+            iv,
+            asset="SPY",
+            as_of=idx[-1].date(),
+            notional=1000.0,
+            moneyness_pct=10.0,
+            tenor_weeks=0.05,
+            lookback_years=0.4,
+            basis=PricingBasis(quotes=_ZeroDteSource()),
+            include_curves=False,
+        )

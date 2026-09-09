@@ -86,7 +86,14 @@ def test_rank_universe_sorts_by_fragility_and_skips_missing(tmp_path: Path) -> N
     assert row.verdict in {"confirmed", "regime_only", "failed", "untested"}
     assert row.n_cycles >= 1
     for r in ranking.ranked:
-        assert r.annualized_return == pytest.approx(annualized_return(r.roi_on_premium, 1.0))
+        # Paced by the span actually traded, not the 1.0 year requested — so a
+        # losing name's honest figure is MORE negative than the nominal one,
+        # never less. Pinning `annualized_return(roi, 1.0)` here would
+        # re-assert the flatterer this module's own MIN_WINDOW_COVERAGE
+        # comment was written about.
+        nominal = annualized_return(r.roi_on_premium, 1.0)
+        assert r.annualized_return <= nominal
+        assert r.annualized_return == pytest.approx(nominal, rel=0.2)
 
 
 def test_rank_universe_sizing_mode_overrides_notional(tmp_path: Path) -> None:

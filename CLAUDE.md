@@ -100,13 +100,22 @@ them.
   `docs/adr/0015`'s `confirmed` verdict — is partly measuring whether the strike
   was reachable. Delta-based selection is queued; until it lands, say which
   parameterisation a result used.
-- **optionsDX is the deepest quote source and its coverage is a trap**
+- **optionsDX coverage is complete; the PRICE series is what limits you**
   (`docs/DATA_CONTRACTS.md` #12). Real 2010-2023 EOD chains in
-  `data/vendor/optionsdx/` (gitignored, licence-limited, absent on CI). **VIX is
-  the only complete panel** — 168/168 months. **SPY has 63 of 168**, and SPY is
-  the benchmark, so a roll backtest across it would skip the holes silently and
-  draw a curve that is mostly an artefact of skipping. Call
-  `contracts/optionsdx.month_coverage` before spanning any range. Also: a blank
+  `data/vendor/optionsdx/` (gitignored, licence-limited, absent on CI).
+  Measured 2026-09-09: **vix 168, spy 168, qqq 144, nvda 96, tsla 96 — all with
+  ZERO gaps**; spx is not ingested. An earlier version of this line said "SPY
+  has 63 of 168" and it was wrong: it predated the rest of the corpus arriving
+  on 2026-09-03, and an adversarial reviewer built a whole finding on it.
+  The real constraint is that bronze OHLCV is a **rolling five-year Tiingo
+  window** (2021-08..2026-08) while this panel ends 2023-12, so anything
+  needing both has only **~589 overlapping trading days**. Two joins are also
+  silently wrong: the panel's `spot` is as-traded while OHLCV `close` is
+  split-adjusted (**nvda differs by exactly 10**), and VIX cannot be joined at
+  all because its `spot` is the index while VIX options settle on futures.
+  Call `contracts/optionsdx.month_coverage` before spanning any range anyway —
+  today the answer is "nothing missing", and the check is what makes that a
+  finding rather than an assumption. Also: a blank
   `P_IV` means the vendor's solver failed and the REST of the greek block is
   garbage (delta pinned to -1.0, which passes the schema) — the same house rule
   as Cboe's zero-fill.
