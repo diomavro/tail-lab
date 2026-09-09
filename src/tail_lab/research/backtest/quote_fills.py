@@ -80,6 +80,7 @@ not a reason code, because nothing downstream of it consumes one yet
 from __future__ import annotations
 
 import datetime as dt
+import math
 from dataclasses import dataclass
 from typing import Protocol
 
@@ -151,6 +152,25 @@ class QuoteSource(Protocol):
         moneyness_pct: float,
         tenor_weeks: float,
     ) -> Fill | None: ...
+
+    def mark(
+        self,
+        *,
+        entry_date: dt.date,
+        strike: float,
+        expiry: dt.date,
+    ) -> float | None:
+        """The BID to close an already-open ``(strike, expiry)`` contract on
+        the session dated ``entry_date`` (the day being marked -- not
+        necessarily the day the contract was bought), or ``None`` if that
+        session/contract isn't in this source. Used by
+        ``put_roll._mark_to_market_curve`` to mark a market-filled leg
+        day-by-day without ever substituting the underflowing model (see the
+        module docstring). See ``OptionsDxQuoteSource.mark`` for why this
+        takes no caller spot (no basis re-derivation, unlike ``fill``) and
+        matches the strike tightly rather than with ``fill``'s snap
+        tolerance."""
+        ...
 
 
 def _basis(panel_spot: float, caller_spot: float) -> float | None:
@@ -250,3 +270,44 @@ class OptionsDxQuoteSource:
             realized_moneyness_pct=realized_moneyness_pct,
             realized_dte=(expiry.date() - entry_date).days,
         )
+
+    def mark(
+        self,
+        *,
+        entry_date: dt.date,
+        strike: float,
+        expiry: dt.date,
+    ) -> float | None:
+        """The BID of the already-filled contract (``strike``, ``expiry``) on
+        the session dated ``entry_date`` — the sell-to-close price on one day
+        of an OPEN position, not a new order.
+
+        Unlike ``fill``, this does not re-derive the split basis (guard 2):
+        it has no caller spot to compute one from, ``strike``/``expiry`` name
+        the SAME contract ``fill`` already basis-checked once at entry, and a
+        split occurring mid-roll is rare enough over a several-week hold that
+        re-deriving it here would trade real complexity for a guard against
+        an edge case the caller already handles safely -- a basis jump big
+        enough to matter moves ``strike`` far enough from anything listed
+        that the tight match just below misses, and this returns ``None``,
+        which ``_mark_to_market_curve`` already treats as "carry the last
+        mark forward" rather than trusting a wrong number.
+
+        The strike match is intentionally TIGHT (``rel_tol=1e-3``), not
+        ``fill``'s snap tolerance: this call must land on the exact contract
+        already bought, never the nearest one on the board.
+        """
+        session = self._panel[
+            (self._panel["underlying"].str.upper() == self._symbol)
+            & (self._panel["quote_date"] == pd.Timestamp(entry_date))
+            & (self._panel["expiration"] == pd.Timestamp(expiry))
+        ]
+        if session.empty:
+            return None
+
+        row = _select_strike(session, strike)
+        if row is None or not math.isclose(float(row["strike"]), strike, rel_tol=1e-3):
+            return None
+
+        bid = float(row["bid"])
+        return bid if bid > 0.0 else None
