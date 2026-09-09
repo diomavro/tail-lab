@@ -712,23 +712,42 @@ may require it to exist.
 
 ### Coverage is uneven, and it is the first thing to know
 
+Measured against the lake 2026-09-09. An earlier version of this table showed
+SPY at 63 months with 105 gaps; it was written before the rest of the corpus
+was downloaded on 2026-09-03, and is corrected here.
+
 | sym | months | span | gaps |
 |---|---|---|---|
 | **vix** | 168 | 2010-01 .. 2023-12 | **0** |
-| nvda | 93 | 2016-01 .. 2023-12 | 3 |
-| tsla | 84 | 2016-01 .. 2023-12 | 12 |
-| qqq | 75 | 2012-01 .. 2023-12 | 69 |
-| spx | 96 | 2010-01 .. 2023-12 | 72 |
-| **spy** | 63 | 2010-01 .. 2023-12 | **105** |
+| **spy** | 168 | 2010-01 .. 2023-12 | **0** |
+| qqq | 144 | 2012-01 .. 2023-12 | 0 |
+| nvda | 96 | 2016-01 .. 2023-12 | 0 |
+| tsla | 96 | 2016-01 .. 2023-12 | 0 |
+| spx | — | **NOT INGESTED** | — |
 
-**SPY is missing more months than it has, and SPY is the benchmark.** A roll
-backtest across it would skip the absent months silently and draw a smooth
-equity curve that is largely an artefact of the skipping — the exact
-silent-wrong-data failure `docs/adr/0009` exists to prevent, and one no test of
-the roll engine would catch, because the engine is correct on the rows it is
-given. `contracts/optionsdx.month_coverage` reports present/missing months, and
-**any consumer spanning a date range must consult it**. VIX is the one symbol
-where a continuous 14-year study is honestly available.
+SPX stays absent: the ingest is OOM-killed at ~3.9 GB and needs a chunked
+bronze write (`AGENT_TODO.md`).
+
+**The obligation on consumers is unchanged even though the gaps are gone.**
+`contracts/optionsdx.month_coverage` still reports present/missing, and any
+consumer spanning a date range must still consult it and refuse, or say loudly
+what it skipped — a backtest that skips absent months silently draws a smooth
+equity curve that is an artefact of the skipping, and no test of the roll engine
+would catch it because the engine is correct on the rows it is given
+(`docs/adr/0009`). Today the answer is "nothing is missing"; the check is what
+makes that a finding rather than an assumption.
+
+**The binding constraint is now the price series, not this panel.** Bronze OHLCV
+is a rolling five-year Tiingo window (2021-08 .. 2026-08) and this panel ends
+2023-12, so a consumer needing both has **~589 overlapping trading days** — about
+a third of a default four-year window.
+
+**Two joins that are silently wrong.** The panel's `spot` is as-traded; the OHLCV
+`close` is split-adjusted. Panel/OHLCV median: spy 1.0000, qqq 1.0000, tsla
+1.0003, **nvda 10.0000** (the 2024 10:1 split). And VIX cannot be joined at all —
+its `spot` here is the *index* while VIX options settle on VIX *futures*, so
+`strike/spot` is not moneyness against the contract, and there is no `ohlcv_vix`
+dataset regardless.
 
 ### The slice
 
