@@ -15,32 +15,48 @@ Where this dataset has coverage, that caveat can be replaced with a
 measurement.
 
 **Coverage is wildly uneven, and that is the first thing to know about it.**
-The download is not a continuous panel; whole months are simply absent, and the
-gaps are worst exactly where they hurt most:
+Coverage is complete for every symbol ingested, and that is a recent fact worth
+dating: this docstring previously carried a table showing SPY with 63 of 168
+months and 105 gaps, written when only part of the corpus had been downloaded.
+The rest arrived on 2026-09-03. Measured against the lake on 2026-09-09:
 
     ====  ======  ==================  ====
     sym   months  span                gaps
     ====  ======  ==================  ====
     vix      168  2010-01 .. 2023-12     0
-    nvda      93  2016-01 .. 2023-12     3
-    tsla      84  2016-01 .. 2023-12    12
-    qqq       75  2012-01 .. 2023-12    69
-    spx       96  2010-01 .. 2023-12    72
-    spy       63  2010-01 .. 2023-12   105
+    spy      168  2010-01 .. 2023-12     0
+    qqq      144  2012-01 .. 2023-12     0
+    nvda      96  2016-01 .. 2023-12     0
+    tsla      96  2016-01 .. 2023-12     0
+    spx        -  NOT INGESTED           -
     ====  ======  ==================  ====
 
-**SPY is missing more months than it has**, and SPY is this platform's
-benchmark. A roll backtest run across it would skip the absent months silently
-and draw a smooth equity curve that is mostly an artefact of the skipping --
-the exact silent-wrong-data failure ``docs/adr/0009`` exists to prevent, and one
-that no test of the roll engine would catch, because the engine is behaving
-correctly on the rows it was given.
+SPX is the exception and stays absent: ingesting it is OOM-killed at ~3.9 GB
+and needs a chunked bronze write (``AGENT_TODO.md``).
 
-So coverage is not a footnote here, it is part of the contract:
-:func:`month_coverage` reports what is present and what is missing, and any
-consumer spanning a date range **must** consult it and refuse, or say loudly
-what it skipped. VIX is the one symbol where a continuous 14-year study is
-honestly available.
+**The obligation on consumers is unchanged even though the gaps are gone.**
+:func:`month_coverage` still reports present/missing and any consumer spanning
+a date range must still consult it and refuse, or say loudly what it skipped --
+because a backtest that skips absent months silently draws a smooth equity
+curve that is an artefact of the skipping, and no test of the roll engine would
+catch it: the engine is behaving correctly on the rows it was given
+(``docs/adr/0009``). Today the answer happens to be "nothing is missing"; the
+check is what makes that a finding rather than an assumption.
+
+**The binding constraint is now the PRICE series, not this panel.** Bronze
+OHLCV is a rolling five-year Tiingo window (2021-08 .. 2026-08), and this panel
+ends 2023-12, so a roll backtest that needs both has only ~589 overlapping
+trading days -- about a third of a default four-year window. Any consumer
+joining the two must report the span it actually traded.
+
+**Two joins that are silently wrong.** The panel's ``spot`` is as-traded; the
+OHLCV ``close`` is split-adjusted. Measured 2026-09-09, panel/ohlcv median:
+spy 1.0000, qqq 1.0000, tsla 1.0003, **nvda 10.0000** (the 2024 10:1 split). A
+strike resolved in one basis against a spot from the other is off by the split
+factor with no error raised. And VIX cannot be joined at all: its ``spot`` here
+is the INDEX, while VIX options settle on VIX FUTURES, so ``strike/spot`` is
+not moneyness against the contract -- and there is no ``ohlcv_vix`` dataset
+regardless.
 
 **The slice.** Puts only, strike within 0.60-1.02 of spot, 0-120 days to
 expiry. Chosen to cover the whole existing sweep grid with headroom --
