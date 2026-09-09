@@ -117,3 +117,39 @@ test('marks the cells the model cannot price', async ({ page }) => {
   )
   await expect(page.locator('.pl-sweep-legend')).toContainText('Beyond the pricer')
 })
+
+test('shows the total-over-window figure the cell itself cannot print', async ({ page }) => {
+  // The cell prints an ANNUALIZED number. `roi_on_premium` — the total over the
+  // window it was derived from — is already in the response and displayed
+  // nowhere, and on short tenors the two differ enormously because annualizing
+  // a 2-week ROI raises (1+roi) to the 26th power. Without this the reader is
+  // comparing cells across tenors with very different compounding baked in.
+  const cell = page.getByRole('button', { name: /^5% OOM · 1 month/ })
+  await cell.hover()
+  const tip = page.getByRole('tooltip')
+  await expect(tip).toBeVisible()
+  await expect(tip).toContainText('Total over window')
+  await expect(tip).toContainText('Rolls')
+})
+
+test('the popup is reachable by keyboard and dismissed by Escape', async ({ page }) => {
+  // Hover does not exist on touch and is unreachable by keyboard, so a popup
+  // that only opens on hover is a popup some readers never see. Focus opens it;
+  // Escape closes it without moving focus, which is what a reader tabbing the
+  // grid expects.
+  const cell = page.getByRole('button', { name: /^5% OOM · 1 month/ })
+  await cell.focus()
+  await expect(page.getByRole('tooltip')).toBeVisible()
+  await page.keyboard.press('Escape')
+  await expect(page.getByRole('tooltip')).toHaveCount(0)
+  await expect(cell).toBeFocused()
+})
+
+test('warns inside the popup on a cell the model cannot price', async ({ page }) => {
+  // The hatch says "not a measurement" visually; the popup says why. Both,
+  // because the hatch alone is a texture a reader has to already know how to
+  // read, and the popup alone is unreachable on touch.
+  const cell = page.getByRole('button', { name: /^20% OOM · 1 month/ })
+  await cell.hover()
+  await expect(page.getByRole('tooltip')).toContainText('Beyond the pricer')
+})
