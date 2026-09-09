@@ -40,6 +40,7 @@ from tail_lab.research.backtest.put_roll import (
     run_put_roll,
 )
 from tail_lab.research.backtest.regime_verdict import regime_breakdown
+from tail_lab.research.backtest.sizing import SizingMode
 from tail_lab.research.backtest.sweep import (
     MODEL_PRICED_SWEEP_MONEYNESS,
     best_point,
@@ -335,6 +336,7 @@ def rank_universe(
     tenor_weeks: float,
     years: float,
     notional: float = 1000.0,
+    sizing_mode: SizingMode | None = None,
 ) -> UniverseRanking:
     """Rank ``symbols`` by fragility (most fragile first), each with its put
     backtest at the given strike/tenor.
@@ -343,7 +345,19 @@ def rank_universe(
     read as of ``as_of``. A symbol with no OHLCV as-of, or too short a window
     for one roll, is skipped. Raises ``LookupError`` only if the VIX regime
     timeline itself is missing.
+
+    ``sizing_mode``, when given, resolves the per-name premium budget and
+    ``notional`` is ignored; it resolves with ``n_legs=len(symbols)`` since
+    every screened name is priced independently, so a wealth fraction is split
+    evenly across the whole universe being ranked. Leaving it ``None`` (the
+    default) uses ``notional`` for every name exactly as before -- see
+    ``research/backtest/sizing.py``.
     """
+    budget = (
+        sizing_mode.resolve(n_legs=len(symbols))
+        if sizing_mode is not None and symbols
+        else notional
+    )
     timeline = compute_regime_timeline(store, as_of=as_of)
     lookback_days = round(years * 252)
     # compute_regime_timeline above already proved a VIX snapshot exists as of
@@ -353,7 +367,7 @@ def rank_universe(
     ctx = _RankContext(
         store=store,
         as_of=as_of,
-        notional=notional,
+        notional=budget,
         moneyness_pct=moneyness_pct,
         tenor_weeks=tenor_weeks,
         years=years,
@@ -385,6 +399,6 @@ def rank_universe(
         moneyness_pct=moneyness_pct,
         tenor_weeks=tenor_weeks,
         lookback_years=years,
-        notional=notional,
+        notional=budget,
         ranked=rows,
     )

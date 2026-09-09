@@ -34,6 +34,7 @@ from tail_lab.research.backtest.put_roll import (
     run_put_roll,
     trailing_realized_vol,
 )
+from tail_lab.research.backtest.sizing import FixedPremium, WealthFraction
 from tail_lab.research.option_pricer import BlackScholesPricer
 
 
@@ -514,6 +515,29 @@ def test_compute_put_backtest_respects_no_look_ahead(tmp_path: Path) -> None:
     assert res1_again.model_dump() == res1.model_dump()
     res2 = compute_put_backtest(store, as_of=day2, **kw)  # type: ignore[arg-type]
     assert res2.net_pnl != res1.net_pnl  # the restatement really would have differed
+
+
+def test_compute_put_backtest_sizing_mode_overrides_notional(tmp_path: Path) -> None:
+    """``sizing_mode`` resolves the budget and ``notional`` is ignored; a
+    single asset is one leg (``n_legs=1``), so ``FixedPremium(x)`` must
+    reproduce plain ``notional=x`` exactly, and ``WealthFraction`` must
+    resolve to ``alpha * wealth``."""
+    store = DeltaLakeStore(tmp_path)
+    day1 = dt.date(2026, 3, 1)
+    rng = np.random.default_rng(3)
+    closes = np.clip(100 + np.cumsum(rng.normal(0, 1.2, size=80)), 20, None)
+    _write_ohlcv(store, day1, closes)
+
+    kw = dict(asset="spy", as_of=day1, moneyness_pct=5.0, tenor_weeks=4.0, lookback_years=10)
+    plain = compute_put_backtest(store, notional=2000.0, **kw)  # type: ignore[arg-type]
+    via_fixed = compute_put_backtest(store, notional=1.0, sizing_mode=FixedPremium(2000.0), **kw)  # type: ignore[arg-type]
+    assert via_fixed.model_dump() == plain.model_dump()
+
+    via_wealth = compute_put_backtest(
+        store, notional=1.0, sizing_mode=WealthFraction(alpha=0.5, wealth=4000.0), **kw
+    )  # type: ignore[arg-type]
+    assert via_wealth.notional == pytest.approx(2000.0)
+    assert via_wealth.model_dump() == plain.model_dump()
 
 
 def test_compute_put_backtest_missing_symbol_raises(tmp_path: Path) -> None:
