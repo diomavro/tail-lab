@@ -43,10 +43,11 @@ each has a specific, measured failure mode it closes:**
    ``basis`` that is neither ~1 nor ~a clean split factor is refused outright
    rather than guessed at.
 
-3. **Expiry selection.** Nearest listed expiry AT OR AFTER the target,
-   mirroring ``marks._select_expiry`` for the same reason: rounding an expiry
-   DOWN buys a shorter, cheaper, different option, and that is the one
-   direction that quietly flatters a result compared against it.
+3. **Expiry selection.** Nearest listed expiry AT OR AFTER the target, using
+   ``marks._select_expiry`` (and ``marks._select_strike`` below) directly
+   rather than a second copy: rounding an expiry DOWN buys a shorter,
+   cheaper, different option, and that is the one direction that quietly
+   flatters a result compared against it.
 
 4. **Snap tolerance.** Even after point-in-time and basis are both right, the
    nearest LISTED strike is not always close to the REQUESTED one — strikes on
@@ -84,7 +85,11 @@ from typing import Protocol
 
 import pandas as pd
 
-from tail_lab.research.backtest.marks import MAX_RELATIVE_SPREAD
+from tail_lab.research.backtest.marks import (
+    MAX_RELATIVE_SPREAD,
+    _select_expiry,
+    _select_strike,
+)
 
 __all__ = [
     "BASIS_TOLERANCE",
@@ -168,32 +173,6 @@ def _basis_is_plausible(basis: float) -> bool:
     if abs(basis - 1.0) <= BASIS_TOLERANCE:
         return True
     return any(abs(basis / factor - 1.0) <= BASIS_TOLERANCE for factor in SPLIT_FACTORS)
-
-
-def _select_expiry(session: pd.DataFrame, target: dt.date) -> pd.Timestamp | None:
-    """The nearest listed expiry at or after ``target``, within one session.
-
-    At-or-after only, mirroring ``marks._select_expiry``: an expiry snapped
-    DOWN is a shorter, cheaper, different position, and that is the one
-    rounding direction that quietly flatters whatever this fill is compared
-    against.
-    """
-    expiries = session["expiration"].drop_duplicates().sort_values()
-    eligible = expiries[expiries >= pd.Timestamp(target)]
-    if eligible.empty:
-        return None
-    return pd.Timestamp(eligible.iloc[0])
-
-
-def _select_strike(at_expiry: pd.DataFrame, target: float) -> pd.Series | None:
-    """The listed strike nearest ``target`` (panel basis), at one expiry."""
-    if at_expiry.empty:
-        return None
-    # Positional argmin, not idxmin + .loc: a duplicated index makes .loc
-    # return a frame instead of a row, matching the reasoning already spelled
-    # out in marks._select_strike for the same line of code.
-    position = int((at_expiry["strike"] - target).abs().to_numpy().argmin())
-    return at_expiry.iloc[position]
 
 
 def _is_liquid(row: pd.Series) -> bool:
