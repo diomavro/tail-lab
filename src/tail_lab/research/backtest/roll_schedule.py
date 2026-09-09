@@ -42,6 +42,7 @@ from pydantic import BaseModel
 from tail_lab.contracts.hypothesis import Verdict
 from tail_lab.research.backtest.put_roll import IV_CAP, IV_FLOOR, TRADING_DAYS_PER_WEEK
 from tail_lab.research.backtest.ranking import RankedAsset
+from tail_lab.research.backtest.sizing import SizingMode
 from tail_lab.research.option_pricer import BlackScholesPricer, OptionPricer
 
 #: A flat stand-in rate, matching what the backtest prices with. The schedule
@@ -183,12 +184,23 @@ def build_roll_schedule(
     screen_tenor_weeks: float = 0.0,
     lookback_years: float = 0.0,
     pricer: OptionPricer | None = None,
+    sizing_mode: SizingMode | None = None,
 ) -> RollSchedule:
     """Assemble the top ``top_k`` strategies into placeable order intent.
 
     Pure: takes the ranking already computed and a volatility estimate per
     asset, and reads nothing. ``sigma_by_asset`` may omit a name, in which case
     that leg carries no model premium rather than a fabricated one.
+
+    ``sizing_mode``, when given, resolves the per-leg premium budget and
+    ``notional`` is ignored; it resolves with ``n_legs`` equal to the actual
+    number of legs the schedule ends up with (``min(top_k, len(scorable))``),
+    not ``top_k`` itself, since a thin universe can produce fewer scorable
+    legs than asked for. The resolution happens here, before any ``RollLeg``
+    is built, precisely because this module's own docstring requires every
+    number an executor reads to be a concrete cash figure, never a live
+    formula -- see ``research/backtest/sizing.py``. Leaving it ``None`` (the
+    default) uses ``notional`` for every leg exactly as before.
     """
     pricer = pricer or BlackScholesPricer()
 
@@ -200,6 +212,10 @@ def build_roll_schedule(
         and r.best_tenor_weeks is not None
     ]
     scorable.sort(key=lambda r: -(r.best_annualized or 0.0))
+    n_legs = min(top_k, len(scorable))
+    budget = (
+        sizing_mode.resolve(n_legs=n_legs) if sizing_mode is not None and n_legs > 0 else notional
+    )
 
     legs: list[RollLeg] = []
     for i, r in enumerate(scorable[:top_k]):
@@ -223,7 +239,7 @@ def build_roll_schedule(
             if model_premium > 0 and not below_tick:
                 # Same floor as the backtest: at least one contract, so the fill
                 # can land either side of the budget.
-                model_contracts = max(1, int(notional // (model_premium * CONTRACT_MULTIPLIER)))
+                model_contracts = max(1, int(budget // (model_premium * CONTRACT_MULTIPLIER)))
 
         legs.append(
             RollLeg(
@@ -240,7 +256,7 @@ def build_roll_schedule(
                 target_expiry=as_of + dt.timedelta(weeks=int(tenor))
                 if float(tenor).is_integer()
                 else as_of + dt.timedelta(days=round(tenor * 7)),
-                premium_budget=notional,
+                premium_budget=budget,
                 model_premium=model_premium,
                 model_contracts=model_contracts,
                 model_premium_below_min_tick=below_tick,
@@ -252,13 +268,13 @@ def build_roll_schedule(
         )
 
     return RollSchedule(
-        schedule_id=_digest(as_of, notional, legs),
+        schedule_id=_digest(as_of, budget, legs),
         as_of=as_of,
         screen_moneyness_pct=screen_moneyness_pct,
         screen_tenor_weeks=screen_tenor_weeks,
         lookback_years=lookback_years,
         universe_size=len(ranked),
         top_k=top_k,
-        premium_budget_per_leg=notional,
+        premium_budget_per_leg=budget,
         legs=legs,
     )

@@ -26,6 +26,7 @@ from pydantic import BaseModel
 from tail_lab.contracts.ohlcv import dataset_id
 from tail_lab.lake.store import LakeStore
 from tail_lab.research.backtest.brokerage import COMMISSION_PER_CONTRACT, roll_cost
+from tail_lab.research.backtest.sizing import SizingMode
 from tail_lab.research.option_pricer import BlackScholesPricer, OptionPricer
 
 #: Trailing window (trading days) for the realized-vol IV proxy.
@@ -572,6 +573,7 @@ def compute_put_backtest(
     pricer: OptionPricer | None = None,
     commission_per_contract: float = COMMISSION_PER_CONTRACT,
     spread_scale: float = 1.0,
+    sizing_mode: SizingMode | None = None,
 ) -> PutBacktestResult:
     """Point-in-time Put Lab backtest for ``asset`` as of ``as_of``.
 
@@ -579,14 +581,20 @@ def compute_put_backtest(
     ``LookupError`` if no snapshot exists as of that date or the window is too
     short for a single roll. ``commission_per_contract``/``spread_scale`` pass
     through to :func:`run_put_roll` (production uses the realistic defaults).
+
+    ``sizing_mode``, when given, resolves the premium budget and ``notional``
+    is ignored; a single asset is one leg, so it resolves with ``n_legs=1``.
+    Leaving it ``None`` (the default) uses ``notional`` exactly as before --
+    see ``research/backtest/sizing.py``.
     """
+    budget = sizing_mode.resolve(n_legs=1) if sizing_mode is not None else notional
     prices, iv_proxy = load_asof_series(store, asset, as_of)
     return run_put_roll(
         prices,
         iv_proxy,
         asset=asset,
         as_of=as_of,
-        notional=notional,
+        notional=budget,
         moneyness_pct=moneyness_pct,
         tenor_weeks=tenor_weeks,
         lookback_years=lookback_years,

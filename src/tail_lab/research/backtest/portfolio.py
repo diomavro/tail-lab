@@ -39,6 +39,7 @@ from tail_lab.research.backtest.put_roll import (
     run_put_roll,
 )
 from tail_lab.research.backtest.regime_verdict import regime_breakdown
+from tail_lab.research.backtest.sizing import SizingMode
 from tail_lab.research.regimes.timeline import VIX_DATASET, compute_regime_timeline
 
 
@@ -110,18 +111,27 @@ def run_portfolio(
     as_of: dt.date,
     notional: float,
     years: float,
+    sizing_mode: SizingMode | None = None,
 ) -> PortfolioResult:
     """Backtest a weighted mix of OOM-put legs as of ``as_of``.
 
     Raises ``ValueError`` if there are no legs or the weights sum to zero, and
     ``LookupError`` if the VIX regime timeline is missing or no leg can be
     scored (every leg lacks data / too short a window).
+
+    ``sizing_mode``, when given, resolves the *total* capital pool and
+    ``notional`` is ignored; it resolves with ``n_legs=1`` because this
+    function's own weight-based split (``leg.weight / total_weight``) is what
+    divides that pool across legs -- resolving per-leg here would divide it
+    twice. Leaving it ``None`` (the default) uses ``notional`` exactly as
+    before -- see ``research/backtest/sizing.py``.
     """
     if not legs:
         raise ValueError("a portfolio needs at least one leg")
     total_weight = sum(leg.weight for leg in legs)
     if total_weight <= 0:
         raise ValueError("leg weights must sum to a positive number")
+    budget = sizing_mode.resolve(n_legs=1) if sizing_mode is not None else notional
 
     timeline = compute_regime_timeline(store, as_of=as_of)
 
@@ -147,7 +157,7 @@ def run_portfolio(
         except LookupError:
             continue  # skip a leg with no data / too short a window
 
-        leg_budget = share * notional
+        leg_budget = share * budget
         s = leg_budget / unit.n_cycles  # per-roll budget
         scaled = [_scaled(c, s) for c in unit.cycles]
         pooled_cycles.extend(scaled)
@@ -208,7 +218,7 @@ def run_portfolio(
 
     return PortfolioResult(
         as_of=as_of,
-        notional=notional,
+        notional=budget,
         lookback_years=years,
         total_premium=total_premium,
         total_payoff=total_payoff,

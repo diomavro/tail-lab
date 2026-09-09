@@ -15,6 +15,7 @@ import pytest
 
 from tail_lab.research.backtest.ranking import RankedAsset
 from tail_lab.research.backtest.roll_schedule import build_roll_schedule
+from tail_lab.research.backtest.sizing import FixedPremium, WealthFraction
 
 AS_OF = dt.date(2026, 8, 22)
 
@@ -66,6 +67,60 @@ def test_the_schedule_is_the_top_k_strategies_in_return_order() -> None:
 
     assert [leg.asset for leg in schedule.legs] == ["bbb", "ccc"]
     assert [leg.rank for leg in schedule.legs] == [1, 2]
+
+
+def test_build_roll_schedule_sizing_mode_overrides_notional() -> None:
+    """``sizing_mode`` resolves the per-leg budget and ``notional`` is
+    ignored; it resolves with ``n_legs`` equal to the schedule's actual leg
+    count (here 2, from ``top_k``), so ``FixedPremium(x)`` reproduces plain
+    ``notional=x`` and ``WealthFraction(alpha, wealth)`` resolves to
+    ``alpha * wealth / n_legs``."""
+    ranked = [
+        _ranked("aaa", best_annualized=0.10),
+        _ranked("bbb", best_annualized=0.90),
+        _ranked("ccc", best_annualized=0.50),
+    ]
+
+    plain = build_roll_schedule(ranked, as_of=AS_OF, notional=1000.0, top_k=2, sigma_by_asset={})
+    via_fixed = build_roll_schedule(
+        ranked,
+        as_of=AS_OF,
+        notional=1.0,
+        top_k=2,
+        sigma_by_asset={},
+        sizing_mode=FixedPremium(1000.0),
+    )
+    assert via_fixed.model_dump() == plain.model_dump()
+
+    # 2 legs (top_k=2, both scorable) -> each gets alpha * wealth / 2 == 1000.
+    via_wealth = build_roll_schedule(
+        ranked,
+        as_of=AS_OF,
+        notional=1.0,
+        top_k=2,
+        sigma_by_asset={},
+        sizing_mode=WealthFraction(alpha=0.5, wealth=4000.0),
+    )
+    assert via_wealth.premium_budget_per_leg == pytest.approx(1000.0)
+    assert via_wealth.model_dump() == plain.model_dump()
+
+
+def test_build_roll_schedule_sizing_mode_uses_actual_leg_count_not_top_k() -> None:
+    """A thin universe can produce fewer scorable legs than ``top_k`` asks
+    for; the wealth fraction must split across the legs the schedule actually
+    ends up with, not the requested ``top_k``."""
+    ranked = [_ranked("aaa", best_annualized=None), _ranked("bbb", best_annualized=0.2)]
+
+    schedule = build_roll_schedule(
+        ranked,
+        as_of=AS_OF,
+        notional=1.0,
+        top_k=5,  # only 1 of 2 names is scorable
+        sigma_by_asset={},
+        sizing_mode=WealthFraction(alpha=0.5, wealth=2000.0),
+    )
+    assert len(schedule.legs) == 1
+    assert schedule.premium_budget_per_leg == pytest.approx(1000.0)  # 0.5 * 2000 / 1, not / 5
 
 
 def test_a_name_with_no_scorable_cell_is_left_out() -> None:

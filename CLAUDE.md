@@ -141,7 +141,7 @@ The layer boundaries and dependency rules in `ARCHITECTURE.md` are enforced and 
 - `lake/` is `store.py` (`LakeStore` protocol + `DeltaLakeStore`, including as-of resolution — there is no separate `asof.py`) and `blob_store.py` (JSON blobs, used by feedback).
 - `api/` is flat (`main.py`, `putlab_routes.py`, `feedback_routes.py`, `ingest_routes.py`, `schemas.py`), no `routes/` subpackage yet.
 - `feedback/` is a real layer (peer of ingestion/transforms in the import-linter contract) not shown in the tree.
-- `research/` currently has `metrics/` (downside_beta, downside_capture, tail_beta, co_skewness, co_kurtosis), `option_pricer.py` (one module, not the `pricing/` package `ARCHITECTURE.md` shows), `vix_stretch.py`, `data_quality.py`, `regimes/timeline.py`, and `backtest/` (put_roll, portfolio, ranking, metric_screen, regime_verdict, brokerage, index_replication).
+- `research/` currently has `metrics/` (downside_beta, downside_capture, tail_beta, co_skewness, co_kurtosis), `option_pricer.py` (one module, not the `pricing/` package `ARCHITECTURE.md` shows), `vix_stretch.py`, `data_quality.py`, `regimes/timeline.py`, and `backtest/` (put_roll, portfolio, ranking, metric_screen, regime_verdict, brokerage, index_replication, sizing).
 
 Follow the existing code's shape when extending; update `ARCHITECTURE.md` in the same change if you move it structurally, and add an ADR for consequential decisions.
 

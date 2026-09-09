@@ -13,6 +13,7 @@ from tail_lab.contracts.ohlcv import dataset_id
 from tail_lab.lake.store import DeltaLakeStore
 from tail_lab.research.backtest.portfolio import PortfolioLeg, run_portfolio
 from tail_lab.research.backtest.put_roll import annualized_return
+from tail_lab.research.backtest.sizing import FixedPremium, WealthFraction
 
 
 def _seed_ohlcv(
@@ -95,6 +96,37 @@ def test_weights_are_normalized_by_share(tmp_path: Path) -> None:
     by = {r.asset: r for r in res.legs}
     assert by["spy"].total_premium == pytest.approx(2500.0)  # 1/4 of capital
     assert by["tsla"].total_premium == pytest.approx(7500.0)  # 3/4 of capital
+
+
+def test_run_portfolio_sizing_mode_overrides_notional(tmp_path: Path) -> None:
+    """``sizing_mode`` resolves the *total* capital pool and ``notional`` is
+    ignored; it resolves with ``n_legs=1`` because the weight-based split
+    above is what divides the pool across legs, so ``FixedPremium(x)`` must
+    reproduce plain ``notional=x`` and ``WealthFraction(alpha, wealth)`` must
+    resolve to the whole ``alpha * wealth``, not that divided by leg count."""
+    store = DeltaLakeStore(tmp_path)
+    ingest = dt.date(2026, 3, 2)
+    _seed_two(store, ingest)
+    legs = [
+        PortfolioLeg(asset="spy", moneyness_pct=5, tenor_weeks=4, weight=1),
+        PortfolioLeg(asset="tsla", moneyness_pct=10, tenor_weeks=4, weight=1),
+    ]
+    plain = run_portfolio(store, legs=legs, as_of=ingest, notional=10000.0, years=1.0)
+    via_fixed = run_portfolio(
+        store, legs=legs, as_of=ingest, notional=1.0, years=1.0, sizing_mode=FixedPremium(10000.0)
+    )
+    assert via_fixed.model_dump() == plain.model_dump()
+
+    via_wealth = run_portfolio(
+        store,
+        legs=legs,
+        as_of=ingest,
+        notional=1.0,
+        years=1.0,
+        sizing_mode=WealthFraction(alpha=0.5, wealth=20000.0),
+    )
+    assert via_wealth.notional == pytest.approx(10000.0)
+    assert via_wealth.model_dump() == plain.model_dump()
 
 
 def test_diversification_combined_dd_not_worse_than_sum(tmp_path: Path) -> None:

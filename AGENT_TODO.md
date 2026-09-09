@@ -970,18 +970,57 @@ textbook number — but the reason matters, and getting the framing wrong
 produces a confident wrong answer. **Read §4 Q8 before starting.** Ordered so
 that nothing depends on a number the platform cannot yet compute honestly.
 
-- [ ] **Sizing mode: fixed cash OR a fraction of wealth.** Today
-      `premium_budget_per_leg` is a fixed $1,000 — a placeholder, not a
-      decision. Add a `SizingMode` seam mirroring the `OptionPricer`
-      pluggability of `docs/adr/0004`: `FixedPremium(amount)` (today's,
-      unchanged, still the default) and `WealthFraction(alpha, wealth)` where
-      the per-leg budget is `alpha * wealth / n_legs`. Thread it through
-      `put_roll`, `portfolio`, `ranking` and `roll_schedule`, and surface it as
-      a toggle on the Put Lab control bar. Small, self-contained, and it
-      unblocks everything below. **Note for the executor path**: the roll
-      schedule's premium-budget sizing is deliberate (`roll_schedule.py`
-      docstring) — a wealth fraction must resolve to a cash budget *before* the
-      artifact is written, so the file an executor reads stays absolute.
+- [x] **Sizing mode: fixed cash OR a fraction of wealth.** **Backend seam done
+      2026-09-09.** `research/backtest/sizing.py` — `SizingMode` ABC mirroring
+      `OptionPricer`'s pluggability (`docs/adr/0004`) exactly: `resolve(*,
+      n_legs) -> float`, with `FixedPremium(amount)` (today's, unchanged) and
+      `WealthFraction(alpha, wealth)` (`alpha * wealth / n_legs`, `alpha`
+      constrained to `(0, 1]` — sizing above 100% of stated wealth is a
+      leverage decision this seam deliberately leaves to the `g(alpha)` sweep
+      below). Threaded through `compute_put_backtest`, `run_portfolio`,
+      `rank_universe` and `build_roll_schedule` as a new optional
+      `sizing_mode: SizingMode | None = None` parameter *alongside* the
+      existing `notional: float`, mirroring how those same functions already
+      take `pricer: OptionPricer | None` — when given, it resolves the budget
+      and `notional` is ignored; when `None` (every existing caller, unchanged)
+      `notional` is used exactly as before. Chosen over renaming/replacing
+      `notional` because `run_put_roll` (the pure engine one layer down) sits
+      exactly at the `max-args=13` ratchet pinned to its own name in
+      `pyproject.toml` — an additive optional parameter on the four
+      orchestration functions costs nothing there since none of them are
+      ratchet-pinned, whereas replacing `notional` would have forced updating
+      every one of the ~30 existing test call sites across
+      `tests/test_research_backtest_{put_roll,portfolio,ranking,roll_schedule}.py`
+      for zero behavioral gain. Per-call-site `n_legs` choice, each documented
+      in its function's docstring: `compute_put_backtest` and `run_portfolio`
+      use `n_legs=1` (a single asset is one leg; portfolio's own
+      `leg.weight / total_weight` split already divides the pool across legs,
+      so dividing again here would double-count); `rank_universe` uses
+      `n_legs=len(symbols)` (every screened name is priced independently, so a
+      wealth fraction splits evenly across the universe); `build_roll_schedule`
+      uses `n_legs=min(top_k, len(scorable))` — the schedule's *actual* leg
+      count, not the requested `top_k`, since a thin universe can produce fewer
+      scorable legs (pinned by
+      `test_build_roll_schedule_sizing_mode_uses_actual_leg_count_not_top_k`) —
+      and resolves the budget before building any `RollLeg`/`RollSchedule`,
+      satisfying the executor-path note below: the artifact still carries only
+      a concrete `float`, never a live formula. Tested per `docs/STANDARDS.md`:
+      pinned hand-computable cases + Hypothesis properties (linearity in
+      wealth, monotone-decreasing in `n_legs`, never exceeds `alpha * wealth`)
+      in `tests/test_research_backtest_sizing{,_properties}.py`, plus one
+      override test per orchestration function proving `sizing_mode` actually
+      drives the result (not just default-constructible — no prior seam in
+      this codebase, including `OptionPricer` itself, had that test). **Not
+      done, deliberately deferred**: the API surface (`api/putlab_routes.py`)
+      and the Put Lab control-bar toggle — same ship-the-pure-seam-first
+      precedent `downside_beta.py`/`options_expiry.py`/every dataset adapter in
+      this file has followed. Every existing route still passes a flat
+      `notional` query param and gets identical behavior; wiring `alpha`/
+      `wealth` query params through to `sizing_mode=WealthFraction(...)` and a
+      Fixed/Wealth-fraction toggle in `ParamRail.tsx`'s "Position" section
+      (mirroring its existing radiogroup pattern) is the natural next
+      increment, and unblocks the `g(alpha)` sweep two items below, which needs
+      a live `alpha` control to sweep over.
 - [ ] **Report time-average growth, not just ROI.** Every headline the platform
       shows — `roi_on_premium`, `hit_rate`, `annualized`,
       `biggest_payoff_mult` — describes a put in isolation, and **none of them
