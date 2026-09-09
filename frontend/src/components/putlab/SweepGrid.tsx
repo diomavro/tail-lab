@@ -1,3 +1,5 @@
+import { useState } from 'react'
+
 import type { SweepCell } from '../../api/client'
 import { fmtPct } from './format'
 
@@ -43,6 +45,73 @@ interface Props {
 const tenorLabel = (t: number) =>
   t === 1 ? '1 week' : t === 4 ? '1 month' : t === 12 || t === 13 ? '1 quarter' : `${t} wk`
 
+/**
+ * Supplementary detail for one cell, on hover and on focus.
+ *
+ * Deliberately SUPPLEMENTARY. Anything load-bearing -- which band the cell is
+ * in, and whether it is beyond what the pricer can price -- already reaches the
+ * reader three other ways: the cell's own ink, a legend swatch, and a suffix on
+ * its `aria-label`. That matters because hover does not exist on touch, so a
+ * fact only reachable by hovering is a fact some readers never get. This popup
+ * carries the things worth a second look and nothing a decision rests on.
+ *
+ * What it adds that the grid cannot: `roi_on_premium`. The cell prints an
+ * ANNUALIZED figure, and the total-over-the-window number behind it is already
+ * in the response and shown nowhere. On a short window those two differ by a
+ * lot -- annualizing a 2-week ROI raises (1+roi) to the 26th power -- so a
+ * reader comparing cells across tenors is comparing numbers with very
+ * different amounts of compounding baked in.
+ *
+ * Rendered as a SIBLING of the <button>, not a child: a <button>'s content
+ * model is phrasing content, so a <dl> inside it is invalid HTML and React
+ * warns. The wrapper is the positioned ancestor.
+ */
+function CellTip({
+  cell,
+  bench,
+  benchmarkSymbol,
+  unpriced,
+  id,
+  edge,
+}: {
+  cell: SweepCell
+  bench: number
+  benchmarkSymbol: string
+  unpriced: boolean
+  id: string
+  edge: 'left' | 'right' | null
+}) {
+  const over = (cell.annualized_return - bench) * 100
+  return (
+    <div
+      className={['pl-tip', edge ? `pl-tip-${edge}` : ''].filter(Boolean).join(' ')}
+      id={id}
+      role="tooltip"
+    >
+      <dl className="pl-tip-rows">
+        <dt>Annualized</dt>
+        <dd>{fmtPct(cell.annualized_return)}/yr</dd>
+        <dt>Total over window</dt>
+        <dd>{fmtPct(cell.roi_on_premium)}</dd>
+        <dt>vs {benchmarkSymbol}</dt>
+        <dd>
+          {over >= 0 ? '+' : '−'}
+          {Math.abs(over).toFixed(1)} pp/yr
+        </dd>
+        <dt>Rolls</dt>
+        <dd>{cell.n_cycles}</dd>
+      </dl>
+      {unpriced ? (
+        <p className="pl-tip-warn">
+          Beyond the pricer. The flat-vol model prices this strike at almost nothing, so the
+          premium budget buys an absurd number of contracts — the return above is an artefact of
+          that, not a measurement.
+        </p>
+      ) : null}
+    </div>
+  )
+}
+
 export function SweepGrid({
   cells,
   moneynessPct,
@@ -52,6 +121,7 @@ export function SweepGrid({
   modelPricedMaxMoneynessPct,
   onSelect,
 }: Props) {
+  const [openTip, setOpenTip] = useState<string | null>(null)
   if (cells.length === 0) return null
 
   // The API returns the ticker lowercase ("spy"); it prints as a ticker here.
@@ -135,10 +205,20 @@ export function SweepGrid({
               const label =
                 `${s}% OOM · ${tenorLabel(t)} · ${fmtPct(cell.annualized_return)}/yr · ${cell.n_cycles} rolls` +
                 (unpriced ? ' · beyond what the model can price' : '')
+              const key = `${t}-${s}`
+              const tipId = `pl-tip-${key}`
+              const open = openTip === key
+              // Which columns need the popup flipped inward. The grid is 11
+              // columns of ~70px and the popup is ~230px, so anchoring it
+              // centrally on the first or last two columns runs it off the
+              // container. `.pl-sweep` sets no overflow, so it escapes rather
+              // than clipping -- it would run off-screen, not get cut.
+              const col = strikes.indexOf(s)
+              const edge = col <= 1 ? 'left' : col >= strikes.length - 2 ? 'right' : null
               return (
+                <div className="pl-sweep-cellwrap" key={key}>
                 <button
                   type="button"
-                  key={`${t}-${s}`}
                   className={[
                     'pl-sweep-cell',
                     `is-${band}`,
@@ -154,7 +234,17 @@ export function SweepGrid({
                   aria-current={isCurrent || undefined}
                   onClick={() => onSelect(s, t)}
                   aria-label={label}
-                  title={label}
+                  // Focus as well as hover, so the popup is reachable by
+                  // keyboard; Escape dismisses it without moving focus, which
+                  // is what a reader tabbing the grid expects.
+                  onMouseEnter={() => setOpenTip(key)}
+                  onMouseLeave={() => setOpenTip((k) => (k === key ? null : k))}
+                  onFocus={() => setOpenTip(key)}
+                  onBlur={() => setOpenTip((k) => (k === key ? null : k))}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Escape') setOpenTip(null)
+                  }}
+                  aria-describedby={open ? tipId : undefined}
                 >
                   <span className="v">{fmtPct(cell.annualized_return)}</span>
                   <span className="n">
@@ -163,6 +253,17 @@ export function SweepGrid({
                       : `${cell.n_cycles} rolls`}
                   </span>
                 </button>
+                {open ? (
+                  <CellTip
+                    cell={cell}
+                    bench={bench}
+                    benchmarkSymbol={benchmarkSymbol}
+                    unpriced={unpriced}
+                    id={tipId}
+                    edge={edge}
+                  />
+                ) : null}
+                </div>
               )
             })}
           </div>
