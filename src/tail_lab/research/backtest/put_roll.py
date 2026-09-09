@@ -12,12 +12,25 @@ Every premium is a **model price**, not a real historical quote
 IV proxy at an entry date uses only trailing prices (no future leakage into
 the premium), and ``compute_put_backtest`` reads only the bronze snapshot
 known on or before ``as_of`` (``LakeStore.read_bronze_as_of``).
+
+**Market-priced rolls.** Passing ``basis=PricingBasis(quotes=...)`` switches
+every leg in the run from the model above to a real listed contract fetched
+through :mod:`tail_lab.research.backtest.quote_fills` — see that module's
+docstring for why the model cannot be trusted at the depths this exists for.
+There is no per-leg fallback: a cycle that cannot fill a real quote is
+SKIPPED and counted (``PutBacktestResult.n_cycles_skipped``), never priced by
+the model, because a silent model price inside a run labelled
+``priced_from == "market"`` is the one failure mode this path exists to rule
+out.
 """
 
 from __future__ import annotations
 
+import bisect
 import datetime as dt
 from collections.abc import Sequence
+from dataclasses import dataclass, field
+from typing import TYPE_CHECKING, Literal
 
 import numpy as np
 import pandas as pd
@@ -27,6 +40,15 @@ from tail_lab.contracts.ohlcv import dataset_id
 from tail_lab.lake.store import LakeStore
 from tail_lab.research.backtest.brokerage import COMMISSION_PER_CONTRACT, roll_cost
 from tail_lab.research.backtest.sizing import SizingMode
+
+# quote_fills -> marks -> roll_schedule -> put_roll (roll_schedule imports IV_CAP/
+# IV_FLOOR/TRADING_DAYS_PER_WEEK from here), so a top-level import of QuoteSource
+# would be circular. `from __future__ import annotations` (above) already makes
+# every annotation in this file a lazy string, so a TYPE_CHECKING-only import is
+# enough for mypy and never runs at import time -- QuoteSource is only ever used
+# here as a type, never constructed or introspected.
+if TYPE_CHECKING:
+    from tail_lab.research.backtest.quote_fills import QuoteSource
 from tail_lab.research.option_pricer import BlackScholesPricer, OptionPricer
 
 #: Trailing window (trading days) for the realized-vol IV proxy.
@@ -44,6 +66,9 @@ DEFAULT_RATE = 0.04
 TRADING_DAYS_PER_WEEK = 5
 #: Premium is floored at this fraction of spot before sizing, so a
 #: vanishingly cheap far-OOM/short-dated put can't imply infinite contracts.
+#: Model path only — see ``PricingBasis``: a real quoted ask is a real price
+#: and is never floored (quote_fills's own liquidity guard already refuses
+#: the pennies this floor was accidentally protecting against).
 PREMIUM_FLOOR_FRAC = 1e-4
 #: Don't annualize the running return-on-premium until at least this much of the
 #: window has elapsed. Annualizing a two-week ROI raises ``(1+roi)`` to the 26th
@@ -53,6 +78,25 @@ PREMIUM_FLOOR_FRAC = 1e-4
 MIN_YEARS_FOR_ANNUALIZED = 0.25
 
 
+@dataclass(frozen=True)
+class PricingBasis:
+    """How premiums are produced for one ``run_put_roll`` call.
+
+    ``pricer`` is the existing model path (``None`` behaves exactly as
+    passing nothing at all: :class:`BlackScholesPricer` is used). ``quotes``,
+    when given, switches the WHOLE run to real listed contracts via
+    :mod:`tail_lab.research.backtest.quote_fills` — there is no mixing the
+    two within a single run, and no per-leg fallback from ``quotes`` back to
+    ``pricer`` (see the module docstring's "Market-priced rolls" paragraph).
+    This replaces the old ``pricer: OptionPricer | None`` parameter
+    one-for-one so ``run_put_roll``'s keyword-only argument count does not
+    grow past the ``max-args = 13`` ratchet in ``pyproject.toml``.
+    """
+
+    pricer: OptionPricer | None = None
+    quotes: QuoteSource | None = None
+
+
 class PutRollCycle(BaseModel):
     """One entry-to-expiry roll of the strategy."""
 
@@ -60,8 +104,12 @@ class PutRollCycle(BaseModel):
     expiry_date: dt.date
     spot: float
     strike: float
-    sigma: float  # IV proxy (clamped realized-vol) used to price the entry premium
-    premium: float  # model price of one put at entry
+    #: IV proxy (clamped realized-vol) at entry. Used to price the premium on
+    #: the model path; on the market path (``PricingBasis.quotes`` set) the
+    #: premium comes from a real quote instead, and this is kept only as the
+    #: vol-regime context for that entry, not an input to the price.
+    sigma: float
+    premium: float  # model price of one put at entry (the real ask, on the market path)
     contracts: float  # notional / premium
     cost: float  # entry brokerage (commission + bid-ask half-spread) for this roll
     payoff: float  # contracts * max(strike - spot_at_expiry, 0)
@@ -116,6 +164,25 @@ class PutBacktestResult(BaseModel):
     #: draws the annualized-so-far line against. Populated by the API route (the
     #: pure engine has no benchmark), so it defaults to ``None``.
     benchmark_annualized: float | None = None
+    #: "model" (default) or "market" — whether every premium in this run came
+    #: from BlackScholesPricer or from a real listed ask via quote_fills. See
+    #: PricingBasis.
+    priced_from: Literal["model", "market"] = "model"
+    #: Fraction of ATTEMPTED market fills that actually produced a Fill (this
+    #: run only attempts fills when priced_from == "market"); the rest were
+    #: skipped and counted in n_cycles_skipped, never priced by the model.
+    #: 0.0 on the model path.
+    quote_coverage_pct: float = 0.0
+    #: Cycles skipped because quote_fills.QuoteSource.fill(...) returned None
+    #: (no guard satisfied) or the realized expiry ran past the end of the
+    #: price series. Always 0 on the model path.
+    n_cycles_skipped: int = 0
+    #: First entry date / last expiry date actually traded — may fall short
+    #: of the nominal [as_of - lookback_years, as_of] window when cycles were
+    #: skipped. annualized_return is computed over this span, not the nominal
+    #: window, whenever n_cycles_skipped > 0 (see run_put_roll's callsite).
+    traded_start: dt.date | None = None
+    traded_end: dt.date | None = None
     equity_curve: list[EquityPoint]  # realized, one point per expiry (+ a seed)
     mtm_curve: list[EquityPoint]  # daily mark-to-model cum P&L, aligned with price_path
     price_path: list[PricePoint]  # underlying over the traded window (for the tape)
@@ -226,82 +293,113 @@ def annualized_sharpe(
     return float(excess / sd * np.sqrt(rolls_per_year))
 
 
-def run_put_roll(
-    prices: pd.Series,
-    iv_proxy: pd.Series,
+@dataclass
+class _CycleAccumulation:
+    """Mutable bookkeeping shared by ``_roll_model_cycles`` and
+    ``_roll_market_cycles`` — one instance per ``run_put_roll`` call, built up
+    cycle by cycle and read back into local variables once the loop is done.
+    Existing purely so the two roll loops can be functions of their own
+    (``docs/adr/0023``'s max-complexity/max-statements ratchet: merging both
+    loops into ``run_put_roll`` itself pushed it to complexity 21 and 135
+    statements against limits of 11 and 75) without each one returning an
+    eleven-tuple.
+    """
+
+    cycles: list[PutRollCycle] = field(default_factory=list)
+    spans: list[tuple[int, int]] = field(default_factory=list)  # (entry_idx, expiry_idx)
+    equity: list[EquityPoint] = field(default_factory=list)
+    total_payoff: float = 0.0
+    total_brokerage: float = 0.0
+    wins: int = 0
+    biggest_mult: float = 0.0
+    worst_streak: int = 0
+    #: Running state, not part of what the caller reads back -- the current
+    #: cumulative P&L and losing-streak length as of the last recorded cycle.
+    cum: float = 0.0
+    streak: int = 0
+    first_traded_idx: int | None = None
+    last_expiry_idx: int = 0
+    n_attempted: int = 0
+    n_cycles_skipped: int = 0
+
+
+def _record_cycle(
+    acc: _CycleAccumulation,
     *,
-    asset: str,
-    as_of: dt.date,
+    entry_idx: int,
+    expiry_idx: int,
+    dates: list[dt.date],
+    spot: float,
+    strike: float,
+    sigma: float,
+    premium: float,
+    contracts: float,
+    cost: float,
+    payoff: float,
+    net: float,
+    notional: float,
+) -> None:
+    """Append one settled cycle to ``acc`` and update its running bookkeeping.
+
+    Shared by both roll loops so the equity-curve/win-streak/biggest-payoff
+    tallying — which has nothing to do with whether the premium came from the
+    model or a real quote — is written once rather than twice in step.
+    """
+    if not acc.equity:
+        acc.equity.append(EquityPoint(date=dates[entry_idx], cum_pnl=0.0))
+    acc.cum += net
+    acc.total_payoff += payoff
+    acc.total_brokerage += cost
+    if net > 0:
+        acc.wins += 1
+    acc.biggest_mult = max(acc.biggest_mult, payoff / notional)
+    if net < 0:
+        acc.streak += 1
+        acc.worst_streak = max(acc.worst_streak, acc.streak)
+    else:
+        acc.streak = 0
+    acc.cycles.append(
+        PutRollCycle(
+            entry_date=dates[entry_idx],
+            expiry_date=dates[expiry_idx],
+            spot=float(spot),
+            strike=float(strike),
+            sigma=sigma,
+            premium=float(premium),
+            contracts=float(contracts),
+            cost=float(cost),
+            payoff=float(payoff),
+            net=float(net),
+        )
+    )
+    acc.equity.append(EquityPoint(date=dates[expiry_idx], cum_pnl=float(acc.cum)))
+    acc.spans.append((entry_idx, expiry_idx))
+    if acc.first_traded_idx is None:
+        acc.first_traded_idx = entry_idx
+    acc.last_expiry_idx = expiry_idx
+
+
+def _roll_model_cycles(
+    *,
+    px: np.ndarray,
+    iv: np.ndarray,
+    dates: list[dt.date],
+    first_entry: int,
+    n: int,
+    tenor_days: int,
+    pricer: OptionPricer,
+    rate: float,
     notional: float,
     moneyness_pct: float,
     tenor_weeks: float,
-    lookback_years: float,
-    rate: float = DEFAULT_RATE,
-    pricer: OptionPricer | None = None,
-    commission_per_contract: float = COMMISSION_PER_CONTRACT,
-    spread_scale: float = 1.0,
-    include_curves: bool = True,
-) -> PutBacktestResult:
-    """Roll a fixed-``notional`` OOM-put strategy through ``prices``.
-
-    At each entry the strategy spends ``notional`` on puts struck
-    ``moneyness_pct`` percent below spot, expiring ``tenor_weeks`` weeks out,
-    priced at ``iv_proxy`` for that date; at expiry it collects the intrinsic
-    payoff, then re-enters (non-overlapping rolls). ``prices`` and ``iv_proxy``
-    must share the same date index.
-
-    Only the trailing ``lookback_years`` of the series is traded (the head is
-    still needed so the first tradable entry already has a valid IV proxy).
-    Raises ``ValueError`` on misaligned series or non-positive inputs, and
-    ``LookupError`` if the window is too short to complete even one roll.
-
-    Every roll's ``net`` is **net of realistic retail brokerage** (see
-    :mod:`tail_lab.research.backtest.brokerage`): a ``$0.65``/contract
-    commission plus a tenor/moneyness-dependent bid-ask half-spread, paid at
-    entry. ``commission_per_contract`` and ``spread_scale`` are exposed only so
-    a test can run the identical strategy cost-free (both ``0``) to isolate the
-    cost drag; production callers use the defaults.
-
-    ``include_curves=False`` skips the two **per-day** outputs — the
-    mark-to-model curve and the price path — and returns them empty. Every
-    scalar, the cycle list, and the per-roll curves are unchanged, so a caller
-    that only scores a run gets an identical verdict. This is not a
-    micro-optimization: the mark-to-model curve is O(days x cycles) with a
-    pricer call per day, and it dominates the cost of a run by an order of
-    magnitude. A 45-cell sweep computes it 45 times and displays it zero times
-    (:mod:`tail_lab.research.backtest.sweep`), and the universe ranking would
-    compute it ~1,600 times. Charts pass ``True``; scoring passes ``False``.
-    """
-    if not prices.index.equals(iv_proxy.index):
-        raise ValueError("prices and iv_proxy must share the same date index")
-    if notional <= 0 or tenor_weeks <= 0 or not 0 < moneyness_pct < 100:
-        raise ValueError("notional>0, tenor_weeks>0, and 0<moneyness_pct<100 required")
-
-    pricer = pricer or BlackScholesPricer()
-    tenor_days = max(round(tenor_weeks * TRADING_DAYS_PER_WEEK), 1)
+    commission_per_contract: float,
+    spread_scale: float,
+) -> _CycleAccumulation:
+    """The model-priced roll loop — behaviour unchanged from before
+    ``PricingBasis`` existed, only moved out of ``run_put_roll`` (see
+    ``_CycleAccumulation``'s docstring for why)."""
     t_years = tenor_days / 252.0
-    n = len(prices)
-    lookback_days = round(lookback_years * 252)
-    first_entry = max(n - lookback_days, IV_WINDOW)
-
-    px = prices.to_numpy(dtype=float)
-    iv = iv_proxy.to_numpy(dtype=float)
-    dates = [d.date() if isinstance(d, pd.Timestamp) else d for d in prices.index]
-
-    cycles: list[PutRollCycle] = []
-    spans: list[tuple[int, int]] = []  # (entry_idx, expiry_idx) per cycle, for the MTM marks
-    cum = 0.0
-    equity: list[EquityPoint] = []
-    total_payoff = 0.0
-    total_brokerage = 0.0
-    wins = 0
-    biggest_mult = 0.0
-    worst_streak = 0
-    streak = 0
-
-    first_traded_idx: int | None = None
-    last_expiry_idx = first_entry
-
+    acc = _CycleAccumulation(last_expiry_idx=first_entry)
     i = first_entry
     while i + tenor_days < n:
         sigma = iv[i]
@@ -322,45 +420,238 @@ def run_put_roll(
             commission_per_contract=commission_per_contract,
             spread_scale=spread_scale,
         )
-
         spot_at_expiry = px[i + tenor_days]
         payoff = contracts * max(strike - spot_at_expiry, 0.0)
         net = payoff - notional - cost
-
-        if not equity:
-            equity.append(EquityPoint(date=dates[i], cum_pnl=0.0))
-        cum += net
-        total_payoff += payoff
-        total_brokerage += cost
-        if net > 0:
-            wins += 1
-        biggest_mult = max(biggest_mult, payoff / notional)
-        if net < 0:
-            streak += 1
-            worst_streak = max(worst_streak, streak)
-        else:
-            streak = 0
-
-        cycles.append(
-            PutRollCycle(
-                entry_date=dates[i],
-                expiry_date=dates[i + tenor_days],
-                spot=float(spot),
-                strike=float(strike),
-                sigma=sigma,
-                premium=float(premium),
-                contracts=float(contracts),
-                cost=float(cost),
-                payoff=float(payoff),
-                net=float(net),
-            )
+        _record_cycle(
+            acc,
+            entry_idx=i,
+            expiry_idx=i + tenor_days,
+            dates=dates,
+            spot=spot,
+            strike=strike,
+            sigma=sigma,
+            premium=premium,
+            contracts=contracts,
+            cost=cost,
+            payoff=payoff,
+            net=net,
+            notional=notional,
         )
-        equity.append(EquityPoint(date=dates[i + tenor_days], cum_pnl=float(cum)))
-        spans.append((i, i + tenor_days))
-        if first_traded_idx is None:
-            first_traded_idx = i
-        last_expiry_idx = i + tenor_days
         i += tenor_days
+    return acc
+
+
+def _roll_market_cycles(
+    *,
+    px: np.ndarray,
+    iv: np.ndarray,
+    dates: list[dt.date],
+    first_entry: int,
+    n: int,
+    quotes: QuoteSource,
+    notional: float,
+    moneyness_pct: float,
+    tenor_weeks: float,
+    commission_per_contract: float,
+) -> _CycleAccumulation:
+    """The market-priced roll loop — see the "Market-priced rolls" paragraph
+    in the module docstring for what it does and why there is no fallback to
+    the model. Moved out of ``run_put_roll`` for the same ratchet reason as
+    ``_roll_model_cycles``."""
+    acc = _CycleAccumulation(last_expiry_idx=first_entry)
+    i = first_entry
+    while i < n:
+        sigma_raw = iv[i]
+        if not np.isfinite(sigma_raw):  # not enough trailing history yet — step forward
+            i += 1
+            continue
+        sigma = float(min(max(sigma_raw, IV_FLOOR), IV_CAP))
+        spot = px[i]
+        entry_date = dates[i]
+
+        acc.n_attempted += 1
+        fill = quotes.fill(
+            entry_date=entry_date,
+            spot=float(spot),
+            moneyness_pct=moneyness_pct,
+            tenor_weeks=tenor_weeks,
+        )
+        if fill is None:
+            # No guard in quote_fills was satisfied for this session -- SKIP
+            # and COUNT, never fall back to the model.
+            acc.n_cycles_skipped += 1
+            i += 1
+            continue
+
+        expiry_idx = bisect.bisect_left(dates, fill.expiry, i)
+        if expiry_idx >= n:
+            # The listed expiry runs past the end of the price series -- the
+            # cycle cannot be settled, so it is a skip too, not a truncated
+            # payoff.
+            acc.n_cycles_skipped += 1
+            i += 1
+            continue
+
+        strike = fill.strike  # the REALIZED strike, not spot*(1-moneyness/100)
+        premium = fill.premium  # the real ask -- no PREMIUM_FLOOR_FRAC (guard 6)
+        contracts = notional / premium
+        cost = roll_cost(
+            contracts,
+            notional,
+            tenor_weeks,
+            moneyness_pct,
+            commission_per_contract=commission_per_contract,
+            spread_scale=0.0,  # the ask already prices the spread -- see run_put_roll's docstring
+        )
+        spot_at_expiry = px[expiry_idx]
+        payoff = contracts * max(strike - spot_at_expiry, 0.0)
+        net = payoff - notional - cost
+        _record_cycle(
+            acc,
+            entry_idx=i,
+            expiry_idx=expiry_idx,
+            dates=dates,
+            spot=spot,
+            strike=strike,
+            sigma=sigma,
+            premium=premium,
+            contracts=contracts,
+            cost=cost,
+            payoff=payoff,
+            net=net,
+            notional=notional,
+        )
+        i = expiry_idx
+    return acc
+
+
+def run_put_roll(
+    prices: pd.Series,
+    iv_proxy: pd.Series,
+    *,
+    asset: str,
+    as_of: dt.date,
+    notional: float,
+    moneyness_pct: float,
+    tenor_weeks: float,
+    lookback_years: float,
+    rate: float = DEFAULT_RATE,
+    basis: PricingBasis | None = None,
+    commission_per_contract: float = COMMISSION_PER_CONTRACT,
+    spread_scale: float = 1.0,
+    include_curves: bool = True,
+) -> PutBacktestResult:
+    """Roll a fixed-``notional`` OOM-put strategy through ``prices``.
+
+    At each entry the strategy spends ``notional`` on puts struck
+    ``moneyness_pct`` percent below spot, expiring ``tenor_weeks`` weeks out,
+    priced at ``iv_proxy`` for that date; at expiry it collects the intrinsic
+    payoff, then re-enters (non-overlapping rolls). ``prices`` and ``iv_proxy``
+    must share the same date index.
+
+    Only the trailing ``lookback_years`` of the series is traded (the head is
+    still needed so the first tradable entry already has a valid IV proxy).
+    Raises ``ValueError`` on misaligned series or non-positive inputs, and
+    ``LookupError`` if the window is too short to complete even one roll.
+
+    ``basis`` selects how every premium in the run is produced (default
+    ``None`` == ``PricingBasis()`` == the model path, exactly as before).
+    Passing ``PricingBasis(quotes=...)`` switches to real listed contracts:
+    each cycle's strike, expiry AND premium come from ``quotes.fill(...)``
+    rather than Black-Scholes, and a cycle whose request cannot fill (see
+    ``quote_fills``'s guards) is SKIPPED and counted in
+    ``PutBacktestResult.n_cycles_skipped`` rather than priced by the model —
+    there is no fallback between the two paths within one run. On the market
+    path ``spread_scale`` is ignored (always treated as ``0.0``): the premium
+    is already the real historical ask, so charging the model's bid-ask
+    half-spread on top of it double-counts a cost already paid (measured
+    2.4-5pp of ROI per roll) — ``commission_per_contract`` still applies,
+    since a real trade still pays a real commission. When any cycle was
+    skipped, ``annualized_return`` is computed over the ACTUAL traded span
+    (first entry to last expiry) rather than the nominal ``lookback_years``:
+    annualizing a truncated run over its nominal window is a measured
+    flatterer — a truncated SPY run reported -15.0%/yr over the nominal
+    window where the honest figure, over the traded span, is -26.2%/yr.
+
+    Every roll's ``net`` is **net of realistic retail brokerage** (see
+    :mod:`tail_lab.research.backtest.brokerage`): a ``$0.65``/contract
+    commission plus a tenor/moneyness-dependent bid-ask half-spread, paid at
+    entry (the half-spread is model-path only — see above).
+    ``commission_per_contract`` and ``spread_scale`` are exposed only so a
+    test can run the identical model strategy cost-free (both ``0``) to
+    isolate the cost drag; production callers use the defaults.
+
+    ``include_curves=False`` skips the two **per-day** outputs — the
+    mark-to-model curve and the price path — and returns them empty. Every
+    scalar, the cycle list, and the per-roll curves are unchanged, so a caller
+    that only scores a run gets an identical verdict. This is not a
+    micro-optimization: the mark-to-model curve is O(days x cycles) with a
+    pricer (or quote) call per day, and it dominates the cost of a run by an
+    order of magnitude. A 45-cell sweep computes it 45 times and displays it
+    zero times (:mod:`tail_lab.research.backtest.sweep`), and the universe
+    ranking would compute it ~1,600 times. Charts pass ``True``; scoring
+    passes ``False``.
+    """
+    if not prices.index.equals(iv_proxy.index):
+        raise ValueError("prices and iv_proxy must share the same date index")
+    if notional <= 0 or tenor_weeks <= 0 or not 0 < moneyness_pct < 100:
+        raise ValueError("notional>0, tenor_weeks>0, and 0<moneyness_pct<100 required")
+
+    basis = basis or PricingBasis()
+    pricer = basis.pricer or BlackScholesPricer()
+    quotes = basis.quotes
+    tenor_days = max(round(tenor_weeks * TRADING_DAYS_PER_WEEK), 1)
+    n = len(prices)
+    lookback_days = round(lookback_years * 252)
+    first_entry = max(n - lookback_days, IV_WINDOW)
+
+    px = prices.to_numpy(dtype=float)
+    iv = iv_proxy.to_numpy(dtype=float)
+    dates = [d.date() if isinstance(d, pd.Timestamp) else d for d in prices.index]
+
+    if quotes is not None:
+        acc = _roll_market_cycles(
+            px=px,
+            iv=iv,
+            dates=dates,
+            first_entry=first_entry,
+            n=n,
+            quotes=quotes,
+            notional=notional,
+            moneyness_pct=moneyness_pct,
+            tenor_weeks=tenor_weeks,
+            commission_per_contract=commission_per_contract,
+        )
+    else:
+        acc = _roll_model_cycles(
+            px=px,
+            iv=iv,
+            dates=dates,
+            first_entry=first_entry,
+            n=n,
+            tenor_days=tenor_days,
+            pricer=pricer,
+            rate=rate,
+            notional=notional,
+            moneyness_pct=moneyness_pct,
+            tenor_weeks=tenor_weeks,
+            commission_per_contract=commission_per_contract,
+            spread_scale=spread_scale,
+        )
+
+    cycles = acc.cycles
+    spans = acc.spans
+    equity = acc.equity
+    total_payoff = acc.total_payoff
+    total_brokerage = acc.total_brokerage
+    wins = acc.wins
+    biggest_mult = acc.biggest_mult
+    worst_streak = acc.worst_streak
+    first_traded_idx = acc.first_traded_idx
+    last_expiry_idx = acc.last_expiry_idx
+    n_attempted = acc.n_attempted
+    n_cycles_skipped = acc.n_cycles_skipped
 
     if not cycles or first_traded_idx is None:
         raise LookupError(
@@ -389,6 +680,7 @@ def run_put_roll(
             notional=notional,
             first_traded_idx=first_traded_idx,
             last_expiry_idx=last_expiry_idx,
+            quotes=quotes,
         )
 
     total_premium = len(cycles) * notional
@@ -407,6 +699,19 @@ def run_put_roll(
         first_entry_date=cycles[0].entry_date,
         notional=notional,
     )
+
+    traded_start = cycles[0].entry_date
+    traded_end = cycles[-1].expiry_date
+    if n_cycles_skipped > 0:
+        # See the "basis" docstring paragraph above: annualizing a truncated
+        # run over the nominal lookback_years understates its loss (measured
+        # -15.0%/yr nominal vs -26.2%/yr over the traded span, on a real SPY
+        # run) -- ranking.MIN_WINDOW_COVERAGE exists for the same bug class.
+        traded_years = (traded_end - traded_start).days / 365.25
+        final_annualized = annualized_return(roi_on_premium, traded_years)
+    else:
+        final_annualized = annualized_return(roi_on_premium, lookback_years)
+
     return PutBacktestResult(
         asset=asset,
         as_of=as_of,
@@ -422,7 +727,7 @@ def run_put_roll(
         total_brokerage=total_brokerage,
         net_pnl=net_pnl,
         roi_on_premium=roi_on_premium,
-        annualized_return=annualized_return(roi_on_premium, lookback_years),
+        annualized_return=final_annualized,
         hit_rate=wins / len(cycles),
         biggest_payoff_mult=biggest_mult,
         worst_bleed_streak=worst_streak,
@@ -432,6 +737,11 @@ def run_put_roll(
         mtm_curve=mtm_curve,
         price_path=price_path,
         cycles=cycles,
+        priced_from="market" if quotes is not None else "model",
+        quote_coverage_pct=(len(cycles) / n_attempted) if n_attempted > 0 else 0.0,
+        n_cycles_skipped=n_cycles_skipped,
+        traded_start=traded_start,
+        traded_end=traded_end,
     )
 
 
@@ -447,6 +757,7 @@ def _mark_to_market_curve(
     notional: float,
     first_traded_idx: int,
     last_expiry_idx: int,
+    quotes: QuoteSource | None = None,
 ) -> list[EquityPoint]:
     """Daily mark-to-market cumulative P&L over ``first_traded_idx..last_expiry_idx``.
 
@@ -456,26 +767,43 @@ def _mark_to_market_curve(
         mtm_k = realized_completed + unrealized_open
 
     where ``realized_completed`` sums the (net-of-brokerage) ``net`` of every
-    cycle that has expired by ``k`` and is *not* the currently-open roll, and
-    ``unrealized_open = contracts * BS_raw(spot[k], strike, (expiry-k)/252, iv[k]) - notional - cost``
-    marks the open put with **raw** Black-Scholes (less its entry brokerage
-    ``cost``, so the curve steps down by the cost at entry) — no
-    ``PREMIUM_FLOOR_FRAC``
-    (flooring the mark would overstate a decayed OOM put and break the expiry
-    identity below). ``sigma`` is clamped with ``IV_FLOOR``/``IV_CAP`` exactly
-    as entry pricing does, so a dead-calm window (realized vol 0, which would
-    make the pricer reject ``sigma<=0``) still marks cleanly.
+    cycle that has expired by ``k`` and is *not* the currently-open roll.
+
+    **Model path** (``quotes is None``, unchanged from before this existed):
+    ``unrealized_open = contracts * BS_raw(spot[k], strike, (expiry-k)/252, iv[k]) -
+    notional - cost`` marks the open put with **raw** Black-Scholes (less its
+    entry brokerage ``cost``, so the curve steps down by the cost at entry) —
+    no ``PREMIUM_FLOOR_FRAC`` (flooring the mark would overstate a decayed OOM
+    put and break the expiry identity below). ``sigma`` is clamped with
+    ``IV_FLOOR``/``IV_CAP`` exactly as entry pricing does, so a dead-calm
+    window (realized vol 0, which would make the pricer reject ``sigma<=0``)
+    still marks cleanly.
+
+    **Market path** (``quotes`` given): the open leg is a real listed
+    contract, so it is marked from the SAME panel at the **bid** (you sell to
+    close, not buy — see ``quote_fills.OptionsDxQuoteSource.mark``), not
+    re-priced by the model. If a day's bid is unavailable, the last known
+    real mark for that open cycle is carried forward rather than substituted
+    with a model price — marking a market entry with the model here would
+    show every roll losing ~100% of its premium on day 1, since the model has
+    already underflowed to ~0 at the depths quote_fills exists for (see its
+    module docstring). The very first day a mark is needed for a given cycle
+    and no bid is available yet falls back to the cycle's own entry premium
+    (the ask actually paid), never to the model.
 
     Rolls re-enter on the expiry date, so at a shared expiry index the
     newly-entered roll is treated as the open one (unrealized ~= 0) and the
-    just-expired roll counts as realized. At ``k == expiry_idx`` the raw BS value
-    with ``t_years=0`` is the intrinsic ``max(strike-spot,0)``; since
+    just-expired roll counts as realized. At ``k == expiry_idx`` the mark is
+    always the exact intrinsic ``max(strike-spot,0)`` (both paths); since
     ``contracts * premium == notional``, ``unrealized = contracts*intrinsic -
-    notional - cost = payoff - notional - cost = net``, so ``mtm_curve`` meets the realized
-    ``equity_curve`` at every expiry date. Point-in-time safe: every input at
-    ``k`` is known at ``k`` (``iv`` is backward-looking).
+    notional - cost = payoff - notional - cost = net``, so ``mtm_curve`` meets
+    the realized ``equity_curve`` at every expiry date. Point-in-time safe:
+    every input at ``k`` is known at ``k`` (``iv`` is backward-looking, and a
+    quote lookup is filtered to the session dated ``k`` itself).
     """
     curve: list[EquityPoint] = []
+    open_mark: float | None = None
+    open_mark_pos: int | None = None
     for k in range(first_traded_idx, last_expiry_idx + 1):
         # The open roll is the (newest, at a shared boundary) cycle bracketing k.
         open_pos: int | None = None
@@ -491,14 +819,32 @@ def _mark_to_market_curve(
         if open_pos is not None:
             cyc = cycles[open_pos]
             _, expiry_idx = spans[open_pos]
-            t_years = (expiry_idx - k) / 252.0
-            if t_years <= 0.0:
-                mark = max(cyc.strike - float(px[k]), 0.0)  # intrinsic at expiry (guards T=0)
+            if quotes is not None:
+                if open_mark_pos != open_pos:  # a new roll opened -- forget the old mark
+                    open_mark = None
+                    open_mark_pos = open_pos
+                if k == expiry_idx:
+                    mark = max(cyc.strike - float(px[k]), 0.0)  # intrinsic (guards T=0)
+                else:
+                    bid = quotes.mark(
+                        entry_date=dates[k], strike=cyc.strike, expiry=cyc.expiry_date
+                    )
+                    if bid is not None:
+                        mark = bid
+                        open_mark = bid
+                    elif open_mark is not None:
+                        mark = open_mark  # carry the last known REAL mark forward
+                    else:
+                        mark = cyc.premium  # no mark seen yet -- the entry ask, not the model
             else:
-                sigma = float(min(max(iv[k], IV_FLOOR), IV_CAP))
-                mark = pricer.price_put(
-                    spot=float(px[k]), strike=cyc.strike, t_years=t_years, r=rate, sigma=sigma
-                )
+                t_years = (expiry_idx - k) / 252.0
+                if t_years <= 0.0:
+                    mark = max(cyc.strike - float(px[k]), 0.0)  # intrinsic at expiry (guards T=0)
+                else:
+                    sigma = float(min(max(iv[k], IV_FLOOR), IV_CAP))
+                    mark = pricer.price_put(
+                        spot=float(px[k]), strike=cyc.strike, t_years=t_years, r=rate, sigma=sigma
+                    )
             # Net of the open roll's entry brokerage, so the curve steps down by
             # the cost at entry and still converges to the net realized value at
             # expiry (contracts*intrinsic - notional - cost == net).
@@ -570,7 +916,7 @@ def compute_put_backtest(
     tenor_weeks: float,
     lookback_years: float,
     rate: float = DEFAULT_RATE,
-    pricer: OptionPricer | None = None,
+    basis: PricingBasis | None = None,
     commission_per_contract: float = COMMISSION_PER_CONTRACT,
     spread_scale: float = 1.0,
     sizing_mode: SizingMode | None = None,
@@ -580,7 +926,9 @@ def compute_put_backtest(
     Reads the as-of price path and its IV proxy and rolls the strategy. Raises
     ``LookupError`` if no snapshot exists as of that date or the window is too
     short for a single roll. ``commission_per_contract``/``spread_scale`` pass
-    through to :func:`run_put_roll` (production uses the realistic defaults).
+    through to :func:`run_put_roll` (production uses the realistic defaults),
+    and so does ``basis`` — see its dataclass and ``run_put_roll``'s docstring
+    for the model-vs-market behavior it selects.
 
     ``sizing_mode``, when given, resolves the premium budget and ``notional``
     is ignored; a single asset is one leg, so it resolves with ``n_legs=1``.
@@ -599,7 +947,7 @@ def compute_put_backtest(
         tenor_weeks=tenor_weeks,
         lookback_years=lookback_years,
         rate=rate,
-        pricer=pricer,
+        basis=basis,
         commission_per_contract=commission_per_contract,
         spread_scale=spread_scale,
     )
