@@ -10,7 +10,7 @@ failures pull in opposite directions:
   if paid per request.
 * **Too much caching and the machine dies.** Every Put Lab route is a sync
   ``def``, so Starlette runs up to 40 of them in a threadpool. Two SIMULTANEOUS
-  constructions were measured at **1318 MB** against a **1024 MB** cap, and a
+  constructions were measured at **~1066 MB** against a **1024 MB** cap, and a
   naive per-``(symbol, as_of)`` dict is a monotonic ~300 MB-per-asset leak:
   five optionsDX assets plus ``option_quotes`` measured 682 MB resident, on top
   of the app's own ~252 MB.
@@ -24,7 +24,7 @@ Two properties beyond eviction, both load-bearing under a threadpool:
 
 * **One build per key, ever.** A per-key lock means the second thread asking
   for SPY waits for the first thread's build instead of starting its own. That
-  is what turns the measured 1318 MB concurrent peak back into one build's
+  is what turns the measured ~1066 MB concurrent peak back into one build's
   worth, and it is the whole reason this is not a plain ``functools.lru_cache``
   (which happily runs the same expensive call on N threads at once).
 * **The budget is fed a deliberate OVER-estimate.** A source reports its own

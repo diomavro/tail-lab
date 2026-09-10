@@ -286,12 +286,13 @@ def build_session_index(panel: pd.DataFrame, symbol: str) -> dict[pd.Timestamp, 
     Two things this does NOT do, stated because the numbers invite the
     opposite reading:
 
-    * The session frames ALIAS the parent panel -- pandas copy-on-write makes
-      `frame[keep]` a lazy reference -- so the index is additive to the
-      projected panel, not a replacement for it, and the panel cannot be freed
-      while the index lives.
+    * The session frames do NOT alias the parent panel. `panel[mask]` is a
+      boolean-index COPY and `groupby` yields per-group frames, so the
+      sessions own their blocks (measured in `index_nbytes` below, which
+      relies on exactly this) -- the panel is free to be dropped once the
+      index is built.
     * It does not make the source safe to construct concurrently. Two
-      simultaneous constructions were measured at **1318 MB**, over the
+      simultaneous constructions were measured at **~1066 MB**, over the
       machine's 1024 MB cap. See the note on `from_store`.
     """
     if panel.empty:
@@ -527,7 +528,7 @@ class OptionsDxQuoteSource:
 
         NOT SAFE TO CALL CONCURRENTLY as things stand, and there is no cache
         seam yet: measured 13-38 s per call for SPY (always past the 5 s health
-        check), and two simultaneous constructions peaked at 1318 MB against a
+        check), and two simultaneous constructions peaked at ~1066 MB against a
         1024 MB machine. A route must hold a bounded, evicting cache of these
         before wiring one up -- `AGENT_TODO.md` carries the requirement.
 
