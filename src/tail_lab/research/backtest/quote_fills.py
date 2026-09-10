@@ -115,6 +115,7 @@ __all__ = [
     "OptionQuotesSource",
     "OptionsDxQuoteSource",
     "QuoteSource",
+    "index_nbytes",
 ]
 
 #: The one underlying ``contracts/option_quotes`` holds (guard 2 of
@@ -299,6 +300,28 @@ def build_session_index(panel: pd.DataFrame, symbol: str) -> dict[pd.Timestamp, 
         # Timestamp column, so this narrows rather than converts.
         grouped[cast("pd.Timestamp", key)] = frame[keep]
     return grouped
+
+
+def index_nbytes(sessions: dict[pd.Timestamp, pd.DataFrame]) -> int:
+    """Resident bytes of a built index, for the cache's byte budget.
+
+    Deliberately measures the PARENT panel's blocks once rather than summing
+    the session frames. Under pandas copy-on-write `frame[keep]` is a lazy
+    reference, so the sessions alias the panel and summing them counts the same
+    memory 3,500 times -- measured 131.5 MB of "session" bytes against a panel
+    that never left 193 MB resident. A budget fed the summed number would evict
+    far too eagerly.
+    """
+    if not sessions:
+        return 0
+    seen: dict[int, int] = {}
+    for frame in sessions.values():
+        for block in frame._mgr.blocks:
+            values = block.values
+            base = getattr(values, "base", None)
+            target = base if base is not None else values
+            seen[id(target)] = target.nbytes
+    return sum(seen.values())
 
 
 def _session(index: dict[pd.Timestamp, pd.DataFrame], entry_date: dt.date) -> pd.DataFrame | None:

@@ -960,7 +960,12 @@ lost a second time.
       symbols that ended up missing a loud output rather than a `::warning::`
       nobody reads.
 
-- [ ] **A bounded cache for quote sources, BEFORE any route constructs one.**
+- [x] **Done 2026-09-10.** A bounded cache for quote sources —
+      `research/backtest/quote_cache.py`. Byte-budgeted (400 MB against the
+      1024 MB machine), LRU by BYTES not entries, and one build per key even
+      under threads. Measured: four concurrent SPY requests produce ONE build
+      and peak at 702 MB, against 1318 MB for two unguarded ones. Still not
+      wired to a route — that is the next step, and it is now safe to take.
       `OptionsDxQuoteSource.from_store` is measured at 13-38 s for SPY — always
       past the 5 s health-check timeout — and two simultaneous constructions
       peaked at **1318 MB against a 1024 MB machine**. Every putlab route is a
@@ -971,7 +976,11 @@ lost a second time.
       resident, on top of the app's own ~252 MB. Wanted: an explicit cache with
       a BYTE budget and eviction, not the count-capped `_frame_cache`.
 
-- [ ] **`bronze_snapshot_id` has no projected sibling, and it is a loaded gun.**
+- [x] **Done 2026-09-10.** `bronze_snapshot_id` reads the Delta LOG rather
+      than the data — per-file path, size, row count and per-column stats,
+      which the log already carries. Measured 186 MB peak across three
+      datasets including the 3.28M-row SPY panel, where the old path would
+      have read all of it and pinned it in `_frame_cache` forever.
       `docs/STANDARDS.md` §f requires every backtest to log its input
       snapshots, and `putlab_routes._log_run(..., extra_snapshots=...)` routes
       through `store.bronze_snapshot_id` → `_cached_partition` → a FULL
