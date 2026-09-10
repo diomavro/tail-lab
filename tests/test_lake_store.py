@@ -143,56 +143,6 @@ def test_bronze_snapshot_id_is_stable_and_content_addressed(tmp_path: Path) -> N
         store.bronze_snapshot_id(DATASET, dt.date(2026, 1, 1))
 
 
-def test_bronze_snapshot_id_reads_the_log_not_the_data(tmp_path: Path) -> None:
-    """The provenance id must not cost a full partition read.
-
-    `docs/STANDARDS.md` §f requires every backtest to log its input snapshots,
-    so this runs on the hot path of every result. It used to materialise the
-    whole partition and sha256 its Parquet bytes — fine for the ~1k-row
-    datasets it was written for, fatal for a 3.28M-row quote panel, where it
-    also pinned the frame in `_frame_cache` (which evicts by COUNT, so never
-    releases it). Being provenance-correct would have undone the projection
-    work and OOM'd the machine.
-
-    Asserted by watching `_read_bronze_partition`: the id must be produced
-    without it being called even once.
-    """
-    store = DeltaLakeStore(tmp_path)
-    frame = pd.DataFrame({"a": [1, 2, 3], "b": ["x", "y", "z"]})
-    store.write_bronze("probe", dt.date(2026, 1, 5), frame)
-
-    reads: list[str] = []
-    original = store._read_bronze_partition
-
-    def spy(*args: object, **kwargs: object) -> pd.DataFrame:
-        reads.append("read")
-        return original(*args, **kwargs)  # type: ignore[arg-type]
-
-    store._read_bronze_partition = spy  # type: ignore[method-assign]
-    snapshot_id = store.bronze_snapshot_id("probe", dt.date(2026, 1, 5))
-
-    assert reads == [], "the snapshot id read the partition's data"
-    assert snapshot_id.startswith("probe@2026-01-05#")
-    # Deterministic: a provenance id that changed between calls would make
-    # every logged result un-reproducible against itself.
-    assert store.bronze_snapshot_id("probe", dt.date(2026, 1, 5)) == snapshot_id
-
-
-def test_bronze_snapshot_id_differs_when_the_partition_does(tmp_path: Path) -> None:
-    """Two partitions of the same dataset must not share an id — otherwise the
-    id cannot do the one job it has, which is saying WHICH snapshot a result
-    was computed from."""
-    store = DeltaLakeStore(tmp_path)
-    store.write_bronze("probe", dt.date(2026, 1, 5), pd.DataFrame({"a": [1, 2, 3]}))
-    store.write_bronze("probe", dt.date(2026, 1, 6), pd.DataFrame({"a": [1, 2, 3, 4]}))
-
-    first = store.bronze_snapshot_id("probe", dt.date(2026, 1, 5))
-    second = store.bronze_snapshot_id("probe", dt.date(2026, 1, 6))
-    assert first != second
-    # And the as-of resolution still picks the right one.
-    assert store.bronze_snapshot_id("probe", dt.date(2026, 1, 5)) == first
-
-
 def test_silver_and_gold_round_trip(tmp_path: Path) -> None:
     store = DeltaLakeStore(tmp_path)
     df = _frame(["2026-01-02", "2026-01-05"], [15.0, 16.0])
@@ -246,3 +196,67 @@ def test_query_via_duckdb(tmp_path: Path) -> None:
 
     result = store.query(f"SELECT COUNT(*) AS n FROM delta_scan('{Path(location).as_posix()}')")
     assert int(result["n"].iloc[0]) == 2
+
+
+def test_bronze_snapshot_id_is_addressed_on_content_not_on_the_write(tmp_path: Path) -> None:
+    """Same rows must give the same id, in a lake that has never seen the other.
+
+    This is the direction `docs/adr/0012` depends on -- the id stands in for a
+    lakeFS commit and must prove "this result was computed from exactly this
+    data", which only works if the id can be recomputed from any copy of the
+    rows. A first version of the log-based digest hashed the add-action `path`,
+    which carries a write-time UUID, so byte-identical data written twice gave
+    two different ids and neither could be checked against anything but that one
+    live table. Nothing caught it, because the only test compared ids whose DATE
+    prefixes already differed.
+    """
+    rows = pd.DataFrame({"a": [1, 2, 3], "b": ["x", "y", "z"]})
+    first = DeltaLakeStore(tmp_path / "lake_a")
+    second = DeltaLakeStore(tmp_path / "lake_b")
+    for store in (first, second):
+        store.write_bronze("probe", dt.date(2026, 1, 5), rows)
+
+    assert first.bronze_snapshot_id("probe", dt.date(2026, 1, 5)) == second.bronze_snapshot_id(
+        "probe", dt.date(2026, 1, 5)
+    )
+
+
+def test_bronze_snapshot_id_changes_when_the_ROWS_change(tmp_path: Path) -> None:
+    """Same dataset, same ingest date, one different value.
+
+    The complementary direction, and the one a digest of nothing would pass:
+    replacing the whole computation with a hardcoded constant kept the previous
+    tests green, because they only ever compared ids that differed in their date
+    prefix anyway.
+    """
+    same_date = dt.date(2026, 1, 5)
+    first = DeltaLakeStore(tmp_path / "one")
+    second = DeltaLakeStore(tmp_path / "two")
+    first.write_bronze("probe", same_date, pd.DataFrame({"a": [1, 2, 3]}))
+    second.write_bronze("probe", same_date, pd.DataFrame({"a": [1, 2, 9]}))
+
+    assert first.bronze_snapshot_id("probe", same_date) != second.bronze_snapshot_id(
+        "probe", same_date
+    )
+
+
+def test_bronze_snapshot_id_does_not_read_the_partition(tmp_path: Path) -> None:
+    """The whole point: it must cost the log, not the data.
+
+    `docs/STANDARDS.md` §f puts this on the hot path of every backtest, so a
+    full read here means a 3.28M-row quote panel materialised and pinned in
+    `_frame_cache` -- which evicts by COUNT and never releases it.
+    """
+    store = DeltaLakeStore(tmp_path)
+    store.write_bronze("probe", dt.date(2026, 1, 5), pd.DataFrame({"a": [1, 2, 3]}))
+
+    reads: list[str] = []
+    original = store._read_bronze_partition
+
+    def spy(*args: object, **kwargs: object) -> pd.DataFrame:
+        reads.append("read")
+        return original(*args, **kwargs)  # type: ignore[arg-type]
+
+    store._read_bronze_partition = spy  # type: ignore[method-assign]
+    store.bronze_snapshot_id("probe", dt.date(2026, 1, 5))
+    assert reads == [], "the snapshot id read the partition's data"

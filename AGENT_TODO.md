@@ -964,18 +964,31 @@ lost a second time.
       `research/backtest/quote_cache.py`. Byte-budgeted (400 MB against the
       1024 MB machine), LRU by BYTES not entries, and one build per key even
       under threads. Measured: four concurrent SPY requests produce ONE build
-      and peak at 702 MB, against 1318 MB for two unguarded ones. Still not
-      wired to a route — that is the next step, and it is now safe to take.
+      and peak at 702 MB, against ~1066 MB measured for two unguarded ones
+      (an earlier note said 1318 MB; a second measurement put it at 1066 MB,
+      still over the 1024 MB cap, so the conclusion holds and the number was
+      quoted too confidently).
+
+- [ ] **Wire a route THROUGH the cache — the cache alone does not protect
+      anything.** `OptionsDxQuoteSource.from_store` is still the only public
+      constructor and is still unguarded, so a route can bypass the cache
+      entirely by calling it. Needs a single seam that a route must go through,
+      a documented cache key, and a TTL or `as_of` contract: keying on
+      `(symbol, as_of)` with `as_of` defaulting to today is stale-forever,
+      where `LakeStore._resolve_cached` refreshes in 45 s. Given `docs/adr/0009`
+      is the #1 invariant, a cache sitting in front of as-of reads with no key
+      contract is the specific risk to close before turning any of this on.
       `OptionsDxQuoteSource.from_store` is measured at 13-38 s for SPY — always
       past the 5 s health-check timeout — and two simultaneous constructions
-      peaked at **1318 MB against a 1024 MB machine**. Every putlab route is a
-      sync `def`, so Starlette runs up to 40 in a threadpool: per-request
-      construction is unservable and concurrent construction OOMs. A
-      per-`(symbol, as_of)` cache is not enough on its own either — measured
-      steady state for five optionsDX assets plus `option_quotes` is 682 MB
-      resident, on top of the app's own ~252 MB. Wanted: an explicit cache with
-      a BYTE budget and eviction, not the count-capped `_frame_cache`.
-      `quote_fills.index_nbytes` (dedupes aliased session blocks by `id(base)`,
+      peaked at ~1066 MB against a 1024 MB machine (see the revised
+      measurement above). Every putlab route is a sync `def`, so Starlette
+      runs up to 40 in a threadpool: per-request construction is unservable
+      and concurrent construction OOMs. A per-`(symbol, as_of)` cache is not
+      enough on its own either — measured steady state for five optionsDX
+      assets plus `option_quotes` is 682 MB resident, on top of the app's own
+      ~252 MB. Wanted: an explicit cache with a BYTE budget and eviction, not
+      the count-capped `_frame_cache`. `quote_fills.index_nbytes` (a
+      `memory_usage(deep=True)` sum with a measured RSS correction factor,
       tested directly in `test_research_backtest_quote_fills.py`) is the
       byte-reporter this cache's `build` callable needs — still not called
       from `OptionsDxQuoteSource.from_store` / `OptionQuotesSource.from_store`,

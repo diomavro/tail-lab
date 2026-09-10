@@ -2,12 +2,14 @@ from __future__ import annotations
 
 import datetime as dt
 
+import numpy as np
 import pandas as pd
 import pytest
 
 from tail_lab.research.backtest.quote_fills import (
     MAX_SNAP_MONEYNESS_PP,
     OptionsDxQuoteSource,
+    build_session_index,
     index_nbytes,
 )
 
@@ -242,36 +244,39 @@ def test_no_listed_expiry_at_or_after_the_target_is_refused() -> None:
 # ---- index_nbytes: the cache's byte-budget input ----------------------------
 
 
-def test_index_nbytes_dedupes_two_sessions_that_alias_the_same_parent_block() -> None:
-    """`frame[keep]` under pandas copy-on-write is a lazy reference: two
-    session frames sliced from the same parent panel can share the exact same
-    underlying block, so summing each frame's own `nbytes` counts that shared
-    memory once per session instead of once. `index_nbytes` must dedupe by
-    the block's `base` identity and report the true, single-counted figure --
-    the specific failure mode its docstring describes (131.5 MB summed vs.
-    193 MB actually resident)."""
-    parent = pd.DataFrame({"strike": [90.0, 95.0, 100.0, 105.0]})
-    session_a = parent[["strike"]]
-    session_b = parent[["strike"]]
+def test_index_nbytes_overstates_rather_than_understates_the_real_cost() -> None:
+    """A byte budget fed an UNDERCOUNT does not evict when it should.
 
-    # Precondition: the two frames really do alias one block, or this test
-    # would not be exercising the dedup path at all.
-    base_a = session_a._mgr.blocks[0].values.base
-    base_b = session_b._mgr.blocks[0].values.base
-    assert base_a is not None
-    assert base_a is base_b
+    `memory_usage(deep=True)` accounts for values and not for pandas' per-frame
+    overhead. With 3,500 session frames that is ~30%: measured on the real SPY
+    panel, an index reporting 125 MB cost ~174 MB of process RSS. Three such
+    sources then sat at 94% of a 400 MB budget while the process peaked at
+    1195 MB on a 1024 MB machine -- the cache believing itself comfortably in
+    budget is precisely how it overshoots.
 
-    naive_sum = sum(
-        block.values.nbytes for frame in (session_a, session_b) for block in frame._mgr.blocks
+    An earlier version of this test asserted the opposite property: that
+    `index_nbytes` deduplicates sessions aliasing one parent block. Measured,
+    they do not alias -- `panel[mask]` is a boolean-index copy -- so the dedup
+    changed the answer by 0.3% and the test was pinning a rationale that was
+    not true.
+    """
+    rows = 4_000
+    panel = pd.DataFrame(
+        {
+            "underlying": ["SPY"] * rows,
+            "quote_date": pd.to_datetime([f"2024-01-{i % 4 + 1:02d}" for i in range(rows)]),
+            "expiration": pd.to_datetime(["2024-02-02"] * rows),
+            "strike": np.arange(rows, dtype=float),
+            "bid": np.arange(rows, dtype=float),
+            "ask": np.arange(rows, dtype=float),
+            "spot": np.full(rows, 100.0),
+        }
     )
-    sessions = {
-        pd.Timestamp("2024-01-05"): session_a,
-        pd.Timestamp("2024-01-08"): session_b,
-    }
+    sessions = build_session_index(panel, "SPY")
+    raw = sum(int(f.memory_usage(deep=True).sum()) for f in sessions.values())
 
-    actual = index_nbytes(sessions)
-    assert actual == parent["strike"].to_numpy().nbytes
-    assert actual == naive_sum // 2
+    assert index_nbytes(sessions) > raw, "the estimate must not undercount"
+    assert index_nbytes({}) == 0
 
 
 def test_index_nbytes_of_an_empty_index_is_zero() -> None:

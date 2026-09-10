@@ -59,30 +59,72 @@ def test_concurrent_requests_for_one_key_build_exactly_once() -> None:
     assert sum(builds) == 1, f"built {sum(builds)} times under 8 threads"
 
 
-def test_different_keys_do_not_block_each_other() -> None:
-    """The per-key lock must not become a global one.
+def test_builds_for_DIFFERENT_keys_are_bounded_too() -> None:
+    """The per-key lock does not bound anything across keys, and that gap WAS
+    the original failure.
 
-    Holding a single lock across a 13-38 s S3 read would serialise every
-    unrelated request on the machine — turning a memory fix into a latency
-    outage.
+    Five assets are five keys, so five builds ran in parallel and the peak was
+    five panels, not one — measured, with a budget sized for two sources, three
+    concurrent requests for three different symbols peaked at 4.7x the budget.
+    An earlier version of this file asserted the opposite (that different keys
+    never wait on each other) and so actively pinned the unbounded behaviour.
     """
-    cache: QuoteSourceCache[str] = QuoteSourceCache()
-    started = threading.Barrier(2, timeout=5.0)
+    cache: QuoteSourceCache[str] = QuoteSourceCache(max_concurrent_builds=1)
+    live = 0
+    peak = 0
+    lock = threading.Lock()
 
     def build() -> tuple[str, int]:
-        started.wait()  # deadlocks (BrokenBarrier) if the two builds serialise
+        nonlocal live, peak
+        with lock:
+            live += 1
+            peak = max(peak, live)
+        time.sleep(0.05)
+        with lock:
+            live -= 1
         return "panel", 10
 
     threads = [
         threading.Thread(target=lambda k=k: cache.get_or_build(k, build))  # type: ignore[misc]
-        for k in ("spy", "qqq")
+        for k in ("spy", "qqq", "iwm", "gld")
     ]
     for t in threads:
         t.start()
     for t in threads:
         t.join()
 
-    assert sorted(cache.cached_keys()) == ["qqq", "spy"]
+    assert peak == 1, f"{peak} builds ran at once; the budget bounds only one"
+    assert sorted(cache.cached_keys()) == ["gld", "iwm", "qqq", "spy"]
+
+
+def test_a_cache_HIT_never_waits_behind_someone_elses_build() -> None:
+    """Bounding builds must not bound reads.
+
+    A build is 13-38 s of S3 I/O. If a hit on an already-resident source had to
+    queue behind it, the memory fix would have bought a latency outage — every
+    request on the machine serialised behind one cold asset.
+    """
+    cache: QuoteSourceCache[str] = QuoteSourceCache(max_concurrent_builds=1)
+    cache.get_or_build("warm", lambda: ("warm", 10))
+
+    building = threading.Event()
+    release = threading.Event()
+
+    def slow_build() -> tuple[str, int]:
+        building.set()
+        release.wait(timeout=5.0)
+        return "cold", 10
+
+    slow = threading.Thread(target=lambda: cache.get_or_build("cold", slow_build))
+    slow.start()
+    assert building.wait(timeout=5.0)
+
+    started = time.monotonic()
+    assert cache.get_or_build("warm", lambda: ("SHOULD NOT REBUILD", 10)) == "warm"
+    assert time.monotonic() - started < 0.5, "a hit queued behind an in-flight build"
+
+    release.set()
+    slow.join()
 
 
 def test_eviction_is_by_BYTES_not_by_entry_count() -> None:
@@ -118,6 +160,21 @@ def test_a_source_bigger_than_the_whole_budget_is_served_but_not_retained() -> N
     assert cache.get_or_build("huge", lambda: ("panel", 500)) == "panel"
     assert cache.cached_keys() == []
     assert cache.resident_bytes == 0
+
+
+def test_a_source_bigger_than_the_budget_does_not_leak_its_key_lock() -> None:
+    """`_entries` staying at 0 is not enough -- `_key_locks` gets a new entry
+    per distinct key regardless of whether the build lands in `_entries`, and
+    `_drop_oldest` only prunes locks for keys it evicts FROM `_entries`. A key
+    that is never retained must still have its lock pruned, or `_key_locks`
+    grows without bound on exactly the keys `MAX_ENTRIES` cannot see."""
+    cache: QuoteSourceCache[str] = QuoteSourceCache(budget_bytes=100, max_entries=32)
+
+    for i in range(200):
+        cache.get_or_build(f"huge{i}", lambda: ("panel", 500))
+
+    assert cache.cached_keys() == []
+    assert len(cache._key_locks) == 0
 
 
 def test_the_default_budget_leaves_room_on_the_real_machine() -> None:

@@ -244,6 +244,22 @@ class QuoteSource(Protocol):
 #: memory win: the full optionsDX SPY panel is 351 MB and these five are
 #: 157 MB, against a 1024 MB machine (``fly.toml``).
 _SESSION_COLUMNS = ("expiration", "strike", "bid", "ask", "spot")
+#: Measured ratio of real resident cost to `memory_usage(deep=True)` for a
+#: built index. Two independent measurements on the real SPY panel shape:
+#: 174 MB actual against 125 MB reported (1.39x), and 223 MB against 131.6 MB
+#: (1.69x). A two-symbol panel, where the boolean mask genuinely copies rather
+#: than aliasing, measured 150.9 against 65.8 (2.29x).
+#:
+#: 1.75 sits above both single-symbol measurements deliberately. pandas does
+#: not account per-frame overhead, and at 3,500 session frames that is not a
+#: rounding error; nor does it see parent-panel blocks the index keeps alive
+#: but does not reference. An OVERSTATEMENT evicts a little too eagerly, which
+#: costs a rebuild. An understatement fails to evict at all, which is how
+#: three sources sat at 94% of a 400 MB budget while the process peaked at
+#: 1195 MB on a 1024 MB machine. The two errors are not symmetric, so this
+#: rounds toward the safe one.
+_RSS_OVERHEAD_FACTOR = 1.75
+
 #: Always needed to build the index itself.
 _INDEX_COLUMNS = ("underlying", "quote_date")
 #: Every guard reads these; a panel without them cannot answer anything, so
@@ -270,12 +286,13 @@ def build_session_index(panel: pd.DataFrame, symbol: str) -> dict[pd.Timestamp, 
     Two things this does NOT do, stated because the numbers invite the
     opposite reading:
 
-    * The session frames ALIAS the parent panel -- pandas copy-on-write makes
-      `frame[keep]` a lazy reference -- so the index is additive to the
-      projected panel, not a replacement for it, and the panel cannot be freed
-      while the index lives.
+    * The session frames do NOT alias the parent panel. `panel[mask]` is a
+      boolean-index COPY and `groupby` yields per-group frames, so the
+      sessions own their blocks (measured in `index_nbytes` below, which
+      relies on exactly this) -- the panel is free to be dropped once the
+      index is built.
     * It does not make the source safe to construct concurrently. Two
-      simultaneous constructions were measured at **1318 MB**, over the
+      simultaneous constructions were measured at **~1066 MB**, over the
       machine's 1024 MB cap. See the note on `from_store`.
     """
     if panel.empty:
@@ -303,25 +320,33 @@ def build_session_index(panel: pd.DataFrame, symbol: str) -> dict[pd.Timestamp, 
 
 
 def index_nbytes(sessions: dict[pd.Timestamp, pd.DataFrame]) -> int:
-    """Resident bytes of a built index, for the cache's byte budget.
+    """Approximate resident bytes of a built index, for the cache's budget.
 
-    Deliberately measures the PARENT panel's blocks once rather than summing
-    the session frames. Under pandas copy-on-write `frame[keep]` is a lazy
-    reference, so the sessions alias the panel and summing them counts the same
-    memory 3,500 times -- measured 131.5 MB of "session" bytes against a panel
-    that never left 193 MB resident. A budget fed the summed number would evict
-    far too eagerly.
+    A plain public-API sum, with a correction factor, and both halves of that
+    were arrived at by being wrong first.
+
+    An earlier version reached into `frame._mgr.blocks` to deduplicate by
+    underlying array, on the theory that copy-on-write makes the session frames
+    aliases of one parent panel so a naive sum would count the same memory once
+    per session. **That was measured false**: `panel[mask]` is a boolean-index
+    COPY and `groupby` yields per-group frames, so the sessions own their
+    blocks. Deduplicating changed the answer by 0.3% on the real SPY panel and
+    17% on a small synthetic one, in exchange for private API and an `id()`-keyed
+    dict that is unsound for any block whose `.values` is built per access.
+
+    The correction factor is the part that matters. `memory_usage(deep=True)`
+    accounts for the values and not for pandas' per-frame overhead, and with
+    3,500 session frames that overhead is not a rounding error: measured on the
+    real SPY panel, an index reporting 125 MB cost **~174 MB** of process RSS,
+    a consistent ~30% undercount. Feeding the raw number to a byte budget is
+    what let three sources sit at 94% of a 400 MB budget while the process
+    peaked at 1195 MB on a 1024 MB machine. A budget fed an undercount does not
+    evict when it should, which is exactly the failure it exists to prevent.
     """
     if not sessions:
         return 0
-    seen: dict[int, int] = {}
-    for frame in sessions.values():
-        for block in frame._mgr.blocks:
-            values = block.values
-            base = getattr(values, "base", None)
-            target = base if base is not None else values
-            seen[id(target)] = target.nbytes
-    return sum(seen.values())
+    reported = sum(int(frame.memory_usage(deep=True).sum()) for frame in sessions.values())
+    return int(reported * _RSS_OVERHEAD_FACTOR)
 
 
 def _session(index: dict[pd.Timestamp, pd.DataFrame], entry_date: dt.date) -> pd.DataFrame | None:
@@ -503,7 +528,7 @@ class OptionsDxQuoteSource:
 
         NOT SAFE TO CALL CONCURRENTLY as things stand, and there is no cache
         seam yet: measured 13-38 s per call for SPY (always past the 5 s health
-        check), and two simultaneous constructions peaked at 1318 MB against a
+        check), and two simultaneous constructions peaked at ~1066 MB against a
         1024 MB machine. A route must hold a bounded, evicting cache of these
         before wiring one up -- `AGENT_TODO.md` carries the requirement.
 
