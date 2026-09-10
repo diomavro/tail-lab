@@ -237,3 +237,31 @@ def test_from_store_reads_the_asof_bronze_snapshot(tmp_path: Path) -> None:
     )
     assert fill_again is not None
     assert fill_again.strike == pytest.approx(450.0)
+
+
+def test_mark_converts_the_strike_into_the_panel_basis_and_the_bid_back() -> None:
+    """The one line in the shared `_mark` that a split makes load-bearing.
+
+    Added because mutation testing found it unprotected: replacing
+    `panel_strike = strike * basis` with `panel_strike = strike` survived the
+    entire 851-test suite, and no test anywhere called `.mark()` with a basis
+    other than 1.0. That is the exact defect the module already fixed once and
+    documented at length -- an NVDA-shaped 10x offset made every mark miss, so
+    "carry the last real mark forward" degraded to "there was never a first
+    mark", and the tape became a flat line at the entry ask.
+
+    It matters more now than it did then: `_mark` is shared, so the untested
+    line is the mark path for BOTH sources rather than one.
+    """
+    # Panel quoted 10x the caller's basis, the shape a pre-split panel has.
+    source = _source(_row(spot=5000.0, strike=4500.0, bid=52.0, ask=55.0))
+
+    # The caller holds a strike in ITS basis (450.0) and must still find the
+    # 4500.0 contract, getting a bid back in its own basis.
+    assert source.mark(entry_date=ENTRY, strike=450.0, expiry=EXPIRY, basis=10.0) == pytest.approx(
+        5.2
+    )
+
+    # And the same call without the basis must NOT find it: a silent miss here
+    # is what produced the flat tape.
+    assert source.mark(entry_date=ENTRY, strike=450.0, expiry=EXPIRY, basis=1.0) is None

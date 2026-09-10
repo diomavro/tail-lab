@@ -32,7 +32,7 @@ import io
 import time
 from abc import ABC, abstractmethod
 from collections import OrderedDict
-from collections.abc import Mapping, Sequence
+from collections.abc import Mapping
 from pathlib import Path
 
 import duckdb
@@ -92,7 +92,7 @@ class LakeStore(ABC):
 
     @abstractmethod
     def read_bronze_columns_as_of(
-        self, dataset: str, as_of: dt.date, columns: Sequence[str]
+        self, dataset: str, as_of: dt.date, columns: list[str]
     ) -> pd.DataFrame:
         """Plural sibling of :meth:`read_bronze_column_as_of`: several columns
         projected out of the Parquet scan in one read, instead of one whole
@@ -374,7 +374,7 @@ class DeltaLakeStore(LakeStore):
         return df[column].reset_index(drop=True)
 
     def read_bronze_columns_as_of(
-        self, dataset: str, as_of: dt.date, columns: Sequence[str]
+        self, dataset: str, as_of: dt.date, columns: list[str]
     ) -> pd.DataFrame:
         """Plural sibling of :meth:`read_bronze_column_as_of` -- same seam,
         several columns in one Parquet scan instead of one column per call.

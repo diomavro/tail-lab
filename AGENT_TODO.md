@@ -960,6 +960,27 @@ lost a second time.
       symbols that ended up missing a loud output rather than a `::warning::`
       nobody reads.
 
+- [ ] **A bounded cache for quote sources, BEFORE any route constructs one.**
+      `OptionsDxQuoteSource.from_store` is measured at 13-38 s for SPY — always
+      past the 5 s health-check timeout — and two simultaneous constructions
+      peaked at **1318 MB against a 1024 MB machine**. Every putlab route is a
+      sync `def`, so Starlette runs up to 40 in a threadpool: per-request
+      construction is unservable and concurrent construction OOMs. A
+      per-`(symbol, as_of)` cache is not enough on its own either — measured
+      steady state for five optionsDX assets plus `option_quotes` is 682 MB
+      resident, on top of the app's own ~252 MB. Wanted: an explicit cache with
+      a BYTE budget and eviction, not the count-capped `_frame_cache`.
+
+- [ ] **`bronze_snapshot_id` has no projected sibling, and it is a loaded gun.**
+      `docs/STANDARDS.md` §f requires every backtest to log its input
+      snapshots, and `putlab_routes._log_run(..., extra_snapshots=...)` routes
+      through `store.bronze_snapshot_id` → `_cached_partition` → a FULL
+      partition read plus a sha256 of it. The obvious next commit after wiring
+      the market path — adding `("quotes_snapshot", "optionsdx_quotes_spy")` —
+      therefore reads the whole 3.28M-row panel and dies, undoing the
+      projection entirely. Needs a content id that can be computed from a
+      projection, or an explicit refusal for quote datasets.
+
 ## Position sizing / optimal leverage (2026-09-01 — Dio; `docs/END_STATE.md` §4 Q8)
 
 Dio's ask, in his words: a control where "the investor can either keep

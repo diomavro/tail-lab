@@ -109,7 +109,7 @@ from tail_lab.research.backtest.marks import _is_liquid as _is_liquid_with_open_
 __all__ = [
     "BASIS_TOLERANCE",
     "MAX_SNAP_MONEYNESS_PP",
-    "MAX_TENOR_GAP_DAYS",
+    "MAX_TENOR_GAP_FRAC",
     "SPLIT_FACTORS",
     "Fill",
     "OptionQuotesSource",
@@ -139,22 +139,40 @@ SPLIT_FACTORS: tuple[int, ...] = (2, 3, 4, 5, 7, 10, 20)
 #: ratio like 1.5 that fits neither pattern is a data problem, not a split.
 BASIS_TOLERANCE = 0.01
 
-#: Largest gap, in calendar days, between a leg's REQUESTED tenor
-#: (``round(tenor_weeks * 7)``) and the realized DTE of the nearest listed
-#: expiry before a fill is refused as an unserviceable tenor. Only
-#: ``OptionQuotesSource`` uses this (``OptionsDxQuoteSource`` passes
-#: ``max_tenor_gap_days=None`` to ``_fill``) because ``option_quotes`` lists
-#: exactly one expiry per roll date -- the monthly contract being rolled
-#: into, DTE 26-40, median 31 (``contracts/option_quotes.py``) -- never a
-#: chain of tenors the way optionsDX does. Reusing "nearest listed expiry AT
-#: OR AFTER target" alone would happily stretch a 1-week request onto that
-#: one 31-day contract and report it as a 1-week fill: wrong, not
-#: approximate, since nothing shorter is ever on offer. Set to half the
-#: measured DTE band's own width (40 - 26 = 14), i.e. 7 days: a target
-#: further from the realized DTE than the band is wide is not being snapped
-#: to the listed contract, it is being substituted for a materially
-#: different one.
-MAX_TENOR_GAP_DAYS = 7
+#: Largest gap between a leg's REQUESTED tenor and the realized DTE of the
+#: nearest listed expiry before a fill is refused as an unserviceable tenor,
+#: as a FRACTION of the requested tenor. Only ``OptionQuotesSource`` uses it
+#: (``OptionsDxQuoteSource`` passes ``max_tenor_gap=None``).
+#:
+#: Relative, not a fixed number of days, and that correction matters. A fixed
+#: +-7 calendar days was tried first on the reasoning that it was half the
+#: measured DTE band's width. It cannot be right across a 12x range of
+#: requested tenors: measured on the real panel, a 3-week (21-day) request
+#: filled on 49 of 50 in-window roll dates onto contracts with a realized DTE
+#: of 26-28 -- 24-33% longer than asked for, reported as a 3-week fill. Seven
+#: days is a rounding error against 84 and a third of the way against 21.
+#:
+#: The justification for the old constant was also factually wrong about the
+#: data, which is worth recording because it is the kind of claim that reads
+#: as measured: it said ``option_quotes`` lists "exactly one expiry per roll
+#: date". It does not. 157 of 210 roll dates list 2-7 distinct expiries, and
+#: ALL 49 of the dates inside the current OHLCV window list at least two.
+#:
+#: 0.25 = a quarter of the requested tenor. Measured on the 49 in-window roll
+#: dates at 10% OTM, before -> after:
+#:
+#:     1w 2w 8w 12w   refused        -> refused (unchanged, correct)
+#:     3w             49/49, DTE 26-28 -> 13/49, all DTE 26
+#:     4w             48/50, DTE 28-35 -> 47/49, DTE 28-35
+#:
+#: Note what it still admits rather than claiming it closed: a 3-week request
+#: can fill on a 26-day contract, 23.8% long and just inside the tolerance. It
+#: is a real listed put a quarter-tenor from the request, reported with its
+#: ``realized_dte``, not a silent substitution -- but a caller that treats the
+#: cell's label as the tenor traded is still slightly wrong, and
+#: ``run_put_roll`` currently discards ``Fill.realized_dte`` rather than
+#: surfacing it (``AGENT_TODO.md``).
+MAX_TENOR_GAP_FRAC = 0.25
 
 
 @dataclass(frozen=True)
@@ -227,6 +245,9 @@ class QuoteSource(Protocol):
 _SESSION_COLUMNS = ("expiration", "strike", "bid", "ask", "spot")
 #: Always needed to build the index itself.
 _INDEX_COLUMNS = ("underlying", "quote_date")
+#: Every guard reads these; a panel without them cannot answer anything, so
+#: `build_session_index` refuses rather than letting the source construct.
+_REQUIRED_SESSION_COLUMNS = ("expiration", "strike", "bid", "ask", "spot")
 
 
 def build_session_index(panel: pd.DataFrame, symbol: str) -> dict[pd.Timestamp, pd.DataFrame]:
@@ -235,19 +256,42 @@ def build_session_index(panel: pd.DataFrame, symbol: str) -> dict[pd.Timestamp, 
     Guard 1 (point-in-time) is a lookup by exact ``quote_date``, and it used to
     be answered by boolean-masking the WHOLE panel on every call -- including a
     ``.str.upper()`` over 3.28M rows, which was half the cost by itself.
-    Measured on the real SPY panel: **72 ms per call**, and a single backtest
-    makes roughly 1,200 of them, which is where the 52.9-second run came from.
+    Measured on the real SPY panel: **68-72 ms per call**, and a single
+    backtest makes ~1,026 of them, which is where a 76-second run came from.
 
     The symbol is fixed at construction, so that filter is pure waste per call.
-    Doing it once and grouping by session costs ~0.3 s and turns each lookup
-    into **0.0003 ms** -- 240,000x, and the whole backtest into ~0.0 s.
+    Doing it once and grouping by session costs **~2.3 s** and takes the whole
+    backtest to **0.30 s** -- the honest end-to-end numbers, measured
+    independently. (An earlier version of this docstring said 0.3 s to build
+    and "~0.0 s" to run; both were optimistic, and "~0.0" was hiding a real
+    third of a second.)
 
-    Only the columns the guards read are kept, which is separately what brings
-    the resident panel under the machine's memory cap.
+    Two things this does NOT do, stated because the numbers invite the
+    opposite reading:
+
+    * The session frames ALIAS the parent panel -- pandas copy-on-write makes
+      `frame[keep]` a lazy reference -- so the index is additive to the
+      projected panel, not a replacement for it, and the panel cannot be freed
+      while the index lives.
+    * It does not make the source safe to construct concurrently. Two
+      simultaneous constructions were measured at **1318 MB**, over the
+      machine's 1024 MB cap. See the note on `from_store`.
     """
     if panel.empty:
         return {}
-    rows = panel[panel["underlying"].str.upper() == symbol]
+    missing = [
+        c
+        for c in ("underlying", "quote_date", *_REQUIRED_SESSION_COLUMNS)
+        if c not in panel.columns
+    ]
+    if missing:
+        # Fail at construction, not on the first fill. Without this the index
+        # silently drops whatever is absent (`keep` filters on presence) and
+        # the source builds fine, then raises KeyError from inside `_fill` on
+        # every call -- reachable through the public in-memory constructor.
+        # `marks._mark_one` already guards its own inputs this way.
+        raise KeyError(f"quote panel is missing required column(s) {missing}")
+    rows = panel[panel["underlying"].str.upper() == symbol.upper()]
     keep = [c for c in (*_SESSION_COLUMNS, "open_interest") if c in rows.columns]
     grouped: dict[pd.Timestamp, pd.DataFrame] = {}
     for key, frame in rows.groupby("quote_date", sort=False):
@@ -321,7 +365,7 @@ def _fill(
     moneyness_pct: float,
     tenor_weeks: float,
     is_liquid: Callable[[pd.Series], bool],
-    max_tenor_gap_days: int | None,
+    max_tenor_gap: float | None,
 ) -> Fill | None:
     """The shared guard pipeline behind every source's ``fill`` -- guards 1-4
     and 6 from the module docstring, run identically regardless of which
@@ -330,7 +374,7 @@ def _fill(
     injects: ``is_liquid`` is guard 5 (the module's own open-interest-less
     ``_is_liquid`` for ``OptionsDxQuoteSource``, ``marks._is_liquid`` for
     ``OptionQuotesSource`` -- see that class's docstring for why), and
-    ``max_tenor_gap_days`` is ``OptionQuotesSource``'s extra tenor guard
+    ``max_tenor_gap`` is ``OptionQuotesSource``'s extra tenor guard
     (``None`` for ``OptionsDxQuoteSource``, which skips it because its
     many-tenor chain makes ``_select_expiry``'s own "nearest listed expiry AT
     OR AFTER target" rule sufficient on its own).
@@ -352,9 +396,12 @@ def _fill(
         return None
 
     realized_dte = (expiry.date() - entry_date).days
-    if max_tenor_gap_days is not None:
+    if max_tenor_gap is not None:
+        # Relative to the request, not a fixed number of days — see
+        # MAX_TENOR_GAP_FRAC. `>` not `>=`: a gap exactly at the tolerance is
+        # accepted, which is what the boundary test pins.
         requested_days = round(tenor_weeks * 7)
-        if abs(realized_dte - requested_days) > max_tenor_gap_days:
+        if abs(realized_dte - requested_days) > max_tenor_gap * requested_days:
             return None
 
     # Resolved in the PANEL's basis (guard 2) — never the caller's.
@@ -431,6 +478,12 @@ class OptionsDxQuoteSource:
     def from_store(cls, store: LakeStore, *, symbol: str, as_of: dt.date) -> OptionsDxQuoteSource:
         """Read only the columns the guards use, then index.
 
+        NOT SAFE TO CALL CONCURRENTLY as things stand, and there is no cache
+        seam yet: measured 13-38 s per call for SPY (always past the 5 s health
+        check), and two simultaneous constructions peaked at 1318 MB against a
+        1024 MB machine. A route must hold a bounded, evicting cache of these
+        before wiring one up -- `AGENT_TODO.md` carries the requirement.
+
         The constructor a route would call. Reading the whole partition
         instead costs 351 MB against a 1024 MB machine, and
         ``read_bronze_as_of`` additionally hands back a ``.copy()`` and pins
@@ -464,7 +517,7 @@ class OptionsDxQuoteSource:
             moneyness_pct=moneyness_pct,
             tenor_weeks=tenor_weeks,
             is_liquid=_is_liquid,
-            max_tenor_gap_days=None,
+            max_tenor_gap=None,
         )
 
     def mark(
@@ -511,10 +564,23 @@ class OptionQuotesSource:
     """Fills a leg request against ``contracts/option_quotes`` — real SPY put
     quotes at 210 monthly roll dates, 2008-01-18 to 2025-11-21 (42,131 rows).
 
-    Same job as ``OptionsDxQuoteSource``, same ``QuoteSource`` Protocol, and
-    the same six guards from the module docstring, built on the same shared
-    ``_fill``/``_mark`` pipelines — but this dataset differs from optionsDX in
-    ways that change three of those guards and enrich a fourth:
+    **It cannot supply a daily mark, and a caller must not ask it for one.**
+    The panel carries quotes on those 210 roll dates and on no other session,
+    so ``mark`` resolves on the entry day of each cycle and essentially nowhere
+    else: measured over a real 39-cycle SPY run, **39 of 757** intraperiod
+    sessions returned a bid — 5.2%, against 94.9% for optionsDX.
+    ``_mark_to_market_curve`` carries the last real mark forward, so what a
+    reader would see is a flat line at the entry ask for twenty sessions and
+    then a step at expiry: the exact artefact ``Fill.basis`` was added to
+    stop, arriving by a different route. Use this source for realized P&L
+    (``include_curves=False``), and optionsDX when a mark-to-market tape is
+    wanted. This is a property of the dataset's shape, not a bug to fix here —
+    a monthly snapshot has no intraperiod prices to give.
+
+    Same job as ``OptionsDxQuoteSource`` otherwise, same ``QuoteSource``
+    Protocol, and the same six guards from the module docstring, built on the
+    same shared ``_fill``/``_mark`` pipelines — but this dataset differs from
+    optionsDX in ways that change three of those guards and enrich a fourth:
 
     - **One underlying, not six** (guard 2). ``option_quotes`` holds SPY
       only. optionsDX answers for a different symbol per instance and would
@@ -531,14 +597,16 @@ class OptionQuotesSource:
       lists many tenors and wrong here: applied unchanged, a 1-week request
       would happily stretch onto the one 31-day contract on offer and report
       it as a 1-week fill. ``_fill`` additionally refuses whenever the
-      realized DTE is more than ``MAX_TENOR_GAP_DAYS`` from the requested one
+      realized DTE is more than ``MAX_TENOR_GAP_FRAC`` from the requested one
       (see that constant for the tolerance and its justification) — so
       1-week and 12-week requests are unserviceable BY DESIGN, not merely by
       this particular panel's contents, and return ``None`` rather than the
       nearest thing on the board. Guard 4's snap tolerance
       (``MAX_SNAP_MONEYNESS_PP``, reused unchanged) still does its job on the
-      strike axis: strikes within 1pp of both 10% and 20% OTM are listed on
-      100% of the 49 roll dates that currently overlap bronze OHLCV's window.
+      strike axis: strikes within 1pp of 20% OTM are listed on 49 of 49
+      of those roll dates and of 10% OTM on 47 of 49 that currently overlap bronze OHLCV's window (which
+      runs to 2026-08 while this panel ends 2025-11, so the most recent ~15%
+      of the window has no quotes either).
 
     - **Liquidity is the FULL test, including open interest** (guard 5) —
       ``marks._is_liquid`` unchanged, not the module's own ``_is_liquid``
@@ -546,7 +614,8 @@ class OptionQuotesSource:
       does not carry the column at all (``contracts/optionsdx.py``);
       ``option_quotes`` does, and it is the one place this source is RICHER
       than the other. Measured on the panel: 0.0% of rows fail on a zero
-      bid, but 8.2% fail on open interest alone — a contract with a live
+      bid, but 12.8% fail the open-interest floor (8.2% hold exactly zero;
+      the guard is `< MIN_OPEN_INTEREST = 10`, not `== 0`) — a contract with a live
       quote and nobody actually holding it, which the optionsDX guard could
       never have caught for want of the column.
 
@@ -616,7 +685,7 @@ class OptionQuotesSource:
             moneyness_pct=moneyness_pct,
             tenor_weeks=tenor_weeks,
             is_liquid=_is_liquid_with_open_interest,
-            max_tenor_gap_days=MAX_TENOR_GAP_DAYS,
+            max_tenor_gap=MAX_TENOR_GAP_FRAC,
         )
 
     def mark(

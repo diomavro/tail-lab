@@ -491,10 +491,20 @@ def _write_ohlcv(
     store: DeltaLakeStore, ingest_date: dt.date, closes: np.ndarray, symbol: str = "spy"
 ) -> None:
     n = len(closes)
+    # Roll a weekend ingest_date back to the Friday before generating the
+    # index. `date_range(end=<Sunday>, periods=n, freq="B")` DROPS the weekend
+    # end instead of rolling it back, returning n-1 dates — which then hits
+    # `ValueError: All arrays must be of the same length` against an n-element
+    # close array. `test_compute_put_backtest_respects_no_look_ahead` uses
+    # 2026-03-01, a Sunday, so this fixture broke on that pandas behaviour and
+    # left main red.
+    end = pd.Timestamp(ingest_date)
+    if end.weekday() >= 5:
+        end -= pd.Timedelta(days=end.weekday() - 4)
     df = pd.DataFrame(
         {
             "symbol": symbol.upper(),
-            "trade_date": pd.date_range(end=ingest_date, periods=n, freq="B"),
+            "trade_date": pd.date_range(end=end, periods=n, freq="B"),
             "open": closes,
             "high": closes * 1.001,
             "low": closes * 0.999,
