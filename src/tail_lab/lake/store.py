@@ -348,6 +348,15 @@ class DeltaLakeStore(LakeStore):
         return self._cached_partition(dataset, as_of)[1].copy()
 
     def read_bronze_column_as_of(self, dataset: str, as_of: dt.date, column: str) -> pd.Series:
+        """Projected read of a single column. Thin wrapper over
+        :meth:`read_bronze_columns_as_of`, which is where the projected-read
+        seam (cache reuse, schema check, ``to_pandas(columns=...)``) lives.
+        """
+        return self.read_bronze_columns_as_of(dataset, as_of, [column])[column]
+
+    def read_bronze_columns_as_of(
+        self, dataset: str, as_of: dt.date, columns: list[str]
+    ) -> pd.DataFrame:
         """Projected read: pushes the column list into the Parquet scan.
 
         Deliberately does NOT populate ``_frame_cache`` -- that cache holds
@@ -355,36 +364,6 @@ class DeltaLakeStore(LakeStore):
         next full reader a frame missing most of its columns. It does reuse the
         cached partition when one is already resident, since the expensive part
         (the S3 read) has then already happened.
-        """
-        table_uri = self._table_uri(self._bronze_table_key(dataset))
-        snapshot_date = self._resolve_cached(table_uri, dataset, as_of)
-        cached = self._frame_cache.get((dataset, snapshot_date.isoformat()))
-        if cached is not None:
-            return cached[column].copy()
-        table = DeltaTable(table_uri, storage_options=self._storage_options)
-        # Checked against the schema first: pyarrow raises ArrowInvalid for an
-        # unknown projection, and this method's contract (and its callers'
-        # error handling) is KeyError.
-        if column not in table.schema().to_arrow().names:
-            raise KeyError(f"dataset {dataset!r} has no column {column!r}")
-        df = table.to_pandas(
-            partitions=[(_INGEST_DATE_COL, "=", snapshot_date.isoformat())],
-            columns=[column],
-        )
-        return df[column].reset_index(drop=True)
-
-    def read_bronze_columns_as_of(
-        self, dataset: str, as_of: dt.date, columns: list[str]
-    ) -> pd.DataFrame:
-        """Plural sibling of :meth:`read_bronze_column_as_of` -- same seam,
-        several columns in one Parquet scan instead of one column per call.
-
-        Copies that method's approach exactly (reuse a resident cached
-        partition; otherwise project via ``to_pandas(columns=...)``) and
-        carries the same deliberate omission: it must NOT populate
-        ``_frame_cache``, because that cache holds whole partitions and
-        seeding it from a projected read would hand the next full reader
-        (``read_bronze_as_of``) a frame missing most of its columns.
         """
         table_uri = self._table_uri(self._bronze_table_key(dataset))
         snapshot_date = self._resolve_cached(table_uri, dataset, as_of)
