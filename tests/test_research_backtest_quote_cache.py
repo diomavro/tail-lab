@@ -162,6 +162,21 @@ def test_a_source_bigger_than_the_whole_budget_is_served_but_not_retained() -> N
     assert cache.resident_bytes == 0
 
 
+def test_a_source_bigger_than_the_budget_does_not_leak_its_key_lock() -> None:
+    """`_entries` staying at 0 is not enough -- `_key_locks` gets a new entry
+    per distinct key regardless of whether the build lands in `_entries`, and
+    `_drop_oldest` only prunes locks for keys it evicts FROM `_entries`. A key
+    that is never retained must still have its lock pruned, or `_key_locks`
+    grows without bound on exactly the keys `MAX_ENTRIES` cannot see."""
+    cache: QuoteSourceCache[str] = QuoteSourceCache(budget_bytes=100, max_entries=32)
+
+    for i in range(200):
+        cache.get_or_build(f"huge{i}", lambda: ("panel", 500))
+
+    assert cache.cached_keys() == []
+    assert len(cache._key_locks) == 0
+
+
 def test_the_default_budget_leaves_room_on_the_real_machine() -> None:
     """400 MB against fly.toml's 1024 MB. Eviction happens AFTER a build, so
     the true peak is the budget plus one source — with the app's own ~252 MB

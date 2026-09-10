@@ -170,6 +170,15 @@ class QuoteSourceCache[T]:
                     self._resident += nbytes
                     self._evict_to_budget()
                 else:
+                    # Never retained, so there is nothing for the lock to
+                    # protect past this call -- no entry means no "second
+                    # thread must wait for the first build" scenario worth
+                    # remembering. Without this pop, a key that is never
+                    # retained never gets its lock pruned either, since
+                    # `_drop_oldest` only prunes keys it evicts FROM
+                    # `_entries` -- an unbounded `_key_locks` leak on the
+                    # exact keys `MAX_ENTRIES` cannot see.
+                    self._key_locks.pop(key, None)
                     # Loudly, every time. Without this the symptom is a route
                     # that is inexplicably slow forever -- the source is
                     # rebuilt on EVERY call at 13-38s, and nothing else in the
