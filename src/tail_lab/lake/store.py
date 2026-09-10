@@ -28,7 +28,6 @@ from __future__ import annotations
 
 import datetime as dt
 import hashlib
-import io
 import time
 from abc import ABC, abstractmethod
 from collections import OrderedDict
@@ -234,14 +233,6 @@ class DeltaLakeStore(LakeStore):
     @staticmethod
     def _partition_location(table_uri: str, ingest_date: dt.date) -> str:
         return f"{table_uri}/{_INGEST_DATE_COL}={ingest_date.isoformat()}"
-
-    # ---- parquet <-> bytes, for the content-hash snapshot id --------------
-
-    @staticmethod
-    def _serialize(df: pd.DataFrame) -> bytes:
-        buf = io.BytesIO()
-        df.to_parquet(buf, index=False)
-        return buf.getvalue()
 
     # ---- Delta table access -------------------------------------------------
 
