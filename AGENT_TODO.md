@@ -1021,7 +1021,7 @@ that nothing depends on a number the platform cannot yet compute honestly.
       (mirroring its existing radiogroup pattern) is the natural next
       increment, and unblocks the `g(alpha)` sweep two items below, which needs
       a live `alpha` control to sweep over.
-- [ ] **Report time-average growth, not just ROI.** Every headline the platform
+- [x] **Report time-average growth, not just ROI.** Every headline the platform
       shows — `roi_on_premium`, `hit_rate`, `annualized`,
       `biggest_payoff_mult` — describes a put in isolation, and **none of them
       can say how much to hold**. Add `g = (1/T) * log(W_T / W_0)` computed on
@@ -1029,6 +1029,52 @@ that nothing depends on a number the platform cannot yet compute honestly.
       alongside the arithmetic figures, and label the difference. For a
       right-skewed payoff the two diverge sharply, and the gap is the whole
       point (`docs/END_STATE.md` §4 Q8).
+      **Done 2026-09-10**: `research/backtest/growth.py`
+      (`time_average_growth`), a pure function deliberately decoupled from
+      `PutBacktestResult`'s `PricePoint`/`EquityPoint` models (plain
+      `(date, value)` tuples for `price_path` instead) so it stays a leaf
+      module any benchmark price series can feed later, not just a single
+      leg's `price_path`. Only the two endpoints of the benchmark path matter
+      — `g = (1/T) * log(W_T/W_0)` with `W_T = wealth * (S_T/S_0) +
+      hedge_final` — since a time-average growth rate is defined by a
+      trajectory's start and end, not its interior; `hedge_final` is a single
+      realized-P&L figure (the hedge's last `mtm_curve` point), not a curve,
+      because nothing in this function ever reads an interior hedge point
+      (round 2 of review caught the unused-generality version of this
+      signature). Wired into `compute_put_backtest`: when `sizing_mode` is
+      specifically a `WealthFraction` (not `FixedPremium`/`None`, which have
+      no `wealth` figure to compound against), the result's new
+      `PutBacktestResult.time_average_growth` field is populated by calling
+      the pure function on the run's own `price_path` and `mtm_curve[-1]`;
+      otherwise it stays `None`. No API/UI change — same ship-the-pure-function-first
+      precedent the `SizingMode` seam itself just followed (`AGENT_TODO.md`'s
+      "Sizing mode" item above), and `sizing_mode` still isn't threaded
+      through `api/putlab_routes.py`, so this has no effect on production
+      output today. Pinned hand-computable cases + Hypothesis properties
+      (zero-hedge collapses to benchmark-only growth exactly, monotone in the
+      hedge's realized P&L, invariant to uniformly scaling wealth and hedge
+      P&L by the same constant) in `tests/test_research_backtest_growth{,
+      _properties}.py`; `research/backtest/growth.py` itself is at 100%
+      coverage.
+      **One modeling decision surfaced, not hidden, in the docstring**: this
+      treats the *entire* stated `wealth` as continuously held in the
+      benchmark, with the hedge funded as a separate additive cash flow sized
+      by `alpha * wealth` — not `(1-alpha)*wealth` in the benchmark and
+      `alpha*wealth` held back in cash. Because `WealthFraction` resolves
+      `alpha * wealth` as a **per-roll** budget (re-spent every cycle, not a
+      one-time draw), a strategy that rolls enough times can spend more than
+      the stated `wealth` in cumulative premium — found while testing:
+      `alpha=0.5, wealth=4000` over a 2-cycle SPY window spent ~4000 in
+      premium against a benchmark that barely moved, so combined wealth went
+      non-positive and `time_average_growth` correctly returned `None`
+      (`log` of a non-positive number is undefined, handled as a `None`
+      return alongside every other undefined case, same convention
+      `annualized_sharpe` already uses — not a bug to raise on, since a
+      leveraged sweep hitting ruin at some `alpha` is a real scenario, not an
+      error). **Not done, deliberately deferred**: the `g(alpha)` sweep two
+      items below is the natural next step and needs this ruin case handled
+      exactly as it is here (a sweep must see `g` go to `None`/very negative
+      near ruin, not crash) — no further plumbing needed to consume it.
 - [ ] **The leverage analytic Dio asked for: a `g(alpha)` sweep.** Sweep alpha
       across a grid, plot the time-average growth of the combined portfolio,
       and report three numbers: the argmax `alpha*`, the growth at `alpha = 0`

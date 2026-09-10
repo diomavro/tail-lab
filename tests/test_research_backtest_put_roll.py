@@ -21,6 +21,7 @@ import pytest
 from tail_lab.contracts.ohlcv import dataset_id
 from tail_lab.lake.store import DeltaLakeStore
 from tail_lab.research.backtest.brokerage import roll_cost
+from tail_lab.research.backtest.growth import time_average_growth
 from tail_lab.research.backtest.put_roll import (
     DEFAULT_RATE,
     IV_WINDOW,
@@ -545,11 +546,53 @@ def test_compute_put_backtest_sizing_mode_overrides_notional(tmp_path: Path) -> 
     via_fixed = compute_put_backtest(store, notional=1.0, sizing_mode=FixedPremium(2000.0), **kw)  # type: ignore[arg-type]
     assert via_fixed.model_dump() == plain.model_dump()
 
+    # alpha/wealth chosen so alpha * wealth == 2000.0, same as FixedPremium
+    # above, but with wealth large relative to the premium actually spent --
+    # unlike alpha=0.5/wealth=4000.0, which resolves to the identical 2000.0
+    # budget but lets 2 rolls' worth of premium (~4000) exceed the stated
+    # wealth outright, making combined wealth go non-positive and
+    # time_average_growth legitimately undefined (see
+    # test_time_average_growth_undefined_cases_return_none).
     via_wealth = compute_put_backtest(
-        store, notional=1.0, sizing_mode=WealthFraction(alpha=0.5, wealth=4000.0), **kw
+        store, notional=1.0, sizing_mode=WealthFraction(alpha=0.01, wealth=200_000.0), **kw
     )  # type: ignore[arg-type]
     assert via_wealth.notional == pytest.approx(2000.0)
-    assert via_wealth.model_dump() == plain.model_dump()
+    # WealthFraction also populates time_average_growth (see the dedicated
+    # test below); every other field matches the plain notional run exactly.
+    assert plain.time_average_growth is None
+    assert via_wealth.time_average_growth is not None
+    assert via_wealth.model_dump(exclude={"time_average_growth"}) == plain.model_dump(
+        exclude={"time_average_growth"}
+    )
+
+
+def test_compute_put_backtest_time_average_growth_matches_the_pure_function(
+    tmp_path: Path,
+) -> None:
+    """``compute_put_backtest`` must delegate to
+    ``research.backtest.growth.time_average_growth`` with exactly the run's
+    own ``price_path``/``mtm_curve`` and the ``WealthFraction``'s ``wealth`` --
+    not a reimplementation -- for both a well-defined case and one where
+    combined wealth goes non-positive (see the comment on
+    ``test_compute_put_backtest_sizing_mode_overrides_notional`` for why this
+    particular seed/window produces ruin at a smaller wealth)."""
+    store = DeltaLakeStore(tmp_path)
+    day1 = dt.date(2026, 3, 1)
+    rng = np.random.default_rng(3)
+    closes = np.clip(100 + np.cumsum(rng.normal(0, 1.2, size=80)), 20, None)
+    _write_ohlcv(store, day1, closes)
+    kw = dict(asset="spy", as_of=day1, moneyness_pct=5.0, tenor_weeks=4.0, lookback_years=10)
+
+    for wealth in (200_000.0, 4_000.0):
+        result = compute_put_backtest(
+            store, notional=1.0, sizing_mode=WealthFraction(alpha=0.5, wealth=wealth), **kw
+        )  # type: ignore[arg-type]
+        expected = time_average_growth(
+            [(p.date, p.price) for p in result.price_path],
+            result.mtm_curve[-1].cum_pnl if result.mtm_curve else 0.0,
+            wealth=wealth,
+        )
+        assert result.time_average_growth == expected
 
 
 def test_compute_put_backtest_missing_symbol_raises(tmp_path: Path) -> None:

@@ -39,7 +39,8 @@ from pydantic import BaseModel
 from tail_lab.contracts.ohlcv import dataset_id
 from tail_lab.lake.store import LakeStore
 from tail_lab.research.backtest.brokerage import COMMISSION_PER_CONTRACT, roll_cost
-from tail_lab.research.backtest.sizing import SizingMode
+from tail_lab.research.backtest.growth import time_average_growth
+from tail_lab.research.backtest.sizing import SizingMode, WealthFraction
 
 # quote_fills -> marks -> roll_schedule -> put_roll (roll_schedule imports IV_CAP/
 # IV_FLOOR/TRADING_DAYS_PER_WEEK from here), so a top-level import of QuoteSource
@@ -157,6 +158,16 @@ class PutBacktestResult(BaseModel):
     net_pnl: float
     roi_on_premium: float
     annualized_return: float  # geometric annualization of roi_on_premium over lookback_years
+    #: Time-average (geometric) growth rate of `wealth` held in the benchmark
+    #: with this run's hedge P&L layered on top (`docs/END_STATE.md` §4 Q8) --
+    #: labels the difference `roi_on_premium`/`annualized_return` cannot:
+    #: those describe the put in isolation, this describes what compounding
+    #: does to the *combined* portfolio, which is what an investor actually
+    #: experiences. Only populated when `compute_put_backtest` was given
+    #: `sizing_mode=WealthFraction(...)` (a flat `notional` has no `wealth`
+    #: figure to compound against); `None` otherwise, or when growth is
+    #: undefined -- see `research.backtest.growth.time_average_growth`.
+    time_average_growth: float | None = None
     hit_rate: float
     biggest_payoff_mult: float
     worst_bleed_streak: int
@@ -1029,11 +1040,15 @@ def compute_put_backtest(
     ``sizing_mode``, when given, resolves the premium budget and ``notional``
     is ignored; a single asset is one leg, so it resolves with ``n_legs=1``.
     Leaving it ``None`` (the default) uses ``notional`` exactly as before --
-    see ``research/backtest/sizing.py``.
+    see ``research/backtest/sizing.py``. When ``sizing_mode`` is specifically a
+    ``WealthFraction``, the result's ``time_average_growth`` is also populated
+    (``research/backtest/growth.py``) -- a flat ``notional``/``FixedPremium``
+    run has no ``wealth`` figure to compound the hedge against, so it stays
+    ``None``.
     """
     budget = sizing_mode.resolve(n_legs=1) if sizing_mode is not None else notional
     prices, iv_proxy = load_asof_series(store, asset, as_of)
-    return run_put_roll(
+    result = run_put_roll(
         prices,
         iv_proxy,
         asset=asset,
@@ -1047,3 +1062,11 @@ def compute_put_backtest(
         commission_per_contract=commission_per_contract,
         spread_scale=spread_scale,
     )
+    if isinstance(sizing_mode, WealthFraction):
+        growth = time_average_growth(
+            [(p.date, p.price) for p in result.price_path],
+            result.mtm_curve[-1].cum_pnl if result.mtm_curve else 0.0,
+            wealth=sizing_mode.wealth,
+        )
+        result = result.model_copy(update={"time_average_growth": growth})
+    return result
