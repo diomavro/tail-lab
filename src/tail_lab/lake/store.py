@@ -376,36 +376,50 @@ class DeltaLakeStore(LakeStore):
         )
         return df.reset_index(drop=True)
 
-    #: Add-action fields that describe the data rather than when it was
-    #: uploaded. `modification_time` is excluded because re-uploading identical
-    #: bytes changes it, which would make the id unstable for no reason.
-    _SNAPSHOT_ID_FIELDS_EXCLUDED = ("modification_time",)
+    #: Add-action fields the digest is built from. An ALLOWLIST, and every one
+    #: is a function of the DATA: the row count, and delta-rs's per-column
+    #: min/max/null-count statistics. Deliberately excludes `path` (a write-time
+    #: UUID), `size_bytes` and `modification_time` -- properties of the write,
+    #: not of the rows.
+    #:
+    #: An allowlist rather than a denylist because `deltalake` is pinned only as
+    #: `>=1.0.0` with no lockfile, so a future release adding an add-action
+    #: column (`base_row_id`, deletion-vector fields -- both in the Delta
+    #: protocol) would otherwise silently change every id for unchanged data on
+    #: the next image build, with no code change and nothing failing.
+    _SNAPSHOT_STAT_PREFIXES = ("min", "max", "null_count")
 
     def bronze_snapshot_id(self, dataset: str, as_of: dt.date) -> str:
-        """Identify the resolved partition from the Delta LOG, never its data.
+        """Identify the resolved partition by CONTENT, from the Delta LOG.
 
-        This used to materialise the whole partition and sha256 its Parquet
-        bytes. That is fine for the ~1k-row datasets it was written for and
-        fatal for the quote panels: the SPY optionsDX partition is 3.28M rows,
-        and hashing it means a full read (measured 1.6 s and a 235 MB buffer)
-        plus pinning the frame in `_frame_cache`, which evicts by COUNT and so
-        never releases it. `docs/STANDARDS.md` §f requires every backtest to log
-        its input snapshots, so the very act of being provenance-correct would
-        have undone the projection work and OOM'd a 1 GB machine.
+        Two requirements pull against each other, and the first version of this
+        satisfied only one.
 
-        The log already carries what an id needs: per-file path, size, row count
-        and per-column min/max/null-count statistics. Reading it costs 0.94 s
-        against S3 and touches no data.
+        CHEAP: `docs/STANDARDS.md` §f puts this on the hot path of every
+        backtest, and materialising a partition to hash it means a full read of
+        a 3.28M-row quote panel plus pinning the frame in `_frame_cache`, which
+        evicts by COUNT and so never releases it. Being provenance-correct would
+        itself have OOM'd a 1 GB machine. Reading the log costs ~1s and touches
+        no data.
 
-        **What this trades.** The old digest was addressed on logical CONTENT,
-        so a compaction that rewrote files without changing rows produced the
-        same id. This one includes the file paths, so such a rewrite produces a
-        different id. That is the right way round for this repo: bronze is
-        immutable and written once per `ingest_date` (`write_bronze` no-ops on
-        an existing partition), nothing here runs `OPTIMIZE`, and an id that
-        changes when the physical snapshot changes is a stricter provenance
-        claim than one that does not. An id computed from a projection could
-        not have made either claim.
+        CONTENT-ADDRESSED, which is the harder half and the one the first
+        attempt got wrong. It hashed the whole add-action row including `path`
+        -- a write-time UUID -- so byte-identical data written twice produced
+        two DIFFERENT ids, and neither could be verified against anything but
+        that one live table. `docs/adr/0012` requires this id to prove "this
+        result was computed from exactly this data", and `docs/adr/0013` names
+        compaction-robustness as a benefit of the scheme; both need *same rows
+        -> same id*. Measured after the fix: identical data written into two
+        independent lakes yields the identical id.
+
+        THE HONEST WEAKNESS. Statistics are not a hash. Two partitions with the
+        same row count and the same per-column extremes and null counts but
+        different interior values collide -- a real reduction in strength
+        against a byte-level sha256, and the price of not reading the data. It
+        is bounded by the `dataset@ingest_date` prefix, already unique per
+        partition because bronze is immutable and `write_bronze` no-ops on an
+        existing one: the digest guards against a partition being silently
+        REPLACED, and a statistical fingerprint is sufficient for that.
         """
         table_uri = self._table_uri(self._bronze_table_key(dataset))
         snapshot_date = self._resolve_cached(table_uri, dataset, as_of)
@@ -416,7 +430,7 @@ class DeltaLakeStore(LakeStore):
         material = {
             name: [values[i] for i in keep]
             for name, values in sorted(actions.items())
-            if name not in self._SNAPSHOT_ID_FIELDS_EXCLUDED
+            if name == "num_records" or name.split(".")[0] in self._SNAPSHOT_STAT_PREFIXES
         }
         digest = hashlib.sha256(repr(material).encode()).hexdigest()[:16]
         return f"{dataset}@{snapshot_date.isoformat()}#{digest}"

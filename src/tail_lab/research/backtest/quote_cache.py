@@ -34,12 +34,15 @@ Two properties beyond eviction, both load-bearing under a threadpool:
 
 from __future__ import annotations
 
+import logging
 import threading
 from collections import OrderedDict
 from collections.abc import Callable
 from dataclasses import dataclass
 
 __all__ = ["DEFAULT_BUDGET_BYTES", "QuoteSourceCache"]
+
+_LOGGER = logging.getLogger(__name__)
 
 #: Total bytes of quote sources allowed resident at once.
 #:
@@ -72,7 +75,8 @@ class QuoteSourceCache[T]:
 
     @property
     def resident_bytes(self) -> int:
-        return self._resident
+        with self._guard:
+            return self._resident
 
     def cached_keys(self) -> list[str]:
         with self._guard:
@@ -115,9 +119,35 @@ class QuoteSourceCache[T]:
                     self._entries[key] = _Entry(value, nbytes)
                     self._resident += nbytes
                     self._evict_to_budget()
+                else:
+                    # Loudly, every time. Without this the symptom is a route
+                    # that is inexplicably slow forever -- the source is
+                    # rebuilt on EVERY call at 13-38s, and nothing else in the
+                    # process would say so. docs/STANDARDS.md §f: "an increment
+                    # that adds automated behavior without logging what it does
+                    # at runtime is incomplete".
+                    _LOGGER.warning(
+                        "quote_cache.too_large_to_retain key=%s bytes=%d budget=%d "
+                        "-- this source will be REBUILT on every call",
+                        key,
+                        nbytes,
+                        self._budget,
+                    )
                 return value
 
     def _evict_to_budget(self) -> None:
         while self._resident > self._budget and len(self._entries) > 1:
-            _, evicted = self._entries.popitem(last=False)
+            key, evicted = self._entries.popitem(last=False)
             self._resident -= evicted.nbytes
+            # Eviction is the signal that the budget is actually binding. A
+            # cache that thrashes -- evicting the thing it is about to be
+            # asked for again -- looks identical to a working one from the
+            # outside unless it says so.
+            self._key_locks.pop(key, None)
+            _LOGGER.info(
+                "quote_cache.evicted key=%s bytes=%d resident=%d budget=%d",
+                key,
+                evicted.nbytes,
+                self._resident,
+                self._budget,
+            )
