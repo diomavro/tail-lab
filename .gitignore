@@ -23,3 +23,4 @@ data/
 .vscode/
 .DS_Store
 .env
+.claude/worktrees/

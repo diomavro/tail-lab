@@ -91,6 +91,29 @@ class LakeStore(ABC):
         """
 
     @abstractmethod
+    def read_bronze_columns_as_of(
+        self, dataset: str, as_of: dt.date, columns: list[str]
+    ) -> pd.DataFrame:
+        """Plural sibling of :meth:`read_bronze_column_as_of`: several columns
+        projected out of the Parquet scan in one read, instead of one whole
+        partition.
+
+        Built for ``OptionsDxQuoteSource.from_store``: the optionsDX quote
+        datasets are 3.28M rows / ~351 MB (SPY, measured) across twelve
+        columns, but a fill/mark only ever needs a handful of them (the
+        symbol filter's ``underlying``, the session index's ``quote_date``,
+        and the five columns ``fill``/``mark`` actually read). Materialising
+        the other columns just to discard them is exactly the allocation that
+        OOMs a 1 GB machine (``fly.toml``) before a single backtest request
+        is served — see ``OptionsDxQuoteSource``'s class docstring for the
+        measured before/after.
+
+        Same contract as the singular method: raises ``LookupError`` if no
+        snapshot exists on or before ``as_of``, and ``KeyError`` for any
+        column not present in the dataset's schema.
+        """
+
+    @abstractmethod
     def bronze_snapshot_id(self, dataset: str, as_of: dt.date) -> str:
         """A stable identifier for the exact bronze snapshot ``read_bronze_as_of``
         would resolve to: the ingest-date partition plus a content hash. This
@@ -325,6 +348,15 @@ class DeltaLakeStore(LakeStore):
         return self._cached_partition(dataset, as_of)[1].copy()
 
     def read_bronze_column_as_of(self, dataset: str, as_of: dt.date, column: str) -> pd.Series:
+        """Projected read of a single column. Thin wrapper over
+        :meth:`read_bronze_columns_as_of`, which is where the projected-read
+        seam (cache reuse, schema check, ``to_pandas(columns=...)``) lives.
+        """
+        return self.read_bronze_columns_as_of(dataset, as_of, [column])[column]
+
+    def read_bronze_columns_as_of(
+        self, dataset: str, as_of: dt.date, columns: list[str]
+    ) -> pd.DataFrame:
         """Projected read: pushes the column list into the Parquet scan.
 
         Deliberately does NOT populate ``_frame_cache`` -- that cache holds
@@ -337,18 +369,20 @@ class DeltaLakeStore(LakeStore):
         snapshot_date = self._resolve_cached(table_uri, dataset, as_of)
         cached = self._frame_cache.get((dataset, snapshot_date.isoformat()))
         if cached is not None:
-            return cached[column].copy()
+            return cached[list(columns)].copy()
         table = DeltaTable(table_uri, storage_options=self._storage_options)
-        # Checked against the schema first: pyarrow raises ArrowInvalid for an
-        # unknown projection, and this method's contract (and its callers'
-        # error handling) is KeyError.
-        if column not in table.schema().to_arrow().names:
-            raise KeyError(f"dataset {dataset!r} has no column {column!r}")
+        # Checked against the schema first, once for all requested columns:
+        # pyarrow raises ArrowInvalid for an unknown projection, and this
+        # method's contract (and its callers' error handling) is KeyError.
+        available = set(table.schema().to_arrow().names)
+        missing = [c for c in columns if c not in available]
+        if missing:
+            raise KeyError(f"dataset {dataset!r} has no column(s) {missing!r}")
         df = table.to_pandas(
             partitions=[(_INGEST_DATE_COL, "=", snapshot_date.isoformat())],
-            columns=[column],
+            columns=list(columns),
         )
-        return df[column].reset_index(drop=True)
+        return df.reset_index(drop=True)
 
     def bronze_snapshot_id(self, dataset: str, as_of: dt.date) -> str:
         snapshot_date, df = self._cached_partition(dataset, as_of)
