@@ -143,6 +143,56 @@ def test_bronze_snapshot_id_is_stable_and_content_addressed(tmp_path: Path) -> N
         store.bronze_snapshot_id(DATASET, dt.date(2026, 1, 1))
 
 
+def test_bronze_snapshot_id_reads_the_log_not_the_data(tmp_path: Path) -> None:
+    """The provenance id must not cost a full partition read.
+
+    `docs/STANDARDS.md` §f requires every backtest to log its input snapshots,
+    so this runs on the hot path of every result. It used to materialise the
+    whole partition and sha256 its Parquet bytes — fine for the ~1k-row
+    datasets it was written for, fatal for a 3.28M-row quote panel, where it
+    also pinned the frame in `_frame_cache` (which evicts by COUNT, so never
+    releases it). Being provenance-correct would have undone the projection
+    work and OOM'd the machine.
+
+    Asserted by watching `_read_bronze_partition`: the id must be produced
+    without it being called even once.
+    """
+    store = DeltaLakeStore(tmp_path)
+    frame = pd.DataFrame({"a": [1, 2, 3], "b": ["x", "y", "z"]})
+    store.write_bronze("probe", dt.date(2026, 1, 5), frame)
+
+    reads: list[str] = []
+    original = store._read_bronze_partition
+
+    def spy(*args: object, **kwargs: object) -> pd.DataFrame:
+        reads.append("read")
+        return original(*args, **kwargs)  # type: ignore[arg-type]
+
+    store._read_bronze_partition = spy  # type: ignore[method-assign]
+    snapshot_id = store.bronze_snapshot_id("probe", dt.date(2026, 1, 5))
+
+    assert reads == [], "the snapshot id read the partition's data"
+    assert snapshot_id.startswith("probe@2026-01-05#")
+    # Deterministic: a provenance id that changed between calls would make
+    # every logged result un-reproducible against itself.
+    assert store.bronze_snapshot_id("probe", dt.date(2026, 1, 5)) == snapshot_id
+
+
+def test_bronze_snapshot_id_differs_when_the_partition_does(tmp_path: Path) -> None:
+    """Two partitions of the same dataset must not share an id — otherwise the
+    id cannot do the one job it has, which is saying WHICH snapshot a result
+    was computed from."""
+    store = DeltaLakeStore(tmp_path)
+    store.write_bronze("probe", dt.date(2026, 1, 5), pd.DataFrame({"a": [1, 2, 3]}))
+    store.write_bronze("probe", dt.date(2026, 1, 6), pd.DataFrame({"a": [1, 2, 3, 4]}))
+
+    first = store.bronze_snapshot_id("probe", dt.date(2026, 1, 5))
+    second = store.bronze_snapshot_id("probe", dt.date(2026, 1, 6))
+    assert first != second
+    # And the as-of resolution still picks the right one.
+    assert store.bronze_snapshot_id("probe", dt.date(2026, 1, 5)) == first
+
+
 def test_silver_and_gold_round_trip(tmp_path: Path) -> None:
     store = DeltaLakeStore(tmp_path)
     df = _frame(["2026-01-02", "2026-01-05"], [15.0, 16.0])

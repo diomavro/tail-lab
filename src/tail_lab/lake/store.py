@@ -28,7 +28,6 @@ from __future__ import annotations
 
 import datetime as dt
 import hashlib
-import io
 import time
 from abc import ABC, abstractmethod
 from collections import OrderedDict
@@ -37,6 +36,7 @@ from pathlib import Path
 
 import duckdb
 import pandas as pd
+import pyarrow as pa
 from deltalake import DeltaTable, write_deltalake
 from deltalake.exceptions import TableNotFoundError
 
@@ -173,11 +173,11 @@ class DeltaLakeStore(LakeStore):
     only, no data read), picks the latest one on or before ``as_of``, and
     reads only that partition.
 
-    **Snapshot id.** Content-addressed: sha256 of the resolved partition's
-    canonical Parquet bytes, truncated to 16 hex chars — the same shape the
-    Parquet backends used, computed from the logical row content instead of
-    a single physical file's bytes (robust to a future ``OPTIMIZE``/compaction
-    changing file layout without changing content).
+    **Snapshot id.** Addressed on the resolved partition's Delta LOG metadata
+    (file paths, sizes, row counts, column stats), not its data — see
+    :meth:`bronze_snapshot_id` for why, and for what that trades away
+    (the id is not stable across a future ``OPTIMIZE``/compaction, unlike
+    the content-hash the Parquet backends used).
 
     **Silver/gold.** A single non-partitioned Delta table per dataset,
     overwritten (``mode="overwrite"``) on every write — same "current
@@ -233,14 +233,6 @@ class DeltaLakeStore(LakeStore):
     @staticmethod
     def _partition_location(table_uri: str, ingest_date: dt.date) -> str:
         return f"{table_uri}/{_INGEST_DATE_COL}={ingest_date.isoformat()}"
-
-    # ---- parquet <-> bytes, for the content-hash snapshot id --------------
-
-    @staticmethod
-    def _serialize(df: pd.DataFrame) -> bytes:
-        buf = io.BytesIO()
-        df.to_parquet(buf, index=False)
-        return buf.getvalue()
 
     # ---- Delta table access -------------------------------------------------
 
@@ -384,9 +376,49 @@ class DeltaLakeStore(LakeStore):
         )
         return df.reset_index(drop=True)
 
+    #: Add-action fields that describe the data rather than when it was
+    #: uploaded. `modification_time` is excluded because re-uploading identical
+    #: bytes changes it, which would make the id unstable for no reason.
+    _SNAPSHOT_ID_FIELDS_EXCLUDED = ("modification_time",)
+
     def bronze_snapshot_id(self, dataset: str, as_of: dt.date) -> str:
-        snapshot_date, df = self._cached_partition(dataset, as_of)
-        digest = hashlib.sha256(self._serialize(df)).hexdigest()[:16]
+        """Identify the resolved partition from the Delta LOG, never its data.
+
+        This used to materialise the whole partition and sha256 its Parquet
+        bytes. That is fine for the ~1k-row datasets it was written for and
+        fatal for the quote panels: the SPY optionsDX partition is 3.28M rows,
+        and hashing it means a full read (measured 1.6 s and a 235 MB buffer)
+        plus pinning the frame in `_frame_cache`, which evicts by COUNT and so
+        never releases it. `docs/STANDARDS.md` §f requires every backtest to log
+        its input snapshots, so the very act of being provenance-correct would
+        have undone the projection work and OOM'd a 1 GB machine.
+
+        The log already carries what an id needs: per-file path, size, row count
+        and per-column min/max/null-count statistics. Reading it costs 0.94 s
+        against S3 and touches no data.
+
+        **What this trades.** The old digest was addressed on logical CONTENT,
+        so a compaction that rewrote files without changing rows produced the
+        same id. This one includes the file paths, so such a rewrite produces a
+        different id. That is the right way round for this repo: bronze is
+        immutable and written once per `ingest_date` (`write_bronze` no-ops on
+        an existing partition), nothing here runs `OPTIMIZE`, and an id that
+        changes when the physical snapshot changes is a stricter provenance
+        claim than one that does not. An id computed from a projection could
+        not have made either claim.
+        """
+        table_uri = self._table_uri(self._bronze_table_key(dataset))
+        snapshot_date = self._resolve_cached(table_uri, dataset, as_of)
+        table = DeltaTable(table_uri, storage_options=self._storage_options)
+        actions = pa.table(table.get_add_actions(flatten=True)).to_pydict()
+        prefix = f"{_INGEST_DATE_COL}={snapshot_date.isoformat()}/"
+        keep = [i for i, path in enumerate(actions["path"]) if path.startswith(prefix)]
+        material = {
+            name: [values[i] for i in keep]
+            for name, values in sorted(actions.items())
+            if name not in self._SNAPSHOT_ID_FIELDS_EXCLUDED
+        }
+        digest = hashlib.sha256(repr(material).encode()).hexdigest()[:16]
         return f"{dataset}@{snapshot_date.isoformat()}#{digest}"
 
     def write_silver(self, dataset: str, df: pd.DataFrame) -> str:
