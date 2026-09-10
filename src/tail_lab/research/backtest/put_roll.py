@@ -1065,7 +1065,7 @@ def compute_put_backtest(
     if isinstance(sizing_mode, WealthFraction):
         growth = time_average_growth(
             [(p.date, p.price) for p in result.price_path],
-            [(e.date, e.cum_pnl) for e in result.mtm_curve],
+            result.mtm_curve[-1].cum_pnl if result.mtm_curve else 0.0,
             wealth=sizing_mode.wealth,
         )
         result = result.model_copy(update={"time_average_growth": growth})

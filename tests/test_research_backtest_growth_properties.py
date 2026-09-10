@@ -35,7 +35,7 @@ def test_zero_hedge_equals_benchmark_only_growth(
     benchmark's own geometric growth, ln(S_T / S_0) / T -- the hedge term
     must drop out cleanly, not merely approximately."""
     path = _path(start_price, end_price, days)
-    g = time_average_growth(path, [], wealth=wealth)
+    g = time_average_growth(path, wealth=wealth)
     years = days / 365.25
     expected = math.log(end_price / start_price) / years
     assert g is not None
@@ -62,10 +62,9 @@ def test_growth_is_monotone_increasing_in_hedge_pnl(
     the end date can never produce a strictly smaller combined growth rate,
     holding the benchmark path and wealth fixed."""
     path = _path(start_price, end_price, days)
-    end_date = path[-1][0]
     lo, hi = sorted((hedge_a, hedge_b))
-    g_lo = time_average_growth(path, [(end_date, lo)], wealth=wealth)
-    g_hi = time_average_growth(path, [(end_date, hi)], wealth=wealth)
+    g_lo = time_average_growth(path, lo, wealth=wealth)
+    g_hi = time_average_growth(path, hi, wealth=wealth)
     if g_lo is None or g_hi is None:
         return  # combined wealth was wiped out at this corner (extreme wealth/price draw)
     assert g_hi >= g_lo
@@ -87,9 +86,8 @@ def test_growth_is_invariant_to_uniform_scaling_of_wealth_and_hedge(
     -- and therefore `g` -- is unchanged. This is what makes `g` a rate
     rather than a size-dependent figure."""
     path = _path(start_price, end_price, days)
-    end_date = path[-1][0]
-    g = time_average_growth(path, [(end_date, hedge)], wealth=wealth)
-    g_scaled = time_average_growth(path, [(end_date, hedge * scale)], wealth=wealth * scale)
+    g = time_average_growth(path, hedge, wealth=wealth)
+    g_scaled = time_average_growth(path, hedge * scale, wealth=wealth * scale)
     if g is None or g_scaled is None:
         return  # combined wealth was wiped out at this corner (extreme wealth/price draw)
     assert math.isclose(g, g_scaled, rel_tol=1e-6, abs_tol=1e-9)

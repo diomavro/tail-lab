@@ -7,9 +7,9 @@ diverge (Peters, *Optimal leverage from non-ergodicity*, Quantitative Finance
 11(11), 2011).
 
 Deliberately decoupled from ``put_roll.py``'s ``PricePoint``/``EquityPoint``
-models (plain ``(date, value)`` tuples instead) so this stays a leaf module
-any curve-shaped result -- a single leg's ``mtm_curve`` today, a portfolio's
-``equity_curve`` later -- can feed without a new dependency edge.
+models (``price_path`` is a plain ``(date, value)`` tuple sequence instead) so
+this stays a leaf module any price series -- a single leg's ``price_path``
+today, a portfolio's later -- can feed without a new dependency edge.
 """
 
 from __future__ import annotations
@@ -21,7 +21,7 @@ from collections.abc import Sequence
 
 def time_average_growth(
     price_path: Sequence[tuple[dt.date, float]],
-    hedge_curve: Sequence[tuple[dt.date, float]],
+    hedge_final: float = 0.0,
     *,
     wealth: float,
 ) -> float | None:
@@ -30,16 +30,16 @@ def time_average_growth(
 
         g = (1 / T) * log(W_T / W_0)
         W_0 = wealth
-        W_T = wealth * (S_T / S_0) + hedge_curve[-1].cum_pnl
+        W_T = wealth * (S_T / S_0) + hedge_final
 
     ``price_path`` is ``(date, price)`` for the benchmark (e.g. a
-    ``PutBacktestResult.price_path``); ``hedge_curve`` is ``(date, cum_pnl)``
-    for the hedge (e.g. its ``mtm_curve``, aligned to ``price_path`` day for
-    day so the hedge is fully realized -- marked to model where not yet
-    settled -- by ``price_path``'s last date). Only the two endpoints matter:
-    a time-average growth rate is defined by a trajectory's start and end,
-    not its interior path, so ``T`` is the number of years between
-    ``price_path``'s first and last date.
+    ``PutBacktestResult.price_path``); ``hedge_final`` is the hedge's realized
+    cumulative P&L as of ``price_path``'s last date (e.g. the last
+    ``cum_pnl`` of its ``mtm_curve``, marked to model where not yet settled).
+    Only the two endpoints of ``price_path`` matter: a time-average growth
+    rate is defined by a trajectory's start and end, not its interior path,
+    so ``T`` is the number of years between ``price_path``'s first and last
+    date.
 
     This treats the *entire* ``wealth`` as continuously held in the benchmark
     (the "keep investing the same way" half of Dio's ask) with the hedge
@@ -66,7 +66,6 @@ def time_average_growth(
     years = (end_date - start_date).days / 365.25
     if years <= 0.0:
         return None
-    hedge_final = hedge_curve[-1][1] if hedge_curve else 0.0
     w0 = wealth
     w1 = wealth * (end_price / start_price) + hedge_final
     if w1 <= 0.0:

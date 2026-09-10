@@ -589,7 +589,7 @@ def test_compute_put_backtest_time_average_growth_matches_the_pure_function(
         )  # type: ignore[arg-type]
         expected = time_average_growth(
             [(p.date, p.price) for p in result.price_path],
-            [(e.date, e.cum_pnl) for e in result.mtm_curve],
+            result.mtm_curve[-1].cum_pnl if result.mtm_curve else 0.0,
             wealth=wealth,
         )
         assert result.time_average_growth == expected

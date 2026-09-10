@@ -1032,18 +1032,21 @@ that nothing depends on a number the platform cannot yet compute honestly.
       **Done 2026-09-10**: `research/backtest/growth.py`
       (`time_average_growth`), a pure function deliberately decoupled from
       `PutBacktestResult`'s `PricePoint`/`EquityPoint` models (plain
-      `(date, value)` tuples instead) so it stays a leaf module any
-      curve-shaped result can feed later (a portfolio's `equity_curve`, not
-      just a single leg's `mtm_curve`). Only the two endpoints of the
-      benchmark path matter — `g = (1/T) * log(W_T/W_0)` with `W_T =
-      wealth * (S_T/S_0) + hedge_curve[-1].cum_pnl` — since a time-average
-      growth rate is defined by a trajectory's start and end, not its
-      interior. Wired into `compute_put_backtest`: when `sizing_mode` is
+      `(date, value)` tuples for `price_path` instead) so it stays a leaf
+      module any benchmark price series can feed later, not just a single
+      leg's `price_path`. Only the two endpoints of the benchmark path matter
+      — `g = (1/T) * log(W_T/W_0)` with `W_T = wealth * (S_T/S_0) +
+      hedge_final` — since a time-average growth rate is defined by a
+      trajectory's start and end, not its interior; `hedge_final` is a single
+      realized-P&L figure (the hedge's last `mtm_curve` point), not a curve,
+      because nothing in this function ever reads an interior hedge point
+      (round 2 of review caught the unused-generality version of this
+      signature). Wired into `compute_put_backtest`: when `sizing_mode` is
       specifically a `WealthFraction` (not `FixedPremium`/`None`, which have
       no `wealth` figure to compound against), the result's new
       `PutBacktestResult.time_average_growth` field is populated by calling
-      the pure function on the run's own `price_path`/`mtm_curve`; otherwise
-      it stays `None`. No API/UI change — same ship-the-pure-function-first
+      the pure function on the run's own `price_path` and `mtm_curve[-1]`;
+      otherwise it stays `None`. No API/UI change — same ship-the-pure-function-first
       precedent the `SizingMode` seam itself just followed (`AGENT_TODO.md`'s
       "Sizing mode" item above), and `sizing_mode` still isn't threaded
       through `api/putlab_routes.py`, so this has no effect on production
