@@ -173,11 +173,11 @@ class DeltaLakeStore(LakeStore):
     only, no data read), picks the latest one on or before ``as_of``, and
     reads only that partition.
 
-    **Snapshot id.** Content-addressed: sha256 of the resolved partition's
-    canonical Parquet bytes, truncated to 16 hex chars — the same shape the
-    Parquet backends used, computed from the logical row content instead of
-    a single physical file's bytes (robust to a future ``OPTIMIZE``/compaction
-    changing file layout without changing content).
+    **Snapshot id.** Addressed on the resolved partition's Delta LOG metadata
+    (file paths, sizes, row counts, column stats), not its data — see
+    :meth:`bronze_snapshot_id` for why, and for what that trades away
+    (the id is not stable across a future ``OPTIMIZE``/compaction, unlike
+    the content-hash the Parquet backends used).
 
     **Silver/gold.** A single non-partitioned Delta table per dataset,
     overwritten (``mode="overwrite"``) on every write — same "current
