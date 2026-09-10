@@ -244,10 +244,21 @@ class QuoteSource(Protocol):
 #: memory win: the full optionsDX SPY panel is 351 MB and these five are
 #: 157 MB, against a 1024 MB machine (``fly.toml``).
 _SESSION_COLUMNS = ("expiration", "strike", "bid", "ask", "spot")
-#: Measured ratio of process RSS to `memory_usage(deep=True)` for a built
-#: index: 174 MB actual against 125 MB reported on the real SPY panel. pandas
-#: does not account per-frame overhead, and at 3,500 frames that is ~30%.
-_RSS_OVERHEAD_FACTOR = 1.40
+#: Measured ratio of real resident cost to `memory_usage(deep=True)` for a
+#: built index. Two independent measurements on the real SPY panel shape:
+#: 174 MB actual against 125 MB reported (1.39x), and 223 MB against 131.6 MB
+#: (1.69x). A two-symbol panel, where the boolean mask genuinely copies rather
+#: than aliasing, measured 150.9 against 65.8 (2.29x).
+#:
+#: 1.75 sits above both single-symbol measurements deliberately. pandas does
+#: not account per-frame overhead, and at 3,500 session frames that is not a
+#: rounding error; nor does it see parent-panel blocks the index keeps alive
+#: but does not reference. An OVERSTATEMENT evicts a little too eagerly, which
+#: costs a rebuild. An understatement fails to evict at all, which is how
+#: three sources sat at 94% of a 400 MB budget while the process peaked at
+#: 1195 MB on a 1024 MB machine. The two errors are not symmetric, so this
+#: rounds toward the safe one.
+_RSS_OVERHEAD_FACTOR = 1.75
 
 #: Always needed to build the index itself.
 _INDEX_COLUMNS = ("underlying", "quote_date")

@@ -204,6 +204,7 @@ class DeltaLakeStore(LakeStore):
         # every call (a cheap Delta-log metadata read), memoized briefly so the
         # leaderboard's 35 resolutions don't each hit S3.
         self._frame_cache: OrderedDict[tuple[str, str], pd.DataFrame] = OrderedDict()
+        self._snapshot_id_cache: dict[tuple[str, str], str] = {}
         self._resolve_cache: dict[tuple[str, str], tuple[float, dt.date]] = {}
 
     @property
@@ -423,6 +424,17 @@ class DeltaLakeStore(LakeStore):
         """
         table_uri = self._table_uri(self._bronze_table_key(dataset))
         snapshot_date = self._resolve_cached(table_uri, dataset, as_of)
+        # Memoized on (dataset, resolved partition). Bronze is immutable and
+        # `write_bronze` no-ops on an existing partition, so the digest for a
+        # resolved snapshot can never change and the memo is trivially correct.
+        # Without it this costs a fresh Delta log read on EVERY call where the
+        # old implementation cost zero after the first (it reused the frame
+        # cache) -- measured 2.13x slower on a small local dataset and ~1 s per
+        # call against S3, paid n+1 times by a portfolio run.
+        memo_key = (dataset, snapshot_date.isoformat())
+        cached_id = self._snapshot_id_cache.get(memo_key)
+        if cached_id is not None:
+            return cached_id
         table = DeltaTable(table_uri, storage_options=self._storage_options)
         actions = pa.table(table.get_add_actions(flatten=True)).to_pydict()
         prefix = f"{_INGEST_DATE_COL}={snapshot_date.isoformat()}/"
@@ -432,8 +444,16 @@ class DeltaLakeStore(LakeStore):
             for name, values in sorted(actions.items())
             if name == "num_records" or name.split(".")[0] in self._SNAPSHOT_STAT_PREFIXES
         }
+        if not keep:
+            # A well-formed id whose digest is a dataset-independent constant
+            # would be worse than an error: it would look like provenance.
+            raise LookupError(
+                f"no files in the {snapshot_date.isoformat()} partition of {dataset!r}"
+            )
         digest = hashlib.sha256(repr(material).encode()).hexdigest()[:16]
-        return f"{dataset}@{snapshot_date.isoformat()}#{digest}"
+        snapshot_id = f"{dataset}@{snapshot_date.isoformat()}#{digest}"
+        self._snapshot_id_cache[memo_key] = snapshot_id
+        return snapshot_id
 
     def write_silver(self, dataset: str, df: pd.DataFrame) -> str:
         return self._write_derived("silver", dataset, df)
