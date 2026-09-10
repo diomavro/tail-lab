@@ -470,6 +470,11 @@ def _mark_row(**overrides: object) -> dict[str, object]:
         "strike": 90.0,
         "bid": 1.20,
         "ask": 1.30,
+        # `mark` never reads spot, but a QuoteSource that cannot also `fill`
+        # is not a usable source, so `build_session_index` requires the whole
+        # guard column set at construction rather than letting a partial panel
+        # build and then KeyError from inside the first fill.
+        "spot": 100.0,
     }
     base.update(overrides)
     return base
