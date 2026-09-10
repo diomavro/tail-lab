@@ -975,6 +975,11 @@ lost a second time.
       steady state for five optionsDX assets plus `option_quotes` is 682 MB
       resident, on top of the app's own ~252 MB. Wanted: an explicit cache with
       a BYTE budget and eviction, not the count-capped `_frame_cache`.
+      `quote_fills.index_nbytes` (dedupes aliased session blocks by `id(base)`,
+      tested directly in `test_research_backtest_quote_fills.py`) is the
+      byte-reporter this cache's `build` callable needs — still not called
+      from `OptionsDxQuoteSource.from_store` / `OptionQuotesSource.from_store`,
+      which is the other half of this wiring step.
 
 - [x] **Done 2026-09-10.** `bronze_snapshot_id` reads the Delta LOG rather
       than the data — per-file path, size, row count and per-column stats,

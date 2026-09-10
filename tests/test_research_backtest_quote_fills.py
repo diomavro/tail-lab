@@ -8,6 +8,7 @@ import pytest
 from tail_lab.research.backtest.quote_fills import (
     MAX_SNAP_MONEYNESS_PP,
     OptionsDxQuoteSource,
+    index_nbytes,
 )
 
 SYMBOL = "SPY"
@@ -236,3 +237,42 @@ def test_no_listed_expiry_at_or_after_the_target_is_refused() -> None:
         entry_date=dt.date(2024, 1, 5), spot=100.0, moneyness_pct=10.0, tenor_weeks=4.0
     )
     assert fill is None
+
+
+# ---- index_nbytes: the cache's byte-budget input ----------------------------
+
+
+def test_index_nbytes_dedupes_two_sessions_that_alias_the_same_parent_block() -> None:
+    """`frame[keep]` under pandas copy-on-write is a lazy reference: two
+    session frames sliced from the same parent panel can share the exact same
+    underlying block, so summing each frame's own `nbytes` counts that shared
+    memory once per session instead of once. `index_nbytes` must dedupe by
+    the block's `base` identity and report the true, single-counted figure --
+    the specific failure mode its docstring describes (131.5 MB summed vs.
+    193 MB actually resident)."""
+    parent = pd.DataFrame({"strike": [90.0, 95.0, 100.0, 105.0]})
+    session_a = parent[["strike"]]
+    session_b = parent[["strike"]]
+
+    # Precondition: the two frames really do alias one block, or this test
+    # would not be exercising the dedup path at all.
+    base_a = session_a._mgr.blocks[0].values.base
+    base_b = session_b._mgr.blocks[0].values.base
+    assert base_a is not None
+    assert base_a is base_b
+
+    naive_sum = sum(
+        block.values.nbytes for frame in (session_a, session_b) for block in frame._mgr.blocks
+    )
+    sessions = {
+        pd.Timestamp("2024-01-05"): session_a,
+        pd.Timestamp("2024-01-08"): session_b,
+    }
+
+    actual = index_nbytes(sessions)
+    assert actual == parent["strike"].to_numpy().nbytes
+    assert actual == naive_sum // 2
+
+
+def test_index_nbytes_of_an_empty_index_is_zero() -> None:
+    assert index_nbytes({}) == 0
