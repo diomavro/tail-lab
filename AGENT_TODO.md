@@ -896,16 +896,17 @@ lost a second time.
       Either add a test that calls `ingest_earnings_calendar` with a
       non-default value, or trim the parameter if nothing is meant to use it
       yet.
-- [ ] **`ingest_vix_complex`'s `raw` mapping is looked up with the already-
+- [x] **`ingest_vix_complex`'s `raw` mapping is looked up with the already-
       uppercased `resolved` series name** — advisory from PR #87's review
-      (2026-09-07): `raw[one_series]` (`ingestion/vix_complex.py`, in the
-      `parsed = [...]` comprehension) is keyed by `resolved`'s uppercased
-      names, so a caller passing lowercase keys in `raw` silently misses the
-      injected payload and falls through to a live network call instead of
-      erroring. Only matters if `raw` injection is ever used outside tests
-      (e.g. a future backfill script) — fix with a
-      `{k.upper(): v for k, v in raw.items()}` normalization at the top of
-      `ingest_vix_complex` if/when that happens.
+      (2026-09-07). **Done 2026-09-11**: `ingest_vix_complex` now
+      uppercase-normalizes `raw`'s keys once at the top
+      (`ingestion/vix_complex.py`) before the lookup, so a caller passing
+      lowercase keys is matched instead of silently falling through to a live
+      `fetch_vix_complex_raw` call. Pinned by
+      `test_ingest_matches_lowercase_raw_keys_against_uppercased_series`,
+      which monkeypatches `fetch_vix_complex_raw` to raise if called at all —
+      proving the injected payload was used, not a network path that tests
+      happen not to exercise.
 
 ## Operational (2026-09-01)
 

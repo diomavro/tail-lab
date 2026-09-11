@@ -188,6 +188,28 @@ def test_ingest_uppercases_requested_series(tmp_path: Any) -> None:
     assert result.valid_rows == 1
 
 
+def test_ingest_matches_lowercase_raw_keys_against_uppercased_series(
+    tmp_path: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """`resolved` series names are always uppercase; a `raw` dict keyed in
+    lowercase must still be matched, not silently missed and fall through to
+    a live fetch (design review, PR #87)."""
+
+    def _fail_if_called(series: str, *, timeout: float = 30.0) -> str:
+        raise AssertionError(f"fetch_vix_complex_raw should not be called for {series}")
+
+    monkeypatch.setattr("tail_lab.ingestion.vix_complex.fetch_vix_complex_raw", _fail_if_called)
+    store = DeltaLakeStore(tmp_path)
+    raw = {"skew": "DATE,SKEW\n01/02/2026,130.0\n"}
+    ingest_date = dt.date(2026, 1, 6)
+    result = ingest_vix_complex(store, ["SKEW"], ingest_date=ingest_date, raw=raw)
+
+    assert result.valid_rows == 1
+    assert result.series == ("SKEW",)
+    bronze = store.read_bronze_as_of("vix_complex", ingest_date)
+    assert bronze["close"].iloc[0] == pytest.approx(130.0)
+
+
 def test_ingest_defaults_to_the_full_series_catalogue(tmp_path: Any) -> None:
     store = DeltaLakeStore(tmp_path)
     raw = {
