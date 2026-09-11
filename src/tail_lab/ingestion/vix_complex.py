@@ -188,12 +188,16 @@ def ingest_vix_complex(
     # as-of clock the API/backtest read with (matches vix.py; docs/adr/0009).
     ingest_date = ingest_date or dt.datetime.now(dt.UTC).date()
     resolved = tuple(s.upper() for s in (series if series is not None else SERIES_NAMES))
+    # `resolved` is always uppercase, so `raw`'s keys must match — a caller
+    # passing lowercase keys would otherwise silently miss the injected
+    # payload and fall through to a live network call (design review, PR #87).
+    raw_upper = {k.upper(): v for k, v in raw.items()} if raw is not None else None
 
     parsed = [
         parse_vix_complex_csv(
             one_series,
-            raw[one_series]
-            if raw is not None and one_series in raw
+            raw_upper[one_series]
+            if raw_upper is not None and one_series in raw_upper
             else fetch_vix_complex_raw(one_series),
         )
         for one_series in resolved
