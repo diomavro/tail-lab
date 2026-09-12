@@ -37,7 +37,11 @@ from tail_lab.api.schemas import (
     OptionChainSnapshotStatus,
 )
 from tail_lab.config import get_lake_store as _get_configured_lake_store
-from tail_lab.contracts.option_chain import DATASET, split_valid_and_quarantined
+from tail_lab.contracts.option_chain import (
+    DATASET,
+    DEFAULT_SNAPSHOT_SYMBOLS,
+    split_valid_and_quarantined,
+)
 from tail_lab.lake.store import LakeStore
 from tail_lab.observability import log_event
 
@@ -137,18 +141,26 @@ def option_chain_snapshot_status(
     Unlike a failed FRED pull, a gap here can never be filled in.
     """
     today = dt.date.today()
+    expected = tuple(sorted(s.upper() for s in DEFAULT_SNAPSHOT_SYMBOLS))
     try:
         frame = store.read_bronze_as_of(DATASET, today)
     except LookupError:
         return OptionChainSnapshotStatus(
-            dataset=DATASET, last_quote_date=None, rows=0, symbols=0, stale_days=None
+            dataset=DATASET,
+            last_quote_date=None,
+            rows=0,
+            symbols=0,
+            stale_days=None,
+            missing_symbols=expected,
         )
 
     last_quote = frame["quote_date"].max().date()
+    present = set(frame["underlying"].str.upper())
     return OptionChainSnapshotStatus(
         dataset=DATASET,
         last_quote_date=last_quote,
         rows=len(frame),
         symbols=int(frame["underlying"].nunique()),
         stale_days=(today - last_quote).days,
+        missing_symbols=tuple(s for s in expected if s not in present),
     )

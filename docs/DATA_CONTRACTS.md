@@ -374,8 +374,10 @@ before its first snapshot, and a `LookupError` for pre-collection dates is
 correct behavior, not a bug to work around.
 
 **Freshness.** `GET /api/ingest/option-chain/status` reports the last session
-collected and `stale_days`. Public, and read by the daily agent before it
-picks any work.
+collected, `stale_days`, and `missing_symbols` — anyone in
+`DEFAULT_SNAPSHOT_SYMBOLS` absent from that partition, which `stale_days`
+alone cannot see (a sweep landing 23 of 24 chains is not stale). Public, and
+read by the daily agent before it picks any work.
 
 ### Deltas from the original plan (kept for the record)
 

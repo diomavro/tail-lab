@@ -949,7 +949,7 @@ lost a second time.
       Note `write_bronze` is currently a no-op if the `ingest_date` partition
       exists (immutable bronze), so a chunked writer needs an explicit
       append-within-one-ingest mode rather than repeated `write_bronze` calls.
-- [ ] **Retry a failed chain FETCH, not just the failed POST.** The POST now
+- [x] **Retry a failed chain FETCH, not just the failed POST.** The POST now
       retries (2026-09-04, a transient 500 cost a session). `sweep_to_records`
       still does not: a per-symbol Cboe blip is caught, logged and skipped, and
       the sweep continues. That is partly deliberate — per-symbol fault
@@ -960,6 +960,30 @@ lost a second time.
       Wanted: retry each symbol a couple of times, and make the count of
       symbols that ended up missing a loud output rather than a `::warning::`
       nobody reads.
+      **Done 2026-09-12.** `ingestion/option_chain.py` gained
+      `_fetch_with_retry`, used by both `ingest_option_chain`'s and
+      `sweep_to_records`'s per-symbol loops: up to 3 attempts, 3s apart,
+      retrying only a fault a retry could plausibly fix (`_retryable_fetch_error`
+      mirrors `scripts/chain_snapshot.py`'s `_retryable` for the POST leg — a
+      5xx/429/connection fault retries, a firm 4xx or a non-`requests`
+      exception from an injected test fetcher does not, so existing
+      one-dead-chain tests are unaffected). Pinned: a transient-then-success
+      fetch is retried and lands in `symbols_ok`; a persistent 5xx exhausts the
+      attempt budget; a 404 and a non-network exception are each tried exactly
+      once (`tests/test_ingestion_option_chain.py`).
+      For the "loud output" half, chose the cockpit over the CI log: a missing
+      symbol is exactly the "accuracy surfaced, not filed" case, and
+      `GET /api/ingest/option-chain/status` is the freshness check the daily
+      agent (and Dio) already reads every day, unlike a scheduled workflow's
+      `::warning::` line. `OptionChainSnapshotStatus` gained `missing_symbols`
+      — anyone in `DEFAULT_SNAPSHOT_SYMBOLS` absent from the last partition —
+      computed in `api/ingest_routes.option_chain_snapshot_status` and pinned
+      in `tests/test_api_ingest.py`, including the case `stale_days` cannot see
+      (23 of 24 chains landed, so the day is fresh but not complete).
+      `docs/DATA_CONTRACTS.md` #6 updated in the same PR. The scheduled
+      script's `::warning::` for a missing symbol is left in place — still
+      useful for someone actually watching a run — the status field is the new
+      always-on signal, not a replacement for it.
 
 - [x] **Done 2026-09-10.** A bounded cache for quote sources —
       `research/backtest/quote_cache.py`. Byte-budgeted (400 MB against the
