@@ -36,6 +36,7 @@ from __future__ import annotations
 
 import datetime as dt
 import logging
+import time
 from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import Any
@@ -81,6 +82,19 @@ _INDEX_ROOTS = frozenset({"SPX", "VIX", "NDX", "RUT", "DJX", "XSP", "OEX"})
 _GREEK_SENTINEL = 0.0
 
 _REQUEST_TIMEOUT_S = 60
+
+#: How many times to fetch one symbol's chain before recording it as failed,
+#: and how long to wait between attempts.
+#:
+#: Same reasoning as ``scripts/chain_snapshot.py``'s POST retry, one seam
+#: earlier: a per-symbol Cboe blip previously cost that symbol its ENTIRE
+#: session on the first exception, permanently -- nobody sells a retroactive
+#: chain (module docstring). The driving script's ``MIN_PLAUSIBLE_ROWS`` floor
+#: only catches a WHOLESALE failure across the universe; losing one name of
+#: two dozen still passes it, and that loss is exactly as unrecoverable as
+#: losing all of them.
+_FETCH_ATTEMPTS = 3
+_FETCH_BACKOFF_S = 3.0
 _COLUMNS = [
     "underlying",
     "quote_date",
@@ -224,6 +238,47 @@ def fetch_chain_raw(symbol: str, *, timeout: int = _REQUEST_TIMEOUT_S) -> dict[s
     return payload
 
 
+def _retryable_fetch_error(exc: Exception) -> bool:
+    """Whether retrying THIS symbol's fetch could plausibly change the answer.
+
+    Mirrors ``scripts/chain_snapshot.py``'s ``_retryable`` for the POST leg:
+    a 5xx, a 429, or a connection/timeout fault says Cboe (or the network)
+    failed to answer a request it might answer next time. A 4xx other than
+    429 says Cboe understood the request and refused it -- most often a root
+    this host does not list at all -- and repeating the identical GET cannot
+    change that.
+    """
+    if isinstance(exc, requests.exceptions.HTTPError) and exc.response is not None:
+        return exc.response.status_code >= 500 or exc.response.status_code == 429
+    return isinstance(exc, requests.exceptions.RequestException)
+
+
+def _fetch_with_retry(
+    fetcher: Callable[[str], Mapping[str, Any]], symbol: str
+) -> Mapping[str, Any]:
+    """Fetch one symbol's chain, retrying a fault a retry could plausibly fix.
+
+    Deliberately does not retry an exception ``_retryable_fetch_error`` calls
+    a firm no (or one raised by an injected test fetcher, which is never a
+    ``requests`` exception) -- retrying those only burns time before the
+    symbol is recorded as failed anyway.
+    """
+    for attempt in range(1, _FETCH_ATTEMPTS + 1):
+        try:
+            return fetcher(symbol)
+        except Exception as exc:
+            if not _retryable_fetch_error(exc) or attempt == _FETCH_ATTEMPTS:
+                raise
+            _LOGGER.warning(
+                "event=ingestion.option_chain.symbol_retry symbol=%s attempt=%d/%d",
+                symbol,
+                attempt,
+                _FETCH_ATTEMPTS,
+            )
+            time.sleep(_FETCH_BACKOFF_S)
+    raise AssertionError("_FETCH_ATTEMPTS must be >= 1")
+
+
 def validate_and_quarantine(df: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame]:
     """Split ``df`` into (valid, quarantined) against the snapshot contract.
 
@@ -257,7 +312,7 @@ def ingest_option_chain(
 
     for symbol in symbols:
         try:
-            payload = fetcher(symbol)
+            payload = _fetch_with_retry(fetcher, symbol)
             frame, unparsed = parse_cboe_chain(payload)
         except Exception:
             _LOGGER.exception("event=ingestion.option_chain.symbol_failed symbol=%s", symbol)
@@ -332,7 +387,7 @@ def sweep_to_records(
     records: list[dict[str, Any]] = []
     for symbol in symbols:
         try:
-            frame, _unparsed = parse_cboe_chain(fetcher(symbol))
+            frame, _unparsed = parse_cboe_chain(_fetch_with_retry(fetcher, symbol))
         except Exception:
             _LOGGER.exception("event=ingestion.option_chain.symbol_failed symbol=%s", symbol)
             continue

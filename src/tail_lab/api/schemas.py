@@ -142,10 +142,20 @@ class OptionChainSnapshotResponse(BaseModel):
 class OptionChainSnapshotStatus(BaseModel):
     """Freshness of the forward collection. ``last_quote_date`` is ``None``
     only before the very first sweep; after that, ``stale_days`` climbing
-    past a long weekend means sessions are being lost permanently."""
+    past a long weekend means sessions are being lost permanently.
+
+    ``missing_symbols`` names anyone in
+    ``contracts.option_chain.DEFAULT_SNAPSHOT_SYMBOLS`` absent from the last
+    partition -- a partial loss that ``stale_days`` alone cannot see, since a
+    sweep that landed 23 of 24 chains is not stale. Before this field existed
+    that loss was visible only as a ``::warning::`` in a scheduled workflow's
+    log, which nobody reads (``AGENT_TODO.md``); this is the same freshness
+    check the daily agent already runs, so a partial day is now as loud as a
+    stale one."""
 
     dataset: str
     last_quote_date: dt.date | None
     rows: int
     symbols: int
     stale_days: int | None
+    missing_symbols: tuple[str, ...] = ()

@@ -11,7 +11,7 @@ from fastapi.testclient import TestClient
 from tail_lab.api.ingest_routes import get_lake_store
 from tail_lab.api.main import app
 from tail_lab.config import Settings
-from tail_lab.contracts.option_chain import DATASET
+from tail_lab.contracts.option_chain import DATASET, DEFAULT_SNAPSHOT_SYMBOLS
 from tail_lab.lake.store import DeltaLakeStore
 
 TOKEN = "sweep-token"
@@ -196,6 +196,7 @@ def test_status_reports_no_snapshot_before_the_first_sweep(client: TestClient) -
     assert payload["last_quote_date"] is None
     assert payload["rows"] == 0
     assert payload["stale_days"] is None
+    assert sorted(payload["missing_symbols"]) == sorted(s.upper() for s in DEFAULT_SNAPSHOT_SYMBOLS)
 
 
 def test_status_reports_the_last_session_collected(
@@ -213,6 +214,27 @@ def test_status_reports_the_last_session_collected(
     assert payload["rows"] == 2
     assert payload["symbols"] == 2
     assert payload["stale_days"] == (dt.date.today() - dt.date(2026, 8, 26)).days
+
+
+def test_status_names_the_symbols_a_partial_sweep_lost(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A sweep that lands 23 of 24 chains is not stale -- ``stale_days`` alone
+    would report a healthy day. This is the check the daily agent already
+    runs, so a partial loss is now as loud as a wholesale one, instead of
+    living only in a scheduled workflow's ``::warning::`` log line that
+    nobody reads (``AGENT_TODO.md``, "Retry a failed chain FETCH")."""
+    _set_token(monkeypatch, TOKEN)
+    client.post(
+        "/api/ingest/option-chain",
+        json=_body(_row(underlying="SPY")),
+        headers={"Authorization": f"Bearer {TOKEN}"},
+    )
+
+    payload = client.get("/api/ingest/option-chain/status").json()
+    expected_missing = sorted(s.upper() for s in DEFAULT_SNAPSHOT_SYMBOLS if s.upper() != "SPY")
+    assert sorted(payload["missing_symbols"]) == expected_missing
+    assert "SPY" not in payload["missing_symbols"]
 
 
 def test_the_partition_defaults_to_the_session_not_the_server_clock(

@@ -6,10 +6,13 @@ from typing import Any
 
 import pandas as pd
 import pytest
+import requests
 
 from tail_lab.contracts.option_chain import DATASET, MAX_TENOR_DAYS
 from tail_lab.ingestion.option_chain import (
+    _FETCH_ATTEMPTS,
     QUARANTINE_DATASET,
+    _fetch_with_retry,
     cboe_symbol,
     ingest_option_chain,
     parse_cboe_chain,
@@ -214,6 +217,105 @@ def _fetcher(**by_symbol: dict[str, Any]) -> Any:
             raise RuntimeError(f"chain unavailable for {symbol}") from exc
 
     return fetch
+
+
+# ---- per-symbol fetch retry -------------------------------------------------
+
+
+def _http_error(status_code: int) -> requests.exceptions.HTTPError:
+    response = requests.Response()
+    response.status_code = status_code
+    return requests.exceptions.HTTPError(response=response)
+
+
+@pytest.fixture(autouse=True)
+def _no_sleeping(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The backoff is real in production and pointless in a test."""
+    import tail_lab.ingestion.option_chain as option_chain_module
+
+    monkeypatch.setattr(option_chain_module.time, "sleep", lambda _s: None)
+
+
+def test_a_transient_fault_is_retried_and_the_symbol_is_saved() -> None:
+    """The exact shape of a 2026-09-04-style blip, one seam earlier than the
+    POST retry: a 500 on the first attempt, success on the second."""
+    calls: list[int] = []
+
+    def flaky(_symbol: str) -> dict[str, Any]:
+        calls.append(1)
+        if len(calls) == 1:
+            raise _http_error(500)
+        return _payload(_put(95.0), symbol="SPY")
+
+    result = _fetch_with_retry(flaky, "SPY")
+    assert result["data"]["symbol"] == "SPY"
+    assert len(calls) == 2
+
+
+@pytest.mark.parametrize(
+    ("exc", "expected_calls"),
+    [
+        # A 4xx (other than 429) means Cboe understood and refused -- most
+        # often a root this host does not list. Re-sending the identical GET
+        # cannot change that answer.
+        (_http_error(404), 1),
+        # A 5xx means Cboe failed to answer a request it might answer next
+        # time, so it gets the full attempt budget.
+        (_http_error(503), _FETCH_ATTEMPTS),
+        (requests.exceptions.ConnectionError("dns"), _FETCH_ATTEMPTS),
+    ],
+)
+def test_only_faults_a_retry_could_fix_are_retried(exc: Exception, expected_calls: int) -> None:
+    """Asserted as a CONTRAST, deliberately, mirroring
+    ``test_scripts_chain_snapshot_retry.py``: "a 404 is fetched once" also
+    passes with no retry loop at all, so only the 1-vs-N call count actually
+    detects the loop's presence."""
+    calls: list[int] = []
+
+    def always_fails(_symbol: str) -> dict[str, Any]:
+        calls.append(1)
+        raise exc
+
+    with pytest.raises(type(exc)):
+        _fetch_with_retry(always_fails, "SPY")
+    assert len(calls) == expected_calls
+
+
+def test_a_non_network_error_from_an_injected_fetcher_is_not_retried() -> None:
+    """A test/local ``fetch`` callable never raises a ``requests`` exception,
+    so it is never mistaken for a transient fault -- one attempt, same as
+    before this retry existed."""
+    calls: list[int] = []
+
+    def broken(_symbol: str) -> dict[str, Any]:
+        calls.append(1)
+        raise RuntimeError("chain unavailable")
+
+    with pytest.raises(RuntimeError):
+        _fetch_with_retry(broken, "BROKEN")
+    assert len(calls) == 1
+
+
+def test_a_transient_blip_no_longer_costs_the_symbol_its_whole_session(
+    tmp_path: Path,
+) -> None:
+    """End to end through ``ingest_option_chain``: a symbol that fails once
+    and then answers now lands in the sweep instead of ``symbols_failed``."""
+    store = DeltaLakeStore(tmp_path)
+    calls: list[int] = []
+
+    def by_symbol(symbol: str) -> dict[str, Any]:
+        if symbol.upper() == "SPY":
+            calls.append(1)
+            if len(calls) == 1:
+                raise _http_error(500)
+            return _payload(_put(95.0), symbol="SPY")
+        return _payload(_put(95.0), symbol="QQQ")
+
+    result = ingest_option_chain(store, ["SPY", "QQQ"], fetch=by_symbol)
+
+    assert result.symbols_ok == ("SPY", "QQQ")
+    assert result.symbols_failed == ()
 
 
 def test_ingest_commits_one_partition_for_the_whole_universe(tmp_path: Path) -> None:
