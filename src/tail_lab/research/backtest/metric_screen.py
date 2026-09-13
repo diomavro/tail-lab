@@ -244,6 +244,49 @@ def _run_screen(
     )
 
 
+def _safe_metric(
+    fn: Callable[[pd.Series, pd.Series], float], a: pd.Series, b: pd.Series
+) -> float | None:
+    try:
+        return fn(a, b)
+    except ValueError:
+        return None
+
+
+def _fragility(
+    asset_prices: pd.Series,
+    *,
+    bench_ret: pd.Series,
+    vol_changes: pd.Series,
+    lookback_days: int,
+) -> dict[str, float | None]:
+    """Every raw fragility metric for ``asset_prices`` over the trailing
+    ``lookback_days``, keyed by name. Un-nested from ``compare_metric_screens``
+    (``docs/adr/0023``'s max-complexity ratchet — mccabe folds a nested
+    closure's own complexity into its enclosing function, so this and
+    ``_safe_metric`` being defined inside ``compare_metric_screens`` added
+    their combined complexity on top of its own branching), mirroring
+    ``ranking.py:rank_universe``'s identical fix."""
+    aligned = pd.concat({"a": _returns(asset_prices), "b": bench_ret}, axis=1).dropna()
+    window = aligned.iloc[-lookback_days:]
+    a, b = window["a"], window["b"]
+
+    values: dict[str, float | None] = {
+        name: _safe_metric(fn, a, b) for name, fn in _METRIC_FUNCS.items()
+    }
+
+    # Vol beta regresses against VIX changes, not the SPY benchmark, so it
+    # aligns and windows its own pair rather than reusing (a, b) above.
+    vol_aligned = pd.concat({"a": _returns(asset_prices), "v": vol_changes}, axis=1).dropna()
+    vol_window = vol_aligned.iloc[-lookback_days:]
+    try:
+        values["vol_beta"] = vol_beta(vol_window["a"], vol_window["v"])
+    except ValueError:
+        values["vol_beta"] = None
+
+    return values
+
+
 def compare_metric_screens(
     store: LakeStore,
     *,
@@ -285,30 +328,6 @@ def compare_metric_screens(
         ) from exc
     bench_ret = _returns(bench_prices)
 
-    def _fragility(asset_prices: pd.Series) -> dict[str, float | None]:
-        aligned = pd.concat({"a": _returns(asset_prices), "b": bench_ret}, axis=1).dropna()
-        window = aligned.iloc[-lookback_days:]
-        a, b = window["a"], window["b"]
-
-        def _safe(fn: Callable[[pd.Series, pd.Series], float]) -> float | None:
-            try:
-                return fn(a, b)
-            except ValueError:
-                return None
-
-        values: dict[str, float | None] = {name: _safe(fn) for name, fn in _METRIC_FUNCS.items()}
-
-        # Vol beta regresses against VIX changes, not the SPY benchmark, so it
-        # aligns and windows its own pair rather than reusing (a, b) above.
-        vol_aligned = pd.concat({"a": _returns(asset_prices), "v": vol_changes}, axis=1).dropna()
-        vol_window = vol_aligned.iloc[-lookback_days:]
-        try:
-            values["vol_beta"] = vol_beta(vol_window["a"], vol_window["v"])
-        except ValueError:
-            values["vol_beta"] = None
-
-        return values
-
     scored: list[_Scored] = []
     for symbol in symbols:
         try:
@@ -327,7 +346,19 @@ def compare_metric_screens(
             )
         except LookupError:
             continue  # no data / too short a window for this name -> skip
-        scored.append(_Scored(symbol, _fragility(prices), None, result))
+        scored.append(
+            _Scored(
+                symbol,
+                _fragility(
+                    prices,
+                    bench_ret=bench_ret,
+                    vol_changes=vol_changes,
+                    lookback_days=lookback_days,
+                ),
+                None,
+                result,
+            )
+        )
 
     if not scored:
         raise LookupError(f"no universe name could be scored as of {as_of.isoformat()}")

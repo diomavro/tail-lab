@@ -923,41 +923,88 @@ def _mark_to_market_curve(
         if open_pos is not None:
             cyc = cycles[open_pos]
             _, expiry_idx = spans[open_pos]
-            if quotes is not None:
-                if open_mark_pos != open_pos:  # a new roll opened -- forget the old mark
-                    open_mark = None
-                    open_mark_pos = open_pos
-                if k == expiry_idx:
-                    mark = max(cyc.strike - float(px[k]), 0.0)  # intrinsic (guards T=0)
-                else:
-                    bid = quotes.mark(
-                        entry_date=dates[k],
-                        strike=cyc.strike,
-                        expiry=cyc.expiry_date,
-                        basis=cyc.quote_basis,
-                    )
-                    if bid is not None:
-                        mark = bid
-                        open_mark = bid
-                    elif open_mark is not None:
-                        mark = open_mark  # carry the last known REAL mark forward
-                    else:
-                        mark = cyc.premium  # no mark seen yet -- the entry ask, not the model
-            else:
-                t_years = (expiry_idx - k) / 252.0
-                if t_years <= 0.0:
-                    mark = max(cyc.strike - float(px[k]), 0.0)  # intrinsic at expiry (guards T=0)
-                else:
-                    sigma = float(min(max(iv[k], IV_FLOOR), IV_CAP))
-                    mark = pricer.price_put(
-                        spot=float(px[k]), strike=cyc.strike, t_years=t_years, r=rate, sigma=sigma
-                    )
+            mark, open_mark, open_mark_pos = _mark_open_leg(
+                cyc,
+                k,
+                expiry_idx,
+                open_pos,
+                px=px,
+                iv=iv,
+                dates=dates,
+                pricer=pricer,
+                rate=rate,
+                quotes=quotes,
+                open_mark=open_mark,
+                open_mark_pos=open_mark_pos,
+            )
             # Net of the open roll's entry brokerage, so the curve steps down by
             # the cost at entry and still converges to the net realized value at
             # expiry (contracts*intrinsic - notional - cost == net).
             unrealized = cyc.contracts * mark - notional - cyc.cost
         curve.append(EquityPoint(date=dates[k], cum_pnl=float(realized + unrealized)))
     return curve
+
+
+def _mark_open_leg(
+    cyc: PutRollCycle,
+    k: int,
+    expiry_idx: int,
+    open_pos: int,
+    *,
+    px: np.ndarray,
+    iv: np.ndarray,
+    dates: list[dt.date],
+    pricer: OptionPricer,
+    rate: float,
+    quotes: QuoteSource | None,
+    open_mark: float | None,
+    open_mark_pos: int | None,
+) -> tuple[float, float | None, int | None]:
+    """Mark-to-market value of the currently open leg ``cyc`` at day ``k``.
+
+    Returns ``(mark, open_mark, open_mark_pos)`` — the last two are the
+    carried-forward real-mark state ``_mark_to_market_curve`` must pass back in
+    on its next call (market path only; see that function's docstring for what
+    each branch means and why there is no model fallback on the market path).
+    """
+    if quotes is not None:
+        if open_mark_pos != open_pos:  # a new roll opened -- forget the old mark
+            open_mark = None
+            open_mark_pos = open_pos
+        if k == expiry_idx:
+            return (
+                max(cyc.strike - float(px[k]), 0.0),
+                open_mark,
+                open_mark_pos,
+            )  # intrinsic (guards T=0)
+        bid = quotes.mark(
+            entry_date=dates[k],
+            strike=cyc.strike,
+            expiry=cyc.expiry_date,
+            basis=cyc.quote_basis,
+        )
+        if bid is not None:
+            return bid, bid, open_mark_pos
+        if open_mark is not None:
+            return open_mark, open_mark, open_mark_pos  # carry the last known REAL mark forward
+        return (
+            cyc.premium,
+            open_mark,
+            open_mark_pos,
+        )  # no mark seen yet -- the entry ask, not the model
+
+    t_years = (expiry_idx - k) / 252.0
+    if t_years <= 0.0:
+        return (
+            max(cyc.strike - float(px[k]), 0.0),
+            open_mark,
+            open_mark_pos,
+        )  # intrinsic at expiry (guards T=0)
+    sigma = float(min(max(iv[k], IV_FLOOR), IV_CAP))
+    mark = pricer.price_put(
+        spot=float(px[k]), strike=cyc.strike, t_years=t_years, r=rate, sigma=sigma
+    )
+    return mark, open_mark, open_mark_pos
 
 
 def _close_series(bronze: pd.DataFrame) -> pd.Series:

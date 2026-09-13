@@ -87,7 +87,7 @@ ignore = [
 "tests/**" = ["ARG001", "ARG002", "ARG005"]
 
 [tool.ruff.lint.mccabe]
-max-complexity = 11 # put_roll.run_put_roll, metric_screen.compare_metric_screens
+max-complexity = 10 # ingestion.optionsdx.ingest_optionsdx, portfolio.run_portfolio
 
 [tool.ruff.lint.pylint]
 max-args = 13 # put_roll.run_put_roll — keyword-only, which is why it is survivable

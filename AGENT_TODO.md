@@ -1313,13 +1313,56 @@ ever go down.
       passes unchanged. New repo-wide worst offender is 11
       (`put_roll.run_put_roll` / `metric_screen.compare_metric_screens`, both
       below), so `max-complexity` moved **14 -> 11** in the same PR.
-- [ ] **`research/backtest/put_roll.py:run_put_roll`** — **13 keyword arguments**
-      (pins `max-args`) and **75 statements** (pins `max-statements`), 206 lines.
-      The textbook accretion case: every increment added a flag rather than
-      reshaping. Likely wants a parameter object for the roll spec.
-- [ ] **`research/backtest/metric_screen.py:compare_metric_screens`** (144 lines,
-      complexity 11) and **`index_replication.py:run_index_replication`**
-      (121 lines, 11 args).
+- [ ] **`research/backtest/put_roll.py:run_put_roll`** — still **13 keyword
+      arguments**, pinning `max-args`. **Its statement count is no longer the
+      `max-statements` pin** — a prior refactor (not logged here when it
+      landed; found while doing the complexity item below) already split the
+      roll loop into `_roll_model_cycles`/`_roll_market_cycles`/
+      `_CycleAccumulation`, leaving `run_put_roll` at 48 statements against
+      the 75 the ratchet still names it for. The actual `max-statements`
+      worst offender today is `portfolio.py:run_portfolio` at 51 — lowering
+      that ratchet **75 -> 51** needs no work on `run_put_roll` at all, just
+      a PR confirming the number and updating the comment. `max-args=13` is
+      still genuinely pinned by `run_put_roll`'s own signature, unreduced:
+      bundling the strategy-spec keywords (`moneyness_pct`, `tenor_weeks`,
+      `lookback_years`, `rate`, `commission_per_contract`, `spread_scale`)
+      into a parameter object is still the honest fix, but note first that
+      ~30 existing test call sites across
+      `tests/test_research_backtest_{put_roll,portfolio,ranking,sweep}.py`
+      and `test_research_backtest_quote_priced_roll.py` call it by keyword —
+      changing its signature rewrites all of them, in tension with the
+      "tests stay unchanged" rule this agent runs under. Consider a
+      backward-compatible `RollSpec` overload, or accept the test-file
+      rewrite explicitly and say so in the PR, rather than silently
+      breaking the rule.
+- [x] **`research/backtest/metric_screen.py:compare_metric_screens`** (complexity
+      11). **Done (weekly cleanup, 2026-09-13).** Same nested-closure cause as
+      `rank_universe` above: `_fragility` and its nested `_safe` were defined
+      *inside* `compare_metric_screens`, folding their complexity into it.
+      Un-nested both to module level (`_fragility` now takes `bench_ret`/
+      `vol_changes`/`lookback_days` explicitly instead of closing over them;
+      `_safe` renamed `_safe_metric`, also module-level) — no logic change,
+      `tests/test_research_backtest_metric_screen.py` passes unchanged.
+      `compare_metric_screens` itself is now complexity 7. In the same PR,
+      also found and fixed `put_roll.py:_mark_to_market_curve` at complexity
+      11 (the actual, undocumented co-holder of the old `max-complexity=11`
+      pin — `run_put_roll` itself hadn't been the offender since whatever
+      refactor is described in the item above, and the pyproject comment
+      was never updated to say so): extracted the open-leg mark computation
+      (model vs. real-quote, with the carried-forward-bid state machine)
+      into `_mark_open_leg`, leaving `_mark_to_market_curve` at complexity 5.
+      New repo-wide worst offenders are `ingestion/optionsdx.py:
+      ingest_optionsdx` and `portfolio.py:run_portfolio`, both complexity
+      10, so `max-complexity` moved **11 -> 10** in the same PR.
+      **`index_replication.py:run_index_replication`** (121 lines, 11 args)
+      is unrelated to this item (it pins nothing at today's `max-args=13`,
+      `_roll_model_cycles`/`run_put_roll` both already sit at 13) and is
+      left open below.
+- [ ] **`index_replication.py:run_index_replication`** (121 lines, 11
+      positional-eligible args) — split out from the item above since it
+      doesn't pin any current ratchet value (`max-args=13`, `run_put_roll`
+      and `_roll_model_cycles` sit there instead); still worth a parameter-
+      object pass on its own merits if a future PR touches that module.
 - [ ] **`api/putlab_routes.py`** is 669 lines, the largest module in the repo.
       Check whether it is still one thing before it becomes a god module; the
       flat `api/` layout is a documented deviation (`CLAUDE.md`) and splitting
