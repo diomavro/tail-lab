@@ -1413,7 +1413,7 @@ Ordered by how directly each attacks a known weakness rather than by how
 interesting it is. Q6-Q8 in `docs/END_STATE.md` §4 are the questions these
 serve; `docs/adr/0021` is why the risk-shaped one comes first.
 
-- [ ] **Multiple-testing correction on the Bake-off (correctness, not a
+- [x] **Multiple-testing correction on the Bake-off (correctness, not a
       feature).** `research/backtest/metric_screen.py` ranks six-plus
       sensitivity metrics across strikes, tenors and regimes and reports a
       winner. That is a large grid, and the conventional t > 2.0 hurdle is
@@ -1426,6 +1426,37 @@ serve; `docs/adr/0021` is why the risk-shaped one comes first.
       grid and asserts the corrected ranking declares no winner — the
       uncorrected one will happily name one, which is the whole point.
       **This changes existing published numbers**, so say so on the surface.
+      **Done 2026-09-13.** New leaf module `research/backtest/multiple_testing.py`
+      (`benjamini_hochberg`, Benjamini & Hochberg (1995)'s step-up procedure,
+      pinned against the textbook 5-p-value example plus Hypothesis
+      invariants), wired into `metric_screen.py`: each `MetricScreenEntry` now
+      carries `spearman_pvalue` (from `scipy.stats.spearmanr`, replacing the
+      old pandas-only correlation call), `significant_raw`
+      (`spearman_pvalue < fdr_alpha`, the uncorrected per-test hurdle), and
+      `significant_corrected` (BH across every screen with a defined p-value
+      in the same comparison); `MetricScreenComparison` gained `n_comparisons`
+      and `fdr_alpha` so the correction's own denominator is visible, not just
+      implied by counting table rows. Pinned end-to-end with a pure-noise
+      universe (`test_bakeoff_multiple_testing_correction_on_pure_noise`,
+      seed chosen so the uncorrected reading names a winner by chance and the
+      corrected one does not — the exact contrast this item asked for).
+      **Not yet wired to the cockpit**: `BakeOff.tsx` and its API client type
+      don't show the new fields yet, so today's dashboard still reads however
+      it did before this landed. That's the "say so on the surface" half of
+      this item, left as a follow-up (same ship-the-computation-first
+      precedent `vol_beta.py` and `downside_beta.py` set) — see the item
+      below.
+- [ ] **Surface the Bake-off's significance columns in the cockpit.**
+      Follow-up to the item above: `metric_screen.py` now computes
+      `spearman_pvalue`, `significant_raw`, `significant_corrected` per screen
+      and `n_comparisons`/`fdr_alpha` on the comparison, but nothing reads
+      them yet. Add them to `frontend/src/api/client.ts`'s
+      `MetricScreenEntry`/`MetricScreenComparison` interfaces, show
+      raw-vs-corrected significance in `BakeOff.tsx` (e.g. grey out or badge a
+      screen whose apparent edge doesn't survive correction), and update
+      `frontend/e2e/fixtures/putlab.ts` + `bakeoff.spec.ts` to match. This is
+      the change that actually stops a reader from taking an uncorrected
+      "winner" at face value.
 - [ ] **Measure the volatility risk premium the screen pays** (§4 Q6). VRP
       = implied minus subsequently-realized vol, per name, per roll. It is
       the headwind every S1 roll fights and the platform has never once
