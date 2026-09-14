@@ -313,6 +313,8 @@ const screenEntry = (
   lift: number,
   spearman: number | null,
   verdict: RegimeVerdictResponse['verdict'],
+  pvalue: number | null,
+  significantCorrected: boolean,
 ): MetricScreenComparison['entries'][number] => ({
   metric,
   label,
@@ -327,10 +329,16 @@ const screenEntry = (
     { regime: 'crisis', n_cycles: 7, roi_on_premium: roi + 0.31, paid_off: true },
   ],
   spearman_vs_payoff: spearman,
+  spearman_pvalue: pvalue,
+  significant_raw: pvalue != null && pvalue < 0.05,
+  significant_corrected: significantCorrected,
   lift_vs_baseline: lift,
 })
 
-// top_k = 5: the composite wins with real lift above the baseline.
+// top_k = 5: the composite wins with real lift above the baseline. Only the
+// composite survives Benjamini-Hochberg correction; downside beta clears the
+// uncorrected p < 0.05 hurdle alone (the "raw only" tag), which is the exact
+// raw-vs-corrected divergence the bake-off's Sig. column exists to show.
 export const METRIC_SCREEN_WINNER: MetricScreenComparison = {
   as_of: '2026-08-21',
   moneyness_pct: 5,
@@ -339,16 +347,18 @@ export const METRIC_SCREEN_WINNER: MetricScreenComparison = {
   top_k: 5,
   universe_size: 35,
   baseline_roi: -0.241,
+  n_comparisons: 7,
+  fdr_alpha: 0.05,
   entries: [
-    screenEntry('fragility_score', 'Composite fragility', ['tsla', 'iwm', 'xlf', 'eem', 'qqq'], -0.225, 0.016, 0.34, 'confirmed'),
-    screenEntry('downside_beta', 'Downside beta', ['tsla', 'iwm', 'qqq', 'xlf', 'spy'], -0.238, 0.003, 0.21, 'regime_only'),
-    screenEntry('co_skewness', 'Co-skewness', ['tsla', 'eem', 'iwm', 'xlf', 'gld'], -0.262, -0.021, 0.09, 'regime_only'),
-    screenEntry('tail_beta', 'Tail beta', ['tsla', 'iwm', 'eem', 'qqq', 'xlf'], -0.271, -0.03, -0.04, 'failed'),
-    screenEntry('downside_capture', 'Downside capture', ['tsla', 'xlf', 'iwm', 'eem', 'spy'], -0.289, -0.048, -0.12, 'failed'),
-    screenEntry('vol_beta', 'Vol beta', ['tsla', 'iwm', 'xlf', 'qqq', 'eem'], -0.301, -0.06, 0.14, 'regime_only'),
+    screenEntry('fragility_score', 'Composite fragility', ['tsla', 'iwm', 'xlf', 'eem', 'qqq'], -0.225, 0.016, 0.34, 'confirmed', 0.018, true),
+    screenEntry('downside_beta', 'Downside beta', ['tsla', 'iwm', 'qqq', 'xlf', 'spy'], -0.238, 0.003, 0.21, 'regime_only', 0.041, false),
+    screenEntry('co_skewness', 'Co-skewness', ['tsla', 'eem', 'iwm', 'xlf', 'gld'], -0.262, -0.021, 0.09, 'regime_only', 0.35, false),
+    screenEntry('tail_beta', 'Tail beta', ['tsla', 'iwm', 'eem', 'qqq', 'xlf'], -0.271, -0.03, -0.04, 'failed', 0.82, false),
+    screenEntry('downside_capture', 'Downside capture', ['tsla', 'xlf', 'iwm', 'eem', 'spy'], -0.289, -0.048, -0.12, 'failed', 0.49, false),
+    screenEntry('vol_beta', 'Vol beta', ['tsla', 'iwm', 'xlf', 'qqq', 'eem'], -0.301, -0.06, 0.14, 'regime_only', 0.24, false),
     // Co-kurtosis picks the broad indices -- the index-flattering behaviour
     // MODEL_RESIDUAL.md describes, and why it is excluded from the composite.
-    screenEntry('co_kurtosis', 'Co-kurtosis', ['spy', 'iwm', 'qqq', 'eem', 'xlf'], -0.316, -0.075, -0.28, 'failed'),
+    screenEntry('co_kurtosis', 'Co-kurtosis', ['spy', 'iwm', 'qqq', 'eem', 'xlf'], -0.316, -0.075, -0.28, 'failed', 0.06, false),
   ],
 }
 

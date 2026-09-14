@@ -1,5 +1,11 @@
 import { useMemo, useState } from 'react'
-import { ApiError, fetchMetricScreen, type MetricScreenComparison, type Verdict } from '../../api/client'
+import {
+  ApiError,
+  fetchMetricScreen,
+  type MetricScreenComparison,
+  type MetricScreenEntry,
+  type Verdict,
+} from '../../api/client'
 import { ConceptInfo } from './ConceptInfo'
 import { fmtDollar, fmtFixed, fmtPct } from './format'
 import type { PutLabControls } from './types'
@@ -43,6 +49,29 @@ const VERDICT_TAG: Record<Verdict, string> = {
 /** Lift is a difference of two rates, so it prints in points, not percent. */
 function signedPts(x: number): string {
   return `${x >= 0 ? '+' : '−'}${Math.abs(x * 100).toFixed(1)}`
+}
+
+/** Raw-vs-corrected significance, so an uncorrected "winner" can't be read at
+ * face value: `significant_corrected` is the same Spearman test after a
+ * Benjamini-Hochberg FDR correction across every screen in the comparison
+ * (Harvey, Liu & Zhu 2016) -- a screen that only clears the uncorrected hurdle
+ * is exactly the false-discovery risk the correction exists to catch. */
+function significanceTag(e: MetricScreenEntry): { cls: string; text: string; title: string } {
+  if (e.spearman_pvalue == null) {
+    return { cls: 'pl-tag pl-tag-outline', text: '—', title: 'No p-value (fewer than 3 usable pairs)' }
+  }
+  const p = `p = ${fmtFixed(e.spearman_pvalue, 3)}`
+  if (e.significant_corrected) {
+    return { cls: 'pl-tag pl-tag-ok', text: 'FDR-sig.', title: `${p} — survives Benjamini-Hochberg correction` }
+  }
+  if (e.significant_raw) {
+    return {
+      cls: 'pl-tag pl-tag-mute',
+      text: 'raw only',
+      title: `${p} — clears the uncorrected hurdle alone, not after FDR correction`,
+    }
+  }
+  return { cls: 'pl-tag pl-tag-outline', text: 'n.s.', title: p }
 }
 
 export function BakeOff({ controls }: { controls: PutLabControls }) {
@@ -163,6 +192,7 @@ export function BakeOff({ controls }: { controls: PutLabControls }) {
                   <th className="num">Hit</th>
                   <th className="num">Bleed</th>
                   <th className="num">Spearman</th>
+                  <th className="num">Sig.</th>
                   <th className="num">Lift</th>
                   <th className="num">Verdict</th>
                 </tr>
@@ -189,6 +219,16 @@ export function BakeOff({ controls }: { controls: PutLabControls }) {
                       }`}
                     >
                       {e.spearman_vs_payoff == null ? '—' : fmtFixed(e.spearman_vs_payoff)}
+                    </td>
+                    <td className="num">
+                      {(() => {
+                        const tag = significanceTag(e)
+                        return (
+                          <span className={tag.cls} title={tag.title}>
+                            {tag.text}
+                          </span>
+                        )
+                      })()}
                     </td>
                     <td className={`num bold ${e.lift_vs_baseline >= 0 ? 'pl-pos' : 'pl-neg'}`}>
                       {signedPts(e.lift_vs_baseline)}
@@ -222,6 +262,19 @@ export function BakeOff({ controls }: { controls: PutLabControls }) {
                 Beyond the top K, Spearman asks whether the screen ordered the <em>whole</em>{' '}
                 universe sensibly: +1 a perfect ordering, 0 none, negative means it sorted the wrong
                 way. A screen can win its basket and still order badly.
+              </p>
+            </div>
+            <div>
+              <div className="pl-kicker" style={{ marginBottom: 5 }}>
+                Reading Sig.
+                <ConceptInfo id="multiple_testing" />
+              </div>
+              <p className="pl-note">
+                Testing {data.n_comparisons} screens against one window is a multiple-comparisons
+                problem: a per-test hurdle of p &lt; {data.fdr_alpha} names a winner far more often
+                than it should. <strong>FDR-sig.</strong> survives a Benjamini-Hochberg correction
+                across all {data.n_comparisons}; <strong>raw only</strong> clears the uncorrected
+                hurdle alone and should not be called a real winner.
               </p>
             </div>
             <div>
