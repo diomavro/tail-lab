@@ -872,6 +872,80 @@ item 2 is time-sensitive in a way nothing else in this file is.
       Yahoo partitions are internally consistent and still readable; nothing
       is broken today.
 
+## The ranked screen is still model-priced (found 2026-09-14 — outside review)
+
+Raised while reconciling the Put Lab's output against an independent analysis
+of long-put strategies (written up in
+`~/Documents/teaching/university_of_cyprus/mfa752_behavioral_finance/instructor_notes/`,
+§1c, where every figure below is machine-checked). **Nothing here is a new
+discovery about the platform** — `option_pricer.py`'s assumption register,
+`docs/MODEL_RESIDUAL.md` and `marks.py`'s docstring each state part of it
+already, and PRs #92/#94/#96 have shipped most of the machinery. What is new
+is that the pieces have not been joined, and the deployed ranking is on the
+wrong side of the join.
+
+- [ ] **The market-priced path exists and the screen does not use it.**
+      `research/backtest/put_roll.py` grew a `PricingBasis(quotes=...)` path
+      in #92/#94 that prices a roll from real listed contracts. But
+      `ranking.py`, `sweep.py`, `metric_screen.py` and `portfolio.py` contain
+      **zero** references to `PricingBasis` — every one of them calls
+      `run_put_roll(prices, iv_proxy, ...)` with no basis, so the whole
+      ranked screen, the sweep heatmap and the portfolio view are still
+      priced by Black-Scholes at **trailing realised volatility**
+      (`ranking.py:249`, `put_roll.py:1013`). The variance risk premium *is*
+      the implied-minus-realised gap, so pricing at realised sets it to zero
+      by construction: **the backtest behind the ranking cannot discover that
+      a put is expensive, because it never pays market price for one.**
+      *Success*: the ranked screen runs on `PricingBasis(quotes=...)` wherever
+      coverage allows, and a leg without coverage is labelled model-priced on
+      the surface rather than ranked beside market-priced ones. If flipping
+      the default is too large a step, the cheaper first increment is to
+      **print the basis next to every ROI figure** — a model-priced ROI and a
+      market-priced ROI are not the same quantity and currently look
+      identical.
+
+- [ ] **Rename the `iv` variables that hold realised vol.** `put_roll.py`
+      carries the output of `trailing_realized_vol()` in locals and
+      parameters named `iv` / `iv_proxy` (`:466`, `:532`, `:951`, `:1013`,
+      and through `ranking.py:249`). The docstring is honest — "the IV proxy"
+      — but every call site reads as though implied volatility were being
+      used. This is how a documented assumption becomes an invisible one, and
+      it is the single cheapest fix on this list. *Success*: the identifier
+      says `realized_vol` (or `vol_proxy`) everywhere; nothing named `iv`
+      holds a realised number.
+
+- [ ] **Make the model/market ratio a ranking input, not only a per-leg
+      footnote.** `marks.py` records the ratio and refuses on liquidity, which
+      is right — but it runs *after* the screen has already ranked. The KRE
+      leg in its own docstring is the worked example: model premium
+      **\$0.0019/share** against a **\$1.13** listed mid (**595x**), which is
+      why it advertised **+1867% return on premium**. The same payoff bought
+      at the quoted price returns **-96.7%**, and that contract carried open
+      interest of 0 and 1 with **no bid at all**. A 595x error in a
+      denominator is not a bias to adjust for — it is a different quantity.
+      *Success*: a leg whose model price is some multiple of its market price
+      (or which has no quote at all) cannot reach the top of the ranking
+      without that multiple being displayed beside it.
+
+- [ ] **`roi_on_premium` needs its denominator named on the surface.**
+      `put_roll.py:773` computes `net_pnl / total_premium` — return on
+      premium *spent*, not on capital. README already says this metric
+      "cannot say how much to hold", and #96 added time-average growth
+      alongside it, which is the right direction. The remaining gap is
+      presentational: a reader seeing "+1867%" has no way to know whether the
+      denominator was paid or modelled. *Success*: every ROI on the screen
+      carries its basis and its denominator in the same glance, per README's
+      "accuracy is surfaced, not filed".
+
+**Why this is worth a slot despite being mostly known.** The platform's own
+specification already concludes that "the standalone answer is zero" and that
+model-priced results are "a relative ranking of sensitivity metrics, never
+P&L truth". Both are correct. But the deployed cockpit shows ROI figures
+computed on model premiums, ranked against each other, with the basis not
+displayed — so the surface invites exactly the reading the constitution
+forbids. The fix is not new analysis; it is joining machinery that already
+exists.
+
 ## Design-review advisories not yet acted on (found 2026-09-07)
 
 Two non-blocking findings from PR #86's round-2 review (the Nasdaq
