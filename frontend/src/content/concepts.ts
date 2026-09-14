@@ -374,6 +374,20 @@ export const CONCEPTS: Record<string, Concept> = {
       'Positive lift means the metric selection beat holding everyone; zero or negative means the screen added nothing over the buy-everything baseline. It is the cleanest single read of whether a fragility screen earns its keep -- in-sample.',
     seeAlso: ['metric_bakeoff', 'spearman', 'in_sample'],
   },
+  multiple_testing: {
+    id: 'multiple_testing',
+    term: 'FDR correction (Sig. column)',
+    category: 'bakeoff',
+    short:
+      'Testing seven screens against one window inflates how often a per-test hurdle names a winner by chance; the Sig. column shows which screens survive a correction for that.',
+    formula:
+      'Benjamini-Hochberg step-up procedure across every screen with a defined Spearman p-value in the comparison, at fdr_alpha = 0.05 (research/backtest/multiple_testing.py)',
+    intuition:
+      'Harvey, Liu & Zhu (2016) showed that once a literature has tried hundreds of factors, the conventional p < 0.05 (or t > 2.0) hurdle names far more "winners" than are real -- exactly this bake-off situation, seven screens tested against the same window. significant_raw is the uncorrected per-test reading a single test in isolation would use; significant_corrected is the same reading after Benjamini-Hochberg FDR correction across all of them.',
+    howToRead:
+      '"FDR-sig." survives the correction; "raw only" clears the uncorrected hurdle alone and should not be called a real winner; "n.s." clears neither. Read the corrected tag, not the raw one, before trusting a bake-off result.',
+    seeAlso: ['metric_bakeoff', 'spearman', 'in_sample'],
+  },
 
   // -------------------------------------------------------------- portfolio
   diversification: {

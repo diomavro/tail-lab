@@ -1446,7 +1446,7 @@ serve; `docs/adr/0021` is why the risk-shaped one comes first.
       this item, left as a follow-up (same ship-the-computation-first
       precedent `vol_beta.py` and `downside_beta.py` set) — see the item
       below.
-- [ ] **Surface the Bake-off's significance columns in the cockpit.**
+- [x] **Surface the Bake-off's significance columns in the cockpit.**
       Follow-up to the item above: `metric_screen.py` now computes
       `spearman_pvalue`, `significant_raw`, `significant_corrected` per screen
       and `n_comparisons`/`fdr_alpha` on the comparison, but nothing reads
@@ -1457,6 +1457,37 @@ serve; `docs/adr/0021` is why the risk-shaped one comes first.
       `frontend/e2e/fixtures/putlab.ts` + `bakeoff.spec.ts` to match. This is
       the change that actually stops a reader from taking an uncorrected
       "winner" at face value.
+      **Done 2026-09-14**: the three new `MetricScreenEntry` fields and the two
+      new `MetricScreenComparison` fields landed in `client.ts` unchanged from
+      the backend shape. `BakeOff.tsx` gained a **Sig.** column between
+      Spearman and Lift: a tag badge reading `FDR-sig.` (survives
+      Benjamini-Hochberg correction), `raw only` (clears the uncorrected p <
+      `fdr_alpha` hurdle alone -- the exact false-discovery risk the
+      correction exists to catch) or `n.s.`, with the p-value itself in the
+      tag's title attribute rather than a new always-visible column, since the
+      three-way read is what a glance needs and the exact number is a hover
+      away. A new "Reading Sig." note (mirroring the existing "Reading
+      Spearman" one) names `n_comparisons`/`fdr_alpha` explicitly rather than
+      leaving the correction's denominator implied by table row count, per
+      Harvey, Liu & Zhu (2016)'s own requirement. Also added a
+      `multiple_testing` entry to `content/concepts.ts` (the glossary/ⓘ-popover
+      source), following the existing `spearman`/`lift` entries' shape, and
+      wired a `ConceptInfo` into the new note -- consistent with how the
+      bake-off's other in-sample caveat is surfaced, not filed. Deliberately
+      left the ROI-based verdict prose (`winner.roi_on_premium > baseline`)
+      unchanged: that sentence is about realized return, a different question
+      from Spearman-ordering significance, and conflating the two would be a
+      second, unasked-for editorial call. `frontend/e2e/fixtures/putlab.ts`'s
+      `screenEntry` helper now takes an explicit p-value and
+      `significant_corrected`, chosen so `METRIC_SCREEN_WINNER` exercises all
+      three tag states (composite FDR-sig., downside beta raw-only, the rest
+      not significant) -- the raw/corrected divergence this feature exists to
+      show, not just a same-value stand-in. `bakeoff.spec.ts` gained a test
+      asserting exactly that distinction plus the `n_comparisons`/method text;
+      all 9 bake-off e2e tests and the full hermetic suite (83 passed, 2
+      skipped `smoke-live` as expected without a deployment) pass, along with
+      `npm run typecheck`, `npm run lint` and `npm run build`. No backend file
+      touched.
 - [ ] **Measure the volatility risk premium the screen pays** (§4 Q6). VRP
       = implied minus subsequently-realized vol, per name, per roll. It is
       the headwind every S1 roll fights and the platform has never once
