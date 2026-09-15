@@ -166,10 +166,10 @@ def test_deterministic_baseline_equals_mean_roi(tmp_path: Path) -> None:
 
     rois = []
     for sym in symbols:
-        prices, iv = load_asof_series(store, sym, ingest)
+        prices, realized_vol = load_asof_series(store, sym, ingest)
         res = run_put_roll(
             prices,
-            iv,
+            realized_vol,
             asset=sym,
             as_of=ingest,
             notional=1.0,

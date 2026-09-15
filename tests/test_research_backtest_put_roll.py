@@ -52,14 +52,16 @@ def test_run_put_roll_pins_arithmetic_against_the_pricer() -> None:
     recomputed independently from the tested pricer."""
     n = 101  # entries at 20 -> expiry 60, and 60 -> expiry 100
     prices = _flat_with_dips(n, {60: 70.0, 100: 98.0})
-    iv = pd.Series(np.full(n, 0.30), index=prices.index)  # explicit, so premiums are pinnable
+    realized_vol = pd.Series(
+        np.full(n, 0.30), index=prices.index
+    )  # explicit, so premiums are pinnable
     notional, moneyness, tenor_w = 1000.0, 5.0, 8.0
     tenor_days = round(tenor_w * 5)  # 40
     t_years = tenor_days / 252.0
 
     res = run_put_roll(
         prices,
-        iv,
+        realized_vol,
         asset="TEST",
         as_of=dt.date(2021, 6, 1),
         notional=notional,
@@ -132,7 +134,7 @@ def test_costs_strictly_reduce_net_pnl_and_roi() -> None:
     brokerage and a strictly higher net P&L / ROI than the realistic-cost run —
     a bought put's brokerage can only reduce what you keep."""
     prices = _flat_with_dips(120, {60: 70.0, 100: 80.0})
-    iv = pd.Series(np.full(120, 0.30), index=prices.index)
+    realized_vol = pd.Series(np.full(120, 0.30), index=prices.index)
     common = dict(
         asset="T",
         as_of=dt.date(2021, 6, 1),
@@ -141,8 +143,10 @@ def test_costs_strictly_reduce_net_pnl_and_roi() -> None:
         tenor_weeks=4.0,
         lookback_years=10,
     )
-    free = run_put_roll(prices, iv, commission_per_contract=0.0, spread_scale=0.0, **common)  # type: ignore[arg-type]
-    costed = run_put_roll(prices, iv, **common)  # type: ignore[arg-type]
+    free = run_put_roll(
+        prices, realized_vol, commission_per_contract=0.0, spread_scale=0.0, **common
+    )  # type: ignore[arg-type]
+    costed = run_put_roll(prices, realized_vol, **common)  # type: ignore[arg-type]
 
     assert free.total_brokerage == 0.0
     assert costed.total_brokerage > 0.0
@@ -165,11 +169,11 @@ def test_less_frequent_tenor_bleeds_less_to_brokerage() -> None:
     prices = pd.Series(
         np.full(n, 500.0), index=pd.date_range("2016-01-01", periods=n, freq="B"), name="T"
     )
-    iv = pd.Series(np.full(n, 0.18), index=prices.index)
+    realized_vol = pd.Series(np.full(n, 0.18), index=prices.index)
     common = dict(asset="T", as_of=dt.date(2020, 1, 1), notional=1000.0, moneyness_pct=5.0)
     years = 4.0
-    weekly = run_put_roll(prices, iv, tenor_weeks=1.0, lookback_years=years, **common)  # type: ignore[arg-type]
-    quarterly = run_put_roll(prices, iv, tenor_weeks=12.0, lookback_years=years, **common)  # type: ignore[arg-type]
+    weekly = run_put_roll(prices, realized_vol, tenor_weeks=1.0, lookback_years=years, **common)  # type: ignore[arg-type]
+    quarterly = run_put_roll(prices, realized_vol, tenor_weeks=12.0, lookback_years=years, **common)  # type: ignore[arg-type]
 
     # Gross returns tie exactly: on a flat path no put ever pays, so both lose
     # 100% of premium before costs.
@@ -245,11 +249,11 @@ def test_run_put_roll_threads_annualized_so_far_and_sharpe() -> None:
     the per-roll annualized Sharpe."""
     n = 261  # 8-week rolls: entries 20,60,...,220 -> ~6 cycles spanning ~1 year
     prices = _flat_with_dips(n, {60: 70.0, 140: 75.0})
-    iv = pd.Series(np.full(n, 0.30), index=prices.index)
+    realized_vol = pd.Series(np.full(n, 0.30), index=prices.index)
     notional, tenor_w, years = 1000.0, 8.0, 10.0
     res = run_put_roll(
         prices,
-        iv,
+        realized_vol,
         asset="T",
         as_of=dt.date(2021, 6, 1),
         notional=notional,
@@ -296,10 +300,10 @@ def test_price_path_spans_the_traded_window() -> None:
     """price_path covers exactly first-entry → last-expiry, aligned with the
     equity curve, so the tape's stock line and PnL share one x-axis."""
     prices = _flat_with_dips(101, {60: 70.0, 100: 98.0})
-    iv = pd.Series(np.full(101, 0.30), index=prices.index)
+    realized_vol = pd.Series(np.full(101, 0.30), index=prices.index)
     res = run_put_roll(
         prices,
-        iv,
+        realized_vol,
         asset="T",
         as_of=dt.date(2021, 6, 1),
         notional=1000.0,
@@ -319,10 +323,10 @@ def test_mtm_curve_spans_price_path_and_shares_dates() -> None:
     """The daily mark-to-market curve has one point per trading day over the
     same window as price_path, on the same dates (so it plots on one x-axis)."""
     prices = _flat_with_dips(101, {60: 70.0, 100: 98.0})
-    iv = pd.Series(np.full(101, 0.30), index=prices.index)
+    realized_vol = pd.Series(np.full(101, 0.30), index=prices.index)
     res = run_put_roll(
         prices,
-        iv,
+        realized_vol,
         asset="T",
         as_of=dt.date(2021, 6, 1),
         notional=1000.0,
@@ -344,10 +348,10 @@ def test_mtm_curve_converges_to_realized_equity_at_every_expiry() -> None:
     expiry/entry date the curve sits below realized equity by exactly the new
     roll's cost (and equals it at the final expiry, where nothing re-enters)."""
     prices = _flat_with_dips(101, {60: 70.0, 100: 98.0})
-    iv = pd.Series(np.full(101, 0.30), index=prices.index)
+    realized_vol = pd.Series(np.full(101, 0.30), index=prices.index)
     res = run_put_roll(
         prices,
-        iv,
+        realized_vol,
         asset="T",
         as_of=dt.date(2021, 6, 1),
         notional=1000.0,
@@ -375,10 +379,12 @@ def test_mtm_curve_moves_intra_cycle_on_a_sharp_drop() -> None:
     # first entry idx 20, tenor 20d -> cycles 20->40, 40->60, 60->80; the dip at
     # day 50 sits strictly inside the 40->60 roll (not on any entry/expiry).
     prices = _flat_with_dips(85, {50: 70.0})
-    iv = trailing_realized_vol(prices)  # real backward-looking proxy (spikes after the dip)
+    realized_vol = trailing_realized_vol(
+        prices
+    )  # real backward-looking proxy (spikes after the dip)
     res = run_put_roll(
         prices,
-        iv,
+        realized_vol,
         asset="T",
         as_of=dt.date(2021, 6, 1),
         notional=1000.0,
@@ -392,13 +398,13 @@ def test_mtm_curve_moves_intra_cycle_on_a_sharp_drop() -> None:
     assert mtm_by_date[drop_day] > mtm_by_date[prior_day]
 
 
-def test_sigma_is_the_positive_iv_proxy_used_at_entry() -> None:
+def test_sigma_is_the_positive_realized_vol_proxy_used_at_entry() -> None:
     """Each cycle's sigma records the (clamped) IV proxy its premium was priced with."""
     prices = _flat_with_dips(101, {60: 70.0, 100: 98.0})
-    iv = pd.Series(np.full(101, 0.30), index=prices.index)
+    realized_vol = pd.Series(np.full(101, 0.30), index=prices.index)
     res = run_put_roll(
         prices,
-        iv,
+        realized_vol,
         asset="T",
         as_of=dt.date(2021, 6, 1),
         notional=1000.0,
@@ -416,12 +422,12 @@ def test_deeper_oom_is_cheaper_per_cycle() -> None:
     budget buys strictly more contracts (a monotonicity the pricer guarantees
     and the engine must not scramble)."""
     prices = _flat_with_dips(80, {60: 60.0})
-    iv = pd.Series(np.full(80, 0.35), index=prices.index)
+    realized_vol = pd.Series(np.full(80, 0.35), index=prices.index)
     common = dict(
         asset="T", as_of=dt.date(2021, 6, 1), notional=1000.0, tenor_weeks=8.0, lookback_years=10
     )
-    near = run_put_roll(prices, iv, moneyness_pct=3.0, **common)
-    far = run_put_roll(prices, iv, moneyness_pct=12.0, **common)
+    near = run_put_roll(prices, realized_vol, moneyness_pct=3.0, **common)
+    far = run_put_roll(prices, realized_vol, moneyness_pct=12.0, **common)
     assert far.cycles[0].premium < near.cycles[0].premium
     assert far.cycles[0].contracts > near.cycles[0].contracts
 
@@ -430,11 +436,11 @@ def test_non_finite_iv_entry_is_skipped_not_priced() -> None:
     """If the IV proxy is NaN at a would-be entry (too little trailing
     history), that entry steps forward rather than pricing on a stub."""
     prices = _flat_with_dips(90, {70: 60.0})
-    iv = pd.Series(np.full(90, 0.30), index=prices.index)
-    iv.iloc[IV_WINDOW] = np.nan  # first candidate entry has no vol
+    realized_vol = pd.Series(np.full(90, 0.30), index=prices.index)
+    realized_vol.iloc[IV_WINDOW] = np.nan  # first candidate entry has no vol
     res = run_put_roll(
         prices,
-        iv,
+        realized_vol,
         asset="T",
         as_of=dt.date(2021, 6, 1),
         notional=1000.0,
@@ -447,7 +453,7 @@ def test_non_finite_iv_entry_is_skipped_not_priced() -> None:
 
 def test_run_put_roll_validates_inputs() -> None:
     prices = _flat_with_dips(60, {})
-    iv = pd.Series(np.full(60, 0.3), index=prices.index)
+    realized_vol = pd.Series(np.full(60, 0.3), index=prices.index)
     ok = dict(
         asset="T",
         as_of=dt.date(2021, 6, 1),
@@ -457,18 +463,18 @@ def test_run_put_roll_validates_inputs() -> None:
         lookback_years=10,
     )
     with pytest.raises(ValueError, match="same date index"):
-        run_put_roll(prices, iv.iloc[:-1], **ok)  # type: ignore[arg-type]
+        run_put_roll(prices, realized_vol.iloc[:-1], **ok)  # type: ignore[arg-type]
     with pytest.raises(ValueError, match="moneyness_pct"):
-        run_put_roll(prices, iv, **{**ok, "moneyness_pct": 0.0})  # type: ignore[arg-type]
+        run_put_roll(prices, realized_vol, **{**ok, "moneyness_pct": 0.0})  # type: ignore[arg-type]
 
 
 def test_run_put_roll_raises_when_window_too_short() -> None:
     prices = _flat_with_dips(IV_WINDOW + 3, {})
-    iv = pd.Series(np.full(IV_WINDOW + 3, 0.3), index=prices.index)
+    realized_vol = pd.Series(np.full(IV_WINDOW + 3, 0.3), index=prices.index)
     with pytest.raises(LookupError, match="not enough price history"):
         run_put_roll(
             prices,
-            iv,
+            realized_vol,
             asset="T",
             as_of=dt.date(2021, 6, 1),
             notional=1000.0,

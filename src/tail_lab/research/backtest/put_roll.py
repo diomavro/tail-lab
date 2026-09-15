@@ -443,7 +443,7 @@ def _record_cycle(
 def _roll_model_cycles(
     *,
     px: np.ndarray,
-    iv: np.ndarray,
+    realized_vol: np.ndarray,
     dates: list[dt.date],
     first_entry: int,
     n: int,
@@ -463,7 +463,7 @@ def _roll_model_cycles(
     acc = _CycleAccumulation(last_expiry_idx=first_entry)
     i = first_entry
     while i + tenor_days < n:
-        sigma = iv[i]
+        sigma = realized_vol[i]
         if not np.isfinite(sigma):  # not enough trailing history yet — step forward
             i += 1
             continue
@@ -508,7 +508,7 @@ def _roll_model_cycles(
 def _roll_market_cycles(
     *,
     px: np.ndarray,
-    iv: np.ndarray,
+    realized_vol: np.ndarray,
     dates: list[dt.date],
     first_entry: int,
     n: int,
@@ -525,7 +525,7 @@ def _roll_market_cycles(
     acc = _CycleAccumulation(last_expiry_idx=first_entry)
     i = first_entry
     while i < n:
-        sigma_raw = iv[i]
+        sigma_raw = realized_vol[i]
         if not np.isfinite(sigma_raw):  # not enough trailing history yet — step forward
             i += 1
             continue
@@ -611,7 +611,7 @@ def _roll_market_cycles(
 
 def run_put_roll(
     prices: pd.Series,
-    iv_proxy: pd.Series,
+    realized_vol_proxy: pd.Series,
     *,
     asset: str,
     as_of: dt.date,
@@ -629,8 +629,8 @@ def run_put_roll(
 
     At each entry the strategy spends ``notional`` on puts struck
     ``moneyness_pct`` percent below spot, expiring ``tenor_weeks`` weeks out,
-    priced at ``iv_proxy`` for that date; at expiry it collects the intrinsic
-    payoff, then re-enters (non-overlapping rolls). ``prices`` and ``iv_proxy``
+    priced at ``realized_vol_proxy`` for that date; at expiry it collects the intrinsic
+    payoff, then re-enters (non-overlapping rolls). ``prices`` and ``realized_vol_proxy``
     must share the same date index.
 
     Only the trailing ``lookback_years`` of the series is traded (the head is
@@ -676,8 +676,8 @@ def run_put_roll(
     ranking would compute it ~1,600 times. Charts pass ``True``; scoring
     passes ``False``.
     """
-    if not prices.index.equals(iv_proxy.index):
-        raise ValueError("prices and iv_proxy must share the same date index")
+    if not prices.index.equals(realized_vol_proxy.index):
+        raise ValueError("prices and realized_vol_proxy must share the same date index")
     if notional <= 0 or tenor_weeks <= 0 or not 0 < moneyness_pct < 100:
         raise ValueError("notional>0, tenor_weeks>0, and 0<moneyness_pct<100 required")
 
@@ -690,13 +690,13 @@ def run_put_roll(
     first_entry = max(n - lookback_days, IV_WINDOW)
 
     px = prices.to_numpy(dtype=float)
-    iv = iv_proxy.to_numpy(dtype=float)
+    realized_vol = realized_vol_proxy.to_numpy(dtype=float)
     dates = [d.date() if isinstance(d, pd.Timestamp) else d for d in prices.index]
 
     if quotes is not None:
         acc = _roll_market_cycles(
             px=px,
-            iv=iv,
+            realized_vol=realized_vol,
             dates=dates,
             first_entry=first_entry,
             n=n,
@@ -709,7 +709,7 @@ def run_put_roll(
     else:
         acc = _roll_model_cycles(
             px=px,
-            iv=iv,
+            realized_vol=realized_vol,
             dates=dates,
             first_entry=first_entry,
             n=n,
@@ -756,7 +756,7 @@ def run_put_roll(
             cycles,
             spans,
             px=px,
-            iv=iv,
+            realized_vol=realized_vol,
             dates=dates,
             pricer=pricer,
             rate=rate,
@@ -854,7 +854,7 @@ def _mark_to_market_curve(
     spans: list[tuple[int, int]],
     *,
     px: np.ndarray,
-    iv: np.ndarray,
+    realized_vol: np.ndarray,
     dates: list[dt.date],
     pricer: OptionPricer,
     rate: float,
@@ -874,7 +874,7 @@ def _mark_to_market_curve(
     cycle that has expired by ``k`` and is *not* the currently-open roll.
 
     **Model path** (``quotes is None``, unchanged from before this existed):
-    ``unrealized_open = contracts * BS_raw(spot[k], strike, (expiry-k)/252, iv[k]) -
+    ``unrealized_open = contracts * BS_raw(spot[k], strike, (expiry-k)/252, realized_vol[k]) -
     notional - cost`` marks the open put with **raw** Black-Scholes (less its
     entry brokerage ``cost``, so the curve steps down by the cost at entry) —
     no ``PREMIUM_FLOOR_FRAC`` (flooring the mark would overstate a decayed OOM
@@ -902,7 +902,7 @@ def _mark_to_market_curve(
     ``contracts * premium == notional``, ``unrealized = contracts*intrinsic -
     notional - cost = payoff - notional - cost = net``, so ``mtm_curve`` meets
     the realized ``equity_curve`` at every expiry date. Point-in-time safe:
-    every input at ``k`` is known at ``k`` (``iv`` is backward-looking, and a
+    every input at ``k`` is known at ``k`` (``realized_vol`` is backward-looking, and a
     quote lookup is filtered to the session dated ``k`` itself).
     """
     curve: list[EquityPoint] = []
@@ -948,7 +948,7 @@ def _mark_to_market_curve(
                 if t_years <= 0.0:
                     mark = max(cyc.strike - float(px[k]), 0.0)  # intrinsic at expiry (guards T=0)
                 else:
-                    sigma = float(min(max(iv[k], IV_FLOOR), IV_CAP))
+                    sigma = float(min(max(realized_vol[k], IV_FLOOR), IV_CAP))
                     mark = pricer.price_put(
                         spot=float(px[k]), strike=cyc.strike, t_years=t_years, r=rate, sigma=sigma
                     )
@@ -990,7 +990,7 @@ def _close_series(bronze: pd.DataFrame) -> pd.Series:
 
 
 def load_asof_series(store: LakeStore, asset: str, as_of: dt.date) -> tuple[pd.Series, pd.Series]:
-    """Point-in-time ``(prices, iv_proxy)`` for ``asset`` as of ``as_of``.
+    """Point-in-time ``(prices, realized_vol_proxy)`` for ``asset`` as of ``as_of``.
 
     Reads only the bronze OHLCV snapshot known on or before ``as_of`` (one
     lake read), returning the **raw closing-price** path (see
@@ -1047,10 +1047,10 @@ def compute_put_backtest(
     ``None``.
     """
     budget = sizing_mode.resolve(n_legs=1) if sizing_mode is not None else notional
-    prices, iv_proxy = load_asof_series(store, asset, as_of)
+    prices, realized_vol_proxy = load_asof_series(store, asset, as_of)
     result = run_put_roll(
         prices,
-        iv_proxy,
+        realized_vol_proxy,
         asset=asset,
         as_of=as_of,
         notional=budget,

@@ -45,8 +45,8 @@ def _point(m: float, t: float, annualized: float) -> SweepPoint:
 
 
 def test_the_sweep_covers_the_whole_grid() -> None:
-    prices, iv = _series()
-    points = run_sweep(prices, iv, asset="spy", as_of=AS_OF, notional=1000.0, years=4.0)
+    prices, realized_vol = _series()
+    points = run_sweep(prices, realized_vol, asset="spy", as_of=AS_OF, notional=1000.0, years=4.0)
 
     assert len(points) == len(SWEEP_MONEYNESS) * len(SWEEP_TENORS_WEEKS)
     assert {p.moneyness_pct for p in points} == set(SWEEP_MONEYNESS)
@@ -58,9 +58,9 @@ def test_a_tenor_too_long_for_the_window_drops_its_cell_not_the_grid() -> None:
     otherwise one recently-listed name breaks the whole ranking."""
     # 70 bars: after the 20-bar IV warm-up there is no room for a 12-week
     # (60 trading day) roll to complete, but the short tenors still fit.
-    prices, iv = _series(n=70)
+    prices, realized_vol = _series(n=70)
 
-    points = run_sweep(prices, iv, asset="spy", as_of=AS_OF, notional=1000.0, years=0.25)
+    points = run_sweep(prices, realized_vol, asset="spy", as_of=AS_OF, notional=1000.0, years=0.25)
 
     assert points  # the short tenors still score
     assert max(p.tenor_weeks for p in points) < max(SWEEP_TENORS_WEEKS)
@@ -71,7 +71,7 @@ def test_skipping_the_per_day_curves_does_not_change_the_verdict() -> None:
     ever changed a score, the ranking and the heatmap would disagree."""
     from tail_lab.research.backtest.put_roll import run_put_roll
 
-    prices, iv = _series()
+    prices, realized_vol = _series()
     common = dict(
         asset="spy",
         as_of=AS_OF,
@@ -80,8 +80,8 @@ def test_skipping_the_per_day_curves_does_not_change_the_verdict() -> None:
         tenor_weeks=4.0,
         lookback_years=4.0,
     )
-    full = run_put_roll(prices, iv, **common, include_curves=True)
-    lean = run_put_roll(prices, iv, **common, include_curves=False)
+    full = run_put_roll(prices, realized_vol, **common, include_curves=True)
+    lean = run_put_roll(prices, realized_vol, **common, include_curves=False)
 
     assert lean.roi_on_premium == full.roi_on_premium
     assert lean.n_cycles == full.n_cycles
@@ -167,8 +167,8 @@ def test_an_empty_grid_has_no_best_cell() -> None:
 def test_the_best_cell_of_a_real_sweep_is_actually_in_the_sweep() -> None:
     """The headline is a cell of this grid — not a number computed some other
     way — because a click on it opens the backtest at exactly those params."""
-    prices, iv = _series()
-    points = run_sweep(prices, iv, asset="spy", as_of=AS_OF, notional=1000.0, years=4.0)
+    prices, realized_vol = _series()
+    points = run_sweep(prices, realized_vol, asset="spy", as_of=AS_OF, notional=1000.0, years=4.0)
 
     best = best_point(points)
 
@@ -181,8 +181,8 @@ def test_the_best_cell_of_a_real_sweep_is_actually_in_the_sweep() -> None:
 def test_the_headline_never_advertises_a_strike_the_model_cannot_price() -> None:
     """Over a real grid, not just hand-built points: whatever the deep cells
     do, the reported best stays inside the priced band."""
-    prices, iv = _series()
-    points = run_sweep(prices, iv, asset="spy", as_of=AS_OF, notional=1000.0, years=4.0)
+    prices, realized_vol = _series()
+    points = run_sweep(prices, realized_vol, asset="spy", as_of=AS_OF, notional=1000.0, years=4.0)
 
     best = best_point(points)
 

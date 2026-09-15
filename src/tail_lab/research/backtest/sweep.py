@@ -92,7 +92,7 @@ class SweepPoint(BaseModel):
 
 def run_sweep(
     prices: pd.Series,
-    iv_proxy: pd.Series,
+    realized_vol_proxy: pd.Series,
     *,
     asset: str,
     as_of: dt.date,
@@ -115,7 +115,7 @@ def run_sweep(
             try:
                 result = run_put_roll(
                     prices,
-                    iv_proxy,
+                    realized_vol_proxy,
                     asset=asset,
                     as_of=as_of,
                     notional=notional,

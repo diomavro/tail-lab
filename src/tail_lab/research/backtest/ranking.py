@@ -247,10 +247,10 @@ def _vol_beta_for(
 
 def _rank_one(symbol: str, ctx: _RankContext) -> RankedAsset | None:
     try:
-        prices, iv_proxy = load_asof_series(ctx.store, symbol, ctx.as_of)
+        prices, realized_vol_proxy = load_asof_series(ctx.store, symbol, ctx.as_of)
         result = run_put_roll(
             prices,
-            iv_proxy,
+            realized_vol_proxy,
             asset=symbol,
             as_of=ctx.as_of,
             notional=ctx.notional,
@@ -274,7 +274,7 @@ def _rank_one(symbol: str, ctx: _RankContext) -> RankedAsset | None:
     best = best_point(
         run_sweep(
             prices,
-            iv_proxy,
+            realized_vol_proxy,
             asset=symbol,
             as_of=ctx.as_of,
             notional=ctx.notional,
@@ -293,7 +293,7 @@ def _rank_one(symbol: str, ctx: _RankContext) -> RankedAsset | None:
         try:
             best_run = run_put_roll(
                 prices,
-                iv_proxy,
+                realized_vol_proxy,
                 asset=symbol,
                 as_of=ctx.as_of,
                 notional=ctx.notional,
