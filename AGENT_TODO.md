@@ -904,7 +904,7 @@ wrong side of the join.
       market-priced ROI are not the same quantity and currently look
       identical.
 
-- [ ] **Rename the `iv` variables that hold realised vol.** `put_roll.py`
+- [x] **Rename the `iv` variables that hold realised vol.** `put_roll.py`
       carries the output of `trailing_realized_vol()` in locals and
       parameters named `iv` / `iv_proxy` (`:466`, `:532`, `:951`, `:1013`,
       and through `ranking.py:249`). The docstring is honest — "the IV proxy"
@@ -913,6 +913,27 @@ wrong side of the join.
       it is the single cheapest fix on this list. *Success*: the identifier
       says `realized_vol` (or `vol_proxy`) everywhere; nothing named `iv`
       holds a realised number.
+      **Done 2026-09-15.** Pure rename, no behavior change: `iv` →
+      `realized_vol` and `iv_proxy` → `realized_vol_proxy` across
+      `put_roll.py` (both private roll loops, `run_put_roll`,
+      `_mark_to_market_curve`, `load_asof_series`, `compute_put_backtest`)
+      and every caller that threads the series through —
+      `ranking.py`, `sweep.py`, `metric_screen.py`, `portfolio.py`,
+      `api/putlab_routes.py` — plus the matching test locals in
+      `tests/test_research_backtest_{put_roll,ranking,sweep,metric_screen,
+      quote_priced_roll}.py` (including the one test function name that
+      embedded `iv_proxy`). Deliberately left untouched: the real `iv` quote
+      columns in `option_chain`/`optionsdx`/`option_quotes` contracts and
+      their tests (`test_research_backtest_{marks,quote_fills,
+      quote_source_index}.py`) — those hold actual implied vol from real
+      quotes, the opposite of what this item is about, and conflating the two
+      naming conventions would have made the confusion worse, not better.
+      Docstring prose that already said "trailing-realized-vol IV proxy" was
+      left as-is (already honest); only bare `iv`/`iv_proxy` identifiers
+      that read as if they held implied vol were renamed. Verified with the
+      full CI gate: ruff, ruff format, mypy --strict, import-linter, and
+      `pytest` (896 passed) including the 90% `research/`/`transforms/`
+      coverage floor (97%).
 
 - [ ] **Make the model/market ratio a ranking input, not only a per-leg
       footnote.** `marks.py` records the ratio and refuses on liquidity, which

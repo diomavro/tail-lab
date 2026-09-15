@@ -360,12 +360,12 @@ def compare_metric_screens(
     scored: list[_Scored] = []
     for symbol in symbols:
         try:
-            prices, iv_proxy = load_asof_series(store, symbol, as_of)
+            prices, realized_vol_proxy = load_asof_series(store, symbol, as_of)
             # Unit notional: outputs scale linearly, so we backtest once at 1.0
             # and scale into each basket's budget (mirrors run_portfolio).
             result = run_put_roll(
                 prices,
-                iv_proxy,
+                realized_vol_proxy,
                 asset=symbol,
                 as_of=as_of,
                 notional=1.0,

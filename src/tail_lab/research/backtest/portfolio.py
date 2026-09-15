@@ -177,10 +177,10 @@ def run_portfolio(
     for leg in legs:
         share = leg.weight / total_weight
         try:
-            prices, iv_proxy = load_asof_series(store, leg.asset, as_of)
+            prices, realized_vol_proxy = load_asof_series(store, leg.asset, as_of)
             unit = run_put_roll(
                 prices,
-                iv_proxy,
+                realized_vol_proxy,
                 asset=leg.asset,
                 as_of=as_of,
                 notional=1.0,
