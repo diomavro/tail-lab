@@ -51,6 +51,16 @@ class ReturnBasisComparison:
     divergence: float
 
 
+def _validate_prices(prices: pd.Series, *, basis: str) -> None:
+    """Shared preconditions for both return bases; ``basis`` only flavors the message."""
+    if len(prices) < 2:
+        raise ValueError(f"need at least two prices to form a return, got {len(prices)}")
+    if not np.isfinite(prices.to_numpy(dtype=float)).all():
+        raise ValueError("prices must be finite; an infinite price fabricates a 100% loss")
+    if not (prices > 0).all():
+        raise ValueError(f"prices must be strictly positive to form {basis} returns")
+
+
 def loss_magnitudes(prices: pd.Series) -> pd.Series:
     """Magnitudes of arithmetic down-moves -- the ``r`` in the paper's
     ``S = (1 - r) S_0``, and the only sanctioned input to a tail fit here.
@@ -63,12 +73,7 @@ def loss_magnitudes(prices: pd.Series) -> pd.Series:
     Raises ``ValueError`` if the series has fewer than two points, is not
     strictly positive, or contains no down-move at all.
     """
-    if len(prices) < 2:
-        raise ValueError(f"need at least two prices to form a return, got {len(prices)}")
-    if not np.isfinite(prices.to_numpy(dtype=float)).all():
-        raise ValueError("prices must be finite; an infinite price fabricates a 100% loss")
-    if not (prices > 0).all():
-        raise ValueError("prices must be strictly positive to form arithmetic returns")
+    _validate_prices(prices, basis="arithmetic")
 
     losses = -prices.pct_change().dropna()
     down = losses[losses > 0.0]
@@ -83,12 +88,7 @@ def log_loss_magnitudes(prices: pd.Series) -> pd.Series:
     Provided **only** so ``compare_return_bases`` can show what the wrong basis
     does. Nothing else in this package may consume it.
     """
-    if len(prices) < 2:
-        raise ValueError(f"need at least two prices to form a return, got {len(prices)}")
-    if not np.isfinite(prices.to_numpy(dtype=float)).all():
-        raise ValueError("prices must be finite; an infinite price fabricates a 100% loss")
-    if not (prices > 0).all():
-        raise ValueError("prices must be strictly positive to form log returns")
+    _validate_prices(prices, basis="log")
 
     log_losses = (
         -pd.Series(np.log(prices.to_numpy(dtype=float)), index=prices.index).diff().dropna()
