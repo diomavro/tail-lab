@@ -65,6 +65,8 @@ def loss_magnitudes(prices: pd.Series) -> pd.Series:
     """
     if len(prices) < 2:
         raise ValueError(f"need at least two prices to form a return, got {len(prices)}")
+    if not np.isfinite(prices.to_numpy(dtype=float)).all():
+        raise ValueError("prices must be finite; an infinite price fabricates a 100% loss")
     if not (prices > 0).all():
         raise ValueError("prices must be strictly positive to form arithmetic returns")
 
@@ -83,6 +85,8 @@ def log_loss_magnitudes(prices: pd.Series) -> pd.Series:
     """
     if len(prices) < 2:
         raise ValueError(f"need at least two prices to form a return, got {len(prices)}")
+    if not np.isfinite(prices.to_numpy(dtype=float)).all():
+        raise ValueError("prices must be finite; an infinite price fabricates a 100% loss")
     if not (prices > 0).all():
         raise ValueError("prices must be strictly positive to form log returns")
 

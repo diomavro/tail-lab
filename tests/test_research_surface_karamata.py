@@ -156,7 +156,7 @@ def test_refusals(kwargs: dict[str, float], match: str) -> None:
 @pytest.mark.parametrize(
     ("sample", "alpha", "match"),
     [
-        ([3.0, 2.0, 1.0], 0.0, "alpha must be positive"),
+        ([3.0, 2.0, 1.0], 0.0, "alpha must be a finite positive number"),
         ([], 3.0, "non-empty sample"),
         ([3.0, 2.0, 0.0], 3.0, "strictly positive"),
     ],
@@ -214,9 +214,10 @@ def test_the_onset_search_does_not_stop_at_the_first_violation() -> None:
 
     On ``L = [0.92]*3 + [1.00]*17`` at tolerance 0.085 the flatness is 0.000 at
     3 points, 0.0851 at 4 (over), then 0.0840 at 5 and 0.0810 at 20 (under
-    again). A search that stopped at the first violation returned an onset 6.1x
-    too shallow on 3 observations instead of 20 -- and reported ``is_flat=True``,
-    so every downstream consumer took it as a measurement.
+    again). A search that stopped at the first violation put the onset at
+    ``x=6.44`` where the answer is ``x=1.05`` -- 6.1x too far out, on 3
+    observations instead of 20 -- and reported ``is_flat=True``, so every
+    downstream consumer took it as a measurement.
     """
     levels = [0.92] * 3 + [1.00] * 17
     n, alpha = len(levels), 1.0
@@ -237,3 +238,26 @@ def test_a_non_positive_min_beyond_is_refused(min_beyond: int) -> None:
     sample = pareto_quantile_sample(n=100, alpha=3.0)
     with pytest.raises(ValueError, match="min_beyond must be at least 1"):
         karamata_onset(sample, alpha=2.0, min_beyond=min_beyond)
+
+
+def test_slowly_varying_refuses_when_L_underflows_for_every_observation() -> None:
+    """``x**alpha`` underflows to 0.0 for every x once ``alpha * log10(max x)``
+    falls below about -323.6, and the mean of L is then exactly zero.
+
+    An earlier version of this module deleted ``_flatness``'s zero-mean guard
+    and asserted in a comment that the case was unreachable. It is reachable,
+    and the false claim was the worse of the two errors.
+    """
+    tiny = [1e-5 * (1 + 0.01 * i) for i in range(60)]
+    with pytest.raises(ValueError, match="not finite and positive"):
+        slowly_varying(tiny, alpha=70.0)
+    with pytest.raises(ValueError, match="not finite and positive"):
+        karamata_onset(tiny, alpha=70.0, min_beyond=10)
+
+
+def test_slowly_varying_refuses_a_non_finite_observation() -> None:
+    """``nan <= 0.0`` is False, so a NaN passes the positivity check; and
+    ``sorted`` around a NaN is order-undefined, so ``ordered[-1]`` is not
+    reliably the minimum either."""
+    with pytest.raises(ValueError, match="finite observations"):
+        slowly_varying([1.0, float("nan"), 2.0], alpha=3.0)

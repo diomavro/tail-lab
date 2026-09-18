@@ -21,6 +21,7 @@ body of the distribution as though it were a tail index.
 
 from __future__ import annotations
 
+import math
 from collections.abc import Sequence
 from dataclasses import dataclass
 
@@ -75,8 +76,8 @@ def slowly_varying(sample: Sequence[float], *, alpha: float) -> list[tuple[float
     Raises ``ValueError`` for a non-positive ``alpha`` or a non-positive
     observation.
     """
-    if alpha <= 0.0:
-        raise ValueError(f"alpha must be positive, got {alpha}")
+    if not math.isfinite(alpha) or alpha <= 0.0:
+        raise ValueError(f"alpha must be a finite positive number, got {alpha}")
 
     ordered = sorted((float(x) for x in sample), reverse=True)
     if not ordered:
@@ -84,8 +85,22 @@ def slowly_varying(sample: Sequence[float], *, alpha: float) -> list[tuple[float
     if ordered[-1] <= 0.0:
         raise ValueError("slowly_varying is defined on strictly positive samples")
 
+    if not all(math.isfinite(x) for x in ordered):
+        raise ValueError("slowly_varying needs finite observations; the sample has nan or inf")
+
     n = len(ordered)
-    return [(x, (i / (n + 1.0)) * x**alpha) for i, x in enumerate(ordered, start=1)]
+    curve = [(x, (i / (n + 1.0)) * x**alpha) for i, x in enumerate(ordered, start=1)]
+    if not all(math.isfinite(level) and level > 0.0 for _, level in curve):
+        # `x**alpha` underflows to 0.0 for every x once alpha*log10(max x) is
+        # below about -323.6, and overflows above it. Either way L carries no
+        # information and `_flatness` would divide by a zero mean. An earlier
+        # version of this module called that branch unreachable and deleted the
+        # guard; it is reachable, and the claim was the worse of the two errors.
+        raise ValueError(
+            f"L = P(X>x) * x^{alpha} is not finite and positive across this sample; "
+            "the tail index is too large for the observations' scale"
+        )
+    return curve
 
 
 def _flatness(values: Sequence[float]) -> float:
@@ -121,7 +136,9 @@ def _onset_for_alpha(
     # dip back under tolerance after exceeding it. An earlier version used a
     # `break` and its docstring claimed to keep "the deepest stretch"; on
     # levels [0.92]*3 + [1.00]*17 at tolerance 0.085 it stopped at 3 points and
-    # reported an onset 6.1x too shallow, with is_flat=True.
+    # put the onset at x=6.44 where the answer is x=1.05 -- 6.1x too FAR OUT,
+    # resting on 3 observations instead of 20, and flagged is_flat=True. (Too
+    # far out, not too shallow: a larger threshold is deeper in the tail.)
     best = min_beyond
     best_flatness = _flatness(levels[:min_beyond])
     for count in range(min_beyond + 1, len(levels) + 1):

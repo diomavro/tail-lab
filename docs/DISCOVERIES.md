@@ -404,18 +404,22 @@ SPY is **alpha 2.75**, exactly the figure Taleb et al. use for SPX. A tool that
 printed it would have produced a number that agrees with the literature and looks
 like a replication.
 
-It is not even the only plateau: at the default window and tolerance SPY has
-**21 disjoint plateau regions**, and `stable_k` returns the first because that
-is the one at the deepest threshold. The last of the 21 reports alpha **0.61**
+It is not even the only plateau: at the default window and tolerance 309
+windows of SPY's Hill plot qualify, forming **21 distinct runs** (overlapping in
+`k`, so a strictly non-overlapping count is 20), and `stable_k` returns the
+first because that is the one at the deepest threshold. The last of the 21 reports alpha **0.61**
 at a 0.12 % move, which is by itself enough to show that "a Hill plateau exists"
 carries no information.
 
-The reported one rests on 55 order statistics at a 1.71 % threshold — the top
-9.7 % of down-days, or 4.5 % of all returns. **Whether that is tail or body is precisely
+The reported one is fitted on 55 order statistics at a 1.71 % threshold; 56 of
+the 577 down-moves lie at or beyond it — 9.7 % of down-days, 4.5 % of all
+returns. **Whether that is tail or body is precisely
 what a percentile cannot settle**, and it is why the Karamata test rather than a
-depth heuristic is the gate: `L` is not flat there (relative spread 0.609 against
-a 0.05 tolerance), so the strong Pareto law is not established at that threshold
-and the plateau is not a tail index — whatever percentile it sits at. HYG makes
+depth heuristic is the gate: `L` is not flat there — relative spread **0.624**
+over that prefix against a 0.05 tolerance, and **0.609** is the best any prefix
+of this sample achieves (at a 2.22 % cut, on the top 30) — so the strong Pareto
+law is not established at that threshold and the plateau is not a tail index,
+whatever percentile it sits at. HYG makes
 the point harder to dismiss: the same 2.75, at a 0.74 % move.
 
 **What changed.**

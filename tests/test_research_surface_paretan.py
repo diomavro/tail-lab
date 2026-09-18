@@ -28,6 +28,7 @@ from tail_lab.research.surface.paretan import (
     LAMBDA_GUARD_MAX_SIGMA_ROOT_T,
     MIN_ALPHA,
     ParetanTail,
+    _put_shape,
     anchor_l_call,
     anchor_l_call_returns,
     anchor_l_put,
@@ -465,8 +466,12 @@ def test_put_ratio_refuses_a_strike_at_spot() -> None:
 @pytest.mark.parametrize(("alpha", "spot"), [(2.75, 0.5), (3.85, 0.5), (3.85, 100.0)])
 def test_the_zero_strike_clamp_actually_clamps(alpha: float, spot: float) -> None:
     """These are the parameterisations where the raw shape at ``K = 0`` really
-    does come out negative (-5.6e-17 to -1.4e-14), so the ``max(0.0, ...)`` in
-    ``put_price`` is load-bearing rather than decorative.
+    does come out negative (-5.6e-17 to -1.4e-14), so the zero-clamp in
+    ``put_price`` is load-bearing rather than decorative. (It is written
+    ``0.0 if raw < 0.0 else raw``; ``max(0.0, raw)`` is the form to avoid, since
+    ``max(0.0, nan)`` is ``0.0``. Non-finite values are refused before the clamp
+    now, so the two are equivalent in practice -- but the guard is the
+    finiteness check, not the clamp's shape.)
 
     ``test_zero_strike_put_is_worthless`` asserts a tolerance, which a small
     negative also satisfies -- removing the clamp survived that test. This one
@@ -511,8 +516,62 @@ def test_non_finite_arguments_are_refused(call: object) -> None:
         call()  # type: ignore[operator]
 
 
-def test_the_clamp_does_not_launder_a_nan_into_zero() -> None:
-    """The regression a `max(0.0, ...)` clamp introduces, pinned directly."""
-    assert max(0.0, float("nan")) == 0.0, "this is the trap the clamp must not use"
+def test_an_overflowing_shape_is_refused_rather_than_priced() -> None:
+    """**All inputs finite and in-domain, and the arithmetic still overflows.**
+
+    ``spot**alpha`` raises OverflowError, but the *product* of two large finite
+    factors quietly returns ``inf``, and ``inf`` then launders: a finite
+    numerator over an infinite denominator is ``0.0``, which reads as "this
+    strike is worthless" rather than as a failure.
+
+    Two earlier attempts missed this. Clamping negatives-only stopped
+    ``max(0.0, nan)`` but not ``finite / inf``; ``_require_finite`` guards the
+    inputs, and every input here is finite. The guard has to be on the RESULT.
+    """
+    spot = 1e15
+    strike = math.nextafter(spot, 0.0)
+    tail = ParetanTail(alpha=20.0, karamata_l=1e-20, basis="returns")
+
+    with pytest.raises(ValueError, match="overflows"):
+        tail.put_price(strike=strike, spot=spot)
+    with pytest.raises(ValueError, match="overflows"):
+        put_ratio(k_from=strike, k_to=spot / 2, spot=spot, alpha=20.0)
+    # The identity case is the clearest tell: inf/inf is nan where the ratio of
+    # a strike to itself must be exactly 1.0.
+    with pytest.raises(ValueError, match="overflows"):
+        put_ratio(k_from=strike, k_to=strike, spot=spot, alpha=20.0)
+
+
+def test_a_strike_at_spot_is_refused_even_when_it_is_the_deepest_valid_one() -> None:
+    """For ``l <= ~1.1e-16``, ``(1 - l)`` rounds to ``1.0``, so
+    ``deepest_valid_put_strike`` returns ``spot`` itself -- and pricing there is
+    ``0.0 ** -2``. The contract says ``ValueError`` outside the domain; this was
+    a ``ZeroDivisionError`` *inside* it, from a tail a public constructor makes.
+    """
+    tail = anchor_l_put(price=1e-50, strike=50.0, spot=100.0, alpha=3.0)
+    assert tail.deepest_valid_put_strike(spot=100.0) == 100.0
+    with pytest.raises(ValueError, match="strictly below spot"):
+        tail.put_price(strike=100.0, spot=100.0)
+
+
+def test_call_price_refuses_a_non_finite_strike() -> None:
+    """The one ``_require_finite`` call site the parametrised sweep above does
+    not reach: without it, ``call_price(strike=nan)`` returns a silent ``nan``.
+    """
     with pytest.raises(ValueError, match="must be a finite number"):
-        put_ratio(k_from=90.0, k_to=80.0, spot=100.0, alpha=float("nan"))
+        _RETURNS_TAIL.call_price(strike=float("nan"), spot=100.0)
+
+
+def test_a_price_that_overflows_after_the_shape_is_refused() -> None:
+    """``_put_shape`` can return a finite value that still overflows once the
+    ``lambda * l^alpha / (alpha - 1)`` factor is applied -- ``lambda * l^alpha``
+    is ``l^alpha/(1 - l^alpha)``, which diverges as ``l`` approaches 1.
+
+    So guarding the shape is not enough either; the price itself is checked.
+    """
+    tail = ParetanTail(alpha=1.0001, karamata_l=0.999999999999, basis="returns")
+    spot = 1e308
+    strike = 0.999999999999999 * tail.deepest_valid_put_strike(spot=spot)
+    assert math.isfinite(_put_shape(strike=strike, spot=spot, alpha=1.0001))
+    with pytest.raises(ValueError, match="put price is not finite"):
+        tail.put_price(strike=strike, spot=spot)

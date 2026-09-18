@@ -13,7 +13,9 @@ notoriously sensitive to ``k``, the number of order statistics it reads.
 Measured 2026-09-18 on the SPY down-moves this repo actually has (bronze OHLCV's
 rolling five-year window, 2021-08..2026-08, 577 of them), alpha runs from
 **1.69 to 3.57** over ``k`` in [20, 200] -- a spread of 1.87, wider than most
-effects anyone would want to detect. Reproduce with ``make tail-alpha``.
+effects anyone would want to detect. (``make tail-alpha`` prints the plateau and
+the onset, not this sweep; reproduce the sweep with ``hill_plot(losses,
+k_min=20, k_max=200)`` on the same series.)
 
 So the useful object is ``hill_plot`` (alpha as a function of k) plus
 ``stable_k``, which reports a plateau **or refuses**. An alpha read off a plot
@@ -22,12 +24,13 @@ with no stable region is a choice dressed as a measurement.
 ``stable_k`` also takes ``min_threshold``, and callers should pass it. A Hill
 plot flattens wherever the log-log slope is locally constant, and for a
 lognormal-ish *body* that happens too. At the default settings on real SPY
-down-moves the plateau lands at alpha 2.75 at a **1.71%** daily move, resting on
-55 order statistics -- the top 9.7% of down-days. Whether that is tail or body is
-exactly what a percentile cannot settle, and the Karamata test is what does:
-``L`` is not flat there (relative spread 0.609 against a 0.05 tolerance), so the
-strong Pareto law is not established at that threshold and the plateau is not a
-tail index. It is worth knowing that 2.75 is also the figure Taleb et al. use for
+down-moves the plateau lands at alpha 2.75 at a **1.71%** daily move, fitted on
+55 order statistics (56 observations lie at or beyond that threshold, 9.7% of
+down-days). Whether that is tail or body is exactly what a percentile cannot
+settle, and the Karamata test is what does: ``L`` is not flat there -- relative
+spread **0.624** over that prefix, against a 0.05 tolerance, and no prefix of
+this sample does better than 0.609 -- so the strong Pareto law is not
+established at that threshold and the plateau is not a tail index. It is worth knowing that 2.75 is also the figure Taleb et al. use for
 SPX, which makes it the most temptingly publishable wrong answer available.
 ``docs/DISCOVERIES.md`` §12 has the measurement.
 """
@@ -103,6 +106,16 @@ def hill_alpha(sample: Sequence[float], *, k: int) -> HillEstimate:
             "pass loss magnitudes, not signed returns"
         )
 
+    return _hill_from_ordered(ordered, k=k)
+
+
+def _hill_from_ordered(ordered: Sequence[float], *, k: int) -> HillEstimate:
+    """``hill_alpha``'s core, on an already-sorted, already-validated sample.
+
+    Split out so ``hill_plot`` validates the sample once instead of once per
+    ``k``: re-scanning 3,520 observations on every one of 3,510 calls cost
+    +48-79% of the plot's runtime and risked the two checks diverging.
+    """
     threshold = ordered[k]
     log_excess_mean = sum(math.log(x / threshold) for x in ordered[:k]) / k
     if log_excess_mean <= 0.0:
@@ -125,7 +138,7 @@ def hill_alpha(sample: Sequence[float], *, k: int) -> HillEstimate:
         k=k,
         threshold=threshold,
         standard_error=alpha / math.sqrt(k),
-        n=n,
+        n=len(ordered),
     )
 
 
@@ -177,7 +190,9 @@ def hill_plot(
     # match on the message text, plus an unreachable re-raise behind it.
     ordered = sorted((float(x) for x in sample), reverse=True)
     return [
-        hill_alpha(ordered, k=k) for k in range(k_min, upper + 1, step) if ordered[0] != ordered[k]
+        _hill_from_ordered(ordered, k=k)
+        for k in range(k_min, upper + 1, step)
+        if ordered[0] != ordered[k]
     ]
 
 
@@ -210,16 +225,23 @@ def stable_k(
     if tolerance <= 0.0:
         raise ValueError(f"tolerance must be positive, got {tolerance}")
 
+    # Refuse the WHOLE plot on one non-finite alpha rather than skipping the
+    # window that holds it. `hill_plot` refuses an entire sample for one bad
+    # observation, on the reasoning that a per-point skip turns bad input into a
+    # verdict about the data; skipping a window here would be the same mistake
+    # one layer up, and the plateau returned would carry k, threshold and n from
+    # a run that produced a NaN somewhere else.
+    if not all(math.isfinite(p.alpha) for p in plot):
+        raise ValueError("stable_k needs finite alphas; the Hill plot contains nan or inf")
+
     for start in range(len(plot) - window + 1):
         window_points = plot[start : start + window]
         alphas = [p.alpha for p in window_points]
-        # Without this, one NaN makes refusal impossible: `mean <= 0` and
-        # `abs(a - mean)/mean > tolerance` are both False under NaN, so any
-        # window containing one passes the plateau test at any tolerance.
-        if not all(math.isfinite(a) for a in alphas):
-            continue
         mean_alpha = sum(alphas) / window
-        if mean_alpha <= 0.0:
+        # `mean_alpha` can be inf while every alpha is finite (the sum
+        # overflows), and `abs(a - inf)/inf` is nan, which is never > tolerance
+        # -- so the window would certify at any tolerance.
+        if not math.isfinite(mean_alpha) or mean_alpha <= 0.0:
             continue
         if any(abs(a - mean_alpha) / mean_alpha > tolerance for a in alphas):
             continue

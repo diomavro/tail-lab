@@ -129,3 +129,16 @@ def test_refusals(prices: pd.Series, match: str) -> None:
         loss_magnitudes(prices)
     with pytest.raises(ValueError, match=match):
         log_loss_magnitudes(prices)
+
+
+def test_an_infinite_price_is_refused_rather_than_read_as_a_total_loss() -> None:
+    """``inf > 0`` is True, so an infinite price passed the positivity check --
+    and ``(inf - 100)/inf`` is exactly ``1.0``, a fabricated 100% loss and the
+    single most influential observation a tail fit can receive. Every value
+    downstream is finite, so no finiteness guard further along can see it.
+    """
+    poisoned = pd.Series([float("inf")] + [100.0 - 0.1 * i for i in range(60)])
+    with pytest.raises(ValueError, match="prices must be finite"):
+        loss_magnitudes(poisoned)
+    with pytest.raises(ValueError, match="prices must be finite"):
+        log_loss_magnitudes(poisoned)

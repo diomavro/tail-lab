@@ -262,7 +262,10 @@ def test_hill_alpha_refuses_a_sample_whose_excess_ratios_overflow() -> None:
 
 
 def test_hill_plot_refuses_a_non_finite_sample() -> None:
-    with pytest.raises(ValueError, match="finite observations"):
+    """Matched on ``hill_plot``'s own message, not the shared phrase: with a
+    looser regex this passed even with ``hill_plot``'s guard deleted, because
+    ``hill_alpha``'s guard fired instead and says something similar."""
+    with pytest.raises(ValueError, match="hill_plot needs finite"):
         hill_plot([1.0] * 40 + [float("nan")] + [0.9**i for i in range(1, 40)])
 
 
@@ -271,9 +274,28 @@ def test_one_nan_cannot_manufacture_a_plateau() -> None:
     both ``mean <= 0`` and ``abs(a-mean)/mean > tolerance`` are False, so every
     window containing one passed the plateau test at any tolerance: alphas
     [nan, 1, 50, 2, 99, 3] were certified stable at tolerance 0.001.
+
+    The whole plot is refused rather than the offending window skipped --
+    ``hill_plot`` refuses an entire sample for one bad observation, and a
+    per-window skip here would be the same mistake one layer up.
     """
     wild = [
         HillEstimate(alpha=a, k=9 + i, threshold=0.05, standard_error=0.1, n=500)
         for i, a in enumerate([float("nan"), 1.0, 50.0, 2.0, 99.0, 3.0])
     ]
-    assert stable_k(wild, window=6, tolerance=0.001) is None
+    with pytest.raises(ValueError, match="stable_k needs finite alphas"):
+        stable_k(wild, window=6, tolerance=0.001)
+
+
+def test_a_window_whose_alpha_sum_overflows_cannot_certify() -> None:
+    """``mean_alpha`` can be ``inf`` while every alpha is finite, and
+    ``abs(a - inf)/inf`` is ``nan``, which is never above the tolerance -- so the
+    window certified at any tolerance. Guarding the alphas alone missed this by
+    exactly one line.
+    """
+    plot = [
+        HillEstimate(alpha=a, k=9 + i, threshold=0.05, standard_error=0.1, n=500)
+        for i, a in enumerate([1e308, 1e308, 1.0, 99.0, 2.0, 50.0])
+    ]
+    assert all(math.isfinite(p.alpha) for p in plot)
+    assert stable_k(plot, window=6, tolerance=1e-9) is None

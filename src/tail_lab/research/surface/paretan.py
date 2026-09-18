@@ -177,9 +177,16 @@ class ParetanTail:
         # zero. A put price is never negative, and the invariant is worth more
         # than the last bit of a number that is zero anyway.
         #
-        # Clamp only NEGATIVES, never `max(0.0, raw)`: `max(0.0, nan)` is 0.0,
-        # so that form would launder a NaN into a confident "this strike is
-        # worthless" -- strictly worse than returning a visible nan.
+        if not math.isfinite(raw):
+            raise ValueError(
+                f"the put price is not finite at strike={strike}, spot={spot}, "
+                f"alpha={self.alpha}, l={self.karamata_l}"
+            )
+        # Reached only with a finite `raw`, so this is purely the ulp guard the
+        # comment above describes. (An earlier version relied on the clamp's
+        # FORM -- `0.0 if raw < 0.0` rather than `max(0.0, raw)` -- to stop a NaN
+        # becoming a confident 0.0. That was the wrong layer: the NaN is born in
+        # the arithmetic, and a clamp cannot tell one from a rounding artefact.)
         return 0.0 if raw < 0.0 else raw
 
     def call_price(self, *, strike: float, spot: float | None = None) -> float:
@@ -239,7 +246,23 @@ def _put_shape(*, strike: float, spot: float, alpha: float) -> float:
     The whole strike-dependence of the put price. ``l`` and ``lambda`` multiply
     it, which is why they cancel from ``put_ratio``.
     """
-    return float(spot**alpha * (spot - strike) ** (1.0 - alpha) - (alpha - 1.0) * strike - spot)
+    if strike >= spot:
+        raise ValueError(
+            f"put strike {strike} must be strictly below spot {spot}; at equality the "
+            "shape divides by zero"
+        )
+    shape = float(spot**alpha * (spot - strike) ** (1.0 - alpha) - (alpha - 1.0) * strike - spot)
+    if not math.isfinite(shape):
+        # `spot**alpha` raises OverflowError, but the product of two large finite
+        # factors quietly returns inf, and inf then launders downstream: a finite
+        # numerator over an infinite denominator is 0.0, which reads as "this
+        # strike is worthless" rather than as a failure. Guarding the INPUTS is
+        # not enough -- every input here can be finite and in-domain.
+        raise ValueError(
+            f"the put shape overflows at strike={strike}, spot={spot}, alpha={alpha}; "
+            "no price can be reported"
+        )
+    return shape
 
 
 def put_ratio(*, k_from: float, k_to: float, spot: float, alpha: float) -> float:
@@ -262,6 +285,9 @@ def put_ratio(*, k_from: float, k_to: float, spot: float, alpha: float) -> float
         if strike < 0.0 or strike >= spot:
             raise ValueError(f"put strike {strike} must lie in [0, {spot}) for a downside tail")
 
+    # `_put_shape` raises on a non-finite result, so the denominator here is
+    # always finite and needs no second check -- an earlier draft added one and
+    # it was dead on arrival.
     denominator = _put_shape(strike=k_from, spot=spot, alpha=alpha)
     if denominator <= 0.0:
         raise ValueError(
