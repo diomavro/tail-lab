@@ -146,8 +146,9 @@ artefact of aggregation rather than a measurement of anything.
 `min_threshold`, and callers pass the Karamata onset. A Hill plot flattens wherever the
 log-log slope is locally constant, and for a lognormal-ish *body* that happens
 too — so without the gate a plateau-finder returns a body slope with every
-appearance of stability. `tests/test_research_surface_karamata.py::test_onset_gates_a_body_plateau_end_to_end`
-demonstrates it on a spliced sample whose onset is known by construction.
+appearance of stability. `tests/test_research_surface_karamata.py` demonstrates both directions on
+samples whose structure is known by construction: the gate keeps a genuine tail
+plateau, and rejects one that lies in the body.
 
 ## Consequences
 

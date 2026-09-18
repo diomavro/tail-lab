@@ -7,6 +7,8 @@ whose onset is placed by hand.
 
 from __future__ import annotations
 
+import math
+
 import pytest
 
 from tail_lab.research.surface.hill import hill_plot, stable_k
@@ -93,17 +95,46 @@ def test_supplied_alpha_is_not_solved_for() -> None:
     assert fit.converged
 
 
-def test_onset_gates_a_body_plateau_end_to_end() -> None:
-    """The two modules together: a Hill plateau found below the Karamata onset
-    is refused. This is the wiring that stops a body slope being published as
-    a tail index."""
+def test_the_onset_gate_keeps_a_genuine_tail_plateau() -> None:
+    """The two modules wired together, on a sample whose tail is real.
+
+    Gating on the **measured onset** -- not on some multiple of it -- must leave
+    a genuine tail plateau standing, and the surviving plateau's threshold must
+    sit at or beyond that onset. An earlier version of this test passed
+    ``min_threshold=fit.onset * 50``, which only showed that an unreachable
+    threshold rejects everything; it demonstrated nothing about the gate.
+    """
     sample = spliced_sample(n=600, n_tail=200, alpha=3.0, onset=2.0)
     fit = karamata_onset(sample, alpha=3.0, tolerance=0.01)
+    assert fit.is_flat
     plot = hill_plot(sample, k_min=20, k_max=400)
+
+    gated = stable_k(plot, window=20, tolerance=0.05, min_threshold=fit.onset)
+    assert gated is not None
+    assert gated.threshold >= fit.onset
+    assert gated.alpha == pytest.approx(3.0, rel=0.2)
+
+
+def test_the_onset_gate_rejects_a_plateau_that_lies_in_the_body() -> None:
+    """The other direction, on a sample built so the only plateau is a body
+    slope: exactly Pareto over the lower range, and a geometric block at the
+    top whose Hill estimate drifts with ``k`` rather than settling.
+
+    Ungated, ``stable_k`` returns the body plateau. Gated on the onset measured
+    from the top of the sample, it returns nothing -- which is the behaviour
+    that stops a body slope being published as a tail index.
+    """
+    body = pareto_quantile_sample(n=400, alpha=3.0, karamata_l=1.0)
+    top = [max(body) * math.exp(0.35 * (40 - i)) for i in range(40)]
+    sample = top + body
+
+    plot = hill_plot(sample, k_min=20, k_max=380)
     ungated = stable_k(plot, window=20, tolerance=0.05)
-    gated = stable_k(plot, window=20, tolerance=0.05, min_threshold=fit.onset * 50)
-    assert ungated is not None
+    assert ungated is not None, "the construction must contain a body plateau to reject"
+
+    gated = stable_k(plot, window=20, tolerance=0.05, min_threshold=min(top))
     assert gated is None
+    assert ungated.threshold < min(top)
 
 
 @pytest.mark.parametrize(
