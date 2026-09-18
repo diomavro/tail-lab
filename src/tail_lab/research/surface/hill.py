@@ -155,8 +155,9 @@ def hill_plot(
     threshold. Points whose sample is tie-degenerate at that ``k`` are skipped
     rather than raising, so one flat stretch does not destroy the whole plot.
 
-    Raises ``ValueError`` for a non-positive ``step`` or a ``k_min`` past the
-    end of the sample.
+    Raises ``ValueError`` for a ``step`` or ``k_min`` below 1, for a ``k_min``
+    past the end of the sample, or for a non-finite or non-positive
+    observation.
     """
     if step < 1:
         raise ValueError(f"step must be at least 1, got {step}")

@@ -104,17 +104,21 @@ def slowly_varying(sample: Sequence[float], *, alpha: float) -> list[tuple[float
         ) from exc
 
 
-def _flatness(values: Sequence[float]) -> float:
+def _flatness(values: Sequence[float], *, total: float) -> float:
     """Relative spread ``(max - min) / mean`` of ``L`` over a stretch.
 
-    Private and single-use: its only caller passes a prefix of
-    ``slowly_varying``'s output, whose values are ``(i/(n+1)) * x^alpha`` with
-    ``x`` strictly positive and ``alpha`` positive -- both enforced there. So
-    the mean is strictly positive by construction and there is no zero-mean
-    branch to guard. An earlier version carried one; it was unreachable, and an
-    untestable guard is worse than no guard because it reads as a handled case.
+    Computed as ``(max - min) / total * len`` rather than by forming the mean,
+    because the two are identical in exact arithmetic and only the first is safe
+    in IEEE754. A prefix of subnormal levels can have ``total = 7.4e-323 > 0``
+    while ``total / 30`` underflows to **exactly zero** -- so a guard on the sum
+    (which is what a caller can meaningfully check) does not protect a division
+    by the mean. An earlier version divided by the mean and was guarded on the
+    sum; the guard was arithmetically true and protected nothing.
+
+    ``total`` is passed in rather than recomputed so the caller can validate the
+    one quantity this divides by.
     """
-    return (max(values) - min(values)) / (sum(values) / len(values))
+    return (max(values) - min(values)) / total * len(values)
 
 
 def _onset_for_alpha(
@@ -131,19 +135,26 @@ def _onset_for_alpha(
     curve = slowly_varying(sample, alpha=alpha)
     levels = [level for _, level in curve]
 
-    # Guard only the levels this function actually CONSUMES. `_flatness` divides
-    # by the mean of a prefix, and every prefix contains the top `min_beyond`,
-    # so a positive sum there makes every longer prefix's mean positive too.
+    # `_flatness` divides by a prefix SUM, and levels are non-negative, so a
+    # prefix sum is monotone non-decreasing in the prefix length. Two checks on
+    # the endpoints therefore cover every prefix the scan below will form:
+    # positive at `min_beyond` (the shortest) and finite over the whole curve
+    # (the longest).
     #
-    # An earlier version validated the whole curve inside `slowly_varying`, and
-    # that refused perfectly fittable samples: one plausible deep loss (1e-6
-    # against a 3% top) underflows at a large seed alpha and is never selected,
-    # yet the entire sample was rejected -- and `scripts/tail_alpha.py` calls
-    # this outside a try, so it tracebacked where it used to print a verdict.
-    if sum(levels[:min_beyond]) <= 0.0:
+    # Scoped to what is consumed, deliberately. Validating every level inside
+    # `slowly_varying` refused perfectly fittable samples -- one plausible deep
+    # loss (1e-6 against a 3% top) underflows at a large alpha and is never
+    # selected, yet the whole sample was rejected.
+    prefix_total = sum(levels[:min_beyond])
+    if prefix_total <= 0.0:
         raise ValueError(
             f"L = P(X>x) * x^{alpha} underflows to zero across the top {min_beyond} "
             "observations; the tail index is too large for their scale"
+        )
+    if not math.isfinite(sum(levels)):
+        raise ValueError(
+            f"L = P(X>x) * x^{alpha} sums to infinity over this sample; "
+            "the tail index is too large for the observations' scale"
         )
 
     # Scan every prefix rather than stopping at the first violation.
@@ -156,16 +167,24 @@ def _onset_for_alpha(
     # resting on 3 observations instead of 20, and flagged is_flat=True. (Too
     # far out, not too shallow: a larger threshold is deeper in the tail.)
     best = min_beyond
-    best_flatness = _flatness(levels[:min_beyond])
+    best_flatness = _flatness(levels[:min_beyond], total=prefix_total)
+    running = prefix_total
     for count in range(min_beyond + 1, len(levels) + 1):
-        spread = _flatness(levels[:count])
+        running += levels[count - 1]
+        spread = _flatness(levels[:count], total=running)
         if spread <= tolerance:
             best, best_flatness = count, spread
 
-    mean_level = sum(levels[:best]) / best
+    # Same underflow trap as `_flatness`: a prefix of subnormal levels has a
+    # positive sum whose mean rounds to zero, and `karamata_l` would then be
+    # reported as 0.0 -- a scale, in a field a consumer reads. Take the root of
+    # the sum and divide by the root of the count instead, which is identical in
+    # exact arithmetic and stays representable.
+    total_level = sum(levels[:best])
+    karamata_l = total_level ** (1.0 / alpha) / best ** (1.0 / alpha)
     return (
         curve[best - 1][0],
-        mean_level ** (1.0 / alpha),
+        karamata_l,
         best_flatness,
         best,
         best_flatness <= tolerance,

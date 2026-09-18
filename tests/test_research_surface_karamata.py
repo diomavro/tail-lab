@@ -280,3 +280,44 @@ def test_slowly_varying_converts_an_overflow_into_a_value_error() -> None:
     module's contract is ``ValueError``."""
     with pytest.raises(ValueError, match="overflows on this sample"):
         slowly_varying([1e5 * (1 + 0.01 * i) for i in range(60)], alpha=100.0)
+
+
+def test_a_prefix_of_subnormal_levels_does_not_divide_by_zero() -> None:
+    """``_flatness`` divides by a prefix SUM, not by its mean, and that is the
+    whole point.
+
+    A prefix of subnormal levels can have ``sum = 7.4e-323`` -- positive, so a
+    guard on the sum passes -- while ``sum / 30`` underflows to **exactly zero**.
+    An earlier version guarded the sum and divided by the mean: the guard was
+    arithmetically true and protected nothing, and this raised
+    ``ZeroDivisionError`` out of ``make tail-alpha``.
+
+    ``karamata_l`` is computed the same way, or it would be reported as 0.0 --
+    a scale, in a field a consumer reads.
+    """
+    fit = karamata_onset(
+        [0.01 * (1 - 1e-4 * i) for i in range(60)], alpha=161.420000000002, min_beyond=30
+    )
+    assert not fit.is_flat
+    assert fit.karamata_l > 0.0
+    assert math.isfinite(fit.flatness)
+
+
+def test_a_longer_prefix_whose_mean_underflows_is_also_safe() -> None:
+    """The sum saturates once deeper levels underflow while the count keeps
+    growing, so a *longer* prefix's mean can reach zero even when the shortest
+    one's does not. Guarding only at ``min_beyond`` would not have covered it.
+    """
+    fit = karamata_onset([0.01] * 31 + [0.001] * 90, alpha=161.0579999997385, min_beyond=30)
+    assert math.isfinite(fit.flatness)
+
+
+def test_a_prefix_sum_that_overflows_is_refused() -> None:
+    """Individual levels can each be finite while their sum is not --
+    ``float.__pow__`` only raises when a single result exceeds DBL_MAX. Without
+    this, ``karamata_onset`` returned ``karamata_l=inf`` with ``flatness=0.0``
+    and ``is_flat=True``: a perfect Karamata region, from an overflow.
+    """
+    sample = [1e5 * (1 - 1e-12 * i) for i in range(59)] + [1e-7]
+    with pytest.raises(ValueError, match="sums to infinity"):
+        karamata_onset(sample, alpha=61.65088146104023, min_beyond=30)
