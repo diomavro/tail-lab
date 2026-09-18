@@ -160,6 +160,11 @@ def hill_plot(
     """
     if step < 1:
         raise ValueError(f"step must be at least 1, got {step}")
+    if k_min < 1:
+        # `hill_plot` used to inherit this from `hill_alpha`; delegating to
+        # `_hill_from_ordered` dropped it, and a negative k_min then produced a
+        # message asserting something false about the sample.
+        raise ValueError(f"k_min must be at least 1, got {k_min}")
 
     n = len(sample)
     upper = n - 1 if k_max is None else min(k_max, n - 1)

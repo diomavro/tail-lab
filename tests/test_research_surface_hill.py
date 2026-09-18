@@ -299,3 +299,11 @@ def test_a_window_whose_alpha_sum_overflows_cannot_certify() -> None:
     ]
     assert all(math.isfinite(p.alpha) for p in plot)
     assert stable_k(plot, window=6, tolerance=1e-9) is None
+
+
+def test_hill_plot_refuses_a_non_positive_k_min() -> None:
+    """Splitting the validated core out of ``hill_alpha`` dropped this: a
+    negative ``k_min`` then reported "the top -4 observations are all equal",
+    which asserts something false about the data rather than about the call."""
+    with pytest.raises(ValueError, match="k_min must be at least 1"):
+        hill_plot(pareto_quantile_sample(n=100, alpha=3.0), k_min=-5)

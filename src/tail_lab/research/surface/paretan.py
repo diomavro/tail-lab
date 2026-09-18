@@ -294,8 +294,10 @@ def put_ratio(*, k_from: float, k_to: float, spot: float, alpha: float) -> float
             f"the anchor strike {k_from} carries no Paretan value at alpha {alpha}; "
             "it is at or beyond the point where the model assigns zero"
         )
-    # Same ulp-scale cancellation put_price guards against, and the same
-    # negatives-only clamp for the same reason: `max(0.0, nan)` is 0.0.
+    # Same ulp-scale cancellation `put_price` guards against. Both `_put_shape`
+    # calls raise on a non-finite result and the denominator is > 0, so `ratio`
+    # is always finite here and this is purely the ulp guard -- the NaN reason
+    # that once justified the negatives-only form no longer applies.
     ratio = float(_put_shape(strike=k_to, spot=spot, alpha=alpha) / denominator)
     return 0.0 if ratio < 0.0 else ratio
 

@@ -240,24 +240,43 @@ def test_a_non_positive_min_beyond_is_refused(min_beyond: int) -> None:
         karamata_onset(sample, alpha=2.0, min_beyond=min_beyond)
 
 
-def test_slowly_varying_refuses_when_L_underflows_for_every_observation() -> None:
-    """``x**alpha`` underflows to 0.0 for every x once ``alpha * log10(max x)``
-    falls below about -323.6, and the mean of L is then exactly zero.
-
-    An earlier version of this module deleted ``_flatness``'s zero-mean guard
-    and asserted in a comment that the case was unreachable. It is reachable,
-    and the false claim was the worse of the two errors.
-    """
-    tiny = [1e-5 * (1 + 0.01 * i) for i in range(60)]
-    with pytest.raises(ValueError, match="not finite and positive"):
-        slowly_varying(tiny, alpha=70.0)
-    with pytest.raises(ValueError, match="not finite and positive"):
-        karamata_onset(tiny, alpha=70.0, min_beyond=10)
-
-
 def test_slowly_varying_refuses_a_non_finite_observation() -> None:
     """``nan <= 0.0`` is False, so a NaN passes the positivity check; and
     ``sorted`` around a NaN is order-undefined, so ``ordered[-1]`` is not
     reliably the minimum either."""
     with pytest.raises(ValueError, match="finite observations"):
         slowly_varying([1.0, float("nan"), 2.0], alpha=3.0)
+
+
+def test_a_deep_observation_that_underflows_does_not_refuse_the_whole_sample() -> None:
+    """Only the levels the search CONSUMES need to be positive.
+
+    ``_onset_for_alpha`` divides by the mean of a prefix, and every prefix
+    contains the top ``min_beyond`` -- so one plausible deep loss (1e-6 against a
+    3% top) that underflows at a large alpha never enters any reported number.
+    An earlier version validated the whole curve and refused such samples
+    outright, which made ``scripts/tail_alpha.py`` traceback where it had
+    previously printed its honest "nothing here is flat" verdict.
+    """
+    sample = [0.03 * (1 - 4e-4 * i) for i in range(598)] + [1e-6]
+    levels = [level for _, level in slowly_varying(sample, alpha=82.0)]
+    assert levels[0] > 0.0, "the consumed prefix must be computable"
+    assert levels[-1] == 0.0, "the deepest level must underflow, or this tests nothing"
+
+    fit = karamata_onset(sample, alpha=None)
+    assert not fit.is_flat
+    assert fit.onset > 0.0
+
+
+def test_an_underflowing_top_prefix_is_still_refused() -> None:
+    """The other side: when the observations the search actually reads underflow,
+    there is nothing to divide by and refusing is right."""
+    with pytest.raises(ValueError, match="underflows to zero across the top"):
+        karamata_onset([1e-5 * (1 + 0.01 * i) for i in range(60)], alpha=70.0, min_beyond=10)
+
+
+def test_slowly_varying_converts_an_overflow_into_a_value_error() -> None:
+    """``float.__pow__`` RAISES on overflow rather than returning inf, and this
+    module's contract is ``ValueError``."""
+    with pytest.raises(ValueError, match="overflows on this sample"):
+        slowly_varying([1e5 * (1 + 0.01 * i) for i in range(60)], alpha=100.0)

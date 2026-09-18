@@ -545,8 +545,9 @@ def test_an_overflowing_shape_is_refused_rather_than_priced() -> None:
 def test_a_strike_at_spot_is_refused_even_when_it_is_the_deepest_valid_one() -> None:
     """For ``l <= ~1.1e-16``, ``(1 - l)`` rounds to ``1.0``, so
     ``deepest_valid_put_strike`` returns ``spot`` itself -- and pricing there is
-    ``0.0 ** -2``. The contract says ``ValueError`` outside the domain; this was
+    ``0.0 ** -2``. The contract says ``ValueError`` outside the domain; that was
     a ``ZeroDivisionError`` *inside* it, from a tail a public constructor makes.
+    ``_put_shape`` now raises ``ValueError`` there instead.
     """
     tail = anchor_l_put(price=1e-50, strike=50.0, spot=100.0, alpha=3.0)
     assert tail.deepest_valid_put_strike(spot=100.0) == 100.0

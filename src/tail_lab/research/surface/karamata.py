@@ -89,18 +89,19 @@ def slowly_varying(sample: Sequence[float], *, alpha: float) -> list[tuple[float
         raise ValueError("slowly_varying needs finite observations; the sample has nan or inf")
 
     n = len(ordered)
-    curve = [(x, (i / (n + 1.0)) * x**alpha) for i, x in enumerate(ordered, start=1)]
-    if not all(math.isfinite(level) and level > 0.0 for _, level in curve):
-        # `x**alpha` underflows to 0.0 for every x once alpha*log10(max x) is
-        # below about -323.6, and overflows above it. Either way L carries no
-        # information and `_flatness` would divide by a zero mean. An earlier
-        # version of this module called that branch unreachable and deleted the
-        # guard; it is reachable, and the claim was the worse of the two errors.
+    try:
+        return [(x, (i / (n + 1.0)) * x**alpha) for i, x in enumerate(ordered, start=1)]
+    except OverflowError as exc:
+        # `float.__pow__` RAISES on overflow rather than returning inf, so this
+        # is the only way a level can fail to be finite -- and the module's
+        # documented contract is ValueError. (An earlier version guarded
+        # `math.isfinite(level)` instead and asserted in a comment that `x**alpha`
+        # "overflows"; it does not, it raises, so that half of the guard was
+        # dead and the comment was wrong.)
         raise ValueError(
-            f"L = P(X>x) * x^{alpha} is not finite and positive across this sample; "
+            f"L = P(X>x) * x^{alpha} overflows on this sample; "
             "the tail index is too large for the observations' scale"
-        )
-    return curve
+        ) from exc
 
 
 def _flatness(values: Sequence[float]) -> float:
@@ -129,6 +130,21 @@ def _onset_for_alpha(
     """
     curve = slowly_varying(sample, alpha=alpha)
     levels = [level for _, level in curve]
+
+    # Guard only the levels this function actually CONSUMES. `_flatness` divides
+    # by the mean of a prefix, and every prefix contains the top `min_beyond`,
+    # so a positive sum there makes every longer prefix's mean positive too.
+    #
+    # An earlier version validated the whole curve inside `slowly_varying`, and
+    # that refused perfectly fittable samples: one plausible deep loss (1e-6
+    # against a 3% top) underflows at a large seed alpha and is never selected,
+    # yet the entire sample was rejected -- and `scripts/tail_alpha.py` calls
+    # this outside a try, so it tracebacked where it used to print a verdict.
+    if sum(levels[:min_beyond]) <= 0.0:
+        raise ValueError(
+            f"L = P(X>x) * x^{alpha} underflows to zero across the top {min_beyond} "
+            "observations; the tail index is too large for their scale"
+        )
 
     # Scan every prefix rather than stopping at the first violation.
     # `_flatness` is (max - min) / mean, and while (max - min) is non-decreasing
