@@ -362,3 +362,65 @@ never read from the vendor's `implied_volatility` column, which is
 sentinel-filled before 2011 (§7). Bisection rather than Newton because a put
 price is monotone in vol and cannot diverge, while Newton can — exactly on the
 near-zero-vega deep strikes that produced the finding above.
+
+---
+
+## 12. Five years of daily returns cannot establish a Karamata region
+
+*2026-09-18*
+
+**Believed:** the tail index is the hard part of Paretan pricing, and the
+Karamata constant — the point beyond which the strong Pareto law takes over —
+is a detail you estimate along the way. `docs/adr/0026` treats it as a
+precondition, and the first version of `research/surface/karamata.py` returned
+an onset unconditionally.
+
+**Turned out:** on bronze OHLCV's rolling five-year window (1,254 closes,
+~580 down-moves) **no name in the universe has a measurable Karamata region.**
+Measured 2026-09-18 with `make tail-alpha`, at the relative-flatness tolerance
+that "L has converged to a constant" actually means:
+
+| | down-moves | best flatness | only Hill plateau |
+|---|---|---|---|
+| SPY | 577 | 0.61 | alpha 2.75 at a **1.71 %** move |
+| QQQ | 574 | 0.69 | alpha 3.27 at a 2.49 % move |
+| TSLA | 602 | 0.96 | alpha 3.41 at a 6.64 % move |
+| NVDA | 584 | 3.00 | alpha 3.10 at a 4.46 % move |
+| HYG | 618 | 1.44 | alpha 2.75 at a **0.74 %** move |
+
+Against a tolerance of 0.05. And it is not one knob away: sweeping tolerance
+over {0.05, 0.10, 0.25, 0.50} × min_beyond over {20, 30, 50} returns
+`is_flat=False` in **every** cell. Only at tolerance 1.00 — where "flat" means
+`L` varying by 100 % of its own mean, which is not flatness — does a region
+appear, and its onset then sits at 0.64–0.80 %, deep in the body.
+
+**Why it is the expensive kind of finding.** SPY's only Hill plateau reports
+**alpha 2.75**, which is exactly the figure Taleb et al. quote for SPX. It is
+extremely tempting, and it is a **body-of-distribution slope**: its threshold is
+a 1.71 % daily move, around the 70th percentile of down-days. HYG's is worse —
+the same 2.75 at a 0.74 % move. A tool that printed the plateau would have
+produced a number that agrees with the literature, looks like a replication, and
+measures nothing about any tail.
+
+**What changed.**
+
+1. `KaramataFit` gained **`is_flat`**, and consumers may not use `onset` without
+   it. Previously, when no stretch met the tolerance, the search returned its own
+   `min_beyond` floor and there was no way to tell that apart from a measurement.
+2. `hill.stable_k` takes **`min_threshold`**, and `scripts/tail_alpha.py` gates
+   on the onset — refusing outright when there is no onset to gate on, rather
+   than falling back to the ungated plateau. Falling back would be backwards:
+   the absence of an onset is *less* reason to trust the plateau, not more.
+3. **The realised-alpha leg is not available from bronze OHLCV.** Anything
+   needing a realised tail index must use the optionsDX panel's own `spot`
+   column (~3,520 trading days, 2010-2023, `docs/DATA_CONTRACTS.md` #12), which
+   is also the basis the implied side is fitted on — so the two legs come from
+   one column of one file rather than two sources with different split
+   conventions.
+
+**What it does not mean.** Not that returns are thin-tailed — `L` converging to
+a constant is an asymptotic statement, and the finding is that ~580 observations
+cannot establish it, not that it is false. The right reading is that the default
+tolerance is calibrated for what the phrase means, and that this window cannot
+meet it. Loosening the tolerance until a number appears is the specific failure
+this entry exists to prevent.

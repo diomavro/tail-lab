@@ -1098,6 +1098,13 @@ platform has never had. The screen item serves §4 **Q1**.
       * **Horizon-match the realised `alpha`** (see `docs/adr/0026` §6) and
         report it as an interval over the Hill plot with a block-bootstrap CI,
         never as a point with `alpha/sqrt(k)`.
+      * **Take the realised leg from the optionsDX panel's own `spot` column,
+        not from bronze OHLCV.** `docs/DISCOVERIES.md` §12: on the rolling
+        five-year OHLCV window no name in the universe has a measurable
+        Karamata region at any sane tolerance, so the realised leg simply is not
+        available there. The panel gives ~3,520 trading days instead of 1,254,
+        and it is the same column the implied leg is fitted on -- which also
+        sidesteps the as-traded-vs-split-adjusted hazard between the two.
       * **Anchor by delta, not fixed moneyness.** Holding the tail identical and
         moving only diffusive vol moves the 90 %-anchor `alpha` by +0.96 from
         calm to crisis — this is `docs/PRIOR_ART.md` §1's confound, dominant
