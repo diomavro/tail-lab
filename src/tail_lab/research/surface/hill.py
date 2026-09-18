@@ -1,0 +1,187 @@
+"""Hill estimator for the tail index ``alpha`` -- the platform's first fat-tail
+measurement (``docs/END_STATE.md`` §4 Q6; ``docs/adr/0026``).
+
+The Paretan pricing heuristic in ``paretan.py`` takes ``alpha`` as its sole
+parameter. This module is where ``alpha`` comes from when it is measured on
+realised moves rather than fitted to quotes. Taleb et al. calibrate "beyond the
+Karamata constant ... using such standard techniques as the Hill estimator",
+and assert ``alpha`` fluctuates minimally over time -- an assertion this module
+makes testable rather than assumed.
+
+**A Hill point estimate on its own is not a measurement.** The estimator is
+notoriously sensitive to ``k``, the number of order statistics it reads: on real
+S&P 500 down-moves 2016-2023 it ranges from 1.48 to 3.32 across the values of
+``k`` a reasonable person would pick -- a spread wider than most effects anyone
+wants to detect. So the useful object is ``hill_plot`` (alpha as a function of
+k) plus ``stable_k``, which reports a plateau **or refuses**. An alpha read off
+a plot with no stable region is a choice dressed as a measurement.
+
+``stable_k`` also takes ``min_threshold``, and callers should pass it. A Hill
+plot flattens wherever the log-log slope is locally constant, and for a
+lognormal-ish *body* that happens too: at the default settings on real index
+down-moves the plateau lands at a 1.9% daily move -- the 5th percentile, which
+is body, not tail. Gating the plateau on the Karamata onset
+(``karamata.karamata_onset``) is what distinguishes the two.
+"""
+
+from __future__ import annotations
+
+import math
+from collections.abc import Sequence
+from dataclasses import dataclass
+
+#: Smallest ``k`` worth reporting. Below roughly ten order statistics the
+#: estimator's own standard error (``alpha / sqrt(k)``) exceeds a third of the
+#: estimate, so the number carries no information a reader can act on.
+MIN_K = 10
+
+
+@dataclass(frozen=True)
+class HillEstimate:
+    """One ``(k, alpha)`` point of a Hill plot.
+
+    ``alpha`` is the tail index: ``P(X > x) ~ L(x) x^-alpha``. ``threshold`` is
+    ``X_(k+1)``, the order statistic the fit starts from, **in the sample's own
+    units** -- for a loss series that is a return magnitude, and reporting it is
+    what lets a reader see whether the fit sits in the tail or in the body.
+    ``standard_error`` is Hill's asymptotic ``alpha / sqrt(k)``, which assumes
+    iid draws; under volatility clustering it understates, measured at ~1.4x on
+    a GARCH-t bootstrap, so it is a floor on the uncertainty and not the whole
+    of it.
+    """
+
+    alpha: float
+    k: int
+    threshold: float
+    standard_error: float
+    n: int
+
+
+def hill_alpha(sample: Sequence[float], *, k: int) -> HillEstimate:
+    """Hill estimate of the tail index from the top ``k`` order statistics.
+
+    ``alpha_hat = 1 / mean(log(X_(i) / X_(k+1)))`` over ``i = 1..k``, where
+    ``X_(1) >= ... >= X_(n)`` are the sample sorted descending.
+
+    ``sample`` must be strictly positive -- the estimator is defined on the
+    right tail of a positive variable. For price moves, pass **magnitudes of
+    arithmetic down-moves** (``returns.loss_magnitudes``), never log returns:
+    the paper's own theorem shows log returns are not in the regular-variation
+    class, so a Hill fit on them is estimating the tail of a different object.
+
+    Raises ``ValueError`` if ``k < 1``, if ``k + 1 > len(sample)`` (there is no
+    ``X_(k+1)`` to divide by), if any value is non-positive, or if the top
+    ``k + 1`` values are all equal (the logs are then all zero and ``alpha`` is
+    infinite, not large -- a tie-degenerate sample, typically a tick-pinned
+    price series).
+    """
+    if k < 1:
+        raise ValueError(f"k must be at least 1, got {k}")
+
+    ordered = sorted((float(x) for x in sample), reverse=True)
+    n = len(ordered)
+    if k + 1 > n:
+        raise ValueError(
+            f"k={k} needs at least {k + 1} observations to have an X_(k+1) threshold, got {n}"
+        )
+    if ordered[-1] <= 0.0:
+        raise ValueError(
+            "hill_alpha is defined on strictly positive samples; "
+            "pass loss magnitudes, not signed returns"
+        )
+
+    threshold = ordered[k]
+    log_excess_mean = sum(math.log(x / threshold) for x in ordered[:k]) / k
+    if log_excess_mean <= 0.0:
+        raise ValueError(
+            f"the top {k + 1} observations are all equal ({threshold}); "
+            "the tail index is undefined on a tie-degenerate sample"
+        )
+
+    alpha = 1.0 / log_excess_mean
+    return HillEstimate(
+        alpha=alpha,
+        k=k,
+        threshold=threshold,
+        standard_error=alpha / math.sqrt(k),
+        n=n,
+    )
+
+
+def hill_plot(
+    sample: Sequence[float],
+    *,
+    k_min: int = MIN_K,
+    k_max: int | None = None,
+    step: int = 1,
+) -> list[HillEstimate]:
+    """``hill_alpha`` across a range of ``k`` -- the Hill plot, in ascending k.
+
+    ``k_max`` defaults to ``len(sample) - 1``, the largest ``k`` with a
+    threshold. Points whose sample is tie-degenerate at that ``k`` are skipped
+    rather than raising, so one flat stretch does not destroy the whole plot.
+
+    Raises ``ValueError`` for a non-positive ``step`` or a ``k_min`` past the
+    end of the sample.
+    """
+    if step < 1:
+        raise ValueError(f"step must be at least 1, got {step}")
+
+    n = len(sample)
+    upper = n - 1 if k_max is None else min(k_max, n - 1)
+    if k_min > upper:
+        raise ValueError(
+            f"k_min={k_min} exceeds the largest usable k ({upper}) for a sample of {n}"
+        )
+
+    points: list[HillEstimate] = []
+    for k in range(k_min, upper + 1, step):
+        try:
+            points.append(hill_alpha(sample, k=k))
+        except ValueError:
+            continue
+    return points
+
+
+def stable_k(
+    plot: Sequence[HillEstimate],
+    *,
+    window: int = 20,
+    tolerance: float = 0.05,
+    min_threshold: float | None = None,
+) -> HillEstimate | None:
+    """The first plateau in a Hill plot, or ``None`` if there isn't one.
+
+    A plateau is ``window`` consecutive points whose ``alpha`` all sit within
+    ``tolerance`` (relative) of the window's mean. The returned estimate is the
+    window's midpoint. Scanning from the left returns the plateau at the
+    highest threshold -- deepest in the tail -- which is the one to prefer when
+    several exist.
+
+    ``min_threshold`` rejects any window whose midpoint threshold falls below
+    it, and callers that can compute it **should pass the Karamata onset**. A
+    Hill plot flattens wherever the log-log slope is locally constant, which
+    includes the body of a lognormal-ish distribution; without this gate the
+    function happily returns a body slope with every appearance of stability.
+
+    Returning ``None`` is a real answer and the caller must render it as one:
+    there is no tail index here that this data supports.
+    """
+    if window < 1:
+        raise ValueError(f"window must be at least 1, got {window}")
+    if tolerance <= 0.0:
+        raise ValueError(f"tolerance must be positive, got {tolerance}")
+
+    for start in range(len(plot) - window + 1):
+        window_points = plot[start : start + window]
+        alphas = [p.alpha for p in window_points]
+        mean_alpha = sum(alphas) / window
+        if mean_alpha <= 0.0:
+            continue
+        if any(abs(a - mean_alpha) / mean_alpha > tolerance for a in alphas):
+            continue
+        midpoint = window_points[window // 2]
+        if min_threshold is not None and midpoint.threshold < min_threshold:
+            continue
+        return midpoint
+    return None

@@ -11,7 +11,7 @@ VENV := .venv
 PY := env -u PYTHONPATH $(VENV)/bin/python
 PIP := env -u PYTHONPATH $(VENV)/bin/pip
 
-.PHONY: setup lint format typecheck import-lint test check cov-floors ingest-vix ingest-vix-complex ingest-ohlcv ingest-cboe-strategy ingest-rates ingest-credit ingest-fomc ingest-earnings ingest-option-quotes residual skew api frontend clean ingest-mpd ingest-options-expiry ingest-sp500-constituents ingest-vix-futures
+.PHONY: setup lint format typecheck import-lint test check cov-floors ingest-vix ingest-vix-complex ingest-ohlcv ingest-cboe-strategy ingest-rates ingest-credit ingest-fomc ingest-earnings ingest-option-quotes residual skew tail-alpha api frontend clean ingest-mpd ingest-options-expiry ingest-sp500-constituents ingest-vix-futures
 
 help:
 	@echo "Targets:"
@@ -143,6 +143,14 @@ ingest-option-chain:
 # correctly; this is the only independent check that the MODEL is right.
 greeks-check:
 	env -u PYTHONPATH $(VENV)/bin/python scripts/greeks_check.py
+
+# Read-only: the tail index of a name's own down-moves, where its tail begins,
+# and whether the log basis would have measured something different
+# (docs/adr/0026). Refuses rather than printing a number when the Hill plot has
+# no plateau, or when its only plateau sits inside the body of the distribution.
+TAIL_SYMBOL ?= SPY
+tail-alpha:
+	env -u PYTHONPATH $(VENV)/bin/python scripts/tail_alpha.py $(TAIL_SYMBOL)
 
 # Reads the hand-downloaded, licence-limited optionsDX corpus in
 # data/vendor/optionsdx/ (gitignored; absent on CI and in prod). Touches no
