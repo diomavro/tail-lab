@@ -381,6 +381,11 @@ export interface RankedAsset {
   hit_rate: number
   biggest_payoff_mult: number
   n_cycles: number
+  /** "model" or "market" -- whether this row's ROI came from BlackScholesPricer
+   *  or a real listed quote. The screen never passes real quotes in today, so
+   *  this is always "model"; surfaced so a model-priced ROI never looks
+   *  identical to a market-priced one once it can be either. */
+  priced_from: 'model' | 'market'
   /** The best this name gets when its parameters are chosen well: the argmax
    *  of its own strike x tenor sweep, bounded to the strikes the model can
    *  actually price. This is the headline the compact ranking shows, and the
@@ -448,6 +453,15 @@ export interface MetricScreenEntry {
   verdict: Verdict
   regime_slices: RegimeSlice[]
   spearman_vs_payoff: number | null
+  // Two-sided p-value for spearman_vs_payoff being zero; null exactly when
+  // spearman_vs_payoff is null. significant_raw is the uncorrected p < fdr_alpha
+  // hurdle a single test would use in isolation; significant_corrected is the
+  // same test after Benjamini-Hochberg FDR correction across every screen in
+  // this comparison (research/backtest/multiple_testing.py) -- read the
+  // corrected flag before calling a screen a real winner.
+  spearman_pvalue: number | null
+  significant_raw: boolean
+  significant_corrected: boolean
   lift_vs_baseline: number
 }
 
@@ -459,6 +473,11 @@ export interface MetricScreenComparison {
   top_k: number
   universe_size: number
   baseline_roi: number
+  // How many of the seven screens had a defined spearman_pvalue and so entered
+  // the Benjamini-Hochberg correction (Harvey, Liu & Zhu 2016 says this must be
+  // reported alongside any "which metric wins" verdict).
+  n_comparisons: number
+  fdr_alpha: number
   entries: MetricScreenEntry[]
 }
 

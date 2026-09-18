@@ -41,8 +41,8 @@ def _build(px: list[float]) -> tuple[pd.Series, pd.Series, list[dt.date]]:
     """
     idx = pd.date_range("2021-01-04", periods=len(px), freq="B")
     prices = pd.Series(px, index=idx, name="TEST")
-    iv = pd.Series(np.full(len(px), 0.20), index=idx)
-    return prices, iv, [ts.date() for ts in idx]
+    realized_vol = pd.Series(np.full(len(px), 0.20), index=idx)
+    return prices, realized_vol, [ts.date() for ts in idx]
 
 
 @dataclass
@@ -80,9 +80,9 @@ class _FakeQuoteSource:
 
 
 def test_a_pinned_market_cycle_settles_at_hand_derived_numbers() -> None:
-    """35 sessions, IV_WINDOW=20 -> first_entry=20 (``lookback_years=5`` makes
+    """35 sessions, REALIZED_VOL_WINDOW=20 -> first_entry=20 (``lookback_years=5`` makes
     the nominal window far wider than the panel, so ``max(n-lookback_days,
-    IV_WINDOW)`` is pinned by the floor). The source quotes exactly one
+    REALIZED_VOL_WINDOW)`` is pinned by the floor). The source quotes exactly one
     session, day 20: strike 90.0, premium (ask) 2.5, expiry day 34.
 
     By hand: ``contracts = notional/premium = 1000/2.5 = 400.0``;
@@ -101,7 +101,7 @@ def test_a_pinned_market_cycle_settles_at_hand_derived_numbers() -> None:
     """
     px = [100.0] * 35
     px[34] = 84.0
-    prices, iv, dates = _build(px)
+    prices, realized_vol, dates = _build(px)
     source = _FakeQuoteSource(
         fills={
             dates[20]: Fill(
@@ -116,7 +116,7 @@ def test_a_pinned_market_cycle_settles_at_hand_derived_numbers() -> None:
 
     result = run_put_roll(
         prices,
-        iv,
+        realized_vol,
         asset="TEST",
         as_of=dates[-1],
         notional=1000.0,
@@ -180,7 +180,7 @@ def test_a_source_that_fills_only_half_never_falls_back_to_the_model() -> None:
     match here is strong evidence nothing but the quote was used.
     """
     px = [100.0] * 30
-    prices, iv, dates = _build(px)
+    prices, realized_vol, dates = _build(px)
     source = _FakeQuoteSource(
         fills={
             dates[20]: Fill(
@@ -202,7 +202,7 @@ def test_a_source_that_fills_only_half_never_falls_back_to_the_model() -> None:
 
     result = run_put_roll(
         prices,
-        iv,
+        realized_vol,
         asset="TEST",
         as_of=dates[-1],
         notional=1000.0,
@@ -243,7 +243,7 @@ def test_realized_expiry_beats_the_naive_i_plus_tenor_days_settlement() -> None:
     px = [100.0] * 46
     px[30] = 95.0
     px[45] = 70.0
-    prices, iv, dates = _build(px)
+    prices, realized_vol, dates = _build(px)
     source = _FakeQuoteSource(
         fills={
             dates[20]: Fill(
@@ -258,7 +258,7 @@ def test_realized_expiry_beats_the_naive_i_plus_tenor_days_settlement() -> None:
 
     result = run_put_roll(
         prices,
-        iv,
+        realized_vol,
         asset="TEST",
         as_of=dates[-1],
         notional=1000.0,
@@ -294,7 +294,7 @@ def test_spread_scale_is_ignored_on_the_market_path() -> None:
     """
     px = [100.0] * 35
     px[34] = 84.0
-    prices, iv, dates = _build(px)
+    prices, realized_vol, dates = _build(px)
 
     def _source() -> _FakeQuoteSource:
         return _FakeQuoteSource(
@@ -318,10 +318,10 @@ def test_spread_scale_is_ignored_on_the_market_path() -> None:
         lookback_years=5.0,
     )
     result_spread = run_put_roll(
-        prices, iv, basis=PricingBasis(quotes=_source()), spread_scale=1.0, **kwargs
+        prices, realized_vol, basis=PricingBasis(quotes=_source()), spread_scale=1.0, **kwargs
     )
     result_no_spread = run_put_roll(
-        prices, iv, basis=PricingBasis(quotes=_source()), spread_scale=0.0, **kwargs
+        prices, realized_vol, basis=PricingBasis(quotes=_source()), spread_scale=0.0, **kwargs
     )
 
     assert result_spread.cycles[0].cost == pytest.approx(2.6)
@@ -352,7 +352,7 @@ def test_annualization_uses_the_traded_span_not_the_nominal_window() -> None:
     """
     px = [100.0] * 29
     px[27] = 85.0
-    prices, iv, dates = _build(px)
+    prices, realized_vol, dates = _build(px)
     source = _FakeQuoteSource(
         fills={
             dates[20]: Fill(
@@ -367,7 +367,7 @@ def test_annualization_uses_the_traded_span_not_the_nominal_window() -> None:
 
     result = run_put_roll(
         prices,
-        iv,
+        realized_vol,
         asset="TEST",
         as_of=dates[-1],
         notional=1000.0,
@@ -416,7 +416,7 @@ def test_adversarial_marks_never_read_a_quote_outside_the_cycles_own_window() ->
     settled.
     """
     px = [100.0] * 30
-    prices, iv, dates = _build(px)
+    prices, realized_vol, dates = _build(px)
     trap_key = (dates[24], 90.0, dates[23])  # cycle 1's contract, one day past its own expiry
     source = _FakeQuoteSource(
         fills={
@@ -440,7 +440,7 @@ def test_adversarial_marks_never_read_a_quote_outside_the_cycles_own_window() ->
 
     result = run_put_roll(
         prices,
-        iv,
+        realized_vol,
         asset="TEST",
         as_of=dates[-1],
         notional=1000.0,
@@ -541,7 +541,7 @@ def test_mtm_market_path_marks_at_the_bid_and_carries_forward() -> None:
     """
     px = [100.0] * 25
     px[24] = 80.0
-    prices, iv, dates = _build(px)
+    prices, realized_vol, dates = _build(px)
     source = _FakeQuoteSource(
         fills={
             dates[20]: Fill(
@@ -557,7 +557,7 @@ def test_mtm_market_path_marks_at_the_bid_and_carries_forward() -> None:
 
     result = run_put_roll(
         prices,
-        iv,
+        realized_vol,
         asset="TEST",
         as_of=dates[-1],
         notional=1000.0,
@@ -615,14 +615,14 @@ def test_a_fill_expiring_on_its_own_entry_day_cannot_hang_the_roll() -> None:
 
     idx = pd.bdate_range("2024-01-02", periods=120)
     prices = pd.Series(np.linspace(100.0, 110.0, 120), index=idx)
-    iv = prices.pct_change().rolling(20).std() * np.sqrt(252)
+    realized_vol = prices.pct_change().rolling(20).std() * np.sqrt(252)
 
     with pytest.raises(LookupError):
         # Every cycle is refused, so no roll completes and the engine reports
         # that rather than returning an empty result -- but it TERMINATES.
         run_put_roll(
             prices,
-            iv,
+            realized_vol,
             asset="SPY",
             as_of=idx[-1].date(),
             notional=1000.0,

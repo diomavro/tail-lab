@@ -33,6 +33,15 @@ const VERDICT_TAG: Record<Verdict, string> = {
   untested: 'pl-tag pl-tag-outline',
 }
 
+const BASIS_TAG: Record<RankedAsset['priced_from'], string> = {
+  model: 'pl-tag pl-tag-outline',
+  market: 'pl-tag pl-tag-ok',
+}
+const BASIS_LABEL: Record<RankedAsset['priced_from'], string> = {
+  model: 'Model',
+  market: 'Market',
+}
+
 const num = (v: number | null, digits = 2) => (v == null ? '—' : fmtFixed(v, digits))
 
 /** `fragility_score` is a mean fractional rank in 0..1, so it needs scaling
@@ -99,6 +108,9 @@ export function RankingStrip({ ranked, currentAsset, onSelect }: Props) {
                 <th>At</th>
                 <th className="num">Hit</th>
                 <th className="num">Verdict</th>
+                <th className="num" title="Whether this row's ROI came from the pricing model or a real listed quote">
+                  Basis
+                </th>
               </tr>
             </thead>
             <tbody>
@@ -132,6 +144,9 @@ export function RankingStrip({ ranked, currentAsset, onSelect }: Props) {
                   <td className="num dim">{Math.round(r.hit_rate * 100)}%</td>
                   <td className="num">
                     <span className={VERDICT_TAG[r.verdict]}>{r.verdict.replace('_', ' ')}</span>
+                  </td>
+                  <td className="num">
+                    <span className={BASIS_TAG[r.priced_from]}>{BASIS_LABEL[r.priced_from]}</span>
                   </td>
                 </tr>
               ))}

@@ -28,6 +28,7 @@ from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from functools import partial
+from typing import Literal
 
 import pandas as pd
 from pydantic import BaseModel
@@ -117,6 +118,14 @@ class RankedAsset(BaseModel):
     hit_rate: float
     biggest_payoff_mult: float
     n_cycles: int
+    # "model" (BlackScholesPricer) or "market" (a real listed quote) -- see
+    # PutBacktestResult.priced_from. `rank_universe` never passes a
+    # PricingBasis today, so this is always "model"; the field exists so the
+    # screen states that plainly (AGENT_TODO.md, "the ranked screen is still
+    # model-priced") instead of leaving a model-priced ROI looking identical
+    # to a market-priced one, and so it flips honestly the day this orchestrator
+    # is wired to real quotes.
+    priced_from: Literal["model", "market"]
     # The best this name gets when its parameters are chosen well: the argmax
     # of its own strike x tenor sweep, bounded to the strikes the model can
     # actually price (docs/adr/0018). This is the headline the ranking leads
@@ -247,10 +256,10 @@ def _vol_beta_for(
 
 def _rank_one(symbol: str, ctx: _RankContext) -> RankedAsset | None:
     try:
-        prices, iv_proxy = load_asof_series(ctx.store, symbol, ctx.as_of)
+        prices, realized_vol_proxy = load_asof_series(ctx.store, symbol, ctx.as_of)
         result = run_put_roll(
             prices,
-            iv_proxy,
+            realized_vol_proxy,
             asset=symbol,
             as_of=ctx.as_of,
             notional=ctx.notional,
@@ -274,7 +283,7 @@ def _rank_one(symbol: str, ctx: _RankContext) -> RankedAsset | None:
     best = best_point(
         run_sweep(
             prices,
-            iv_proxy,
+            realized_vol_proxy,
             asset=symbol,
             as_of=ctx.as_of,
             notional=ctx.notional,
@@ -293,7 +302,7 @@ def _rank_one(symbol: str, ctx: _RankContext) -> RankedAsset | None:
         try:
             best_run = run_put_roll(
                 prices,
-                iv_proxy,
+                realized_vol_proxy,
                 asset=symbol,
                 as_of=ctx.as_of,
                 notional=ctx.notional,
@@ -322,6 +331,7 @@ def _rank_one(symbol: str, ctx: _RankContext) -> RankedAsset | None:
         hit_rate=result.hit_rate,
         biggest_payoff_mult=result.biggest_payoff_mult,
         n_cycles=result.n_cycles,
+        priced_from=result.priced_from,
         best_annualized=best.annualized_return if best else None,
         best_moneyness_pct=best.moneyness_pct if best else None,
         best_tenor_weeks=best.tenor_weeks if best else None,

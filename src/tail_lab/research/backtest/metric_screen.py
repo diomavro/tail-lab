@@ -25,6 +25,16 @@ future data leaks in), but "sorted payoffs well over 2022-2026" must never be
 read as "will sort payoffs well next year". Treat the winner as a screen
 chooser, not a signal.
 
+Testing seven screens against the same window is also a multiple-comparisons
+problem (Harvey, Liu & Zhu, *...and the Cross-Section of Expected Returns*,
+Review of Financial Studies 29(1), 2016): a conventional per-test hurdle names
+a winner far more often than it should once this many candidates are tried.
+Each entry's ``significant_raw`` is that uncorrected per-test reading;
+``significant_corrected`` is the same test after a Benjamini-Hochberg
+false-discovery-rate correction across every screen with a defined p-value in
+the comparison (``multiple_testing.benjamini_hochberg``) -- read the corrected
+column, not the raw one, before calling any screen a real winner.
+
 Efficiency: each name is loaded and backtested **once**; the seven screens differ
 only in how they *rank and select* from that shared pass, so 35 names cost 35
 backtests, not 35x7.
@@ -33,14 +43,17 @@ backtests, not 35x7.
 from __future__ import annotations
 
 import datetime as dt
+import math
 from collections.abc import Callable
 from dataclasses import dataclass
 
 import pandas as pd
 from pydantic import BaseModel
+from scipy.stats import spearmanr
 
 from tail_lab.contracts.hypothesis import Verdict
 from tail_lab.lake.store import LakeStore
+from tail_lab.research.backtest.multiple_testing import benjamini_hochberg
 from tail_lab.research.backtest.portfolio import _max_drawdown, _scaled
 from tail_lab.research.backtest.put_roll import (
     PutBacktestResult,
@@ -89,6 +102,11 @@ _FRAGILE_HIGH: dict[str, bool] = {
     "vol_beta": False,
 }
 _COMPOSITE = "fragility_score"
+#: FDR level for the Benjamini-Hochberg correction across the seven screens'
+#: Spearman tests (`docs/END_STATE.md` §4 Q1) -- the conventional per-test
+#: 0.05 hurdle this also gates the *uncorrected* `significant_raw` reading,
+#: so the two columns are directly comparable at the same nominal level.
+_FDR_ALPHA = 0.05
 #: Human labels for the cockpit table.
 _LABELS: dict[str, str] = {
     "downside_beta": "Downside beta",
@@ -119,6 +137,19 @@ class MetricScreenEntry(BaseModel):
     #: positive value = more-fragile-by-this-metric names had higher realized
     #: put ROI over the lookback (this metric sorted payoffs well).
     spearman_vs_payoff: float | None
+    #: Two-sided p-value for the null hypothesis that `spearman_vs_payoff` is
+    #: zero; None exactly when `spearman_vs_payoff` is None.
+    spearman_pvalue: float | None
+    #: `spearman_pvalue < 0.05`, the hurdle a single test would use in
+    #: isolation -- kept alongside `significant_corrected` because the whole
+    #: point of the correction is showing how often the uncorrected reading
+    #: calls a winner that the FDR-adjusted one does not (`docs/AGENT_TODO.md`).
+    significant_raw: bool
+    #: Whether this screen survives Benjamini-Hochberg FDR correction across
+    #: all screens with a defined p-value in this comparison, at
+    #: `MetricScreenComparison.fdr_alpha`. False whenever `spearman_pvalue` is
+    #: None (an untested screen cannot be a significant one).
+    significant_corrected: bool
     #: Blended ROI minus the buy-puts-on-everyone baseline.
     lift_vs_baseline: float
 
@@ -138,6 +169,13 @@ class MetricScreenComparison(BaseModel):
     top_k: int
     universe_size: int  # names scored (had data + a completable roll)
     baseline_roi: float  # mean per-name ROI, the "buy puts on everyone" baseline
+    #: How many of the seven screens had a defined `spearman_pvalue` and so
+    #: entered the Benjamini-Hochberg correction (`docs/END_STATE.md` §4 Q1) --
+    #: the number Harvey, Liu & Zhu (2016) says must be reported alongside any
+    #: "which metric wins" verdict, not just implied by counting table rows.
+    n_comparisons: int
+    #: FDR level `significant_corrected` was computed at.
+    fdr_alpha: float
     entries: list[MetricScreenEntry]
 
 
@@ -151,24 +189,29 @@ class _Scored:
     result: PutBacktestResult
 
 
-def _spearman(values: list[float | None], rois: list[float], *, fragile_high: bool) -> float | None:
-    """In-sample Spearman rank corr between a metric's fragility ordering and
-    realized put ROI. The metric is turned fragile-increasing (flip sign when
-    fragile-when-low), so a positive result means more-fragile names had higher
-    ROI. Spearman is invariant to that monotone transform, so this equals the
-    correlation of the fragility *rank* with ROI. None if <3 usable pairs (or
-    the correlation is undefined, e.g. a constant column)."""
+def _spearman(
+    values: list[float | None], rois: list[float], *, fragile_high: bool
+) -> tuple[float | None, float | None]:
+    """In-sample Spearman rank corr (and its two-sided p-value) between a
+    metric's fragility ordering and realized put ROI. The metric is turned
+    fragile-increasing (flip sign when fragile-when-low), so a positive result
+    means more-fragile names had higher ROI; flipping the sign changes neither
+    the correlation's magnitude nor its p-value. Both are None if <3 usable
+    pairs (or the correlation is undefined, e.g. a constant column) --
+    ``scipy.stats.spearmanr`` needs at least 2 points to run at all and returns
+    ``nan`` for a degenerate (constant) input rather than raising."""
     pairs = [
         (v if fragile_high else -v, r) for v, r in zip(values, rois, strict=True) if v is not None
     ]
     if len(pairs) < 3:
-        return None
-    xs = pd.Series([p[0] for p in pairs])
-    ys = pd.Series([p[1] for p in pairs])
-    corr = xs.corr(ys, method="spearman")
-    if pd.isna(corr):
-        return None
-    return float(corr)
+        return None, None
+    xs = [p[0] for p in pairs]
+    ys = [p[1] for p in pairs]
+    result = spearmanr(xs, ys)
+    corr, pvalue = float(result.statistic), float(result.pvalue)
+    if math.isnan(corr) or math.isnan(pvalue):
+        return None, None
+    return corr, pvalue
 
 
 def _run_screen(
@@ -226,7 +269,7 @@ def _run_screen(
         cum_values.append(cum)
     combined_dd = _max_drawdown(cum_values)
 
-    spearman = _spearman(
+    spearman, pvalue = _spearman(
         values, [s.result.roi_on_premium for s in scored], fragile_high=fragile_high
     )
     return MetricScreenEntry(
@@ -240,6 +283,11 @@ def _run_screen(
         verdict=verdict,
         regime_slices=slices,
         spearman_vs_payoff=spearman,
+        spearman_pvalue=pvalue,
+        significant_raw=pvalue is not None and pvalue < _FDR_ALPHA,
+        # Corrected across all screens once every entry in the comparison
+        # exists -- compare_metric_screens patches this in via model_copy.
+        significant_corrected=False,
         lift_vs_baseline=roi - baseline_roi,
     )
 
@@ -331,12 +379,12 @@ def compare_metric_screens(
     scored: list[_Scored] = []
     for symbol in symbols:
         try:
-            prices, iv_proxy = load_asof_series(store, symbol, as_of)
+            prices, realized_vol_proxy = load_asof_series(store, symbol, as_of)
             # Unit notional: outputs scale linearly, so we backtest once at 1.0
             # and scale into each basket's budget (mirrors run_portfolio).
             result = run_put_roll(
                 prices,
-                iv_proxy,
+                realized_vol_proxy,
                 asset=symbol,
                 as_of=as_of,
                 notional=1.0,
@@ -409,6 +457,7 @@ def compare_metric_screens(
         )
     )
     entries.sort(key=lambda e: e.roi_on_premium, reverse=True)
+    entries, n_comparisons = _correct_for_multiple_testing(entries)
 
     return MetricScreenComparison(
         as_of=as_of,
@@ -418,5 +467,29 @@ def compare_metric_screens(
         top_k=top_k,
         universe_size=len(scored),
         baseline_roi=baseline_roi,
+        n_comparisons=n_comparisons,
+        fdr_alpha=_FDR_ALPHA,
         entries=entries,
     )
+
+
+def _correct_for_multiple_testing(
+    entries: list[MetricScreenEntry],
+) -> tuple[list[MetricScreenEntry], int]:
+    """Benjamini-Hochberg FDR correction across every screen with a defined
+    p-value (`docs/END_STATE.md` §4 Q1) -- run once over the full set of
+    Spearman tests, not per-entry, since the correction is only meaningful
+    relative to how many hypotheses were tested together. Returns the entries
+    with `significant_corrected` filled in, plus how many had a p-value to
+    correct (`MetricScreenComparison.n_comparisons`)."""
+    tested = [
+        (i, e.spearman_pvalue) for i, e in enumerate(entries) if e.spearman_pvalue is not None
+    ]
+    if not tested:
+        return entries, 0
+    indices, pvalues = zip(*tested, strict=True)
+    for i, significant in zip(
+        indices, benjamini_hochberg(list(pvalues), alpha=_FDR_ALPHA), strict=True
+    ):
+        entries[i] = entries[i].model_copy(update={"significant_corrected": significant})
+    return entries, len(tested)

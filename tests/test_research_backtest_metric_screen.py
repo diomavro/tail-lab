@@ -166,10 +166,10 @@ def test_deterministic_baseline_equals_mean_roi(tmp_path: Path) -> None:
 
     rois = []
     for sym in symbols:
-        prices, iv = load_asof_series(store, sym, ingest)
+        prices, realized_vol = load_asof_series(store, sym, ingest)
         res = run_put_roll(
             prices,
-            iv,
+            realized_vol,
             asset=sym,
             as_of=ingest,
             notional=1.0,
@@ -228,3 +228,77 @@ def test_no_scorable_name_raises(tmp_path: Path) -> None:
             tenor_weeks=4.0,
             years=1.0,
         )
+
+
+def _seeded_noise_store(
+    tmp_path: Path, ingest: dt.date, *, n_symbols: int, n: int = 320
+) -> DeltaLakeStore:
+    """A universe with **no real relationship** between any fragility metric
+    and subsequent put payoff: every name (including the benchmark) is an
+    independent geometric random walk, so any metric-vs-ROI correlation the
+    bake-off measures is sampling noise by construction -- the "pure noise
+    through the grid" case `docs/AGENT_TODO.md`'s multiple-testing item asks
+    for, pinned against Benjamini-Hochberg's own textbook behavior rather than
+    a hand-derived analytic value (STANDARDS.md's "deterministic seeded
+    fixture" pattern, same shape as `_seeded_store` above)."""
+    store = DeltaLakeStore(tmp_path)
+    _seed_vix(store, ingest, n)
+    # Seed 12 is pinned deliberately (not the first one tried): it is one of
+    # several draws where the uncorrected per-screen hurdle names a winner by
+    # chance (exactly what seven simultaneous tests on pure noise sometimes
+    # does) while Benjamini-Hochberg still declares none -- the contrast the
+    # test below exists to demonstrate, not just "no relationship anywhere".
+    rng = np.random.default_rng(12)
+    spy_ret = rng.normal(0.0002, 0.011, size=n)
+    _write_closes(store, "spy", ingest, np.clip(100.0 * np.exp(np.cumsum(spy_ret)), 5, None))
+    for i in range(n_symbols):
+        r = np.random.default_rng(12_000 + i)
+        ret = r.normal(
+            0.0, 0.011, size=n
+        )  # zero drift, zero beta to spy -- pure idiosyncratic noise
+        closes = np.clip(100.0 * np.exp(np.cumsum(ret)), 5, None)
+        _write_closes(store, f"noise{i}", ingest, closes)
+    return store
+
+
+def test_bakeoff_multiple_testing_correction_on_pure_noise(tmp_path: Path) -> None:
+    """The `docs/END_STATE.md` §4 Q1 multiple-testing item, pinned end to end:
+    with no real metric-vs-payoff relationship anywhere in the universe, the
+    uncorrected per-screen hurdle (`significant_raw`, p < fdr_alpha) can still
+    call a screen a winner by chance across seven simultaneous tests, but the
+    Benjamini-Hochberg-corrected reading (`significant_corrected`) must not
+    -- that gap is the entire point of running the correction at all."""
+    ingest = dt.date(2026, 3, 2)
+    store = _seeded_noise_store(tmp_path, ingest, n_symbols=16)
+    symbols = ("spy", *(f"noise{i}" for i in range(16)))
+
+    cmp = compare_metric_screens(
+        store,
+        symbols=symbols,
+        as_of=ingest,
+        moneyness_pct=10.0,
+        tenor_weeks=4.0,
+        years=1.0,
+        top_k=3,
+    )
+
+    assert cmp.fdr_alpha == pytest.approx(0.05)
+    assert cmp.n_comparisons == sum(1 for e in cmp.entries if e.spearman_pvalue is not None)
+    assert cmp.n_comparisons > 0  # enough names for every metric to get >=3 usable pairs
+
+    # Internal consistency: significant_raw is exactly the uncorrected hurdle,
+    # and BH can only ever be stricter than it (never flags something raw
+    # didn't already flag) -- the property `benjamini_hochberg` itself pins,
+    # re-checked here through the real wiring rather than the pure function.
+    for e in cmp.entries:
+        assert e.significant_raw == (
+            e.spearman_pvalue is not None and e.spearman_pvalue < cmp.fdr_alpha
+        )
+        if e.significant_corrected:
+            assert e.significant_raw
+
+    # The actual point: on pure noise, the FDR-corrected reading declares no
+    # winner at all, even though the uncorrected reading may -- deterministic
+    # given the fixed seeds above, not a hand-derived value.
+    assert not any(e.significant_corrected for e in cmp.entries)
+    assert any(e.significant_raw for e in cmp.entries)

@@ -85,6 +85,9 @@ def test_rank_universe_sorts_by_fragility_and_skips_missing(tmp_path: Path) -> N
     assert row.vol_beta is not None
     assert row.verdict in {"confirmed", "regime_only", "failed", "untested"}
     assert row.n_cycles >= 1
+    # rank_universe never passes a PricingBasis, so every row is honestly
+    # labelled model-priced, not silently defaulted.
+    assert all(r.priced_from == "model" for r in ranking.ranked)
     for r in ranking.ranked:
         # Paced by the span actually traded, not the 1.0 year requested — so a
         # losing name's honest figure is MORE negative than the nominal one,
@@ -233,10 +236,10 @@ def test_the_best_cells_stats_all_describe_the_best_cell(tmp_path: Path) -> None
     row = ranking.ranked[0]
     assert row.best_moneyness_pct is not None and row.best_tenor_weeks is not None
 
-    prices, iv = load_asof_series(store, "wild", ingest)
+    prices, realized_vol = load_asof_series(store, "wild", ingest)
     at_best = run_put_roll(
         prices,
-        iv,
+        realized_vol,
         asset="wild",
         as_of=ingest,
         notional=1000.0,
@@ -257,7 +260,7 @@ def test_the_best_cells_stats_all_describe_the_best_cell(tmp_path: Path) -> None
     # on roughly one seed in ten.
     at_screened = run_put_roll(
         prices,
-        iv,
+        realized_vol,
         asset="wild",
         as_of=ingest,
         notional=1000.0,

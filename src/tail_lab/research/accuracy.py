@@ -41,7 +41,12 @@ from tail_lab.research.backtest.index_replication import (
     IndexReplicationResult,
     compute_index_replication,
 )
-from tail_lab.research.backtest.put_roll import DEFAULT_RATE, IV_CAP, IV_FLOOR, IV_WINDOW
+from tail_lab.research.backtest.put_roll import (
+    DEFAULT_RATE,
+    REALIZED_VOL_CAP,
+    REALIZED_VOL_FLOOR,
+    REALIZED_VOL_WINDOW,
+)
 from tail_lab.research.data_quality import assess_asset_quality
 from tail_lab.research.regimes.timeline import compute_regime_timeline
 
@@ -402,8 +407,8 @@ def standing_assumptions(*, rate: float, expected_optimism: float | None) -> lis
         ),
         Assumption(
             name="Implied volatility",
-            value=f"{IV_WINDOW}-day trailing realized vol, clamped to "
-            f"[{IV_FLOOR:.0%}, {IV_CAP:.0%}]",
+            value=f"{REALIZED_VOL_WINDOW}-day trailing realized vol, clamped to "
+            f"[{REALIZED_VOL_FLOOR:.0%}, {REALIZED_VOL_CAP:.0%}]",
             leverage="a proxy for ATM implied vol; it carries no skew, which is the "
             "leading explanation for the residual above",
         ),

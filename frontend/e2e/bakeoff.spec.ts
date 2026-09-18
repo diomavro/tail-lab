@@ -75,13 +75,37 @@ test('ranks the seven screens by ROI and marks the winner', async ({ page }) => 
 test('carries the three fields the app was fetching and discarding', async ({ page }) => {
   await page.getByRole('button', { name: 'Run the bake-off' }).click()
   const table = page.getByRole('table')
-  for (const head of ['ROI', '/yr', 'Hit', 'Bleed', 'Spearman', 'Lift', 'Verdict']) {
+  for (const head of ['ROI', '/yr', 'Hit', 'Bleed', 'Spearman', 'Sig.', 'Lift', 'Verdict']) {
     await expect(table.getByRole('columnheader', { name: head, exact: true })).toBeVisible()
   }
   const winner = table.locator('tbody tr').first()
   await expect(winner).toContainText('0.34') // spearman_vs_payoff
   await expect(winner).toContainText('+1.6') // lift_vs_baseline, in points
   await expect(winner).toContainText('−$4,216') // combined_max_drawdown
+})
+
+test('distinguishes FDR-corrected significance from the uncorrected reading', async ({ page }) => {
+  await page.getByRole('button', { name: 'Run the bake-off' }).click()
+  const table = page.getByRole('table')
+  const rows = table.locator('tbody tr')
+
+  // The composite wins ROI and survives Benjamini-Hochberg correction.
+  await expect(rows.first()).toContainText('FDR-sig.')
+
+  // Downside beta clears the uncorrected p < 0.05 hurdle alone -- exactly the
+  // divergence this column exists to show, so it must read differently from
+  // the composite's FDR-sig. tag, not just render a second copy of it.
+  const downsideBeta = rows.filter({ hasText: 'Downside beta' })
+  await expect(downsideBeta).toContainText('raw only')
+  await expect(downsideBeta).not.toContainText('FDR-sig.')
+
+  // A screen with no significant edge either way reads plainly as such.
+  const tailBeta = rows.filter({ hasText: 'Tail beta' })
+  await expect(tailBeta).toContainText('n.s.')
+
+  const notes = page.locator('.pl-bake-notes')
+  await expect(notes).toContainText('7 screens')
+  await expect(notes).toContainText('Benjamini-Hochberg')
 })
 
 test('reads the winner as a screen chooser when lift is positive', async ({ page }) => {

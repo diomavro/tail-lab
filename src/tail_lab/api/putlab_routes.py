@@ -252,11 +252,13 @@ def putlab_sweep(
     # Read the as-of price path ONCE, then roll every cell over it (one lake
     # read for the whole grid) instead of re-reading per cell.
     try:
-        prices, iv_proxy = load_asof_series(store, asset, resolved)
+        prices, realized_vol_proxy = load_asof_series(store, asset, resolved)
     except LookupError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
 
-    cells = run_sweep(prices, iv_proxy, asset=asset, as_of=resolved, notional=notional, years=years)
+    cells = run_sweep(
+        prices, realized_vol_proxy, asset=asset, as_of=resolved, notional=notional, years=years
+    )
     if not cells:
         raise HTTPException(status_code=404, detail=f"no scorable window for {asset}")
     # The S&P 500 hurdle the heatmap colours against: buy-and-hold over the same
@@ -621,10 +623,10 @@ def putlab_roll_schedule(
     sigma_by_asset: dict[str, float] = {}
     for row in wanted:
         try:
-            _, iv_proxy = load_asof_series(store, row.asset, resolved)
+            _, realized_vol_proxy = load_asof_series(store, row.asset, resolved)
         except LookupError:  # pragma: no cover - it ranked, so it has data
             continue
-        trailing = iv_proxy.dropna()
+        trailing = realized_vol_proxy.dropna()
         if not trailing.empty:
             sigma_by_asset[row.asset] = float(trailing.iloc[-1])
 
