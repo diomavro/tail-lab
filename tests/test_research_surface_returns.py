@@ -130,3 +130,14 @@ def test_refusals(prices: pd.Series, match: str) -> None:
         loss_magnitudes(prices)
     with pytest.raises(ValueError, match=match):
         log_loss_magnitudes(prices)
+
+
+def test_a_sample_too_short_to_resolve_the_drift_reports_no_verdict() -> None:
+    """At small ``k`` the probe fractions collapse onto the same ``k``, so the
+    three probes are identical -- neither rising nor falling. The honest output
+    is then ``False`` ("too short to see the effect"), not a spurious verdict
+    read off repeated values.
+    """
+    losses = pareto_quantile_sample(n=12, alpha=3.0, karamata_l=0.2)
+    comparison = compare_return_bases(price_path_with_losses(losses), k=1)
+    assert not comparison.log_alpha_is_diverging

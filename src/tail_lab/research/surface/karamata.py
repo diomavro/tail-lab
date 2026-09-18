@@ -89,11 +89,16 @@ def slowly_varying(sample: Sequence[float], *, alpha: float) -> list[tuple[float
 
 
 def _flatness(values: Sequence[float]) -> float:
-    """Relative spread ``(max - min) / mean`` of ``L`` over a stretch."""
-    mean = sum(values) / len(values)
-    if mean <= 0.0:
-        return float("inf")
-    return (max(values) - min(values)) / mean
+    """Relative spread ``(max - min) / mean`` of ``L`` over a stretch.
+
+    Private and single-use: its only caller passes a prefix of
+    ``slowly_varying``'s output, whose values are ``(i/(n+1)) * x^alpha`` with
+    ``x`` strictly positive and ``alpha`` positive -- both enforced there. So
+    the mean is strictly positive by construction and there is no zero-mean
+    branch to guard. An earlier version carried one; it was unreachable, and an
+    untestable guard is worse than no guard because it reads as a handled case.
+    """
+    return (max(values) - min(values)) / (sum(values) / len(values))
 
 
 def _onset_for_alpha(

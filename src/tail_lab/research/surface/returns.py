@@ -124,17 +124,23 @@ def compare_return_bases(prices: pd.Series, *, k: int) -> ReturnBasisComparison:
     log_sample = _as_floats(log_loss_magnitudes(prices))
     log_fit = hill_alpha(log_sample, k=k)
 
-    probes: list[float] = []
-    for fraction in DIVERGENCE_PROBE_FRACTIONS:
-        probe_k = max(1, math.floor(k * fraction))
-        if probe_k + 1 > len(log_sample):
-            continue
-        probes.append(hill_alpha(log_sample, k=probe_k).alpha)
+    # Every probe is reachable by construction: the fractions are all <= 1, so
+    # probe_k <= k, and `hill_alpha(log_sample, k=k)` above has already
+    # established k + 1 <= len(log_sample). An earlier version carried a
+    # "skip this probe if the sample is too short" branch and a completeness
+    # check built on it; both were unreachable, and an untestable branch reads
+    # as a handled case when nothing is being handled.
+    probes = [
+        hill_alpha(log_sample, k=max(1, math.floor(k * fraction))).alpha
+        for fraction in DIVERGENCE_PROBE_FRACTIONS
+    ]
 
-    complete = len(probes) == len(DIVERGENCE_PROBE_FRACTIONS)
+    # Repeated probes (which happen when k is small enough that the fractions
+    # collapse onto the same k) are neither rising nor falling, so a sample too
+    # short to resolve the drift reports False rather than a spurious verdict.
     rising = all(later > earlier for earlier, later in pairwise(probes))
     falling = all(later < earlier for earlier, later in pairwise(probes))
-    diverging = complete and (rising or falling)
+    diverging = rising or falling
 
     return ReturnBasisComparison(
         alpha_arithmetic=arithmetic,
