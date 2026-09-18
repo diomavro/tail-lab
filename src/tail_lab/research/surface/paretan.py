@@ -92,6 +92,15 @@ class ParetanTail:
         _validate(self.alpha, self.karamata_l)
         if self.basis not in ("price", "returns"):
             raise ValueError(f"basis must be 'price' or 'returns', got {self.basis!r}")
+        if self.basis == "returns" and self.karamata_l >= 1.0:
+            # In the returns basis l is a fractional distance from spot, so
+            # l >= 1 is not merely unusual: lambda = 1/(1 - l^alpha) comes back
+            # NEGATIVE -- a renormalising constant cannot be -- or divides by
+            # zero at exactly 1, and deepest_valid_put_strike falls to zero.
+            raise ValueError(
+                "a returns-basis karamata_l is a fraction of spot and must be below 1, "
+                f"got {self.karamata_l}"
+            )
 
     def _require_returns_basis(self, what: str) -> None:
         if self.basis != "returns":
@@ -171,6 +180,12 @@ class ParetanTail:
                 raise ValueError(
                     "a price-basis tail prices calls on strike alone; spot is not used"
                 )
+            if strike < self.karamata_l:
+                raise ValueError(
+                    f"strike {strike} is inside the Karamata constant {self.karamata_l}; "
+                    "the strong Pareto law does not hold there, and the survival "
+                    f"probability implied there is {(self.karamata_l / strike) ** self.alpha}"
+                )
             return float(
                 strike ** (1.0 - self.alpha) * self.karamata_l**self.alpha / (self.alpha - 1.0)
             )
@@ -226,7 +241,10 @@ def put_ratio(*, k_from: float, k_to: float, spot: float, alpha: float) -> float
             f"the anchor strike {k_from} carries no Paretan value at alpha {alpha}; "
             "it is at or beyond the point where the model assigns zero"
         )
-    return float(_put_shape(strike=k_to, spot=spot, alpha=alpha) / denominator)
+    # Same ulp-scale cancellation put_price guards against: at k_to = 0 the
+    # shape is a difference of two quantities equal in exact arithmetic, so it
+    # can land a few ulps below zero. A relative price is never negative.
+    return max(0.0, float(_put_shape(strike=k_to, spot=spot, alpha=alpha) / denominator))
 
 
 def call_ratio(*, k_from: float, k_to: float, alpha: float) -> float:
@@ -266,6 +284,12 @@ def anchor_l_call(*, price: float, strike: float, alpha: float) -> ParetanTail:
     if price <= 0.0 or strike <= 0.0:
         raise ValueError(f"price and strike must be positive, got {price} and {strike}")
     karamata_l = ((alpha - 1.0) * price * strike ** (alpha - 1.0)) ** (1.0 / alpha)
+    if karamata_l > strike:
+        raise ValueError(
+            f"the anchor strike {strike} sits inside the calibrated Karamata constant "
+            f"{karamata_l}: at this alpha the quote is too rich to describe as a tail, "
+            "and the survival probability it implies at the anchor exceeds 1"
+        )
     return ParetanTail(alpha=alpha, karamata_l=karamata_l, basis="price")
 
 
@@ -285,6 +309,13 @@ def anchor_l_call_returns(*, price: float, strike: float, spot: float, alpha: fl
         * price ** (1.0 / alpha)
         * (strike - spot) ** (1.0 - 1.0 / alpha)
     ) / spot
+    shallowest = spot * (1.0 + karamata_l)
+    if strike < shallowest:
+        raise ValueError(
+            f"the anchor strike {strike} sits inside the calibrated Karamata point "
+            f"{shallowest} (l={karamata_l}): the strong Pareto law does not hold at the "
+            "anchor, so nothing extrapolated from it is valid"
+        )
     return ParetanTail(alpha=alpha, karamata_l=karamata_l, basis="returns")
 
 

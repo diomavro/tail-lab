@@ -120,9 +120,13 @@ def test_the_onset_gate_rejects_a_plateau_that_lies_in_the_body() -> None:
     slope: exactly Pareto over the lower range, and a geometric block at the
     top whose Hill estimate drifts with ``k`` rather than settling.
 
-    Ungated, ``stable_k`` returns the body plateau. Gated on the onset measured
-    from the top of the sample, it returns nothing -- which is the behaviour
-    that stops a body slope being published as a tail index.
+    Ungated, ``stable_k`` returns the body plateau. Gated at the splice boundary
+    -- which is where the Karamata onset lies by construction here -- it returns
+    nothing, which is the behaviour that stops a body slope being published as a
+    tail index. (The gate is fed ``min(top)`` rather than a fitted onset on
+    purpose: the point under test is ``stable_k``'s threshold logic, and
+    ``test_the_onset_gate_keeps_a_genuine_tail_plateau`` covers the wiring to a
+    measured onset.)
     """
     body = pareto_quantile_sample(n=400, alpha=3.0, karamata_l=1.0)
     top = [max(body) * math.exp(0.35 * (40 - i)) for i in range(40)]
@@ -201,3 +205,35 @@ def test_is_flat_is_false_when_the_floor_is_returned() -> None:
 def test_is_flat_is_reported_through_the_fixed_point_path_too() -> None:
     body_only = [1.0 + 0.5 * i for i in range(60)]
     assert not karamata_onset(body_only, alpha=None, tolerance=0.01, min_beyond=30).is_flat
+
+
+def test_the_onset_search_does_not_stop_at_the_first_violation() -> None:
+    """``_flatness`` is ``(max - min) / mean``: ``max - min`` is non-decreasing
+    in the prefix length but the **mean** can rise faster, so flatness is not
+    monotone and can dip back under tolerance after exceeding it.
+
+    On ``L = [0.92]*3 + [1.00]*17`` at tolerance 0.085 the flatness is 0.000 at
+    3 points, 0.0851 at 4 (over), then 0.0840 at 5 and 0.0810 at 20 (under
+    again). A search that stopped at the first violation returned an onset 6.1x
+    too shallow on 3 observations instead of 20 -- and reported ``is_flat=True``,
+    so every downstream consumer took it as a measurement.
+    """
+    levels = [0.92] * 3 + [1.00] * 17
+    n, alpha = len(levels), 1.0
+    # Invert L_i = (i/(n+1)) * x_i**alpha to get a sample with exactly these levels.
+    sample = [(levels[i - 1] * (n + 1) / i) ** (1.0 / alpha) for i in range(1, n + 1)]
+
+    fit = karamata_onset(sample, alpha=alpha, tolerance=0.085, min_beyond=3)
+    assert fit.n_beyond == 20
+    assert fit.onset == pytest.approx(1.05, rel=1e-9)
+    assert fit.is_flat
+
+
+@pytest.mark.parametrize("min_beyond", [0, -5])
+def test_a_non_positive_min_beyond_is_refused(min_beyond: int) -> None:
+    """``levels[:0]`` divides by zero and ``levels[:-5]`` gives a negative mean
+    whose fractional power is **complex** -- silently, in a float-typed field.
+    """
+    sample = pareto_quantile_sample(n=100, alpha=3.0)
+    with pytest.raises(ValueError, match="min_beyond must be at least 1"):
+        karamata_onset(sample, alpha=2.0, min_beyond=min_beyond)

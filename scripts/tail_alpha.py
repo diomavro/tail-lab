@@ -81,8 +81,7 @@ def main(symbol: str) -> int:
     bases = compare_return_bases(prices, k=min(100, len(losses) // 4))
     print(
         f"  basis check    : arithmetic {bases.alpha_arithmetic.alpha:.3f} vs "
-        f"log {bases.alpha_log.alpha:.3f} (divergence {bases.divergence:+.3f}, "
-        f"log basis {'drifts' if bases.log_alpha_is_diverging else 'does not visibly drift'})"
+        f"log {bases.alpha_log.alpha:.3f} (divergence {bases.divergence:+.3f})"
     )
     print("                   only the arithmetic basis is a tail index (docs/adr/0026 §5)")
     return 0

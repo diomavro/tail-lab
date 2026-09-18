@@ -94,19 +94,18 @@ def test_the_log_basis_measures_a_different_tail() -> None:
     assert comparison.divergence < 0.0
 
 
-def test_log_basis_alpha_fails_to_settle_as_k_falls() -> None:
-    """A regularly varying tail has a Hill estimate that settles as the fit is
-    pushed further out. The log basis does not settle -- it drifts
-    monotonically -- which is the footprint of ``log(S/S_0)`` not being in the
-    regular-variation class, and what ``log_alpha_is_diverging`` reports."""
-    losses = pareto_quantile_sample(n=800, alpha=4.0, karamata_l=0.15)
-    comparison = compare_return_bases(price_path_with_losses(losses), k=200)
-    assert comparison.log_alpha_is_diverging
+def test_the_arithmetic_basis_is_the_hill_closed_form_at_every_k() -> None:
+    """The arithmetic basis is a genuine power law by construction, so its
+    estimate equals the closed form at every ``k`` -- an independent derivation
+    rather than a snapshot.
 
-
-def test_arithmetic_basis_does_not_diverge() -> None:
-    """The control: on the same construction the arithmetic basis is a genuine
-    power law, so its estimate does not climb the same way."""
+    Worth stating explicitly because that closed form,
+    ``alpha * k / (k log(k+1) - lgamma(k+1))``, is **monotone in k**. An earlier
+    version of this module reported a "does the estimate drift?" flag as
+    evidence of the paper's log-return theorem; the flag fired here too, on the
+    textbook regularly-varying case it was meant to rule out, so it had no
+    discriminating power and was removed.
+    """
     losses = pareto_quantile_sample(n=800, alpha=4.0, karamata_l=0.15)
     sample = [float(x) for x in loss_magnitudes(price_path_with_losses(losses))]
     from tail_lab.research.surface.hill import hill_alpha
@@ -130,14 +129,3 @@ def test_refusals(prices: pd.Series, match: str) -> None:
         loss_magnitudes(prices)
     with pytest.raises(ValueError, match=match):
         log_loss_magnitudes(prices)
-
-
-def test_a_sample_too_short_to_resolve_the_drift_reports_no_verdict() -> None:
-    """At small ``k`` the probe fractions collapse onto the same ``k``, so the
-    three probes are identical -- neither rising nor falling. The honest output
-    is then ``False`` ("too short to see the effect"), not a spurious verdict
-    read off repeated values.
-    """
-    losses = pareto_quantile_sample(n=12, alpha=3.0, karamata_l=0.2)
-    comparison = compare_return_bases(price_path_with_losses(losses), k=1)
-    assert not comparison.log_alpha_is_diverging

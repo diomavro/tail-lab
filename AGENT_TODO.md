@@ -1121,9 +1121,13 @@ platform has never had. The screen item serves §4 **Q1**.
       * **Pre-register every threshold before running**, and use a clustered or
         block-bootstrap SE: the grid's effective N is ~15-25, not ~2,700
         (anchors are nested, quarter-ends are serially correlated, SPY/QQQ
-        correlate ~0.95). `docs/adr/0021` §6 already mandates a multiple-testing
-        correction that `metric_screen.py` does not implement; do not inherit
-        that gap.
+        correlate ~0.95). `metric_screen.py` already applies Benjamini-Hochberg FDR
+        across the bake-off's screens (`research/backtest/multiple_testing.py`,
+        PRs #103/#104) -- follow that precedent rather than inventing a second
+        convention, noting that the correction needed here is primarily a
+        **clustered/HAC standard error** on an aggregate, with family-wise
+        control reserved for the monotonicity claims, which genuinely are
+        selected over many slices.
 
 - [ ] **MPD cross-check.** `contracts/mpd.py` defines the Minneapolis Fed's
       Breeden-Litzenberger risk-neutral densities (`prob_large_decline`, sp6m /
@@ -1148,8 +1152,8 @@ platform has never had. The screen item serves §4 **Q1**.
       `ranking.RankedAsset`, displayed as a Screen column. Folding it into
       `fragility_score` is a *separate* decision — the composite is five
       equal-weighted benchmark-regressed metrics, and adding a quantity of a
-      different kind needs its own argument plus the multiple-testing correction
-      above.
+      different kind needs its own argument plus the same Benjamini-Hochberg
+      treatment `metric_screen.py` already applies to the bake-off's screens.
 
 ### Gated — do not start these without a human decision
 

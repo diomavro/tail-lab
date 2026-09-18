@@ -194,3 +194,43 @@ def test_stable_k_ignores_a_window_whose_mean_alpha_is_not_positive() -> None:
         HillEstimate(alpha=-1.0, k=i, threshold=1.0, standard_error=0.1, n=10) for i in range(5)
     ]
     assert stable_k(degenerate, window=5, tolerance=0.5) is None
+
+
+def test_stable_k_returns_the_midpoint_of_the_window_not_an_edge() -> None:
+    """Which point of a plateau is returned decides the published ``k``,
+    ``alpha``, ``threshold`` and SE, and decides what ``min_threshold`` is
+    applied to. Both edges survived mutation before this test existed.
+    """
+    plot = [
+        HillEstimate(alpha=2.5, k=k, threshold=1.0 / k, standard_error=0.1, n=500)
+        for k in range(10, 40)
+    ]
+    found = stable_k(plot, window=20, tolerance=0.05)
+    assert found is not None
+    assert found.k == plot[20 // 2].k == 20
+
+
+def test_the_min_threshold_gate_is_inclusive_at_its_boundary() -> None:
+    """The gate is ``threshold >= min_threshold``. Probing the boundary is what
+    stops it drifting: halving the gate value survived mutation before this
+    test existed, because the only fixture sat far from it.
+    """
+    plot = [
+        HillEstimate(alpha=2.5, k=k, threshold=0.02, standard_error=0.1, n=500)
+        for k in range(10, 40)
+    ]
+    assert stable_k(plot, window=20, tolerance=0.05, min_threshold=0.02) is not None
+    assert stable_k(plot, window=20, tolerance=0.05, min_threshold=0.0200001) is None
+
+
+def test_hill_plot_refuses_a_non_positive_sample_rather_than_returning_empty() -> None:
+    """A blanket ``except ValueError: continue`` turned bad input into a verdict
+    about the data: one negative value emptied the plot, and the caller then
+    reported "this data supports no tail index" for a sample never fitted at
+    all. Positivity is validated once, up front.
+    """
+    bad = [1.0, 2.0, 3.0] * 20 + [-5.0]
+    with pytest.raises(ValueError, match="strictly positive"):
+        hill_plot(bad)
+    with pytest.raises(ValueError, match="strictly positive"):
+        hill_plot([1.0, 2.0, 0.0] * 20)

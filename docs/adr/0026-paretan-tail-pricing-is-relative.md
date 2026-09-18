@@ -59,12 +59,24 @@ Consequence: `ParetanTail` is its own frozen value type. `ARCHITECTURE.md`'s
 reserved `research/pricing/` path is for `OptionPricer` implementations and is
 deliberately not used.
 
-**2. Everything is relative to an anchor, and that is enforced by construction.**
+**2. Everything is relative to an anchor. Today that is a rule, not yet an
+invariant.**
 
 The paper is explicit: "our approach isn't about absolute mispricing of tail
 options, but relative to a given strike closer to the money." `put_ratio` and
-`call_ratio` eliminate `l` and `lambda` entirely, and every consumer takes an
-anchor. Any surface built on this must say which anchor produced a number.
+`call_ratio` eliminate `l` and `lambda` entirely, which is the algebraic form of
+that claim.
+
+**But `ParetanTail.put_price` will return an absolute number to anyone who
+constructs a tail directly, with no anchor in sight**, and calibrating through
+`anchor_l_*` is a convention rather than the only door. Making the anchor a
+required argument on every entry point is the job of the `Anchor` type in
+`research/surface/ladder.py`, which does not exist yet (`AGENT_TODO.md`). Until
+it does, this section is a rule a reviewer has to enforce, and saying otherwise
+would be exactly the kind of unearned "enforced" claim this ADR exists to
+prevent elsewhere. The same caveat applies to §5's "only sanctioned input":
+`hill_alpha` accepts any positive sequence, and nothing stops a caller passing
+log losses.
 
 **3. The sign convention is `(S_0 - K)`, and the paper's printed put formula is
 not what we implement.**
@@ -88,14 +100,19 @@ renormalises) gives
 so the printed `S_0^(1-a)` should be `S_0^(-a)`.
 
 **The discriminator is the boundary condition `P(0) = 0`** — a put struck at zero
-can never pay. The derived form gives `S_0^a * S_0^(1-a) - S_0 = 0`; the printed
-form gives -99.99 at `S_0 = 100, a = 3`. Do not "correct" the implementation back
-to the transcription: `tests/test_research_surface_paretan.py::test_zero_strike_put_is_worthless`
-is the guard, and three further independent checks agree — direct quadrature of
-the defining integral across a 96-point grid, the fact that the same integration
-reproduces the paper's *call* formula exactly, and **the paper's own `.tex`,
-which carries the corrected exponent in a commented-out line immediately below
-the printed one**.
+can never pay. The derived form gives `S_0^a * S_0^(1-a) - S_0 = 0` exactly. The
+printed form is not zero at `K = 0` for any `S_0`: verbatim it gives **-0.0099**
+at `S_0 = 100, a = 3`, and **-9900** once rescaled into this module's
+normalisation. Do not "correct" the implementation back to the transcription:
+`tests/test_research_surface_paretan.py::test_zero_strike_put_is_worthless` is
+the guard, and three further independent checks agree, each of them runnable —
+quadrature of the defining put integral across a **144-point** grid
+(`test_put_price_matches_the_defining_integral`), quadrature of the *call*
+integral reproducing the paper's published call formula
+(`test_call_price_matches_the_defining_integral`), and **the paper's own `.tex`,
+which carries the corrected `S_0^(-alpha)` exponent in a commented-out line
+immediately below the printed one** (it also reverses the term order and carries
+a `(-1)^(1-alpha)` prefactor, which cancels in the ratio).
 
 There is no normalised-`S_0` escape: the paper's call formula scales exactly
 under `(S_0, K) -> (10 S_0, 10 K)`, its `l`-calibration is scale-invariant, and
@@ -104,9 +121,14 @@ even the arbitrage bound's `log^2 K + log^2 S_0` recombines into `log^2(K/S_0)`.
 
 Two further notes for anyone re-deriving this:
 
-* `P(0) = 0` holds in exact arithmetic but **not in IEEE754** — swept over 525
-  `(alpha, S_0, l)` combinations, 140 return a residual of order 1e-14. The test
-  asserts a tolerance, not equality, or it would fail on correct code.
+* `P(0) = 0` holds in exact arithmetic but **not in IEEE754**: the shape is a
+  difference of two quantities equal in exact arithmetic, so for many
+  `(alpha, S_0)` it leaves a residual of a few ulps, and for some it is
+  *negative*. So `put_price` clamps at zero and the boundary test asserts a
+  tolerance rather than equality — demanding equality would fail on correct
+  code. Both halves are pinned: `test_zero_strike_put_is_worthless` and
+  `test_the_zero_strike_clamp_actually_clamps`, the latter on the
+  parameterisations where the raw value really is negative.
 * The truncation is a **modelling choice**. A *censored* reading (bankruptcy mass
   at `S = 0`, limited liability) gives `P_cens(K) = l^a [g/(a-1) + K]` and also
   satisfies `P(0) = 0`. The boundary condition separates the derived form from
@@ -133,12 +155,17 @@ a thinner one. What is constant is that the two bases estimate different objects
 
 **6. "Scale-free" does not mean "aggregation-invariant".** `alpha` is invariant
 under multiplication by a constant, and `hill` has a property test proving it.
-It is **not** invariant under temporal aggregation. Measured on iid Pareto(3)
-daily losses aggregated multiplicatively, the Hill estimate at `k` in
-{50, 100, 250} reads ~3.0-3.3 at 1 day, ~9.2-9.9 at 14 days, ~16.8-17.6 at 30
-days and ~39-62 at 90 days. The tail index of a sum is asymptotically `alpha`,
-so this is not a contradiction — convergence is simply far too slow to reach at
-any `k` a practitioner has. Any comparison of an option-implied `alpha` at some horizon against a
+It is **not** invariant under temporal aggregation. Aggregate iid Pareto daily
+losses to a 14-, 30- or 90-day horizon and re-estimate, and the reading climbs
+steeply with the horizon — by a factor of several even at 30 days. The tail
+index of a sum is asymptotically `alpha`, so this is not a contradiction:
+convergence is simply far slower than any `k` a practitioner can reach. The
+effect is large and robust to the construction; the exact figures are not, and
+depend on the aggregation convention (multiplicative vs additive), the sample
+size and the choice of `k`, so no specific numbers are quoted here. **Anything
+comparing an option-implied `alpha` at a 14-90 day horizon against one measured
+on daily moves must horizon-match, or the difference is an artefact of
+aggregation rather than a measurement.** Any comparison of an option-implied `alpha` at some horizon against a
 `alpha` measured on daily moves must horizon-match, or the difference is an
 artefact of aggregation rather than a measurement of anything.
 
@@ -156,10 +183,11 @@ plateau, and rejects one that lies in the body.
   is additive: no existing number on the cockpit changes.
 * The platform has its first fat-tail machinery — a Hill estimator, a Karamata
   onset, and a return-basis check. There was none before.
-* `mpmath` joins the dev dependencies, test-only. It is required because
-  `scipy.integrate.quad` is **128 % wrong** on the defining integral at
-  `alpha = 8` near the domain edge (`r^(-alpha-1)` over a ~1e27 dynamic range)
-  and fails silently; a reference built on it would condemn correct code.
+* `mpmath` joins the dev dependencies, test-only. It is required because on the
+  defining integral at `alpha = 8` near the domain edge (`r^(-alpha-1)` over a
+  ~1e27 dynamic range) `scipy.integrate.quad` returns **2.24e-11 against a true
+  7.33e-11** — it misses **70 %** of the answer and emits no warning. A
+  reference built on it would condemn correct code.
 * Two things this ADR deliberately does **not** authorise, each needing its own
   decision: making Paretan a `PricingBasis` the roll engine can run on (amends
   0004 further), and replacing `MODEL_PRICED_MAX_MONEYNESS_PCT` with a measured

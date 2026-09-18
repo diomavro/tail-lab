@@ -115,13 +115,19 @@ def _onset_for_alpha(
     curve = slowly_varying(sample, alpha=alpha)
     levels = [level for _, level in curve]
 
+    # Scan every prefix rather than stopping at the first violation.
+    # `_flatness` is (max - min) / mean, and while (max - min) is non-decreasing
+    # in `count`, the MEAN can rise faster -- so flatness is NOT monotone and can
+    # dip back under tolerance after exceeding it. An earlier version used a
+    # `break` and its docstring claimed to keep "the deepest stretch"; on
+    # levels [0.92]*3 + [1.00]*17 at tolerance 0.085 it stopped at 3 points and
+    # reported an onset 6.1x too shallow, with is_flat=True.
     best = min_beyond
     best_flatness = _flatness(levels[:min_beyond])
     for count in range(min_beyond + 1, len(levels) + 1):
         spread = _flatness(levels[:count])
-        if spread > tolerance:
-            break
-        best, best_flatness = count, spread
+        if spread <= tolerance:
+            best, best_flatness = count, spread
 
     mean_level = sum(levels[:best]) / best
     return (
@@ -155,6 +161,11 @@ def karamata_onset(
     """
     if tolerance <= 0.0:
         raise ValueError(f"tolerance must be positive, got {tolerance}")
+    if min_beyond < 1:
+        # A non-positive floor makes `levels[:min_beyond]` empty or a negative
+        # slice, which divides by zero or -- worse -- produces a negative mean
+        # whose fractional power is COMPLEX, silently, in a float-typed field.
+        raise ValueError(f"min_beyond must be at least 1, got {min_beyond}")
     if len(sample) < min_beyond + 1:
         raise ValueError(
             f"need at least {min_beyond + 1} observations to claim an onset "

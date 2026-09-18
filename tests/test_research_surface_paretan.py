@@ -83,14 +83,16 @@ def test_zero_strike_put_is_worthless(alpha: float, spot: float) -> None:
 
     This is the test that discriminates the derived ``S_0^(-alpha)`` form from
     the ``S_0^(1-alpha)`` printed in the paper: the derived one gives
-    ``S_0^alpha * S_0^(1-alpha) - S_0 = 0``, the printed one gives -99.99 at
-    ``S_0=100, alpha=3``.
+    ``S_0^alpha * S_0^(1-alpha) - S_0 = 0`` exactly; the printed one is not
+    zero at K=0 for any ``S_0`` (verbatim it gives -0.0099 at ``S_0=100,
+    alpha=3``, and -9900 once rescaled into this module's normalisation).
 
     It is asserted with a tolerance, not as ``== 0.0``. The shape is a
     difference of two quantities that agree in exact arithmetic but not in
-    IEEE754: swept over 525 ``(alpha, S_0, l)`` combinations, 140 return a
-    non-zero residual (~1e-14 relative to the price scale). Only alpha=2 is
-    clean everywhere. Demanding exact equality would fail on correct code.
+    IEEE754, so for many ``(alpha, S_0)`` it leaves a residual of a few ulps --
+    which is why ``test_the_zero_strike_clamp_actually_clamps`` exists and why
+    this one asserts a tolerance. Demanding exact equality would fail on correct
+    code.
     """
     tail = ParetanTail(alpha=alpha, karamata_l=0.05, basis="returns")
     scale = tail.lambda_correction() * 0.05**alpha * spot / (alpha - 1.0)
@@ -370,3 +372,109 @@ def test_anchor_guards() -> None:
 def test_heuristic_validity_rejects_negative_inputs() -> None:
     with pytest.raises(ValueError, match="non-negative"):
         heuristic_is_valid(sigma=-0.1, t_years=1.0)
+
+
+# --------------------------------------------------------------------------
+# Domain guards added after adversarial review. Each of these accepted a bad
+# input and returned a confident, wrong number.
+# --------------------------------------------------------------------------
+
+
+def _reference_call_price(*, strike: float, spot: float, karamata_l: float, alpha: float) -> float:
+    """``E[(S - K)^+]`` for the returns basis, by quadrature, no closed form.
+
+    ``S = (1 + r) S_0`` with ``r`` Pareto(l, alpha) on ``[l, inf)`` -- untruncated,
+    unlike the put side, because there is no upper bound on the underlying. This
+    is the call-side check ADR 0026 claims as one of its independent
+    verifications; before this it was a claim with nothing in the repo behind it.
+    """
+    mp.dps = 50
+    k, s0, ell, a = (mp.mpf(x) for x in (strike, spot, karamata_l, alpha))
+    lower = max(ell, k / s0 - 1)
+    integrand = lambda r: ((1 + r) * s0 - k) * a * ell**a * r ** (-a - 1)  # noqa: E731
+    return float(mp.quad(integrand, [lower, mp.inf]))
+
+
+@pytest.mark.parametrize("alpha", [1.5, 2.75, 4.0])
+@pytest.mark.parametrize("karamata_l", [0.05, 0.2])
+def test_call_price_matches_the_defining_integral(alpha: float, karamata_l: float) -> None:
+    """The same derivation that produced the put formula reproduces the paper's
+    published call formula. That agreement is the strongest evidence the method
+    is right and the paper's put line is a typo."""
+    tail = ParetanTail(alpha=alpha, karamata_l=karamata_l, basis="returns")
+    spot = 100.0
+    strike = spot * (1.0 + karamata_l) * 1.4
+    got = tail.call_price(strike=strike, spot=spot)
+    want = _reference_call_price(strike=strike, spot=spot, karamata_l=karamata_l, alpha=alpha)
+    assert got == pytest.approx(want, rel=1e-9)
+
+
+@pytest.mark.parametrize("karamata_l", [1.0, 2.0])
+def test_a_returns_basis_l_at_or_above_one_is_refused(karamata_l: float) -> None:
+    """``l`` is a fraction of spot in this basis. At ``l = 2`` the truncation
+    renormaliser ``1/(1 - l^alpha)`` comes back **negative**; at exactly 1 it
+    divides by zero, and the zero strike slips past ``put_price``'s domain check
+    because ``0 > 0`` is false."""
+    with pytest.raises(ValueError, match="must be below 1"):
+        ParetanTail(alpha=3.0, karamata_l=karamata_l, basis="returns")
+
+
+def test_a_price_basis_call_inside_the_karamata_constant_is_refused() -> None:
+    """The strong Pareto law holds for ``K >= l``. Below it the implied survival
+    probability ``(l/K)^alpha`` exceeds 1, and the price returned is nonsense
+    that still type-checks as a price."""
+    tail = ParetanTail(alpha=3.0, karamata_l=65.0, basis="price")
+    with pytest.raises(ValueError, match="inside the Karamata constant"):
+        tail.call_price(strike=50.0)
+
+
+def test_anchor_l_call_refuses_a_quote_too_rich_to_be_a_tail() -> None:
+    """``anchor_l_call(price=55, strike=50, alpha=3)`` calibrated ``l = 65`` --
+    above its own anchor -- and the resulting tail implied ``P(S > 50) = 2.2``.
+    It round-tripped the quote, so it looked correct."""
+    with pytest.raises(ValueError, match="inside the calibrated Karamata constant"):
+        anchor_l_call(price=55.0, strike=50.0, alpha=3.0)
+
+
+@pytest.mark.parametrize(("price", "strike"), [(6.0, 110.0), (7.0, 105.0)])
+def test_anchor_l_call_returns_refuses_an_anchor_inside_its_own_domain(
+    price: float, strike: float
+) -> None:
+    """``anchor_l_put`` has always refused this; the call version did not, and
+    ordinary quotes trip it. The tail it returned could not even reprice the
+    quote it was built from."""
+    with pytest.raises(ValueError, match="inside the calibrated Karamata point"):
+        anchor_l_call_returns(price=price, strike=strike, spot=100.0, alpha=3.0)
+
+
+def test_put_ratio_never_returns_a_negative_relative_price() -> None:
+    """At ``k_to = 0`` the shape is a difference of two quantities equal in exact
+    arithmetic, so it can land a few ulps below zero. ``put_price`` clamped;
+    ``put_ratio`` did not."""
+    ratio = put_ratio(k_from=2777.0, k_to=0.0, spot=5555.753809263293, alpha=5.432674356088957)
+    assert ratio >= 0.0
+
+
+def test_put_ratio_refuses_a_strike_at_spot() -> None:
+    """``_put_shape`` raises ``ZeroDivisionError`` at ``strike == spot``, so the
+    ``>=`` in the guard is load-bearing and its boundary is pinned here."""
+    with pytest.raises(ValueError, match="must lie in"):
+        put_ratio(k_from=100.0, k_to=80.0, spot=100.0, alpha=3.0)
+
+
+@pytest.mark.parametrize(("alpha", "spot"), [(2.75, 0.5), (3.85, 0.5), (3.85, 100.0)])
+def test_the_zero_strike_clamp_actually_clamps(alpha: float, spot: float) -> None:
+    """These are the parameterisations where the raw shape at ``K = 0`` really
+    does come out negative (-5.6e-17 to -1.4e-14), so the ``max(0.0, ...)`` in
+    ``put_price`` is load-bearing rather than decorative.
+
+    ``test_zero_strike_put_is_worthless`` asserts a tolerance, which a small
+    negative also satisfies -- removing the clamp survived that test. This one
+    asserts the sign, which is the invariant the clamp exists to hold.
+    """
+    raw_shape = spot**alpha * spot ** (1.0 - alpha) - spot
+    assert raw_shape < 0.0, "the case must actually exercise the clamp"
+
+    tail = ParetanTail(alpha=alpha, karamata_l=0.05, basis="returns")
+    price = tail.put_price(strike=0.0, spot=spot)
+    assert price == 0.0

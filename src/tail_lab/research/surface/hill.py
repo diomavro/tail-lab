@@ -9,19 +9,24 @@ and assert ``alpha`` fluctuates minimally over time -- an assertion this module
 makes testable rather than assumed.
 
 **A Hill point estimate on its own is not a measurement.** The estimator is
-notoriously sensitive to ``k``, the number of order statistics it reads: on real
-S&P 500 down-moves 2016-2023 it ranges from 1.48 to 3.32 across the values of
-``k`` a reasonable person would pick -- a spread wider than most effects anyone
-wants to detect. So the useful object is ``hill_plot`` (alpha as a function of
-k) plus ``stable_k``, which reports a plateau **or refuses**. An alpha read off
-a plot with no stable region is a choice dressed as a measurement.
+notoriously sensitive to ``k``, the number of order statistics it reads.
+Measured 2026-09-18 on the SPY down-moves this repo actually has (bronze OHLCV's
+rolling five-year window, 2021-08..2026-08, 577 of them), alpha runs from
+**1.69 to 3.57** over ``k`` in [20, 200] -- a spread of 1.87, wider than most
+effects anyone would want to detect. Reproduce with ``make tail-alpha``.
+
+So the useful object is ``hill_plot`` (alpha as a function of k) plus
+``stable_k``, which reports a plateau **or refuses**. An alpha read off a plot
+with no stable region is a choice dressed as a measurement.
 
 ``stable_k`` also takes ``min_threshold``, and callers should pass it. A Hill
 plot flattens wherever the log-log slope is locally constant, and for a
-lognormal-ish *body* that happens too: at the default settings on real index
-down-moves the plateau lands at a 1.9% daily move -- the 5th percentile, which
-is body, not tail. Gating the plateau on the Karamata onset
-(``karamata.karamata_onset``) is what distinguishes the two.
+lognormal-ish *body* that happens too. At the default settings on real SPY
+down-moves the plateau lands at alpha 2.75 at a **1.71%** daily move -- around
+the 70th percentile of down-days, so body rather than tail, and by coincidence
+the same figure Taleb et al. quote for SPX. Gating on the Karamata onset
+(``karamata.karamata_onset``) is what distinguishes the two;
+``docs/DISCOVERIES.md`` §12 has the measurement.
 """
 
 from __future__ import annotations
@@ -44,10 +49,11 @@ class HillEstimate:
     ``X_(k+1)``, the order statistic the fit starts from, **in the sample's own
     units** -- for a loss series that is a return magnitude, and reporting it is
     what lets a reader see whether the fit sits in the tail or in the body.
-    ``standard_error`` is Hill's asymptotic ``alpha / sqrt(k)``, which assumes
-    iid draws; under volatility clustering it understates, measured at ~1.4x on
-    a GARCH-t bootstrap, so it is a floor on the uncertainty and not the whole
-    of it.
+    ``standard_error`` is Hill's asymptotic ``alpha / sqrt(k)``. It assumes iid
+    draws, which daily returns are not -- volatility clusters, so the effective
+    sample is smaller than ``k`` and this understates. Treat it as a floor on
+    the uncertainty, never as the whole of it; nothing here computes the
+    clustering-adjusted version.
     """
 
     alpha: float
@@ -134,13 +140,28 @@ def hill_plot(
             f"k_min={k_min} exceeds the largest usable k ({upper}) for a sample of {n}"
         )
 
-    points: list[HillEstimate] = []
-    for k in range(k_min, upper + 1, step):
-        try:
-            points.append(hill_alpha(sample, k=k))
-        except ValueError:
-            continue
-    return points
+    # Validate positivity ONCE, up front, rather than letting the per-k except
+    # swallow it. A blanket `except ValueError: continue` turns bad input into a
+    # verdict about the data: a series with one non-positive value produced an
+    # empty plot, and `scripts/tail_alpha.py` then reported "this data supports
+    # no tail index" for a sample that was never fitted at all.
+    if any(float(x) <= 0.0 for x in sample):
+        raise ValueError(
+            "hill_plot is defined on strictly positive samples; "
+            "pass loss magnitudes, not signed returns"
+        )
+
+    # Skip a tie-degenerate k by TESTING for it, rather than by calling
+    # `hill_alpha` and catching. Descending order means `ordered[0] ==
+    # ordered[k]` is exactly "the top k+1 observations are equal", where alpha
+    # is infinite rather than large. Catching instead would need either a
+    # blanket `except ValueError` -- which previously swallowed "not strictly
+    # positive" and turned bad input into a verdict about the data -- or a
+    # match on the message text, plus an unreachable re-raise behind it.
+    ordered = sorted((float(x) for x in sample), reverse=True)
+    return [
+        hill_alpha(ordered, k=k) for k in range(k_min, upper + 1, step) if ordered[0] != ordered[k]
+    ]
 
 
 def stable_k(

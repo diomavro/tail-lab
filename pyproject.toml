@@ -29,10 +29,10 @@ dev = [
     "pytest-cov>=5.0.0",
     "hypothesis>=6.100.0",
     # Test-only, never imported by src/. The reference integral for the
-    # Paretan put price needs arbitrary precision: scipy.integrate.quad is
-    # 128% wrong on that integrand at alpha=8 near the domain edge (r^(-alpha-1)
-    # over a ~1e27 dynamic range) and fails silently, so a test built on it
-    # would condemn correct code. See docs/adr/0026.
+    # Paretan put price needs arbitrary precision: on that integrand at
+    # alpha=8 near the domain edge, scipy.integrate.quad returns 2.24e-11 where
+    # the true value is 7.33e-11 -- it misses 70% of the answer, and emits no
+    # warning. A test built on it would condemn correct code. See docs/adr/0026.
     "mpmath>=1.3.0",
     "httpx>=0.27.0",
     "ruff>=0.6.0",

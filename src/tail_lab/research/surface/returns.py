@@ -19,29 +19,21 @@ and it is not a precedent (``docs/adr/0026``).
 
 from __future__ import annotations
 
-import math
 from dataclasses import dataclass
-from itertools import pairwise
 
 import numpy as np
 import pandas as pd
 
 from tail_lab.research.surface.hill import HillEstimate, hill_alpha
 
-#: ``k`` values at which the log-basis fit is probed for drift. A regularly
-#: varying tail has a Hill estimate that *settles* as ``k`` falls; one that is
-#: not regularly varying drifts monotonically instead. Measuring the drift is
-#: what makes the theorem an observation here rather than an appeal to
-#: authority.
-#:
-#: The drift's **direction depends on which tail is being transformed**, and
-#: that is worth stating because it is easy to get backwards. For downside
-#: losses ``-log(1 - r)`` is *unbounded* while the arithmetic loss ``r`` cannot
-#: exceed 1 -- you cannot lose more than everything -- so the log basis stretches
-#: the far tail and reads a **lower** alpha (fatter). On the upside the
-#: transform compresses instead and alpha rises. Measured on an exact Pareto(4)
-#: loss construction: arithmetic 4.05, log 3.41.
-DIVERGENCE_PROBE_FRACTIONS = (1.0, 0.5, 0.25)
+# The sign of ``ReturnBasisComparison.divergence`` **depends on which tail is
+# being transformed**, which is worth stating because it is easy to get
+# backwards. For downside losses ``-log(1 - r)`` is *unbounded* while the
+# arithmetic loss ``r`` cannot exceed 1 -- you cannot lose more than everything
+# -- so the log basis stretches the far tail and reads a **lower** alpha
+# (fatter). On the upside the transform compresses instead and alpha rises.
+# Measured on the exact Pareto(4) loss construction pinned in
+# ``tests/test_research_surface_returns.py``: arithmetic 4.05, log 3.41.
 
 
 @dataclass(frozen=True)
@@ -50,14 +42,13 @@ class ReturnBasisComparison:
 
     ``alpha_log`` is reported so it can be shown and dismissed. It is never an
     input to anything: ``divergence`` being large is the expected result, not a
-    problem to reconcile. Its sign is not fixed -- see
-    ``DIVERGENCE_PROBE_FRACTIONS``.
+    problem to reconcile, and its sign is not fixed -- see the module note
+    above on which tail is being transformed.
     """
 
     alpha_arithmetic: HillEstimate
     alpha_log: HillEstimate
     divergence: float
-    log_alpha_is_diverging: bool
 
 
 def loss_magnitudes(prices: pd.Series) -> pd.Series:
@@ -112,39 +103,23 @@ def _as_floats(series: pd.Series) -> list[float]:
 def compare_return_bases(prices: pd.Series, *, k: int) -> ReturnBasisComparison:
     """Fit the tail index in both bases and report the divergence.
 
-    ``log_alpha_is_diverging`` is ``True`` when the log-basis estimate drifts
-    monotonically -- in either direction -- as ``k`` falls across
-    ``DIVERGENCE_PROBE_FRACTIONS``, i.e. when it fails to settle. That failure
-    to settle is the theorem's observable footprint; the *sign* of the drift is
-    a property of which tail is being transformed, not of whether the theorem
-    holds. When it is ``False`` the sample is too short to see the effect, which
-    is worth knowing before quoting either number.
+    **There is deliberately no "and here is which one is right" flag.** An
+    earlier version reported whether the log-basis Hill estimate drifted
+    monotonically as ``k`` fell, on the theory that a regularly varying tail
+    settles and a non-regularly-varying one drifts. It had no discriminating
+    power: the Hill estimate on an exact Pareto quantile sample is
+    ``alpha * k / (k log(k+1) - lgamma(k+1))``, which is monotone in ``k`` by
+    construction, so the criterion fired on the textbook regularly-varying case
+    it was supposed to rule out. The theorem is proved in the paper; this
+    function reports the two estimates and their difference, and does not
+    pretend to re-derive the proof from 800 observations.
     """
     arithmetic = hill_alpha(_as_floats(loss_magnitudes(prices)), k=k)
     log_sample = _as_floats(log_loss_magnitudes(prices))
     log_fit = hill_alpha(log_sample, k=k)
 
-    # Every probe is reachable by construction: the fractions are all <= 1, so
-    # probe_k <= k, and `hill_alpha(log_sample, k=k)` above has already
-    # established k + 1 <= len(log_sample). An earlier version carried a
-    # "skip this probe if the sample is too short" branch and a completeness
-    # check built on it; both were unreachable, and an untestable branch reads
-    # as a handled case when nothing is being handled.
-    probes = [
-        hill_alpha(log_sample, k=max(1, math.floor(k * fraction))).alpha
-        for fraction in DIVERGENCE_PROBE_FRACTIONS
-    ]
-
-    # Repeated probes (which happen when k is small enough that the fractions
-    # collapse onto the same k) are neither rising nor falling, so a sample too
-    # short to resolve the drift reports False rather than a spurious verdict.
-    rising = all(later > earlier for earlier, later in pairwise(probes))
-    falling = all(later < earlier for earlier, later in pairwise(probes))
-    diverging = rising or falling
-
     return ReturnBasisComparison(
         alpha_arithmetic=arithmetic,
         alpha_log=log_fit,
         divergence=log_fit.alpha - arithmetic.alpha,
-        log_alpha_is_diverging=diverging,
     )

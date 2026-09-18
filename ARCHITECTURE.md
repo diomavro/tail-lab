@@ -152,6 +152,12 @@ src/tail_lab/
 │   │   ├── interface.py         # OptionPricer protocol.
 │   │   ├── black_scholes.py     # v1 implementation: BS + vol-surface proxy.
 │   │   └── real_quotes.py       # Future: real historical quotes (docs/adr/0004).
+│   ├── surface/                 # The Surface: the strike ladder and the tail
+│   │   │                        # behind it (docs/adr/0021, docs/adr/0026).
+│   │   ├── hill.py              # Tail index from realised moves.
+│   │   ├── karamata.py          # Where a body stops and a power law starts.
+│   │   ├── returns.py           # Which return basis a tail fit may use.
+│   │   └── paretan.py           # Paretan relative pricing. NOT an OptionPricer.
 │   └── backtest/
 │       ├── engine.py            # Simulation clock; reads ONLY via lake/asof.py.
 │       └── compare.py           # Cross-metric backtest comparison.
@@ -217,6 +223,7 @@ Rules, precisely. **Distinguish two different arrows:**
 | New gold mart | `transforms/marts/<mart>.py` + a DTO in `contracts/metrics.py` (or `datasets.py`) describing its output shape. |
 | New Put Lab panel | A component in `frontend/src/components/putlab/` taking data as props, composed by a view in `views/`, styled with `.pl-*` classes in `putlab.css`. Its response type is mirrored by hand into `frontend/src/api/client.ts`, and its read is added to `PutLab.tsx` as a `useCachedResource` keyed on only its real deps. A spec in `frontend/e2e/`, with fixtures. |
 | New option-pricing implementation | `research/pricing/<name>.py` implementing the `OptionPricer` protocol in `research/pricing/interface.py`. Never change the interface's shape without an ADR (`docs/adr/0004`). |
+| New tail/strike-ladder analytic | `research/surface/<name>.py`. This package deliberately does **not** implement `OptionPricer`: it prices relative to an anchor and has no sigma, rate or clock (`docs/adr/0026`). |
 | New backtest strategy/screen | `research/backtest/` — must read exclusively through `lake/asof.py`; a test that tries to leak future data must fail (`docs/adr/0009`). |
 | New API endpoint | A module in `api/routes/`, mounted in `api/main.py`. Thin: validate, call into `research`/`transforms`/`lake`, return a `contracts/` DTO. |
 | New env var / secret | Declared once, in the backend's settings module (mirrors `paper_app`'s `Settings` pattern). Never read `os.environ` elsewhere. If it's a credential, it's a `HUMAN_TODO.md` item, not something the agent provisions. |
