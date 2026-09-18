@@ -64,8 +64,22 @@ LAMBDA_GUARD_MAX_SIGMA_ROOT_T: Final = 0.5
 #: in both -- it is scale-free -- but ``L`` reaches its constant at a different
 #: rate, which is exactly the confusion the paper's own Remark warns about.
 #: Mixing them is not a units nit: a price-basis ``l`` of 10 fed to
-#: ``deepest_valid_put_strike`` returns a strike of -900.
+#: ``deepest_valid_put_strike`` would imply a strike of -900, which is why that
+#: method refuses a price-basis tail outright.
 ParetanBasis = Literal["price", "returns"]
+
+
+def _require_finite(**values: float) -> None:
+    """Reject NaN and infinity before any comparison sees them.
+
+    Every ordering guard in this module is written as ``x <= bound``, and that
+    is ``False`` for NaN -- so without this, a NaN argument passes every check
+    and comes back as a plausible number. The dataclass has always validated
+    finiteness; the module-level functions did not.
+    """
+    for name, value in values.items():
+        if not math.isfinite(value):
+            raise ValueError(f"{name} must be a finite number, got {value}")
 
 
 def _validate(alpha: float, karamata_l: float) -> None:
@@ -123,6 +137,7 @@ class ParetanTail:
         """``(1 - l) * spot`` -- the deepest strike at which the strong Pareto
         law is in force, and so the shallowest valid anchor."""
         self._require_returns_basis("deepest_valid_put_strike")
+        _require_finite(spot=spot)
         if spot <= 0.0:
             raise ValueError(f"spot must be positive, got {spot}")
         return (1.0 - self.karamata_l) * spot
@@ -141,6 +156,7 @@ class ParetanTail:
         non-positive spot.
         """
         self._require_returns_basis("put_price")
+        _require_finite(strike=strike, spot=spot)
         if spot <= 0.0:
             raise ValueError(f"spot must be positive, got {spot}")
         deepest = self.deepest_valid_put_strike(spot=spot)
@@ -160,7 +176,11 @@ class ParetanTail:
         # numbers that agree to every digit, so it can land a few ulps below
         # zero. A put price is never negative, and the invariant is worth more
         # than the last bit of a number that is zero anyway.
-        return max(0.0, raw)
+        #
+        # Clamp only NEGATIVES, never `max(0.0, raw)`: `max(0.0, nan)` is 0.0,
+        # so that form would launder a NaN into a confident "this strike is
+        # worthless" -- strictly worse than returning a visible nan.
+        return 0.0 if raw < 0.0 else raw
 
     def call_price(self, *, strike: float, spot: float | None = None) -> float:
         """Call price, in whichever parameterisation this tail carries.
@@ -173,6 +193,9 @@ class ParetanTail:
         Returns basis (``spot`` given): ``C(K, S_0) = (l S_0)^alpha
         (K - S_0)^(1-alpha) / (alpha - 1)``, valid for ``K >= S_0 (1 + l)``.
         """
+        _require_finite(strike=strike)
+        if spot is not None:
+            _require_finite(spot=spot)
         if strike <= 0.0:
             raise ValueError(f"strike must be positive, got {strike}")
         if self.basis == "price":
@@ -181,10 +204,13 @@ class ParetanTail:
                     "a price-basis tail prices calls on strike alone; spot is not used"
                 )
             if strike < self.karamata_l:
+                # The implied survival probability (l/strike)^alpha would say it
+                # better, but computing it inside the message can itself raise
+                # OverflowError -- from the guard whose contract is ValueError.
                 raise ValueError(
                     f"strike {strike} is inside the Karamata constant {self.karamata_l}; "
                     "the strong Pareto law does not hold there, and the survival "
-                    f"probability implied there is {(self.karamata_l / strike) ** self.alpha}"
+                    "probability it implies at the anchor exceeds 1"
                 )
             return float(
                 strike ** (1.0 - self.alpha) * self.karamata_l**self.alpha / (self.alpha - 1.0)
@@ -227,6 +253,7 @@ def put_ratio(*, k_from: float, k_to: float, spot: float, alpha: float) -> float
     check because it never sees ``l`` -- that is the caller's job, and
     ``ParetanTail.put_price`` does it.
     """
+    _require_finite(k_from=k_from, k_to=k_to, spot=spot, alpha=alpha)
     if alpha <= MIN_ALPHA:
         raise ValueError(f"alpha must exceed {MIN_ALPHA}, got {alpha}")
     if spot <= 0.0:
@@ -241,10 +268,10 @@ def put_ratio(*, k_from: float, k_to: float, spot: float, alpha: float) -> float
             f"the anchor strike {k_from} carries no Paretan value at alpha {alpha}; "
             "it is at or beyond the point where the model assigns zero"
         )
-    # Same ulp-scale cancellation put_price guards against: at k_to = 0 the
-    # shape is a difference of two quantities equal in exact arithmetic, so it
-    # can land a few ulps below zero. A relative price is never negative.
-    return max(0.0, float(_put_shape(strike=k_to, spot=spot, alpha=alpha) / denominator))
+    # Same ulp-scale cancellation put_price guards against, and the same
+    # negatives-only clamp for the same reason: `max(0.0, nan)` is 0.0.
+    ratio = float(_put_shape(strike=k_to, spot=spot, alpha=alpha) / denominator)
+    return 0.0 if ratio < 0.0 else ratio
 
 
 def call_ratio(*, k_from: float, k_to: float, alpha: float) -> float:
@@ -254,6 +281,7 @@ def call_ratio(*, k_from: float, k_to: float, alpha: float) -> float:
     paper's central picture: Black-Scholes prices fall off a cliff out in the
     wing while Paretan prices stay on a line.
     """
+    _require_finite(k_from=k_from, k_to=k_to, alpha=alpha)
     if alpha <= MIN_ALPHA:
         raise ValueError(f"alpha must exceed {MIN_ALPHA}, got {alpha}")
     if k_from <= 0.0 or k_to <= 0.0:
@@ -263,6 +291,7 @@ def call_ratio(*, k_from: float, k_to: float, alpha: float) -> float:
 
 def call_ratio_returns(*, k_from: float, k_to: float, spot: float, alpha: float) -> float:
     """``C(k_to)/C(k_from) = ((k_to - S_0)/(k_from - S_0))^(1-alpha)``."""
+    _require_finite(k_from=k_from, k_to=k_to, spot=spot, alpha=alpha)
     if alpha <= MIN_ALPHA:
         raise ValueError(f"alpha must exceed {MIN_ALPHA}, got {alpha}")
     if k_from <= spot or k_to <= spot:
@@ -279,6 +308,7 @@ def anchor_l_call(*, price: float, strike: float, alpha: float) -> ParetanTail:
     inversion. With ``alpha``, this ``l`` carries all the information about the
     distribution that pricing further strikes requires.
     """
+    _require_finite(price=price, strike=strike, alpha=alpha)
     if alpha <= MIN_ALPHA:
         raise ValueError(f"alpha must exceed {MIN_ALPHA}, got {alpha}")
     if price <= 0.0 or strike <= 0.0:
@@ -298,6 +328,7 @@ def anchor_l_call_returns(*, price: float, strike: float, spot: float, alpha: fl
 
     ``l = ((alpha-1)^(1/alpha) C_m^(1/alpha) (K - S_0)^(1 - 1/alpha)) / S_0``.
     """
+    _require_finite(price=price, strike=strike, spot=spot, alpha=alpha)
     if alpha <= MIN_ALPHA:
         raise ValueError(f"alpha must exceed {MIN_ALPHA}, got {alpha}")
     if price <= 0.0:
@@ -330,6 +361,7 @@ def anchor_l_put(*, price: float, strike: float, spot: float, alpha: float) -> P
     inside the Karamata point invalidates the entire extrapolation built on it,
     so it is refused here rather than producing a ladder that looks fine.
     """
+    _require_finite(price=price, strike=strike, spot=spot, alpha=alpha)
     if alpha <= MIN_ALPHA:
         raise ValueError(f"alpha must exceed {MIN_ALPHA}, got {alpha}")
     if price <= 0.0:
@@ -363,6 +395,7 @@ def heuristic_is_valid(*, sigma: float, t_years: float) -> bool:
     negligible. This is not a hard error -- the ladder still renders -- but the
     result must be labelled wherever it is shown.
     """
+    _require_finite(sigma=sigma, t_years=t_years)
     if sigma < 0.0 or t_years < 0.0:
         raise ValueError(f"sigma and t_years must be non-negative, got {sigma} and {t_years}")
     return sigma * math.sqrt(t_years) <= LAMBDA_GUARD_MAX_SIGMA_ROOT_T

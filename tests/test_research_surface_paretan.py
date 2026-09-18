@@ -9,7 +9,7 @@ Three independent references are used, deliberately:
   no closed form anywhere in it. ``scipy.integrate.quad`` is NOT usable here:
   on this integrand (``r^(-alpha-1)`` over a dynamic range reaching ~1e27) it
   returns 2.24e-11 against a true 7.33e-11 at ``alpha=8`` near the domain edge
-  -- a 128% error in the *reference*, failing silently. A test built on it
+  -- it misses 70% of the answer, and emits no warning. A test built on it
   would condemn correct code.
 * **Hand arithmetic**, worked in the docstrings below so a reader can check the
   pin without running anything.
@@ -478,3 +478,41 @@ def test_the_zero_strike_clamp_actually_clamps(alpha: float, spot: float) -> Non
     tail = ParetanTail(alpha=alpha, karamata_l=0.05, basis="returns")
     price = tail.put_price(strike=0.0, spot=spot)
     assert price == 0.0
+
+
+@pytest.mark.parametrize(
+    "call",
+    [
+        lambda: put_ratio(k_from=90.0, k_to=80.0, spot=100.0, alpha=float("nan")),
+        lambda: put_ratio(k_from=90.0, k_to=80.0, spot=float("nan"), alpha=3.0),
+        lambda: call_ratio(k_from=100.0, k_to=float("inf"), alpha=3.0),
+        lambda: call_ratio_returns(k_from=110.0, k_to=120.0, spot=float("nan"), alpha=3.0),
+        lambda: anchor_l_call(price=float("nan"), strike=100.0, alpha=2.0),
+        lambda: anchor_l_call_returns(price=1.0, strike=130.0, spot=float("nan"), alpha=2.75),
+        lambda: anchor_l_put(price=float("nan"), strike=80.0, spot=100.0, alpha=3.0),
+        lambda: _RETURNS_TAIL.put_price(strike=80.0, spot=float("nan")),
+        lambda: _RETURNS_TAIL.put_price(strike=float("nan"), spot=100.0),
+        lambda: _RETURNS_TAIL.deepest_valid_put_strike(spot=float("nan")),
+        lambda: _RETURNS_TAIL.call_price(strike=200.0, spot=float("nan")),
+        lambda: heuristic_is_valid(sigma=float("nan"), t_years=1.0),
+    ],
+)
+def test_non_finite_arguments_are_refused(call: object) -> None:
+    """Every ordering guard in the module is ``x <= bound``, which is **False**
+    for NaN -- so before these checks a NaN passed every validation and came
+    back as a confident number.
+
+    The clamp made it worse rather than better: ``max(0.0, nan)`` is ``0.0``, so
+    ``put_ratio`` and ``put_price`` reported a NaN as "this strike is worth
+    nothing relative to the anchor" -- strictly worse than a visible nan. The
+    clamp now only catches negatives, and these guards stop the NaN earlier.
+    """
+    with pytest.raises(ValueError, match="must be a finite number"):
+        call()  # type: ignore[operator]
+
+
+def test_the_clamp_does_not_launder_a_nan_into_zero() -> None:
+    """The regression a `max(0.0, ...)` clamp introduces, pinned directly."""
+    assert max(0.0, float("nan")) == 0.0, "this is the trap the clamp must not use"
+    with pytest.raises(ValueError, match="must be a finite number"):
+        put_ratio(k_from=90.0, k_to=80.0, spot=100.0, alpha=float("nan"))

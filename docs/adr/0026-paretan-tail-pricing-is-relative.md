@@ -165,9 +165,7 @@ depend on the aggregation convention (multiplicative vs additive), the sample
 size and the choice of `k`, so no specific numbers are quoted here. **Anything
 comparing an option-implied `alpha` at a 14-90 day horizon against one measured
 on daily moves must horizon-match, or the difference is an artefact of
-aggregation rather than a measurement.** Any comparison of an option-implied `alpha` at some horizon against a
-`alpha` measured on daily moves must horizon-match, or the difference is an
-artefact of aggregation rather than a measurement of anything.
+aggregation rather than a measurement.**
 
 **7. A Hill plateau is not evidence of a tail.** `stable_k` takes
 `min_threshold`, and callers pass the Karamata onset. A Hill plot flattens wherever the

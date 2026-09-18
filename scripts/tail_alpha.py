@@ -73,8 +73,9 @@ def main(symbol: str) -> int:
                 print("  realised alpha : NO PLATEAU -- this data supports no tail index")
             else:
                 print(
-                    f"  realised alpha : REFUSED -- the only plateau (alpha {ungated.alpha:.2f}) "
-                    f"sits at a {ungated.threshold * 100:.2f}% move, inside the body"
+                    f"  realised alpha : REFUSED -- the first plateau (alpha "
+                    f"{ungated.alpha:.2f}) sits at a {ungated.threshold * 100:.2f}% move, "
+                    "inside the body"
                 )
         else:
             print(

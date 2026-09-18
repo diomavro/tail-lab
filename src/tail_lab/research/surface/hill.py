@@ -93,6 +93,10 @@ def hill_alpha(sample: Sequence[float], *, k: int) -> HillEstimate:
         raise ValueError(
             f"k={k} needs at least {k + 1} observations to have an X_(k+1) threshold, got {n}"
         )
+    # Finiteness FIRST: `nan <= 0.0` is False, so a NaN would sail through the
+    # positivity check below and come back as `alpha=nan` in a float field.
+    if not all(math.isfinite(x) for x in ordered):
+        raise ValueError("hill_alpha needs finite observations; the sample contains nan or inf")
     if ordered[-1] <= 0.0:
         raise ValueError(
             "hill_alpha is defined on strictly positive samples; "
@@ -105,6 +109,14 @@ def hill_alpha(sample: Sequence[float], *, k: int) -> HillEstimate:
         raise ValueError(
             f"the top {k + 1} observations are all equal ({threshold}); "
             "the tail index is undefined on a tie-degenerate sample"
+        )
+    if not math.isfinite(log_excess_mean):
+        # `x / threshold` can overflow to inf across a dynamic range above
+        # ~1.8e308, and `1 / inf` is 0.0 -- an alpha of zero, below MIN_ALPHA,
+        # reported with a standard error of zero, i.e. perfect precision.
+        raise ValueError(
+            f"the sample spans too wide a dynamic range at k={k} for the excess "
+            "ratios to be finite; the tail index cannot be estimated"
         )
 
     alpha = 1.0 / log_excess_mean
@@ -148,6 +160,8 @@ def hill_plot(
     # verdict about the data: a series with one non-positive value produced an
     # empty plot, and `scripts/tail_alpha.py` then reported "this data supports
     # no tail index" for a sample that was never fitted at all.
+    if not all(math.isfinite(float(x)) for x in sample):
+        raise ValueError("hill_plot needs finite observations; the sample contains nan or inf")
     if any(float(x) <= 0.0 for x in sample):
         raise ValueError(
             "hill_plot is defined on strictly positive samples; "
@@ -199,6 +213,11 @@ def stable_k(
     for start in range(len(plot) - window + 1):
         window_points = plot[start : start + window]
         alphas = [p.alpha for p in window_points]
+        # Without this, one NaN makes refusal impossible: `mean <= 0` and
+        # `abs(a - mean)/mean > tolerance` are both False under NaN, so any
+        # window containing one passes the plateau test at any tolerance.
+        if not all(math.isfinite(a) for a in alphas):
+            continue
         mean_alpha = sum(alphas) / window
         if mean_alpha <= 0.0:
             continue

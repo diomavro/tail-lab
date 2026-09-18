@@ -234,3 +234,46 @@ def test_hill_plot_refuses_a_non_positive_sample_rather_than_returning_empty() -
         hill_plot(bad)
     with pytest.raises(ValueError, match="strictly positive"):
         hill_plot([1.0, 2.0, 0.0] * 20)
+
+
+# --------------------------------------------------------------------------
+# NaN and infinity. Every ordering guard here is written `x <= bound`, which is
+# False for NaN -- so without explicit finiteness checks a NaN passes every
+# test and comes back as a plausible number. Found in adversarial review.
+# --------------------------------------------------------------------------
+
+
+def test_hill_alpha_refuses_a_non_finite_sample() -> None:
+    """``nan <= 0.0`` is False, so a NaN would sail past the positivity check
+    and return ``alpha=nan`` in a float field."""
+    sample = [1.0] * 5 + [float("nan")] + [0.9**i for i in range(1, 30)]
+    with pytest.raises(ValueError, match="finite observations"):
+        hill_alpha(sample, k=10)
+    with pytest.raises(ValueError, match="finite observations"):
+        hill_alpha([1.0, 2.0, float("inf"), 3.0], k=2)
+
+
+def test_hill_alpha_refuses_a_sample_whose_excess_ratios_overflow() -> None:
+    """Across a dynamic range above ~1.8e308 the excess ratio overflows to inf,
+    and ``1/inf`` is 0.0 -- an alpha of zero, below ``MIN_ALPHA``, reported with
+    a standard error of zero, i.e. perfect precision."""
+    with pytest.raises(ValueError, match="too wide a dynamic range"):
+        hill_alpha([1e300] * 11 + [1e-300] * 11, k=11)
+
+
+def test_hill_plot_refuses_a_non_finite_sample() -> None:
+    with pytest.raises(ValueError, match="finite observations"):
+        hill_plot([1.0] * 40 + [float("nan")] + [0.9**i for i in range(1, 40)])
+
+
+def test_one_nan_cannot_manufacture_a_plateau() -> None:
+    """``stable_k``'s whole contract is "a plateau **or refuses**". Under NaN
+    both ``mean <= 0`` and ``abs(a-mean)/mean > tolerance`` are False, so every
+    window containing one passed the plateau test at any tolerance: alphas
+    [nan, 1, 50, 2, 99, 3] were certified stable at tolerance 0.001.
+    """
+    wild = [
+        HillEstimate(alpha=a, k=9 + i, threshold=0.05, standard_error=0.1, n=500)
+        for i, a in enumerate([float("nan"), 1.0, 50.0, 2.0, 99.0, 3.0])
+    ]
+    assert stable_k(wild, window=6, tolerance=0.001) is None

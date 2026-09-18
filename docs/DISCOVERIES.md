@@ -378,9 +378,11 @@ an onset unconditionally.
 **Turned out:** on bronze OHLCV's rolling five-year window (1,254 closes,
 ~580 down-moves) **no name in the universe has a measurable Karamata region.**
 Measured 2026-09-18 with `make tail-alpha`, at the relative-flatness tolerance
-that "L has converged to a constant" actually means:
+that "L has converged to a constant" actually means. At the **default**
+tolerance this holds for all 70 universe symbols; the sweep below was run on
+these five:
 
-| | down-moves | best flatness | only Hill plateau |
+| | down-moves | best flatness | first Hill plateau |
 |---|---|---|---|
 | SPY | 577 | 0.61 | alpha 2.75 at a **1.71 %** move |
 | QQQ | 574 | 0.69 | alpha 3.27 at a 2.49 % move |
@@ -388,19 +390,28 @@ that "L has converged to a constant" actually means:
 | NVDA | 584 | 3.00 | alpha 3.10 at a 4.46 % move |
 | HYG | 618 | 1.44 | alpha 2.75 at a **0.74 %** move |
 
-Against a tolerance of 0.05. And it is not one knob away: sweeping tolerance
-over {0.05, 0.10, 0.25, 0.50} × min_beyond over {20, 30, 50} returns
-`is_flat=False` in **every** cell. Only at tolerance 1.00 — where "flat" means
+Against a tolerance of 0.05. And it is not one knob away: for these five names, sweeping tolerance over
+{0.05, 0.10, 0.25, 0.50} × min_beyond over {20, 30, 50} returns `is_flat=False`
+in all 60 cells. (Across all 70 universe symbols the same sweep finds 6 flat
+cells out of 840 — `dia`, `xbi`, `pltr` and `aapl`, all at tolerance 0.50, which
+is ten times the default and not a tolerance anyone should read as "flat".) Only at tolerance 1.00 — where "flat" means
 `L` varying by 100 % of its own mean, which is not flatness — does a region
-appear, and its onset then sits at 0.64–0.80 %, deep in the body.
+appear, and its onset then sits deep in the body (SPY 0.64–0.80 %, HYG 0.62 %,
+QQQ 1.06–1.31 %; TSLA 4.24 %, NVDA never).
 
-**Why it is the expensive kind of finding.** SPY's only Hill plateau reports
-**alpha 2.75**, which is exactly the figure Taleb et al. use for SPX. A tool that
+**Why it is the expensive kind of finding.** The plateau `stable_k` reports for
+SPY is **alpha 2.75**, exactly the figure Taleb et al. use for SPX. A tool that
 printed it would have produced a number that agrees with the literature and looks
 like a replication.
 
-It rests on 55 order statistics at a 1.71 % threshold — the top 9.7 % of
-down-days, or 4.5 % of all returns. **Whether that is tail or body is precisely
+It is not even the only plateau: at the default window and tolerance SPY has
+**21 disjoint plateau regions**, and `stable_k` returns the first because that
+is the one at the deepest threshold. The last of the 21 reports alpha **0.61**
+at a 0.12 % move, which is by itself enough to show that "a Hill plateau exists"
+carries no information.
+
+The reported one rests on 55 order statistics at a 1.71 % threshold — the top
+9.7 % of down-days, or 4.5 % of all returns. **Whether that is tail or body is precisely
 what a percentile cannot settle**, and it is why the Karamata test rather than a
 depth heuristic is the gate: `L` is not flat there (relative spread 0.609 against
 a 0.05 tolerance), so the strong Pareto law is not established at that threshold
