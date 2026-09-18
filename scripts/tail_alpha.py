@@ -37,7 +37,17 @@ def main(symbol: str) -> int:
     losses = [float(x) for x in loss_magnitudes(prices)]
     print(f"{symbol.upper()}: {len(prices)} closes, {len(losses)} down-moves")
 
-    fit = karamata_onset(losses, alpha=None)
+    try:
+        fit = karamata_onset(losses, alpha=None)
+    except ValueError as exc:
+        # The alpha/onset fixed point re-fits at a new alpha on every iteration,
+        # so a refusal can surface on a later pass than the first. That refusal
+        # is legitimate -- but a `make` target reporting it as a stack trace is
+        # not, which is the same reasoning as the missing-symbol branch above.
+        print(f"  Karamata onset : REFUSED -- {exc}")
+        print("  realised alpha : REFUSED -- no Karamata region to gate on")
+        return 1
+
     if fit.is_flat:
         print(
             f"  Karamata onset : {fit.onset * 100:.2f}% daily move "
