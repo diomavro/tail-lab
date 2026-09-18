@@ -80,9 +80,9 @@ class _FakeQuoteSource:
 
 
 def test_a_pinned_market_cycle_settles_at_hand_derived_numbers() -> None:
-    """35 sessions, IV_WINDOW=20 -> first_entry=20 (``lookback_years=5`` makes
+    """35 sessions, REALIZED_VOL_WINDOW=20 -> first_entry=20 (``lookback_years=5`` makes
     the nominal window far wider than the panel, so ``max(n-lookback_days,
-    IV_WINDOW)`` is pinned by the floor). The source quotes exactly one
+    REALIZED_VOL_WINDOW)`` is pinned by the floor). The source quotes exactly one
     session, day 20: strike 90.0, premium (ask) 2.5, expiry day 34.
 
     By hand: ``contracts = notional/premium = 1000/2.5 = 400.0``;

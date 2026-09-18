@@ -65,3 +65,19 @@ test('prints fragility on a readable scale in the full table too', async ({ page
   const shown = await cells.allTextContents()
   expect(new Set(shown).size).toBeGreaterThan(2)
 })
+
+test('labels every row model-priced, since the screen pays no real quotes yet', async ({ page }) => {
+  await page.getByRole('button', { name: /All 7 names/ }).click()
+  const table = page.getByRole('table', { name: /fragility ranking/i })
+  await expect(table.getByRole('columnheader', { name: 'Basis' })).toBeVisible()
+  const rows = table.locator('tbody tr')
+  await expect(rows).toHaveCount(LEADERBOARD.ranked.length)
+  for (const r of LEADERBOARD.ranked) {
+    expect(r.priced_from).toBe('model')
+  }
+  const basisCells = rows.locator('td:last-child')
+  await expect(basisCells).toHaveCount(LEADERBOARD.ranked.length)
+  for (const text of await basisCells.allTextContents()) {
+    expect(text.trim()).toBe('Model')
+  }
+})

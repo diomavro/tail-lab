@@ -40,7 +40,11 @@ from typing import Literal
 from pydantic import BaseModel
 
 from tail_lab.contracts.hypothesis import Verdict
-from tail_lab.research.backtest.put_roll import IV_CAP, IV_FLOOR, TRADING_DAYS_PER_WEEK
+from tail_lab.research.backtest.put_roll import (
+    REALIZED_VOL_CAP,
+    REALIZED_VOL_FLOOR,
+    TRADING_DAYS_PER_WEEK,
+)
 from tail_lab.research.backtest.ranking import RankedAsset
 from tail_lab.research.backtest.sizing import SizingMode
 from tail_lab.research.option_pricer import BlackScholesPricer, OptionPricer
@@ -230,7 +234,7 @@ def build_roll_schedule(
         if sigma is not None and sigma > 0 and strike > 0 and tenor > 0:
             # Clamped exactly as run_put_roll clamps it, so the number quoted
             # here is the number the backtest would have priced with.
-            clamped = float(min(max(sigma, IV_FLOOR), IV_CAP))
+            clamped = float(min(max(sigma, REALIZED_VOL_FLOOR), REALIZED_VOL_CAP))
             t_years = max(round(tenor * TRADING_DAYS_PER_WEEK), 1) / 252.0
             model_premium = pricer.price_put(
                 spot=r.spot, strike=strike, t_years=t_years, r=SCHEDULE_RATE, sigma=clamped

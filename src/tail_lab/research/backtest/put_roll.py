@@ -42,8 +42,8 @@ from tail_lab.research.backtest.brokerage import COMMISSION_PER_CONTRACT, roll_c
 from tail_lab.research.backtest.growth import time_average_growth
 from tail_lab.research.backtest.sizing import SizingMode, WealthFraction
 
-# quote_fills -> marks -> roll_schedule -> put_roll (roll_schedule imports IV_CAP/
-# IV_FLOOR/TRADING_DAYS_PER_WEEK from here), so a top-level import of QuoteSource
+# quote_fills -> marks -> roll_schedule -> put_roll (roll_schedule imports REALIZED_VOL_CAP/
+# REALIZED_VOL_FLOOR/TRADING_DAYS_PER_WEEK from here), so a top-level import of QuoteSource
 # would be circular. `from __future__ import annotations` (above) already makes
 # every annotation in this file a lazy string, so a TYPE_CHECKING-only import is
 # enough for mypy and never runs at import time -- QuoteSource is only ever used
@@ -52,13 +52,13 @@ if TYPE_CHECKING:
     from tail_lab.research.backtest.quote_fills import QuoteSource
 from tail_lab.research.option_pricer import BlackScholesPricer, OptionPricer
 
-#: Trailing window (trading days) for the realized-vol IV proxy.
-IV_WINDOW = 20
-#: Floor/cap on the annualized IV proxy — a 20-day realized vol can collapse
-#: toward zero in a dead-calm window (making puts look free) or spike absurdly
-#: in a crash; both are artifacts of a short estimator, not tradable IVs.
-IV_FLOOR = 0.06
-IV_CAP = 2.0
+#: Trailing window (trading days) for the realized-vol proxy.
+REALIZED_VOL_WINDOW = 20
+#: Floor/cap on the annualized realized-vol proxy — a 20-day realized vol can
+#: collapse toward zero in a dead-calm window (making puts look free) or spike
+#: absurdly in a crash; both are artifacts of a short estimator, not tradable IVs.
+REALIZED_VOL_FLOOR = 0.06
+REALIZED_VOL_CAP = 2.0
 #: Default continuously-compounded risk-free rate. A real term structure
 #: (FRED, ``docs/DATA_CONTRACTS.md`` #3) is a later upgrade; a flat rate is a
 #: fine approximation for ranking soon-expiry OOM-put outcomes.
@@ -219,7 +219,7 @@ class PutBacktestResult(BaseModel):
     cycles: list[PutRollCycle]
 
 
-def trailing_realized_vol(prices: pd.Series, *, window: int = IV_WINDOW) -> pd.Series:
+def trailing_realized_vol(prices: pd.Series, *, window: int = REALIZED_VOL_WINDOW) -> pd.Series:
     """Annualized trailing realized volatility of ``prices`` — the IV proxy.
 
     Sample std (``ddof=1``) of daily log returns over the trailing ``window``,
@@ -467,7 +467,7 @@ def _roll_model_cycles(
         if not np.isfinite(sigma):  # not enough trailing history yet — step forward
             i += 1
             continue
-        sigma = float(min(max(sigma, IV_FLOOR), IV_CAP))
+        sigma = float(min(max(sigma, REALIZED_VOL_FLOOR), REALIZED_VOL_CAP))
         spot = px[i]
         strike = spot * (1.0 - moneyness_pct / 100.0)
         premium = pricer.price_put(spot=spot, strike=strike, t_years=t_years, r=rate, sigma=sigma)
@@ -529,7 +529,7 @@ def _roll_market_cycles(
         if not np.isfinite(sigma_raw):  # not enough trailing history yet — step forward
             i += 1
             continue
-        sigma = float(min(max(sigma_raw, IV_FLOOR), IV_CAP))
+        sigma = float(min(max(sigma_raw, REALIZED_VOL_FLOOR), REALIZED_VOL_CAP))
         spot = px[i]
         entry_date = dates[i]
 
@@ -687,7 +687,7 @@ def run_put_roll(
     tenor_days = max(round(tenor_weeks * TRADING_DAYS_PER_WEEK), 1)
     n = len(prices)
     lookback_days = round(lookback_years * 252)
-    first_entry = max(n - lookback_days, IV_WINDOW)
+    first_entry = max(n - lookback_days, REALIZED_VOL_WINDOW)
 
     px = prices.to_numpy(dtype=float)
     realized_vol = realized_vol_proxy.to_numpy(dtype=float)
@@ -879,7 +879,7 @@ def _mark_to_market_curve(
     entry brokerage ``cost``, so the curve steps down by the cost at entry) —
     no ``PREMIUM_FLOOR_FRAC`` (flooring the mark would overstate a decayed OOM
     put and break the expiry identity below). ``sigma`` is clamped with
-    ``IV_FLOOR``/``IV_CAP`` exactly as entry pricing does, so a dead-calm
+    ``REALIZED_VOL_FLOOR``/``REALIZED_VOL_CAP`` exactly as entry pricing does, so a dead-calm
     window (realized vol 0, which would make the pricer reject ``sigma<=0``)
     still marks cleanly.
 
@@ -948,7 +948,7 @@ def _mark_to_market_curve(
                 if t_years <= 0.0:
                     mark = max(cyc.strike - float(px[k]), 0.0)  # intrinsic at expiry (guards T=0)
                 else:
-                    sigma = float(min(max(realized_vol[k], IV_FLOOR), IV_CAP))
+                    sigma = float(min(max(realized_vol[k], REALIZED_VOL_FLOOR), REALIZED_VOL_CAP))
                     mark = pricer.price_put(
                         spot=float(px[k]), strike=cyc.strike, t_years=t_years, r=rate, sigma=sigma
                     )
