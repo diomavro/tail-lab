@@ -4,8 +4,11 @@ Date: 2026-09-18
 
 ## Status
 
-**Proposed.** `docs/adr/0001` allows the agent to propose an ADR but not to
-accept its own proposal; this one is accepted by a human merge.
+**Accepted.** `docs/adr/0001` allows the agent to propose an ADR but not to
+accept its own proposal. Dio accepted this one on 2026-09-18 by instructing the
+merge of PR #108, which is the human decision that clause requires; the Status
+line was flipped as part of that merge rather than by the agent on its own
+initiative.
 
 Amends `docs/adr/0004` (model-priced backtest, pluggable pricing) without
 superseding it: the `OptionPricer` ABC stands and Black-Scholes remains the
