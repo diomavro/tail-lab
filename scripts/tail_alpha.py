@@ -24,7 +24,15 @@ def main(symbol: str) -> int:
     # load_asof_series is the single chokepoint every backtest path reads
     # through, and it is where the raw-vs-adjusted close basis is decided once
     # for all of them. Reading bronze directly here would fork that decision.
-    prices, _ = load_asof_series(get_lake_store(), symbol, dt.date.today())
+    try:
+        prices, _ = load_asof_series(get_lake_store(), symbol, dt.date.today())
+    except LookupError:
+        # A typo'd TAIL_SYMBOL is the common case; a traceback is the wrong way
+        # to say so from a make target. Matches scripts/greeks_check.py.
+        print(
+            f"no OHLCV for {symbol.upper()} in the lake — run `make ingest-ohlcv SYMBOL={symbol.upper()}`"
+        )
+        return 1
 
     losses = [float(x) for x in loss_magnitudes(prices)]
     print(f"{symbol.upper()}: {len(prices)} closes, {len(losses)} down-moves")
