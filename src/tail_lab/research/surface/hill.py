@@ -22,10 +22,13 @@ with no stable region is a choice dressed as a measurement.
 ``stable_k`` also takes ``min_threshold``, and callers should pass it. A Hill
 plot flattens wherever the log-log slope is locally constant, and for a
 lognormal-ish *body* that happens too. At the default settings on real SPY
-down-moves the plateau lands at alpha 2.75 at a **1.71%** daily move -- around
-the 70th percentile of down-days, so body rather than tail, and by coincidence
-the same figure Taleb et al. quote for SPX. Gating on the Karamata onset
-(``karamata.karamata_onset``) is what distinguishes the two;
+down-moves the plateau lands at alpha 2.75 at a **1.71%** daily move, resting on
+55 order statistics -- the top 9.7% of down-days. Whether that is tail or body is
+exactly what a percentile cannot settle, and the Karamata test is what does:
+``L`` is not flat there (relative spread 0.609 against a 0.05 tolerance), so the
+strong Pareto law is not established at that threshold and the plateau is not a
+tail index. It is worth knowing that 2.75 is also the figure Taleb et al. use for
+SPX, which makes it the most temptingly publishable wrong answer available.
 ``docs/DISCOVERIES.md`` §12 has the measurement.
 """
 
