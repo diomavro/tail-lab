@@ -181,7 +181,19 @@ def _onset_for_alpha(
     # the sum and divide by the root of the count instead, which is identical in
     # exact arithmetic and stays representable.
     total_level = sum(levels[:best])
-    karamata_l = total_level ** (1.0 / alpha) / best ** (1.0 / alpha)
+    try:
+        karamata_l = total_level ** (1.0 / alpha) / best ** (1.0 / alpha)
+    except OverflowError as exc:
+        # Splitting the root across numerator and denominator avoids the mean's
+        # underflow, at the cost of exposing an overflow the combined form did
+        # not have: for alpha below about 0.005, `best ** (1/alpha)` exceeds
+        # DBL_MAX on its own. Unreachable through `alpha=None` (a Hill estimate
+        # on bounded losses cannot go that low) but reachable from an explicit
+        # alpha, and the contract here is ValueError.
+        raise ValueError(
+            f"the Karamata scale overflows at alpha={alpha} over {best} observations; "
+            "alpha is too small for this sample"
+        ) from exc
     return (
         curve[best - 1][0],
         karamata_l,

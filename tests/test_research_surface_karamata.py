@@ -321,3 +321,51 @@ def test_a_prefix_sum_that_overflows_is_refused() -> None:
     sample = [1e5 * (1 - 1e-12 * i) for i in range(59)] + [1e-7]
     with pytest.raises(ValueError, match="sums to infinity"):
         karamata_onset(sample, alpha=61.65088146104023, min_beyond=30)
+
+
+def test_the_running_total_matches_a_resumming_reference() -> None:
+    """Pins the accumulator's VALUE, not merely that it does not raise.
+
+    ``_onset_for_alpha`` maintains ``running += levels[count - 1]`` instead of
+    re-summing each prefix, and ``_flatness`` now takes that total as an
+    argument -- an unchecked cross-argument invariant where there used to be a
+    self-consistent computation. A one-character off-by-one
+    (``levels[count - 2]``) passed all 1246 tests while flipping ``n_beyond`` in
+    90 of 1500 realistic samples and moving ``flatness`` by up to 5.7%.
+
+    The fixture is chosen so the scan selects a prefix well beyond
+    ``min_beyond``; otherwise the accumulator never runs and this pins nothing.
+    """
+    sample = spliced_sample(n=600, n_tail=200, alpha=3.0, onset=2.0)
+    alpha = 3.0
+    fit = karamata_onset(sample, alpha=alpha, tolerance=0.01, min_beyond=30)
+    assert fit.n_beyond > 30, "the scan must advance past the floor, or this pins nothing"
+
+    # Independent re-derivation: re-sum every prefix rather than accumulate.
+    levels = [level for _, level in slowly_varying(sample, alpha=alpha)]
+    best, best_flatness = 30, None
+    for count in range(30, len(levels) + 1):
+        total = sum(levels[:count])
+        spread = (max(levels[:count]) - min(levels[:count])) / total * count
+        if count == 30:
+            best_flatness = spread
+        elif spread <= 0.01:
+            best, best_flatness = count, spread
+
+    assert fit.n_beyond == best
+    assert fit.flatness == pytest.approx(best_flatness, rel=1e-12)
+
+
+def test_a_karamata_scale_that_overflows_is_refused() -> None:
+    """Splitting the root across numerator and denominator -- which is what
+    avoids the mean's underflow -- exposes an overflow the combined form did not
+    have: below about ``alpha = 0.005``, ``best ** (1/alpha)`` exceeds DBL_MAX on
+    its own.
+
+    Unreachable through ``alpha=None`` (a Hill estimate on bounded losses has a
+    floor around 0.12) but reachable from an explicit alpha, and this module's
+    contract is ``ValueError``, not ``OverflowError`` -- which
+    ``scripts/tail_alpha.py`` does not catch.
+    """
+    with pytest.raises(ValueError, match="Karamata scale overflows"):
+        karamata_onset([0.03 * (1 - 0.001 * i) for i in range(60)], alpha=0.001, min_beyond=30)
