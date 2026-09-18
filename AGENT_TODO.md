@@ -903,6 +903,22 @@ wrong side of the join.
       **print the basis next to every ROI figure** — a model-priced ROI and a
       market-priced ROI are not the same quantity and currently look
       identical.
+      **The cheaper first increment is done, 2026-09-18**: `RankedAsset` (the
+      screen's own row type) now carries `priced_from: Literal["model",
+      "market"]`, read straight off `PutBacktestResult.priced_from` in
+      `_rank_one` — `rank_universe` never threads a `PricingBasis` through, so
+      every row is honestly "model" today, pinned by
+      `test_rank_universe_sorts_by_fragility_and_skips_missing`'s new
+      assertion. `RankingStrip.tsx`'s expanded table gained a **Basis** column
+      (a `Model`/`Market` tag, same pattern as the Verdict column), with a
+      matching e2e test (`ranking.spec.ts`) proving every row currently reads
+      `Model`. **Still not done — the actual defect this item names**: no
+      orchestrator (`ranking.py`, `sweep.py`, `metric_screen.py`,
+      `portfolio.py`) passes real quotes in, so the screen is still
+      Black-Scholes-at-trailing-realised-vol throughout; the variance risk
+      premium is still priced at zero by construction. Flipping the default to
+      `PricingBasis(quotes=...)` wherever optionsDX/`option_chain` coverage
+      allows is the remaining, larger half of this item.
 
 - [x] **Rename the `iv` variables that hold realised vol.** `put_roll.py`
       carries the output of `trailing_realized_vol()` in locals and
@@ -934,6 +950,17 @@ wrong side of the join.
       full CI gate: ruff, ruff format, mypy --strict, import-linter, and
       `pytest` (896 passed) including the 90% `research/`/`transforms/`
       coverage floor (97%).
+      **Follow-up done 2026-09-18** (design-review advisory on this PR,
+      #106 — the reviewer noted the same confusion survived one level down,
+      at module-constant/test-name granularity): `IV_WINDOW`/`IV_FLOOR`/
+      `IV_CAP` → `REALIZED_VOL_WINDOW`/`REALIZED_VOL_FLOOR`/
+      `REALIZED_VOL_CAP` across `put_roll.py`, `roll_schedule.py` and
+      `accuracy.py`, and
+      `test_non_finite_iv_entry_is_skipped_not_priced` →
+      `test_non_finite_realized_vol_entry_is_skipped_not_priced` in
+      `tests/test_research_backtest_put_roll.py`. Pure rename, same scope
+      discipline as the original — the real `iv` quote-column identifiers
+      were not touched.
 
 - [ ] **Make the model/market ratio a ranking input, not only a per-leg
       footnote.** `marks.py` records the ratio and refuses on liquidity, which

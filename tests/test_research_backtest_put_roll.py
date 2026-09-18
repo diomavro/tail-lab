@@ -24,9 +24,9 @@ from tail_lab.research.backtest.brokerage import roll_cost
 from tail_lab.research.backtest.growth import time_average_growth
 from tail_lab.research.backtest.put_roll import (
     DEFAULT_RATE,
-    IV_WINDOW,
     MIN_YEARS_FOR_ANNUALIZED,
     PREMIUM_FLOOR_FRAC,
+    REALIZED_VOL_WINDOW,
     annualized_return,
     annualized_sharpe,
     annualized_so_far_curve,
@@ -432,12 +432,12 @@ def test_deeper_oom_is_cheaper_per_cycle() -> None:
     assert far.cycles[0].contracts > near.cycles[0].contracts
 
 
-def test_non_finite_iv_entry_is_skipped_not_priced() -> None:
+def test_non_finite_realized_vol_entry_is_skipped_not_priced() -> None:
     """If the IV proxy is NaN at a would-be entry (too little trailing
     history), that entry steps forward rather than pricing on a stub."""
     prices = _flat_with_dips(90, {70: 60.0})
     realized_vol = pd.Series(np.full(90, 0.30), index=prices.index)
-    realized_vol.iloc[IV_WINDOW] = np.nan  # first candidate entry has no vol
+    realized_vol.iloc[REALIZED_VOL_WINDOW] = np.nan  # first candidate entry has no vol
     res = run_put_roll(
         prices,
         realized_vol,
@@ -448,7 +448,7 @@ def test_non_finite_iv_entry_is_skipped_not_priced() -> None:
         tenor_weeks=8.0,
         lookback_years=10,
     )
-    assert res.cycles[0].entry_date != prices.index[IV_WINDOW].date()
+    assert res.cycles[0].entry_date != prices.index[REALIZED_VOL_WINDOW].date()
 
 
 def test_run_put_roll_validates_inputs() -> None:
@@ -469,8 +469,8 @@ def test_run_put_roll_validates_inputs() -> None:
 
 
 def test_run_put_roll_raises_when_window_too_short() -> None:
-    prices = _flat_with_dips(IV_WINDOW + 3, {})
-    realized_vol = pd.Series(np.full(IV_WINDOW + 3, 0.3), index=prices.index)
+    prices = _flat_with_dips(REALIZED_VOL_WINDOW + 3, {})
+    realized_vol = pd.Series(np.full(REALIZED_VOL_WINDOW + 3, 0.3), index=prices.index)
     with pytest.raises(LookupError, match="not enough price history"):
         run_put_roll(
             prices,
@@ -487,8 +487,8 @@ def test_run_put_roll_raises_when_window_too_short() -> None:
 def test_trailing_realized_vol_is_backward_looking() -> None:
     prices = _flat_with_dips(60, {})  # flat -> zero returns -> zero realized vol
     rv = trailing_realized_vol(prices)
-    assert rv.iloc[:IV_WINDOW].isna().all()  # not enough history early
-    assert rv.iloc[IV_WINDOW:].abs().max() == pytest.approx(0.0)  # flat path, no vol
+    assert rv.iloc[:REALIZED_VOL_WINDOW].isna().all()  # not enough history early
+    assert rv.iloc[REALIZED_VOL_WINDOW:].abs().max() == pytest.approx(0.0)  # flat path, no vol
 
 
 # ---------- orchestration: point-in-time ----------

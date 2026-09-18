@@ -291,6 +291,9 @@ export const LEADERBOARD: PutLabLeaderboardResponse = {
       hit_rate: 0.08 + frag / 9,
       biggest_payoff_mult: 1 + frag * 4,
       n_cycles: 52,
+      // The screen never passes real quotes in today (AGENT_TODO.md, "the
+      // ranked screen is still model-priced"), so every row is "model".
+      priced_from: 'model',
       best_annualized: bestAnn,
       best_moneyness_pct: bestM,
       best_tenor_weeks: bestT,

@@ -45,6 +45,7 @@ def _ranked(
         hit_rate=0.05,
         biggest_payoff_mult=2.0,
         n_cycles=50,
+        priced_from="model",
         best_annualized=best_annualized,
         best_moneyness_pct=moneyness,
         best_tenor_weeks=tenor,

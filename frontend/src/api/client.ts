@@ -381,6 +381,11 @@ export interface RankedAsset {
   hit_rate: number
   biggest_payoff_mult: number
   n_cycles: number
+  /** "model" or "market" -- whether this row's ROI came from BlackScholesPricer
+   *  or a real listed quote. The screen never passes real quotes in today, so
+   *  this is always "model"; surfaced so a model-priced ROI never looks
+   *  identical to a market-priced one once it can be either. */
+  priced_from: 'model' | 'market'
   /** The best this name gets when its parameters are chosen well: the argmax
    *  of its own strike x tenor sweep, bounded to the strikes the model can
    *  actually price. This is the headline the compact ranking shows, and the
