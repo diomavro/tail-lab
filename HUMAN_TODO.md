@@ -342,18 +342,26 @@ do.
       **Why this one expires, and the deadline.** `daily-chain-snapshot` runs
       **21:30 UTC on weekdays** (`docs/adr/0020`) and forward-collects the put
       wing from Cboe's keyless CDN. Every other source here serves history on
-      demand; **nobody sells a retroactive option chain.** Today is Friday
-      2026-09-19, so the next sweep is ~21:30 UTC today and the one after is
-      Monday. If Actions is still blocked at 21:30 UTC, **that session is gone
-      at any price**, and the same for every weekday it stays blocked. The
-      05:00 UTC catch-up cron does not help — it is the same runner pool.
+      demand; **nobody sells a retroactive option chain.** 2026-09-19 is a
+      **Saturday**, so the next sweep is **Monday 2026-09-21 at 21:30 UTC** --
+      markets are shut over the weekend and there is nothing to collect until
+      then. Every weekday the outage continues past that costs one session
+      permanently. The 05:00 UTC catch-up cron does not help -- same runner pool.
 
-      **Nothing is lost yet (checked 14:49 UTC).**
+      **Covered locally, so this is no longer the urgent half of the item.** A
+      cron entry now runs `scripts/local_chain_sweep.sh` at 21:35 UTC weekdays
+      (`CRON_TZ=UTC`, so it does not drift with Budapest DST), which is the
+      same instant the workflow used. `crontab -l` shows it. It writes straight
+      to the lake with the credentials already in `.env`, so it needs neither
+      Actions nor the Fly app.
+
+      **Nothing is lost (checked 2026-09-19 17:43 UTC).**
       `GET /api/ingest/option-chain/status` reports `last_quote_date
-      2026-09-18`, 19,572 rows, 24 symbols, **0 missing** — Thursday's close
-      landed before the outage, and today's failed 09:02 run was the *catch-up*
-      for data already collected, not a missed session. The exposure is
-      entirely forward-looking: tonight's 21:30 UTC sweep, then Monday's.
+      2026-09-18`, 19,572 rows, 24 symbols, **0 missing** — and 2026-09-18 was
+      **Friday**, so the most recent trading session is fully captured. The
+      run that failed on Saturday at 09:02 was a catch-up for data already
+      collected, not a missed session. The exposure is entirely forward-looking
+      and starts Monday evening.
 
       **Manual fallback, if billing cannot be fixed before 21:30 UTC today:**
 

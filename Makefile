@@ -178,6 +178,46 @@ ingest-mpd:
 ingest-vix-futures:
 	env -u PYTHONPATH $(VENV)/bin/python -c "from tail_lab.ingestion.vix_futures import ingest_vix_futures; from tail_lab.config import get_lake_store; from tail_lab.observability import configure_logging; configure_logging(); r = ingest_vix_futures(get_lake_store()); print(f'committed {r.valid_rows} rows across {len(r.expiries)} contracts -> {r.bronze_path} ({r.quarantined_rows} quarantined)')"
 
+# ---------------------------------------------------------------------------
+# Local stand-ins for GitHub Actions, which is blocked on billing
+# (HUMAN_TODO.md). Each mirrors one workflow so the platform keeps running
+# while no runner will start. Remove them once Actions is paying again --
+# they duplicate CI by design, and duplication that outlives its reason is
+# how two sources of truth start disagreeing.
+# ---------------------------------------------------------------------------
+
+# Everything .github/workflows/ci.yml gates on, in the same order, so a green
+# run here means the same thing a green CI run did. `agent-review` has no local
+# equivalent -- it is a Claude job -- so a human reads the diff instead.
+.PHONY: local-ci local-deploy local-verdict-sweep
+local-ci:
+	@echo "=== backend (ruff + mypy + import-linter + pytest + cov floors) ==="
+	@$(MAKE) --no-print-directory check
+	@echo "=== hygiene (no conflict markers, make help parses) ==="
+	@! git grep -nE '^(<<<<<<< |>>>>>>> |=======$$)' -- . || (echo "conflict markers committed" && false)
+	@$(MAKE) --no-print-directory help > /dev/null
+	@echo "=== frontend (typecheck + lint + build) ==="
+	@cd frontend && npm run typecheck && npm run lint && npm run build
+	@echo "=== e2e (hermetic; starts its own dev server, mocks every /api/**) ==="
+	@cd frontend && npm run e2e
+	@echo "=== ALL LOCAL CI GATES PASSED ==="
+
+# Mirrors .github/workflows/deploy.yml. Same flags, same TAIL_LAB_CODE_SHA
+# stamp, so a locally-shipped release is indistinguishable from a CI one in
+# the app's own runtime settings. Deploys whatever is CHECKED OUT -- verify
+# you are on main and clean first, which CI got for free and you do not.
+local-deploy:
+	@git diff --quiet || (echo "working tree is dirty -- commit or stash before deploying" && false)
+	@echo "deploying $$(git rev-parse --short HEAD) on $$(git rev-parse --abbrev-ref HEAD)"
+	flyctl deploy --remote-only --verbose -a tail-lab --env TAIL_LAB_CODE_SHA="$$(git rev-parse HEAD)"
+	@flyctl releases -a tail-lab | head -3
+
+# Mirrors .github/workflows/daily-verdict-sweep.yml: a deterministic HTTP
+# sweep against the live app, no credentials beyond what the app already holds.
+BASE ?= https://tail-lab.fly.dev
+local-verdict-sweep:
+	@bash scripts/local_verdict_sweep.sh "$(BASE)"
+
 api:
 	env -u PYTHONPATH $(VENV)/bin/uvicorn tail_lab.api.main:app --reload --port 8000
 
