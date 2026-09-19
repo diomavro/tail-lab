@@ -1,0 +1,148 @@
+=== local chain sweep 2026-09-19T18:36:55Z ===
+env -u PYTHONPATH .venv/bin/python scripts/chain_snapshot.py --local 
+2026-09-19 20:37:19,740 WARNING tail_lab.ingestion.option_chain event=ingestion.option_chain.symbol_retry symbol=hyg attempt=1/3
+2026-09-19 20:37:22,855 WARNING tail_lab.ingestion.option_chain event=ingestion.option_chain.symbol_retry symbol=hyg attempt=2/3
+2026-09-19 20:37:25,923 ERROR tail_lab.ingestion.option_chain event=ingestion.option_chain.symbol_failed symbol=hyg
+Traceback (most recent call last):
+  File "/home/dio/Documents/apps/tail-lab/src/tail_lab/ingestion/option_chain.py", line 315, in ingest_option_chain
+    payload = _fetch_with_retry(fetcher, symbol)
+              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/dio/Documents/apps/tail-lab/src/tail_lab/ingestion/option_chain.py", line 268, in _fetch_with_retry
+    return fetcher(symbol)
+           ^^^^^^^^^^^^^^^
+  File "/home/dio/Documents/apps/tail-lab/src/tail_lab/ingestion/option_chain.py", line 236, in fetch_chain_raw
+    response.raise_for_status()
+  File "/home/dio/Documents/apps/tail-lab/.venv/lib/python3.12/site-packages/requests/models.py", line 1167, in raise_for_status
+    raise HTTPError(http_error_msg, response=self)
+requests.exceptions.HTTPError: 429 Client Error: Too Many Requests for url: https://cdn.cboe.com/api/global/delayed_quotes/options/HYG.json
+2026-09-19 20:37:25,988 WARNING tail_lab.ingestion.option_chain event=ingestion.option_chain.symbol_retry symbol=tlt attempt=1/3
+2026-09-19 20:37:29,050 WARNING tail_lab.ingestion.option_chain event=ingestion.option_chain.symbol_retry symbol=tlt attempt=2/3
+2026-09-19 20:37:32,159 ERROR tail_lab.ingestion.option_chain event=ingestion.option_chain.symbol_failed symbol=tlt
+Traceback (most recent call last):
+  File "/home/dio/Documents/apps/tail-lab/src/tail_lab/ingestion/option_chain.py", line 315, in ingest_option_chain
+    payload = _fetch_with_retry(fetcher, symbol)
+              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/dio/Documents/apps/tail-lab/src/tail_lab/ingestion/option_chain.py", line 268, in _fetch_with_retry
+    return fetcher(symbol)
+           ^^^^^^^^^^^^^^^
+  File "/home/dio/Documents/apps/tail-lab/src/tail_lab/ingestion/option_chain.py", line 236, in fetch_chain_raw
+    response.raise_for_status()
+  File "/home/dio/Documents/apps/tail-lab/.venv/lib/python3.12/site-packages/requests/models.py", line 1167, in raise_for_status
+    raise HTTPError(http_error_msg, response=self)
+requests.exceptions.HTTPError: 429 Client Error: Too Many Requests for url: https://cdn.cboe.com/api/global/delayed_quotes/options/TLT.json
+2026-09-19 20:37:32,286 WARNING tail_lab.ingestion.option_chain event=ingestion.option_chain.symbol_retry symbol=gld attempt=1/3
+2026-09-19 20:37:35,384 WARNING tail_lab.ingestion.option_chain event=ingestion.option_chain.symbol_retry symbol=gld attempt=2/3
+2026-09-19 20:37:38,492 ERROR tail_lab.ingestion.option_chain event=ingestion.option_chain.symbol_failed symbol=gld
+Traceback (most recent call last):
+  File "/home/dio/Documents/apps/tail-lab/src/tail_lab/ingestion/option_chain.py", line 315, in ingest_option_chain
+    payload = _fetch_with_retry(fetcher, symbol)
+              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/dio/Documents/apps/tail-lab/src/tail_lab/ingestion/option_chain.py", line 268, in _fetch_with_retry
+    return fetcher(symbol)
+           ^^^^^^^^^^^^^^^
+  File "/home/dio/Documents/apps/tail-lab/src/tail_lab/ingestion/option_chain.py", line 236, in fetch_chain_raw
+    response.raise_for_status()
+  File "/home/dio/Documents/apps/tail-lab/.venv/lib/python3.12/site-packages/requests/models.py", line 1167, in raise_for_status
+    raise HTTPError(http_error_msg, response=self)
+requests.exceptions.HTTPError: 429 Client Error: Too Many Requests for url: https://cdn.cboe.com/api/global/delayed_quotes/options/GLD.json
+2026-09-19 20:37:38,575 WARNING tail_lab.ingestion.option_chain event=ingestion.option_chain.symbol_retry symbol=slv attempt=1/3
+2026-09-19 20:37:41,679 WARNING tail_lab.ingestion.option_chain event=ingestion.option_chain.symbol_retry symbol=slv attempt=2/3
+2026-09-19 20:37:44,795 ERROR tail_lab.ingestion.option_chain event=ingestion.option_chain.symbol_failed symbol=slv
+Traceback (most recent call last):
+  File "/home/dio/Documents/apps/tail-lab/src/tail_lab/ingestion/option_chain.py", line 315, in ingest_option_chain
+    payload = _fetch_with_retry(fetcher, symbol)
+              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/dio/Documents/apps/tail-lab/src/tail_lab/ingestion/option_chain.py", line 268, in _fetch_with_retry
+    return fetcher(symbol)
+           ^^^^^^^^^^^^^^^
+  File "/home/dio/Documents/apps/tail-lab/src/tail_lab/ingestion/option_chain.py", line 236, in fetch_chain_raw
+    response.raise_for_status()
+  File "/home/dio/Documents/apps/tail-lab/.venv/lib/python3.12/site-packages/requests/models.py", line 1167, in raise_for_status
+    raise HTTPError(http_error_msg, response=self)
+requests.exceptions.HTTPError: 429 Client Error: Too Many Requests for url: https://cdn.cboe.com/api/global/delayed_quotes/options/SLV.json
+2026-09-19 20:37:44,879 WARNING tail_lab.ingestion.option_chain event=ingestion.option_chain.symbol_retry symbol=uso attempt=1/3
+2026-09-19 20:37:47,986 WARNING tail_lab.ingestion.option_chain event=ingestion.option_chain.symbol_retry symbol=uso attempt=2/3
+2026-09-19 20:37:51,099 ERROR tail_lab.ingestion.option_chain event=ingestion.option_chain.symbol_failed symbol=uso
+Traceback (most recent call last):
+  File "/home/dio/Documents/apps/tail-lab/src/tail_lab/ingestion/option_chain.py", line 315, in ingest_option_chain
+    payload = _fetch_with_retry(fetcher, symbol)
+              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/dio/Documents/apps/tail-lab/src/tail_lab/ingestion/option_chain.py", line 268, in _fetch_with_retry
+    return fetcher(symbol)
+           ^^^^^^^^^^^^^^^
+  File "/home/dio/Documents/apps/tail-lab/src/tail_lab/ingestion/option_chain.py", line 236, in fetch_chain_raw
+    response.raise_for_status()
+  File "/home/dio/Documents/apps/tail-lab/.venv/lib/python3.12/site-packages/requests/models.py", line 1167, in raise_for_status
+    raise HTTPError(http_error_msg, response=self)
+requests.exceptions.HTTPError: 429 Client Error: Too Many Requests for url: https://cdn.cboe.com/api/global/delayed_quotes/options/USO.json
+2026-09-19 20:37:51,203 WARNING tail_lab.ingestion.option_chain event=ingestion.option_chain.symbol_retry symbol=gdx attempt=1/3
+2026-09-19 20:37:54,313 WARNING tail_lab.ingestion.option_chain event=ingestion.option_chain.symbol_retry symbol=gdx attempt=2/3
+2026-09-19 20:37:57,428 ERROR tail_lab.ingestion.option_chain event=ingestion.option_chain.symbol_failed symbol=gdx
+Traceback (most recent call last):
+  File "/home/dio/Documents/apps/tail-lab/src/tail_lab/ingestion/option_chain.py", line 315, in ingest_option_chain
+    payload = _fetch_with_retry(fetcher, symbol)
+              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/dio/Documents/apps/tail-lab/src/tail_lab/ingestion/option_chain.py", line 268, in _fetch_with_retry
+    return fetcher(symbol)
+           ^^^^^^^^^^^^^^^
+  File "/home/dio/Documents/apps/tail-lab/src/tail_lab/ingestion/option_chain.py", line 236, in fetch_chain_raw
+    response.raise_for_status()
+  File "/home/dio/Documents/apps/tail-lab/.venv/lib/python3.12/site-packages/requests/models.py", line 1167, in raise_for_status
+    raise HTTPError(http_error_msg, response=self)
+requests.exceptions.HTTPError: 429 Client Error: Too Many Requests for url: https://cdn.cboe.com/api/global/delayed_quotes/options/GDX.json
+2026-09-19 20:37:57,541 WARNING tail_lab.ingestion.option_chain event=ingestion.option_chain.symbol_retry symbol=eem attempt=1/3
+2026-09-19 20:38:00,655 WARNING tail_lab.ingestion.option_chain event=ingestion.option_chain.symbol_retry symbol=eem attempt=2/3
+2026-09-19 20:38:03,779 ERROR tail_lab.ingestion.option_chain event=ingestion.option_chain.symbol_failed symbol=eem
+Traceback (most recent call last):
+  File "/home/dio/Documents/apps/tail-lab/src/tail_lab/ingestion/option_chain.py", line 315, in ingest_option_chain
+    payload = _fetch_with_retry(fetcher, symbol)
+              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/dio/Documents/apps/tail-lab/src/tail_lab/ingestion/option_chain.py", line 268, in _fetch_with_retry
+    return fetcher(symbol)
+           ^^^^^^^^^^^^^^^
+  File "/home/dio/Documents/apps/tail-lab/src/tail_lab/ingestion/option_chain.py", line 236, in fetch_chain_raw
+    response.raise_for_status()
+  File "/home/dio/Documents/apps/tail-lab/.venv/lib/python3.12/site-packages/requests/models.py", line 1167, in raise_for_status
+    raise HTTPError(http_error_msg, response=self)
+requests.exceptions.HTTPError: 429 Client Error: Too Many Requests for url: https://cdn.cboe.com/api/global/delayed_quotes/options/EEM.json
+2026-09-19 20:38:03,893 WARNING tail_lab.ingestion.option_chain event=ingestion.option_chain.symbol_retry symbol=fxi attempt=1/3
+2026-09-19 20:38:06,953 WARNING tail_lab.ingestion.option_chain event=ingestion.option_chain.symbol_retry symbol=fxi attempt=2/3
+2026-09-19 20:38:10,029 ERROR tail_lab.ingestion.option_chain event=ingestion.option_chain.symbol_failed symbol=fxi
+Traceback (most recent call last):
+  File "/home/dio/Documents/apps/tail-lab/src/tail_lab/ingestion/option_chain.py", line 315, in ingest_option_chain
+    payload = _fetch_with_retry(fetcher, symbol)
+              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/dio/Documents/apps/tail-lab/src/tail_lab/ingestion/option_chain.py", line 268, in _fetch_with_retry
+    return fetcher(symbol)
+           ^^^^^^^^^^^^^^^
+  File "/home/dio/Documents/apps/tail-lab/src/tail_lab/ingestion/option_chain.py", line 236, in fetch_chain_raw
+    response.raise_for_status()
+  File "/home/dio/Documents/apps/tail-lab/.venv/lib/python3.12/site-packages/requests/models.py", line 1167, in raise_for_status
+    raise HTTPError(http_error_msg, response=self)
+requests.exceptions.HTTPError: 429 Client Error: Too Many Requests for url: https://cdn.cboe.com/api/global/delayed_quotes/options/FXI.json
+2026-09-19 20:38:10,093 WARNING tail_lab.ingestion.option_chain event=ingestion.option_chain.symbol_retry symbol=arkk attempt=1/3
+2026-09-19 20:38:13,158 WARNING tail_lab.ingestion.option_chain event=ingestion.option_chain.symbol_retry symbol=arkk attempt=2/3
+2026-09-19 20:38:16,235 ERROR tail_lab.ingestion.option_chain event=ingestion.option_chain.symbol_failed symbol=arkk
+Traceback (most recent call last):
+  File "/home/dio/Documents/apps/tail-lab/src/tail_lab/ingestion/option_chain.py", line 315, in ingest_option_chain
+    payload = _fetch_with_retry(fetcher, symbol)
+              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/dio/Documents/apps/tail-lab/src/tail_lab/ingestion/option_chain.py", line 268, in _fetch_with_retry
+    return fetcher(symbol)
+           ^^^^^^^^^^^^^^^
+  File "/home/dio/Documents/apps/tail-lab/src/tail_lab/ingestion/option_chain.py", line 236, in fetch_chain_raw
+    response.raise_for_status()
+  File "/home/dio/Documents/apps/tail-lab/.venv/lib/python3.12/site-packages/requests/models.py", line 1167, in raise_for_status
+    raise HTTPError(http_error_msg, response=self)
+requests.exceptions.HTTPError: 429 Client Error: Too Many Requests for url: https://cdn.cboe.com/api/global/delayed_quotes/options/ARKK.json
+2026-09-19 20:38:16,293 WARNING tail_lab.ingestion.option_chain event=ingestion.option_chain.symbol_retry symbol=aapl attempt=1/3
+2026-09-19 20:38:19,975 WARNING tail_lab.ingestion.option_chain event=ingestion.option_chain.symbol_retry symbol=msft attempt=1/3
+2026-09-19 20:38:28,378 INFO tail_lab.ingestion.option_chain event=ingestion.option_chain.run dataset=option_chain_snapshot ingest_date=2026-09-18 quote_date=2026-09-18 valid_rows=14091 quarantined_rows=0 symbols_ok=15 symbols_failed=HYG,TLT,GLD,SLV,USO,GDX,EEM,FXI,ARKK bronze_path="s3://tail-lab-lake/bronze/option_chain_snapshot/ingest_date=2026-09-18"
+swept 24/24 chains -> 19525 put quotes
+committed 14091 rows -> s3://tail-lab-lake/bronze/option_chain_snapshot/ingest_date=2026-09-18
+=== exit=0 2026-09-19T18:38:28Z ===
+=== local chain sweep 2026-09-19T18:41:02Z ===
+env -u PYTHONPATH .venv/bin/python scripts/chain_snapshot.py --local 
+2026-09-19 20:41:21,707 INFO tail_lab.ingestion.option_chain event=ingestion.option_chain.run dataset=option_chain_snapshot ingest_date=2026-09-18 quote_date=2026-09-18 valid_rows=19525 quarantined_rows=0 symbols_ok=24 bronze_path="s3://tail-lab-lake/bronze/option_chain_snapshot/ingest_date=2026-09-18"
+swept 24/24 chains -> committed 19525 rows -> s3://tail-lab-lake/bronze/option_chain_snapshot/ingest_date=2026-09-18
+=== exit=0 2026-09-19T18:41:21Z ===
