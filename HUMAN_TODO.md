@@ -326,11 +326,18 @@ do.
       PR #108 an hour earlier, and `daily-chain-snapshot` succeeded at
       2026-09-18T23:27Z.
 
-      `CLAUDE.md` records this repo losing Actions to a billing fault once
-      before (~2026-06-24 to 2026-08-24), which is the first place to look.
-      I could not check the meter: `/users/diomavro/settings/billing/actions`
-      needs the `user` OAuth scope, and requesting a new scope is not something
-      to do unasked.
+      **CAUSE CONFIRMED (2026-09-19 14:49 UTC).** Not a hypothesis — this is
+      the annotation GitHub attaches to every failed job, verbatim:
+
+      > The job was not started because recent account payments have failed or
+      > your spending limit needs to be increased. Please check the
+      > 'Billing & plans' section in your settings
+
+      **The fix is entirely in GitHub → Settings → Billing & plans**: either a
+      card that needs re-authorising or an Actions spending limit that needs
+      raising. Nothing in this repo is broken and nothing here can fix it.
+      `CLAUDE.md` records the same fault taking this repo down once before,
+      ~2026-06-24 to 2026-08-24.
 
       **Why this one expires, and the deadline.** `daily-chain-snapshot` runs
       **21:30 UTC on weekdays** (`docs/adr/0020`) and forward-collects the put
@@ -340,6 +347,13 @@ do.
       Monday. If Actions is still blocked at 21:30 UTC, **that session is gone
       at any price**, and the same for every weekday it stays blocked. The
       05:00 UTC catch-up cron does not help — it is the same runner pool.
+
+      **Nothing is lost yet (checked 14:49 UTC).**
+      `GET /api/ingest/option-chain/status` reports `last_quote_date
+      2026-09-18`, 19,572 rows, 24 symbols, **0 missing** — Thursday's close
+      landed before the outage, and today's failed 09:02 run was the *catch-up*
+      for data already collected, not a missed session. The exposure is
+      entirely forward-looking: tonight's 21:30 UTC sweep, then Monday's.
 
       **Manual fallback, if billing cannot be fixed before 21:30 UTC today:**
 
