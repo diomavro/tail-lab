@@ -127,12 +127,17 @@ them.
   Standalone, the growth-optimal size for a negative-EV bet is zero; the position
   is only justifiable as a portfolio hedge. Do not report an "optimal size" for
   the put book alone.
-- **The regime classifier has no hysteresis** (`docs/PRIOR_ART.md` §8).
-  `contracts/regime.py` is hard VIX thresholds, so a VIX oscillating around 17
-  or 28 flips regime on consecutive days — and `docs/adr/0015` keys verdicts on
-  regime, so a rule can collect its second regime (and a `confirmed` verdict)
-  from a boundary wobble. Second independent defect on the same axis as the
-  moneyness confound above.
+- **The regime classifier HAS hysteresis now** — `docs/PRIOR_ART.md` §8 says it
+  does not, and §8 is the historical record of what prior art suggested, not the
+  current state. `contracts/regime.py` carries `HYSTERESIS_BAND = 1.0` and
+  `CREDIT_HYSTERESIS_BAND = 0.5`, both wired through `classify_vix_series` and
+  `classify_credit_series` as a `band` parameter, with
+  `tests/test_contracts_regime_hysteresis.py` covering them. A VIX oscillating
+  16.9 → 17.1 → 16.8 no longer flips regime three times.
+  **What that does not fix:** `docs/adr/0015` still keys verdicts on regime, so
+  the *coupling* between a noisy label and a `confirmed` verdict remains — the
+  band narrows the noise, it does not remove the dependency. The moneyness
+  confound above is untouched and is the live one of the pair.
 - **Greeks exist now** (`option_pricer.PutGreeks`) in desk units: **vega per vol
   point, theta per calendar day**. `make greeks-check` scores them against the
   exchange's own from the chain snapshot — the only independent check that the

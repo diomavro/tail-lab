@@ -41,7 +41,16 @@ acts on, removes, or reorders anything in this file.**
       the `FRED_API_KEY` repo secret (2026-08-17). For local dev, export
       `FRED_API_KEY` from that same value.
 
-- [ ] **Create `AGENT_FIX_TOKEN` and add it to the repo's Actions secrets** —
+- [x] **Done 2026-09-04** — verified 2026-09-19: `gh secret list` shows
+      `AGENT_FIX_TOKEN` created 2026-09-04, and the loop demonstrably works.
+      PR #108's `agent-review` logged `HAS_FIX_TOKEN: true`, applied its
+      findings, pushed commit `99d5d83` and failed the run on purpose so the
+      fresh run carried the authoritative verdict — exactly the behaviour the
+      item below describes as blocked. **One caveat learned in the process:**
+      the loop reverted two *correct* statements in `CLAUDE.md` while applying a
+      genuine code fix, so its pushes need reading, not merging on trust.
+      Original item:
+      **Create `AGENT_FIX_TOKEN` and add it to the repo's Actions secrets** —
       the one thing standing between the design review being an alarm and being
       a loop (`docs/adr/0024`). A fine-grained PAT scoped to `diomavro/tail-lab`
       with **Contents: read & write** is enough; nothing else.
@@ -109,12 +118,22 @@ Phase 1 — free accounts (~30 min total, all $0):
       and moved to `data/vendor/optionsdx/`; adapter, contract, tests and
       `make ingest-optionsdx` shipped (`docs/DATA_CONTRACTS.md` #12). VIX is
       ingested — 168,351 quotes, 168/168 months, 2010-2023. **Two things left
-      for you:** (a) the coverage is very uneven and SPY, the benchmark, has
-      only 63 of 168 months — deciding whether to fill those gaps is a
-      judgement about how much a market-priced SPY backtest is worth to you;
-      (b) 18 byte-identical `(1)` duplicates are still sitting in `~/Downloads`
-      (226 MB) and one `(2)` copy is in the vendor dir, all safe to delete —
-      left alone rather than deleting your files unasked.
+      for you:** ~~(a) the coverage is very uneven and SPY, the benchmark, has
+      only 63 of 168 months~~ and ~~(b) 18 byte-identical `(1)` duplicates are
+      still sitting in `~/Downloads` (226 MB) and one `(2)` copy is in the
+      vendor dir~~.
+
+      **Both are resolved — nothing here needs you (checked 2026-09-19).**
+      (a) is the figure `CLAUDE.md` records as **wrong**: it predated the rest
+      of the corpus arriving on 2026-09-03. SPY is **168 of 168 months with
+      zero gaps**, as are vix (168), qqq (144), nvda (96) and tsla (96)
+      (`docs/DATA_CONTRACTS.md` #12, measured 2026-09-09). There is no gap to
+      decide about. (b) the duplicates are gone: no optionsDX `(1)` files remain
+      in `~/Downloads` and no `(2)` copy in the vendor dir.
+
+      **What IS still open, and it is an agent job not yours:** `spx` is not
+      ingested — 22 archives sit in the vendor dir but the ingest is OOM-killed
+      at ~3.9 GB and needs a chunked bronze write (`AGENT_TODO.md`).
 - [x] **Done 2026-09-03** — the optionsDX account and corpus. Superseded by
       the entry above, which carries the outcome; kept only as a pointer so
       the phase reads completely.
@@ -192,14 +211,27 @@ the agent has measured the model-vs-PPUT residual — if the proxy pricer
 tracks Cboe's real-transaction PPUT/PPUT3M series closely, the paid
 chains buy little for evaluation and their real justification is the
 *signal* side (full-universe cross-sectional chains), which is a separate
-decision. Sharadar at $9/mo is unaffected by this — it addresses G2/G3/G4
+decision.
+
+**That precondition is now met, and it points at "do not buy"
+(`docs/MODEL_RESIDUAL.md`, checked 2026-09-19).** The replication tracks
+**ρ = 0.9913** on PPUT over 438 monthly rolls since 1990 and **ρ = 0.9972**
+on PPUT3M over 89 quarterly rolls, at tracking errors of 1.68 %/yr and
+**0.98 %/yr**. By this item's own test that is "closely", so the $99/mo
+buys little for *evaluation*. Two caveats before you close it for good: the
+residual is **+1.34 %/yr at 5 % OTM and +2.71 %/yr at 10 %** — the model
+underpays, and it **doubles as the strike goes deeper**, so it understates
+its own optimism at the 20 % OOM end the S1 thesis is about; and the
+*signal*-side justification is untouched by any of this. Sharadar at $9/mo is unaffected by this — it addresses G2/G3/G4
 (survivorship and the broad-universe feed), not puts.
 
-**One regression worth knowing:** Yahoo's chart endpoint now returns 429
-from *residential* IPs too, not just datacenter ones (probed from your
-workstation, 2026-08-21). `ingestion/ohlcv.py` still has Yahoo as
-primary, so the Tiingo key above is now a genuine fix rather than an
-upgrade.
+**One regression worth knowing — since fixed.** Yahoo's chart endpoint
+returns 429 from *residential* IPs too, not just datacenter ones (probed
+from your workstation, 2026-08-21). At the time `ingestion/ohlcv.py` still
+had Yahoo as primary. **It no longer does** (checked 2026-09-19): that
+module's docstring now reads "Fallback source: Yahoo's chart JSON — the
+adapter's original primary", with Tiingo promoted ahead of it. Nothing to
+do.
 
 ## One licence call (2026-08-21 second deep dive, `docs/DATA_SOURCING.md` §10)
 
@@ -243,3 +275,105 @@ upgrade.
       this.
       **Nothing is blocked on you** — the free Cboe benchmark path (§9) works
       regardless; this only decides whether real 2008 chains join it.
+
+## Operational — found 2026-09-19
+
+- [ ] **Decide the cadence for a scheduled OHLCV/VIX ingest, and merge the
+      workflow.** There is no cron for either. `daily-chain-snapshot`,
+      `daily-verdict-sweep`, `daily-agent` and `weekly-cleanup` are the only
+      scheduled jobs, so price and volatility data drift until someone runs
+      `make ingest-vix` / `make ingest-ohlcv` by hand.
+
+      **Measured 2026-09-19:** bronze had last closed on **2026-08-20** — 29
+      days stale. `/api/vix/stretch` in production was serving a 2026-08-20
+      close of 16.01 at a z-score of −0.10; the same call after a manual
+      refresh returns **2026-09-18, close 14.81, z = −0.83**. The regime
+      classifier keys off VIX and every fragility metric keys off OHLCV, so
+      for those 29 days the live Screen ranked 70 names on month-old returns
+      and the Regime surface showed a month-old label. Both are refreshed now.
+
+      **Cost of delay:** unlike the option chain this is fully recoverable —
+      Tiingo and Cboe both serve history on demand, so a missed day is one
+      `make` invocation from being caught up, and nothing is lost permanently.
+      What it costs is silent wrongness: there is no alarm, the numbers look
+      current, and the only symptom is a date buried in a payload. That is the
+      opposite failure mode from `docs/adr/0020`'s chain sweep, which fails red
+      on purpose.
+
+      **Why this is yours and not the agent's.** The fix is a new file under
+      `.github/workflows/`, which is constitutional (`docs/adr/0022`) and needs
+      a human-merged PR. Two judgements are also genuinely yours: the **cadence**
+      (daily after the US close mirrors the chain sweep; weekly would bound the
+      drift at 7 days for a seventh of the requests), and whether your **Tiingo
+      plan's rate limit** tolerates 70 symbols plus VIX in one run — the free
+      tier's hourly and daily caps are the binding constraint, and a partial
+      run that half-refreshes the universe is worse than a clean weekly one,
+      because the Screen would then rank some names on today's data and others
+      on last week's.
+
+      Say the word and I will draft the workflow; I have not guessed at either
+      number.
+
+- [ ] **⚠ EXPIRING — GitHub Actions is not allocating runners. Check the
+      Actions spending limit / billing.** Found 2026-09-19 ~06:17 UTC.
+
+      **Symptom:** every job in every workflow run fails in 2-4 seconds with
+      **`steps=0`** — they never start. Confirmed across `backend`, `frontend`,
+      `e2e`, `hygiene`, `constitution-guard` and `agent-review` on CI run
+      35426215904, and on two re-run attempts of 35425966439. Job logs return
+      `BlobNotFound`, because there is no log: nothing ran. This is not a test
+      failure and not a diff problem — the same jobs passed with full steps on
+      PR #108 an hour earlier, and `daily-chain-snapshot` succeeded at
+      2026-09-18T23:27Z.
+
+      **CAUSE CONFIRMED (2026-09-19 14:49 UTC).** Not a hypothesis — this is
+      the annotation GitHub attaches to every failed job, verbatim:
+
+      > The job was not started because recent account payments have failed or
+      > your spending limit needs to be increased. Please check the
+      > 'Billing & plans' section in your settings
+
+      **The fix is entirely in GitHub → Settings → Billing & plans**: either a
+      card that needs re-authorising or an Actions spending limit that needs
+      raising. Nothing in this repo is broken and nothing here can fix it.
+      `CLAUDE.md` records the same fault taking this repo down once before,
+      ~2026-06-24 to 2026-08-24.
+
+      **Why this one expires, and the deadline.** `daily-chain-snapshot` runs
+      **21:30 UTC on weekdays** (`docs/adr/0020`) and forward-collects the put
+      wing from Cboe's keyless CDN. Every other source here serves history on
+      demand; **nobody sells a retroactive option chain.** 2026-09-19 is a
+      **Saturday**, so the next sweep is **Monday 2026-09-21 at 21:30 UTC** --
+      markets are shut over the weekend and there is nothing to collect until
+      then. Every weekday the outage continues past that costs one session
+      permanently. The 05:00 UTC catch-up cron does not help -- same runner pool.
+
+      **Covered locally, so this is no longer the urgent half of the item.** A
+      cron entry now runs `scripts/local_chain_sweep.sh` at 21:35 UTC weekdays
+      (`CRON_TZ=UTC`, so it does not drift with Budapest DST), which is the
+      same instant the workflow used. `crontab -l` shows it. It writes straight
+      to the lake with the credentials already in `.env`, so it needs neither
+      Actions nor the Fly app.
+
+      **Nothing is lost (checked 2026-09-19 17:43 UTC).**
+      `GET /api/ingest/option-chain/status` reports `last_quote_date
+      2026-09-18`, 19,572 rows, 24 symbols, **0 missing** — and 2026-09-18 was
+      **Friday**, so the most recent trading session is fully captured. The
+      run that failed on Saturday at 09:02 was a catch-up for data already
+      collected, not a missed session. The exposure is entirely forward-looking
+      and starts Monday evening.
+
+      **Manual fallback, if billing cannot be fixed before 21:30 UTC today:**
+
+      ```bash
+      cd ~/Documents/apps/tail-lab && make ingest-option-chain
+      ```
+
+      It is the same script the workflow runs (`scripts/chain_snapshot.py`),
+      it needs only the `.env` already on the workstation, and bronze is
+      immutable so running it by hand and again later is a no-op, not a
+      conflict. Run it any time after ~21:30 UTC (23:30 Budapest) on a weekday.
+
+      **Also blocked until this clears:** PR #109 cannot auto-merge (its five
+      substantive gates passed before the outage; `agent-review` never ran),
+      the daily agent cannot open PRs, and no green `main` commit can deploy.

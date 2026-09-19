@@ -131,11 +131,53 @@ def _post(base_url: str, token: str, payload: dict[str, Any], timeout: int) -> d
     raise AssertionError("POST_ATTEMPTS must be >= 1")
 
 
+def _run_local(symbols: list[str]) -> int:
+    """Fetch and write in one process, for a human at a terminal.
+
+    Kept out of ``main`` so ``main`` stays under the complexity ratchet, and
+    because this half must never run the ``--post`` path's ``sweep_to_records``
+    first. It used to: ``main`` swept unconditionally and THEN called
+    ``ingest_option_chain``, which does its own fetch -- every chain fetched
+    TWICE, 48 requests where 24 were needed, back to back.
+
+    That was invisible on a GitHub runner and bit immediately on a workstation.
+    Measured 2026-09-19: Cboe returned 429 on 9 of 24 symbols, the first sweep
+    reporting 24/24 and the second 15/24. Because bronze is immutable the short
+    partition is the one that would have stood for that session, and the nine
+    missing chains are as unrecoverable as the whole day -- the reasoning
+    already written against ``_FETCH_ATTEMPTS`` in the adapter.
+    """
+    # Imported here, not at module scope: the --post path must stay importable
+    # (and runnable in CI) without any lake configuration.
+    from tail_lab.config import get_lake_store
+    from tail_lab.ingestion.option_chain import ingest_option_chain
+
+    result = ingest_option_chain(get_lake_store(), symbols)
+    if result.valid_rows < MIN_PLAUSIBLE_ROWS:
+        print(
+            f"::error::only {result.valid_rows} rows across {len(symbols)} chains — "
+            "treating as a failed sweep, not an empty market",
+            file=sys.stderr,
+        )
+        return 1
+    if result.symbols_failed:
+        print(f"::warning::no quotes for {', '.join(result.symbols_failed)}")
+    print(
+        f"swept {len(result.symbols_ok)}/{len(symbols)} chains -> "
+        f"committed {result.valid_rows} rows -> {result.bronze_path}"
+    )
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     args = _parse_args(argv)
     configure_logging()
 
     symbols = [s.strip().lower() for s in args.symbols.split(",") if s.strip()]
+
+    if args.local:
+        return _run_local(symbols)
+
     records = sweep_to_records(symbols)
 
     swept = {r["underlying"] for r in records}
@@ -151,16 +193,6 @@ def main(argv: list[str] | None = None) -> int:
             file=sys.stderr,
         )
         return 1
-
-    if args.local:
-        # Imported here, not at module scope: the --post path must stay
-        # importable (and runnable in CI) without any lake configuration.
-        from tail_lab.config import get_lake_store
-        from tail_lab.ingestion.option_chain import ingest_option_chain
-
-        result = ingest_option_chain(get_lake_store(), symbols)
-        print(f"committed {result.valid_rows} rows -> {result.bronze_path}")
-        return 0
 
     if not args.token:
         print("::error::--post needs --token", file=sys.stderr)

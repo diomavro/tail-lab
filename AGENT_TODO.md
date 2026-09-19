@@ -1178,6 +1178,27 @@ written. Each needs its own ADR.
       its own validity at depths where `docs/MODEL_RESIDUAL.md` measures it
       reports the option is free.
 
+## Results are surfaced without their provenance (found 2026-09-19)
+
+- [ ] **`code_sha` and `snapshot_id` reach the logs but not the payload.**
+      `docs/STANDARDS.md` is explicit: "Every result the cockpit displays ...
+      carries the bronze snapshot id(s) it read and the code SHA that computed
+      it. A result without both is not trustworthy and should not be surfaced."
+      Measured against production 2026-09-19: `/api/putlab/leaderboard` returns
+      70 ranked names with **no `code_sha` and no `snapshot_id` in the
+      response**, and `/api/putlab/accuracy` and `/api/putlab/backtest` carry
+      neither either. The five `code_sha=get_settings().code_sha` call sites in
+      `api/putlab_routes.py` are all arguments to `log_event`, not response
+      fields — the audit trail exists server-side, the *result* does not carry
+      it. A reader of the Screen cannot tell which code or which snapshot
+      produced the ranking they are looking at.
+      *Success*: `UniverseRanking` and the other surfaced result models carry
+      both fields, populated from `get_settings().code_sha` and the store's
+      `bronze_snapshot_id`, and the cockpit shows them where the result is
+      shown (README: "accuracy is surfaced, not filed"). Note `code_sha`
+      defaults to the string `"unknown"` locally, which is the honest value —
+      do not make it `None`.
+
 ## Design-review advisories not yet acted on (found 2026-09-07)
 
 Two non-blocking findings from PR #86's round-2 review (the Nasdaq
