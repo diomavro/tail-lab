@@ -248,6 +248,16 @@ a pricer, per name, per day.
 
 ## 8. The regime classifier flip-flops, and verdicts are keyed on it
 
+> **Acted on — the hysteresis half of this is fixed (checked 2026-09-19).**
+> `contracts/regime.py` now carries `HYSTERESIS_BAND = 1.0` and
+> `CREDIT_HYSTERESIS_BAND = 0.5`, wired through `classify_vix_series` and
+> `classify_credit_series`, with `tests/test_contracts_regime_hysteresis.py`
+> covering them. The section below is kept as the record of what prior art
+> suggested and why, not as a description of the code. What it flags that is
+> **still true**: `docs/adr/0015` keys verdicts on regime, so a noisy label and
+> a `confirmed` verdict remain coupled — the band narrows the noise without
+> removing the dependency.
+
 `contracts/regime.py` classifies on VIX level: calm < 17, elevated < 28, crisis
 above. Hard thresholds, no state, no hysteresis — so a VIX oscillating
 16.9 -> 17.1 -> 16.8 changes regime three times in three days.

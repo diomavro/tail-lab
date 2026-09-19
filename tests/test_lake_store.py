@@ -8,6 +8,7 @@ import datetime as dt
 from pathlib import Path
 
 import pandas as pd
+import pyarrow as pa
 import pytest
 
 from tail_lab.lake.store import DeltaLakeStore
@@ -260,3 +261,43 @@ def test_bronze_snapshot_id_does_not_read_the_partition(tmp_path: Path) -> None:
     store._read_bronze_partition = spy  # type: ignore[method-assign]
     store.bronze_snapshot_id("probe", dt.date(2026, 1, 5))
     assert reads == [], "the snapshot id read the partition's data"
+
+
+def test_a_filtered_frame_does_not_leak_its_index_into_the_schema(tmp_path: Path) -> None:
+    """A second write of a frame whose index survived a filter must not fail.
+
+    pyarrow serialises a non-``RangeIndex`` as a ``__index_level_0__`` **data
+    column**, so a frame that has been filtered -- which is what
+    ``validate_and_quarantine`` returns whenever it quarantines even one row --
+    carries an extra field into a table that does not have it, and
+    ``write_deltalake`` rejects it with
+    ``SchemaMismatchError: number of fields does not match: N+1 vs N``.
+
+    That message names the schema, not the index, so it reads as a data-contract
+    change rather than the plumbing bug it is. Measured 2026-09-19 against the
+    production lake, it silently blocked **7 of the 70** universe symbols --
+    iwm, xlf, xle, jpm, ba, xom, pltr, exactly those with a quarantined row --
+    from ingesting at all, for as long as their bronze tables had existed.
+    """
+    store = DeltaLakeStore(tmp_path)
+    store.write_bronze("ohlcv_test", dt.date(2026, 1, 1), _frame(["2026-01-02"], [1.0]))
+
+    # Any non-default index leaks, so the store's contract is simply "write the
+    # frame you were given, whatever its index". The precondition is asserted
+    # through pyarrow rather than through the index TYPE, because that is the
+    # real mechanism and because pandas collapses most integer indexes back to
+    # a RangeIndex -- which does not leak -- so an index-type assertion would
+    # pass while testing nothing. (In production the trigger was
+    # `validate_and_quarantine` returning a plain `Index` after quarantining a
+    # row; pandas 3.0.5 normalises integer indexes aggressively enough that a
+    # string index is the stable way to reproduce the same leak here.)
+    filtered = _frame(["2026-01-02", "2026-01-03"], [1.0, 2.0]).set_index(pd.Index(["a", "b"]))
+    assert "__index_level_0__" in pa.Table.from_pandas(filtered).schema.names, (
+        "the fixture must actually leak an index column, or this tests nothing"
+    )
+
+    store.write_bronze("ohlcv_test", dt.date(2026, 1, 2), filtered)
+
+    read_back = store.read_bronze_as_of("ohlcv_test", as_of=dt.date(2026, 1, 2))
+    assert "__index_level_0__" not in read_back.columns
+    assert len(read_back) == 2

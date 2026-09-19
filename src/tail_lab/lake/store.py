@@ -290,7 +290,18 @@ class DeltaLakeStore(LakeStore):
             # Immutable: never overwrite an existing snapshot. Re-ingesting
             # the same day is a no-op that preserves the original data.
             return self._partition_location(table_uri, ingest_date)
-        to_write = df.copy()
+        # `reset_index(drop=True)`, not `copy()`: pyarrow serialises a
+        # non-RangeIndex as a `__index_level_0__` DATA column, so a frame whose
+        # index survived a filter (validation dropping rows leaves an `Index`,
+        # not a `RangeIndex`, even when its values are still 0..n-1) writes ten
+        # fields into a nine-field table and fails with
+        # `SchemaMismatchError: number of fields does not match: 10 vs 9`.
+        # That error names the schema and not the index, so it reads as a
+        # contract change rather than the plumbing bug it is. Measured
+        # 2026-09-19: it blocked 7 of the 70 universe symbols -- iwm, xlf, xle,
+        # jpm, ba, xom, pltr -- from ingesting at all, silently, for as long as
+        # their bronze tables have existed.
+        to_write = df.reset_index(drop=True)
         to_write[_INGEST_DATE_COL] = ingest_date.isoformat()
         write_deltalake(
             table_uri,
