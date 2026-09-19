@@ -313,3 +313,45 @@ do.
 
       Say the word and I will draft the workflow; I have not guessed at either
       number.
+
+- [ ] **⚠ EXPIRING — GitHub Actions is not allocating runners. Check the
+      Actions spending limit / billing.** Found 2026-09-19 ~06:17 UTC.
+
+      **Symptom:** every job in every workflow run fails in 2-4 seconds with
+      **`steps=0`** — they never start. Confirmed across `backend`, `frontend`,
+      `e2e`, `hygiene`, `constitution-guard` and `agent-review` on CI run
+      35426215904, and on two re-run attempts of 35425966439. Job logs return
+      `BlobNotFound`, because there is no log: nothing ran. This is not a test
+      failure and not a diff problem — the same jobs passed with full steps on
+      PR #108 an hour earlier, and `daily-chain-snapshot` succeeded at
+      2026-09-18T23:27Z.
+
+      `CLAUDE.md` records this repo losing Actions to a billing fault once
+      before (~2026-06-24 to 2026-08-24), which is the first place to look.
+      I could not check the meter: `/users/diomavro/settings/billing/actions`
+      needs the `user` OAuth scope, and requesting a new scope is not something
+      to do unasked.
+
+      **Why this one expires, and the deadline.** `daily-chain-snapshot` runs
+      **21:30 UTC on weekdays** (`docs/adr/0020`) and forward-collects the put
+      wing from Cboe's keyless CDN. Every other source here serves history on
+      demand; **nobody sells a retroactive option chain.** Today is Friday
+      2026-09-19, so the next sweep is ~21:30 UTC today and the one after is
+      Monday. If Actions is still blocked at 21:30 UTC, **that session is gone
+      at any price**, and the same for every weekday it stays blocked. The
+      05:00 UTC catch-up cron does not help — it is the same runner pool.
+
+      **Manual fallback, if billing cannot be fixed before 21:30 UTC today:**
+
+      ```bash
+      cd ~/Documents/apps/tail-lab && make ingest-option-chain
+      ```
+
+      It is the same script the workflow runs (`scripts/chain_snapshot.py`),
+      it needs only the `.env` already on the workstation, and bronze is
+      immutable so running it by hand and again later is a no-op, not a
+      conflict. Run it any time after ~21:30 UTC (23:30 Budapest) on a weekday.
+
+      **Also blocked until this clears:** PR #109 cannot auto-merge (its five
+      substantive gates passed before the outage; `agent-review` never ran),
+      the daily agent cannot open PRs, and no green `main` commit can deploy.
