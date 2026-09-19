@@ -29,6 +29,32 @@ on:
   # workflow_run trigger, gets deployed). See docs/adr/0016.
   workflow_dispatch:
 
+# GitHub bills a ONE-MINUTE MINIMUM per job, and a superseded PR run costs the
+# full ~11 billed minutes of a real one. Measured on this repo, 2026-09-18:
+# four CI runs on one PR inside fifteen minutes, three of them already
+# irrelevant when they started. Without this block every push to a branch
+# started another full matrix and let the old one finish.
+concurrency:
+  # Keyed on the event as well as the ref: `push` to main and a manual
+  # `workflow_dispatch` on main share `refs/heads/main`, and without the event
+  # in the key an automerge-dispatched run would silently cancel an in-flight
+  # main run — exactly the run that gates the deploy.
+  group: ci-${{ github.workflow }}-${{ github.event_name }}-${{ github.ref }}
+  # Superseded PR pushes are worth cancelling. Main pushes are NOT: cancelling
+  # leaves that commit's status `cancelled` forever — neither pass nor fail —
+  # which answers nothing when you ask "is main broken?", and `trigger-deploy`
+  # would never fire.
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+  #
+  # Interaction with `agent-review`'s fix loop, which is not obvious and is the
+  # thing to check before widening this: that job pushes its fix with
+  # AGENT_FIX_TOKEN *deliberately* so the push triggers a fresh run and a fresh
+  # review (a PAT is exempt from GITHUB_TOKEN recursion suppression). That new
+  # run now cancels the one that pushed it — which is fine, because the push is
+  # the job's last real step and the fix is already on the branch; the fresh
+  # review is what the round wanted. The round counter is derived from PR
+  # state, not from run state, so a cancelled run does not lose a round.
+
 jobs:
   backend:
     runs-on: ubuntu-latest
@@ -69,10 +95,21 @@ jobs:
   # Makefiles and pytest never invokes make -- and only the LLM design reviewer
   # noticed. That was lucky, and luck is not a gate: anything a `grep` can
   # catch should never cost a model call (docs/adr/0023).
-  hygiene:
+  # Two guards that cost six seconds each. They were two jobs (`hygiene` and
+  # `constitution-guard`), which at GitHub's one-minute-per-job minimum billed
+  # TWO minutes for twelve seconds of work — a 10x markup, on every run.
+  #
+  # Merged, and merged INTO the `constitution-guard` name rather than into some
+  # new `guards`: README, ARCHITECTURE.md, CLAUDE.md, AGENT_MISSION.md, four
+  # ADRs and `daily-agent.yml`'s own agent prompt all name this job, and a
+  # rename would have falsified every one of them. `fetch-depth: 0` is for the
+  # constitution diff; the conflict-marker grep does not need it.
+  constitution-guard:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - name: No unresolved merge-conflict markers
         run: |
@@ -87,7 +124,40 @@ jobs:
         # file is syntactically a Makefile, which is exactly what was broken.
         run: make help > /dev/null
 
-  frontend:
+      # The "constitution" (big-picture docs) stays human-curated: an agent/*
+      # PR that edits it fails here, so auto-merge cannot land it — a human
+      # must. Human PRs are unaffected. automerge.yml gates on the whole CI
+      # run being green, so this blocks auto-merge from whichever job it
+      # lives in; it does not need a job of its own to have teeth.
+      - name: Block autonomous edits to the constitution
+        env:
+          HEAD_REF: ${{ github.head_ref }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: |
+          if [[ "$HEAD_REF" != agent/* ]]; then
+            echo "Not an agent PR (head='$HEAD_REF') — constitution guard N/A."
+            exit 0
+          fi
+          changed=$(git diff --name-only "$BASE_SHA...HEAD")
+          echo "Changed files:"; echo "$changed"
+          if echo "$changed" | grep -qE '^docs/adr/|^\.github/workflows/|^ARCHITECTURE\.md$|^docs/STANDARDS\.md$|^README\.md$|^docs/AGENT_MISSION\.md$|^docs/END_STATE\.md$'; then
+            echo "::error::This agent PR edits the constitution (docs/adr, ARCHITECTURE.md, STANDARDS.md, README.md, AGENT_MISSION.md, END_STATE.md) or .github/workflows (where the agent's own instructions and this guard live). A human must review + merge it — auto-merge is blocked."
+            exit 1
+          fi
+          echo "OK: agent PR leaves the constitution untouched."
+
+  # The browser suite. Hermetic by construction — Playwright starts its own Vite
+  # dev server and `e2e/fixtures/mock-api.ts` answers every /api/** call, so this
+  # needs no lake, no backend and no network, and it is deterministic enough to
+  # gate a deploy on.
+  #
+  # `frontend` (tsc + vite build) used to be its own job for fast-fail
+  # diagnosis. That cost a whole billed minute for 21 seconds of work AND a
+  # second `npm ci` of the same lockfile. Folded in here, with typecheck and
+  # build kept as the FIRST steps so a build break still fails in ~25s and the
+  # step name still says which gate went red — the diagnosis the split was for,
+  # without the second runner.
+  e2e:
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -109,28 +179,6 @@ jobs:
 
       - name: npm run build
         run: npm run build
-
-  # The browser suite. Hermetic by construction — Playwright starts its own Vite
-  # dev server and `e2e/fixtures/mock-api.ts` answers every /api/** call, so this
-  # needs no lake, no backend and no network, and it is deterministic enough to
-  # gate a deploy on. It is a separate job from `frontend` so a red run says
-  # "e2e", not "build", and so the fast build gate stays fast.
-  e2e:
-    runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: frontend
-    steps:
-      - uses: actions/checkout@v4
-
-      - uses: actions/setup-node@v4
-        with:
-          node-version: "24"
-          cache: npm
-          cache-dependency-path: frontend/package-lock.json
-
-      - name: npm ci
-        run: npm ci
 
       # Keyed on the lockfile: the browser build Playwright wants is pinned by
       # the @playwright/test version, so a lockfile change is exactly when the
@@ -160,32 +208,6 @@ jobs:
           name: playwright-traces
           path: frontend/test-results/
           retention-days: 7
-
-  # The "constitution" (big-picture docs) stays human-curated: an agent/* PR
-  # that edits it fails here, so auto-merge cannot land it — a human must.
-  # Human PRs are unaffected. Required check, so auto-merge can't skip it.
-  constitution-guard:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-      - name: Block autonomous edits to the constitution
-        env:
-          HEAD_REF: ${{ github.head_ref }}
-          BASE_SHA: ${{ github.event.pull_request.base.sha }}
-        run: |
-          if [[ "$HEAD_REF" != agent/* ]]; then
-            echo "Not an agent PR (head='$HEAD_REF') — constitution guard N/A."
-            exit 0
-          fi
-          changed=$(git diff --name-only "$BASE_SHA...HEAD")
-          echo "Changed files:"; echo "$changed"
-          if echo "$changed" | grep -qE '^docs/adr/|^\.github/workflows/|^ARCHITECTURE\.md$|^docs/STANDARDS\.md$|^README\.md$|^docs/AGENT_MISSION\.md$|^docs/END_STATE\.md$'; then
-            echo "::error::This agent PR edits the constitution (docs/adr, ARCHITECTURE.md, STANDARDS.md, README.md, AGENT_MISSION.md, END_STATE.md) or .github/workflows (where the agent's own instructions and this guard live). A human must review + merge it — auto-merge is blocked."
-            exit 1
-          fi
-          echo "OK: agent PR leaves the constitution untouched."
 
   # Chain to Deploy via workflow_dispatch — the one trigger type exempt from
   # GitHub's GITHUB_TOKEN recursion prevention. A workflow_run trigger on
@@ -670,7 +692,7 @@ jobs:
           exit 1
 
   trigger-deploy:
-    needs: [backend, hygiene, frontend, e2e, constitution-guard]  # not agent-review: it is pull_request-only, so it never runs on this push-to-main
+    needs: [backend, constitution-guard, e2e]  # not agent-review: it is pull_request-only, so it never runs on this push-to-main
     if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     permissions:
