@@ -199,6 +199,20 @@ local-ci:
 	@echo "=== frontend (typecheck + lint + build) ==="
 	@cd frontend && npm run typecheck && npm run lint && npm run build
 	@echo "=== e2e (hermetic; starts its own dev server, mocks every /api/**) ==="
+	@# MEMORY-BOUND on this machine, and that is the honest caveat on treating
+	@# `local-ci` as a CI substitute. Measured 2026-09-19: 79 passed in 3.2 min
+	@# with memory free; then 28 FAILED in 8.9 min, and a retry timed out after
+	@# 20 min, once swap hit 100% (2.0Gi used / 0 free, 965Mi available of
+	@# 7.4Gi) with `vmstat` showing heavy swap-in. Playwright spawns Chromium
+	@# per worker and there was nothing left to give it.
+	@#
+	@# Every failure in both bad runs was `waiting for navigation until "load"`
+	@# -- a stalled browser, never an assertion. So a red e2e HERE is not
+	@# evidence of a regression until it reproduces with memory free. Check
+	@# `free -h` before believing it. A dedicated runner does not share 7.4Gi
+	@# with an IDE, a browser and another repo's test suite; this is the one
+	@# gate that does not transfer to a laptop, and the backend gates above
+	@# (1249 tests) are the ones to lean on.
 	@cd frontend && npm run e2e
 	@echo "=== ALL LOCAL CI GATES PASSED ==="
 
