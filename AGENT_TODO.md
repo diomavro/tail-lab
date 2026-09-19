@@ -1005,6 +1005,28 @@ model is *not* allowed to do, and two of the items below are explicitly gated.
 pay") — implied-vs-realised `alpha` is a basis-free cheapness measure the
 platform has never had. The screen item serves §4 **Q1**.
 
+**ORDER: build the implied-alpha fit BEFORE the tab** (decided with Dio,
+2026-09-19). Both are wanted; the sequence is not arbitrary.
+
+`make tail-alpha` currently **refuses on every name in the universe** — SPY,
+QQQ, TSLA, NVDA and HYG all report no Karamata region, because `L` is not flat
+anywhere in a five-year daily window (`docs/DISCOVERIES.md` §12). That refusal
+is correct and is the point of the gate. But it means a Surface tab built on
+today's inputs would render "REFUSED" in every panel: an honest page with
+nothing on it.
+
+What gives the tab something to show is the **implied** side — `ladder.py` and
+`implied_alpha.py` fitted against the optionsDX chains, which do not depend on
+the realised-alpha gate at all. So: `ladder.py` → `implied_alpha.py` →
+`alpha_bound.py` → the route → the tab, in that order. The tab item stays last
+in the list below for readability, not for scheduling.
+
+One consequence worth stating: if the implied fit ALSO comes back mostly
+refusing — which `ImpliedAlphaFit.refusal` is built to allow, and which Gate 0
+in the experiment notes makes a real possibility — then the honest deliverable
+is a tab that says so, and that is still worth shipping. A surface that reports
+"this data does not support the claim" is the platform working, not failing.
+
 ### The Surface (one increment each — the whole tab in one PR is too large)
 
 - [ ] **`research/surface/ladder.py`.** `Anchor` (required on every public entry
