@@ -150,9 +150,16 @@ def _run_local(symbols: list[str]) -> int:
     # Imported here, not at module scope: the --post path must stay importable
     # (and runnable in CI) without any lake configuration.
     from tail_lab.config import get_lake_store
-    from tail_lab.ingestion.option_chain import ingest_option_chain
+    from tail_lab.ingestion.option_chain import IncompleteSweepError, ingest_option_chain
 
-    result = ingest_option_chain(get_lake_store(), symbols)
+    try:
+        result = ingest_option_chain(get_lake_store(), symbols)
+    except IncompleteSweepError as exc:
+        # Refusing to write is the CORRECT outcome, but it is still a failed
+        # sweep for the operator: the session is recoverable only until the
+        # next US open, so this must exit non-zero and trip the alert.
+        print(f"::error::{exc}", file=sys.stderr)
+        return 1
     if result.valid_rows < MIN_PLAUSIBLE_ROWS:
         print(
             f"::error::only {result.valid_rows} rows across {len(symbols)} chains — "
@@ -162,10 +169,26 @@ def _run_local(symbols: list[str]) -> int:
         return 1
     if result.symbols_failed:
         print(f"::warning::no quotes for {', '.join(result.symbols_failed)}")
-    print(
-        f"swept {len(result.symbols_ok)}/{len(symbols)} chains -> "
-        f"committed {result.valid_rows} rows -> {result.bronze_path}"
-    )
+    if result.symbols_off_session:
+        print(
+            f"::warning::off-session quotes for {', '.join(result.symbols_off_session)} "
+            f"(Cboe served a different session, or no last_trade_time at all); their rows "
+            f"were quarantined, so they have NO {result.quote_date} quotes"
+        )
+    # Say which of the two things actually happened. These used to print the
+    # same sentence: `write_bronze` returns the same path whether it wrote or
+    # short-circuited on an existing ingest_date, so a no-op reported the
+    # in-memory row count as though it had been committed.
+    if result.committed:
+        print(
+            f"swept {len(result.symbols_ok)}/{len(symbols)} chains -> "
+            f"committed {result.valid_rows} rows -> {result.bronze_path}"
+        )
+    else:
+        print(
+            f"swept {len(result.symbols_ok)}/{len(symbols)} chains -> NO-OP: session "
+            f"{result.quote_date} was already captured, wrote nothing -> {result.bronze_path}"
+        )
     return 0
 
 

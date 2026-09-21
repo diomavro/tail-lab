@@ -1,0 +1,14 @@
+# Acknowledged, PERMANENT gaps in the option-chain bronze table.
+#
+# Read by scripts/chain_sweep_verify.sh. One "session<TAB>symbol" per line.
+#
+# A gap belongs here only when it can never be filled: bronze is immutable and
+# nobody sells a retroactive option chain, so once a session is written without
+# a symbol, that symbol's quotes for that session do not exist anywhere. The
+# alternative is alerting daily about something no action can fix, which is how
+# an alert channel stops being believed.
+#
+# Do NOT add a gap here to silence a CURRENT session. If Cboe is still serving
+# it, `make ingest-option-chain` can still capture it, and the alert is doing
+# its job.
+2026-09-08	arkk

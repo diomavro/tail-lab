@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import datetime as dt
+import math
 from pathlib import Path
 from typing import Any
 
@@ -8,10 +9,16 @@ import pandas as pd
 import pytest
 import requests
 
-from tail_lab.contracts.option_chain import DATASET, MAX_TENOR_DAYS
+from tail_lab.contracts.option_chain import (
+    DATASET,
+    DEFAULT_SNAPSHOT_SYMBOLS,
+    MAX_TENOR_DAYS,
+)
 from tail_lab.ingestion.option_chain import (
     _FETCH_ATTEMPTS,
+    MIN_SYMBOL_FRACTION,
     QUARANTINE_DATASET,
+    IncompleteSweepError,
     _fetch_with_retry,
     cboe_symbol,
     ingest_option_chain,
@@ -48,16 +55,23 @@ def _contract(osi: str, **overrides: Any) -> dict[str, Any]:
     return row
 
 
-def _payload(*contracts: dict[str, Any], symbol: str = "SPY", spot: float = SPOT) -> dict[str, Any]:
+def _payload(
+    *contracts: dict[str, Any],
+    symbol: str = "SPY",
+    spot: float = SPOT,
+    day: str = QUOTE_DAY,
+) -> dict[str, Any]:
+    """``day`` exists so a test can serve a STALE session for one symbol, the
+    way Cboe's CDN really does over a holiday weekend."""
     return {
-        "timestamp": f"{QUOTE_DAY} 20:30:28",
+        "timestamp": f"{day} 20:30:28",
         "symbol": symbol,
         "data": {
             "symbol": symbol,
             "security_type": "stock",
             "current_price": spot,
             "close": spot,
-            "last_trade_time": f"{QUOTE_DAY}T16:00:00",
+            "last_trade_time": f"{day}T16:00:00",
             "options": list(contracts),
         },
     }
@@ -341,21 +355,471 @@ def test_ingest_commits_one_partition_for_the_whole_universe(tmp_path: Path) -> 
 
 def test_one_dead_chain_does_not_cost_the_others_their_snapshot(tmp_path: Path) -> None:
     """The whole point of the schedule is that today's quotes are only
-    available today — a single failing symbol must not abort the sweep."""
+    available today — a single failing symbol must not abort the sweep.
+
+    The universe SIZE is load-bearing since ``MIN_SYMBOL_FRACTION`` landed,
+    and this test used to pass three symbols. The floor is a fraction, so
+    "one dead chain" is only tolerable against a realistic universe: at
+    production's 24 names one failure is 4.2%, inside the 10% allowed, while
+    at three names it is 33% and the floor correctly refuses. The three-symbol
+    version was the toy universe misrepresenting the invariant — the docstring
+    this test defends says "the other sixty-nine", not the other two — so the
+    fix is a representative universe, not a weaker floor. The competing
+    invariant is pinned directly below.
+    """
+    live = [f"SYM{i:02d}" for i in range(23)]
     store = DeltaLakeStore(tmp_path)
     result = ingest_option_chain(
         store,
-        ["SPY", "BROKEN", "QQQ"],
+        [*live, "BROKEN"],
         ingest_date=dt.date(2026, 8, 26),
+        fetch=_fetcher(**{name: _payload(_put(95.0), symbol=name) for name in live}),
+    )
+
+    assert result.symbols_ok == tuple(live)
+    assert result.symbols_failed == ("BROKEN",)
+    assert result.valid_rows == 23
+    assert result.committed is True
+
+
+def test_the_floor_tolerates_exactly_two_lost_chains_at_the_real_universe() -> None:
+    """The two tests around this one pull in opposite directions — "one dead
+    chain must not abort the sweep" against "a partial sweep must not define
+    the session" — and only ``MIN_SYMBOL_FRACTION`` keeps both true at once.
+
+    An earlier version asserted ``required <= 23 and required > 15`` and
+    claimed in its docstring that a future change to the constant would fail
+    here. That claim was false: those bounds admit any fraction from 0.626 to
+    0.958, i.e. anything tolerating 1 to 8 dead chains. It also hardcoded 24,
+    so widening the universe would have left it asserting about a size that no
+    longer existed.
+
+    So: read the real universe, and pin the tolerated count exactly. Changing
+    either the constant or the universe fails this test by design — go read
+    the two invariants below and decide deliberately rather than drifting.
+    """
+    universe = len(DEFAULT_SNAPSHOT_SYMBOLS)
+    tolerated = universe - max(1, math.ceil(universe * MIN_SYMBOL_FRACTION))
+    assert (universe, tolerated) == (24, 2), (
+        f"universe={universe}, fraction={MIN_SYMBOL_FRACTION} tolerates {tolerated} lost "
+        "chains. Both invariants below depend on this number: one dead chain must still "
+        "commit the rest, and the 15-of-24 sweep Cboe really served must be refused."
+    )
+
+
+def test_a_small_hand_run_universe_refuses_on_a_single_dead_chain(tmp_path: Path) -> None:
+    """The behaviour change the floor introduced for HAND runs, pinned so it
+    is a decision rather than a surprise.
+
+    ``ceil`` means a universe below ten tolerates zero losses, so
+    ``make ingest-option-chain CHAIN_SYMBOLS=spy,qqq`` with one chain dead now
+    writes nothing where it used to write the survivor. That is the intended
+    direction — a two-symbol partition would permanently define the session
+    with half the data, and the operator can simply re-run — but it IS a
+    change, it is reachable from a documented entry point, and no test covered
+    it after the three-symbol case was reframed to a realistic universe.
+    """
+    store = DeltaLakeStore(tmp_path)
+    with pytest.raises(IncompleteSweepError):
+        ingest_option_chain(
+            store,
+            ["SPY", "BROKEN", "QQQ"],
+            ingest_date=dt.date(2026, 8, 26),
+            fetch=_fetcher(
+                SPY=_payload(_put(95.0), symbol="SPY"),
+                QQQ=_payload(_put(95.0), symbol="QQQ"),
+            ),
+        )
+
+
+def test_a_partial_sweep_refuses_to_create_the_partition(tmp_path: Path) -> None:
+    """The competing invariant to the test above, and the reason the floor
+    counts SYMBOLS rather than rows.
+
+    Bronze is immutable, so the first write of a session is the only one: a
+    partial sweep does not under-report, it permanently *defines* that
+    session. Measured 2026-09-19 on the workstation, Cboe 429'd 9 of 24
+    symbols and the run still exited 0 on 14,091 rows — far above the driving
+    script's 200-row floor, which counts rows and therefore cannot see a
+    missing symbol at all. Every one of the 24 chains clears 200 rows alone
+    (thinnest: FXI at 213), so that floor tolerated losing 23 of 24 names.
+
+    Refusing leaves the session recoverable until the next US open; writing
+    does not. Hence: no partition at all, and a loud exception.
+    """
+    live = [f"SYM{i:02d}" for i in range(15)]
+    dead = [f"DEAD{i:02d}" for i in range(9)]
+    store = DeltaLakeStore(tmp_path)
+
+    with pytest.raises(IncompleteSweepError, match="15 of 24"):
+        ingest_option_chain(
+            store,
+            [*live, *dead],
+            ingest_date=dt.date(2026, 8, 26),
+            fetch=_fetcher(**{name: _payload(_put(95.0), symbol=name) for name in live}),
+        )
+
+    # The point is not merely that it raised — it must not have written.
+    with pytest.raises(LookupError):
+        store.bronze_snapshot_id(DATASET, dt.date(2026, 8, 26))
+
+
+def test_the_floor_does_not_fire_when_the_session_is_already_captured(tmp_path: Path) -> None:
+    """A re-run, a weekend or a holiday resolves to a session already in the
+    lake, where the write is a no-op anyway. Raising there would turn a
+    correct, benign outcome into a red alert on a job whose alerts must stay
+    trustworthy — so the floor is checked only when the run would CREATE the
+    partition."""
+    live = [f"SYM{i:02d}" for i in range(24)]
+    store = DeltaLakeStore(tmp_path)
+    full = _fetcher(**{name: _payload(_put(95.0), symbol=name) for name in live})
+    first = ingest_option_chain(store, live, ingest_date=dt.date(2026, 8, 26), fetch=full)
+    assert first.committed is True
+
+    # Same session, now with only 3 of 24 chains answering: far below the
+    # floor, but the partition exists, so this is a no-op and not a refusal.
+    partial = _fetcher(**{name: _payload(_put(95.0), symbol=name) for name in live[:3]})
+    second = ingest_option_chain(store, live, ingest_date=dt.date(2026, 8, 26), fetch=partial)
+    assert second.committed is False
+
+
+def test_a_no_op_write_does_not_report_rows_it_did_not_commit(tmp_path: Path) -> None:
+    """``write_bronze`` returns the same path string whether it wrote or
+    short-circuited on an existing ingest_date, so before ``committed`` no
+    caller could tell the two apart — and every one printed ``valid_rows``
+    regardless. Measured 2026-09-19: two runs reported "committed 14091 rows"
+    and "committed 19525 rows" against a partition already holding 19,572;
+    the Delta log gained no version and neither wrote a byte. A monitor that
+    cannot distinguish "captured" from "did nothing" is not a monitor.
+    """
+    live = [f"SYM{i:02d}" for i in range(24)]
+    store = DeltaLakeStore(tmp_path)
+    fetch = _fetcher(**{name: _payload(_put(95.0), symbol=name) for name in live})
+
+    first = ingest_option_chain(store, live, ingest_date=dt.date(2026, 8, 26), fetch=fetch)
+    second = ingest_option_chain(store, live, ingest_date=dt.date(2026, 8, 26), fetch=fetch)
+
+    assert first.committed is True
+    assert second.committed is False
+    # Both still report the same in-memory row count and the same path, which
+    # is exactly why the flag has to exist rather than the caller inferring it.
+    assert second.valid_rows == first.valid_rows
+    assert second.bronze_path == first.bronze_path
+
+
+def test_committed_is_correct_when_an_EARLIER_partition_already_exists(tmp_path: Path) -> None:
+    """Regression: the first version of this check went through
+    ``bronze_snapshot_id``, which is as-of resolution and is memoised for
+    ``_RESOLVE_TTL_S`` (45 s) WITHOUT being invalidated by a write. With an
+    empty lake the lookup raised ``LookupError`` before anything was cached,
+    so the bug was invisible; add any earlier partition and the second ingest
+    re-read the pre-write answer and reported ``committed=True`` on a run that
+    wrote nothing — the exact lie the flag exists to kill.
+
+    The seeded 08-25 partition is the whole point of this test. Do not
+    simplify it away.
+    """
+    live = [f"SYM{i:02d}" for i in range(24)]
+    store = DeltaLakeStore(tmp_path)
+    ingest_option_chain(
+        store,
+        live,
+        ingest_date=dt.date(2026, 8, 25),
+        fetch=_fetcher(**{n: _payload(_put(95.0), symbol=n, day="2026-08-25") for n in live}),
+    )
+    fresh = _fetcher(**{n: _payload(_put(95.0), symbol=n) for n in live})
+    first = ingest_option_chain(store, live, ingest_date=dt.date(2026, 8, 26), fetch=fresh)
+    second = ingest_option_chain(store, live, ingest_date=dt.date(2026, 8, 26), fetch=fresh)
+
+    assert first.committed is True
+    assert second.committed is False
+
+
+def test_one_symbol_with_no_last_trade_time_cannot_elect_the_session(tmp_path: Path) -> None:
+    """Regression for the worst defect this module has had.
+
+    ``parse_cboe_chain`` falls back to the payload's ``timestamp`` when a
+    symbol carries no ``last_trade_time`` -- and that field is Cboe's CDN
+    **wall clock**, not a session. Measured live 2026-09-21: ``timestamp``
+    read ``2026-09-21 09:11:43`` while the real session was ``2026-09-18``,
+    three days apart.
+
+    While the session was ``max(quote_date)``, one such symbol elected a
+    session no symbol traded in, and the off-session split then quarantined
+    all 23 CORRECT symbols: a one-row partition stamped with a future date,
+    permanent by immutability, which also pre-claimed the next session's key
+    so the next real sweep no-opped. Exit 0, no alert, two sessions lost.
+    Measured before the fix: ``ok=1 stale=23``.
+
+    A majority vote makes the outlier the outlier, whichever direction it
+    points. Do NOT reintroduce ``max()`` here.
+    """
+    live = [f"SYM{i:02d}" for i in range(24)]
+    rogue = live[0]
+    payloads = {n: _payload(_put(95.0), symbol=n) for n in live}
+    # The rogue payload has NO last_trade_time, so parsing falls back to the
+    # CDN wall clock -- a LATER date than the session every other symbol
+    # reports. This is the shape the live CDN actually serves.
+    rogue_payload = _payload(_put(95.0), symbol=rogue)
+    del rogue_payload["data"]["last_trade_time"]
+    rogue_payload["timestamp"] = "2026-08-27 06:06:48"
+    payloads[rogue] = rogue_payload
+
+    store = DeltaLakeStore(tmp_path)
+    result = ingest_option_chain(store, live, fetch=_fetcher(**payloads))
+
+    assert result.quote_date == dt.date.fromisoformat(QUOTE_DAY), "the majority session must win"
+    assert result.symbols_off_session == (rogue,), "the outlier is the rogue, not the other 23"
+    assert len(result.symbols_ok) == 23
+    landed = store.read_bronze_as_of(DATASET, dt.date.fromisoformat(QUOTE_DAY))
+    assert len(set(landed["underlying"])) == 23
+
+
+@pytest.mark.parametrize(
+    ("label", "split"),
+    [
+        ("12/12 tie", 12),
+        ("8/8/8 three-way", 8),
+    ],
+)
+def test_a_session_without_a_majority_is_refused(tmp_path: Path, label: str, split: int) -> None:
+    """A plurality is not enough to name a partition after.
+
+    The majority vote fixed the ONE-outlier case, but with a plurality rule
+    the degenerate distributions still wrote tiny partitions, and an earlier
+    tie-break preferred the LATER date -- precisely the side the wall-clock
+    fallback makes bogus. Measured at 24 symbols under that rule: a 12/12 tie
+    wrote 12 rows stamped to the wall clock, an 8/8/8 split wrote 8, and 24
+    distinct dates wrote 1. Each named a partition for a future session,
+    which bronze immutability then makes permanent AND which pre-claims the
+    next session's key, so the next real sweep no-ops.
+
+    Requiring MORE than half makes the winner unique, so it removes the
+    tie-break instead of repairing it. When no session has a majority this
+    sweep cannot say which session it captured, and that is exactly when
+    writing an immutable partition is unforgivable.
+    """
+    live = [f"SYM{i:02d}" for i in range(24)]
+    days = ["2026-08-27", QUOTE_DAY, "2026-08-25"]
+    payloads = {
+        name: _payload(_put(95.0), symbol=name, day=days[min(i // split, len(days) - 1)])
+        for i, name in enumerate(live)
+    }
+    with pytest.raises(IncompleteSweepError, match="majority"):
+        ingest_option_chain(DeltaLakeStore(tmp_path), live, fetch=_fetcher(**payloads))
+
+
+def test_every_symbol_on_its_own_date_is_refused(tmp_path: Path) -> None:
+    """The degenerate limit of the case above: 24 symbols, 24 dates, so the
+    'winner' has one vote. Under the plurality rule this wrote a ONE-symbol
+    partition and exited 0."""
+    live = [f"SYM{i:02d}" for i in range(24)]
+    base = dt.date.fromisoformat(QUOTE_DAY)
+    payloads = {
+        name: _payload(_put(95.0), symbol=name, day=(base - dt.timedelta(days=i)).isoformat())
+        for i, name in enumerate(live)
+    }
+    with pytest.raises(IncompleteSweepError, match="majority"):
+        ingest_option_chain(DeltaLakeStore(tmp_path), live, fetch=_fetcher(**payloads))
+
+
+def test_a_symbol_whose_rows_all_fail_validation_is_not_counted_as_captured(
+    tmp_path: Path,
+) -> None:
+    """``symbols_ok`` is appended on PARSE success, before validation.
+
+    So a symbol whose every row failed the schema counted as captured, counted
+    toward the floor, and was printed as part of the completeness number --
+    while contributing nothing. Measured: nine symbols served with a null ask
+    reported ``symbols_ok=24`` on a partition holding 15 names. That is the
+    same 15-of-24 outcome the floor refuses by the fetch route, reached
+    silently by the validation route.
+
+    Such a symbol is RECOVERABLE (a re-run may return usable rows), so it
+    belongs with the fetch failures and must count against the floor.
+    """
+    live = [f"SYM{i:02d}" for i in range(24)]
+
+    def with_duds(duds: list[str]) -> dict[str, dict[str, Any]]:
+        """Built from an explicit LIST, never a set.
+
+        The first version of this test reused one payload dict and reset the
+        duds via ``list(set_of_duds)[1:]``. Set iteration order is not stable
+        across runs, so whether the asserted symbol stayed a dud depended on
+        the hash seed and the test passed or failed at random -- observed
+        both ways on identical source.
+        """
+        return {
+            name: _payload(
+                _put(95.0, bid=0.0, ask=0.0) if name in duds else _put(95.0), symbol=name
+            )
+            for name in live
+        }
+
+    with pytest.raises(IncompleteSweepError):
+        ingest_option_chain(DeltaLakeStore(tmp_path), live, fetch=_fetcher(**with_duds(live[:9])))
+
+    # Below the floor it refuses; at ONE bad symbol it must still commit, and
+    # must not claim the dud among the captured names.
+    result = ingest_option_chain(
+        DeltaLakeStore(tmp_path / "one"), live, fetch=_fetcher(**with_duds([live[0]]))
+    )
+    assert live[0] in result.symbols_failed
+    assert live[0] not in result.symbols_ok
+    assert len(result.symbols_ok) == 23
+
+
+def test_a_stale_majority_cannot_silently_discard_a_fresher_session(tmp_path: Path) -> None:
+    """The one case where the majority rule is worse than the ``max()`` it
+    replaced, refused explicitly rather than rebalanced.
+
+    Cboe serves per-symbol CDN snapshots of wildly different ages — measured
+    2026-09-21, the ``timestamp`` field spanned ten hours across the universe.
+    So on a slow evening most chains can still be serving YESTERDAY while a
+    minority already carry today. The majority then elects yesterday,
+    ``write_bronze`` no-ops on its existing partition, and the run reports
+    "already captured" and exits 0 — today gone, silently, with the fresh
+    chains discarded as "off-session" and the warning naming the *fresh*
+    symbols as the problem.
+
+    Measured at 24 symbols with yesterday already in the lake: 13 stale chains
+    lost the day and 20 stale chains lost the day, both exit 0. The signal is
+    unambiguous — a no-op whose off-session rows are NEWER than the elected
+    session — so it refuses, and the session stays recoverable until the next
+    US open.
+    """
+    live = [f"SYM{i:02d}" for i in range(24)]
+    yesterday, today = "2026-08-25", QUOTE_DAY
+    store = DeltaLakeStore(tmp_path)
+    ingest_option_chain(
+        store,
+        live,
+        fetch=_fetcher(**{n: _payload(_put(95.0), symbol=n, day=yesterday) for n in live}),
+    )
+
+    stale = set(live[:20])
+    with pytest.raises(IncompleteSweepError, match="already captured"):
+        ingest_option_chain(
+            store,
+            live,
+            fetch=_fetcher(
+                **{
+                    n: _payload(_put(95.0), symbol=n, day=yesterday if n in stale else today)
+                    for n in live
+                }
+            ),
+        )
+
+
+def test_an_off_session_symbol_is_not_also_reported_as_failed(tmp_path: Path) -> None:
+    """``failed`` gains symbols that parsed but landed no valid rows. An
+    off-session symbol also lands no rows in ``valid`` — because the split
+    already moved them to quarantine — so without the ``off_set`` guard it
+    would be reported in BOTH lists, and the caller prints two contradictory
+    warnings about the same names: "no quotes for X" beside "off-session
+    quotes for X"."""
+    live = [f"SYM{i:02d}" for i in range(24)]
+    lagging = set(live[:2])
+    result = ingest_option_chain(
+        DeltaLakeStore(tmp_path),
+        live,
         fetch=_fetcher(
-            SPY=_payload(_put(95.0), symbol="SPY"),
-            QQQ=_payload(_put(95.0), symbol="QQQ"),
+            **{
+                n: _payload(_put(95.0), symbol=n, day="2026-08-25" if n in lagging else QUOTE_DAY)
+                for n in live
+            }
+        ),
+    )
+    assert set(result.symbols_off_session) == {n.upper() for n in lagging}
+    assert not set(result.symbols_off_session) & set(result.symbols_failed)
+
+
+def test_laggards_do_not_cost_the_healthy_chains_their_session(tmp_path: Path) -> None:
+    """A fetch failure and a laggard must not share a denominator.
+
+    A 429 is recoverable — re-run before the next US open and the chain
+    arrives — so refusing to write is free and protects the session from being
+    permanently defined by a partial sweep. A laggard, where Cboe serves a
+    previous session, is NOT recoverable: the re-run returns the same stale
+    chain. Counting laggards against the floor therefore discards every
+    healthy chain alongside them, permanently, in exchange for nothing.
+
+    Measured before the fix: three laggards refused a sweep whose other 21
+    chains were fresh, and no re-run could ever have recovered them.
+    """
+    live = [f"SYM{i:02d}" for i in range(24)]
+    lagging = set(live[:3])
+    store = DeltaLakeStore(tmp_path)
+    result = ingest_option_chain(
+        store,
+        live,
+        fetch=_fetcher(
+            **{
+                n: _payload(_put(95.0), symbol=n, day="2026-08-25" if n in lagging else QUOTE_DAY)
+                for n in live
+            }
         ),
     )
 
-    assert result.symbols_ok == ("SPY", "QQQ")
-    assert result.symbols_failed == ("BROKEN",)
-    assert result.valid_rows == 2
+    assert result.committed is True
+    assert len(result.symbols_off_session) == 3
+    assert len(result.symbols_ok) == 21
+
+    # The other half of the contract: a genuine FETCH failure at the same
+    # count must still refuse, or the floor has been neutered rather than
+    # corrected.
+    other = DeltaLakeStore(tmp_path / "second")
+    with pytest.raises(IncompleteSweepError):
+        ingest_option_chain(
+            other,
+            live,
+            fetch=_fetcher(**{n: _payload(_put(95.0), symbol=n) for n in live[3:]}),
+        )
+
+
+def test_a_stale_symbol_is_quarantined_not_filed_under_the_wrong_session(
+    tmp_path: Path,
+) -> None:
+    """Regression for a defect that is already in the production lake.
+
+    ``session`` is ``max(quote_date)``, so when Cboe keeps serving one name's
+    previous session its rows get filed under a session it never traded in.
+    Live: ``ingest_date=2026-09-08`` holds 412 ARKK rows stamped 2026-09-04
+    (ARKK's last trade before Labor Day). ARKK's 2026-09-08 session was never
+    captured, and nothing noticed, because ``.max()`` reads the 23 current
+    symbols and the partition looks healthy in aggregate.
+
+    The stale rows must not be counted as that session's quotes. They go to
+    quarantine — they are real quotes, just not this session's — and the
+    symbol is named in ``symbols_off_session`` so the operator learns it has no
+    quotes for the day rather than silently getting the wrong ones.
+    """
+    fresh = [f"SYM{i:02d}" for i in range(23)]
+    store = DeltaLakeStore(tmp_path)
+    payloads = {name: _payload(_put(95.0), symbol=name) for name in fresh}
+    payloads["ARKK"] = _payload(_put(95.0), symbol="ARKK", day="2026-08-25")
+
+    result = ingest_option_chain(
+        store,
+        [*fresh, "ARKK"],
+        ingest_date=dt.date(2026, 8, 26),
+        fetch=_fetcher(**payloads),
+    )
+
+    assert result.symbols_off_session == ("ARKK",)
+    assert "ARKK" not in result.symbols_ok
+    assert result.quote_date == dt.date(2026, 8, 26)
+    # The committed partition carries only the session it is named for. Note
+    # this holds because `ingest_date` was DERIVED from the quotes: the split
+    # equalises rows against max(quote_date), not against an explicitly passed
+    # `ingest_date`, so passing a mismatched one can still name a partition
+    # after a session it contains none of. No production caller passes it.
+    landed = store.read_bronze_as_of(DATASET, dt.date(2026, 8, 26))
+    assert set(landed["quote_date"].dt.date.unique()) == {dt.date(2026, 8, 26)}
+    assert "ARKK" not in set(landed["underlying"])
+    # ...and the stale rows are preserved rather than dropped.
+    held = store.read_bronze_as_of(QUARANTINE_DATASET, dt.date(2026, 8, 26))
+    assert "ARKK" in set(held["underlying"])
 
 
 def test_quarantined_rows_are_persisted_for_inspection(tmp_path: Path) -> None:

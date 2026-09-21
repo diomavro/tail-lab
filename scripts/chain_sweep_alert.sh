@@ -1,0 +1,107 @@
+#!/usr/bin/env bash
+# OnFailure handler for tail-lab-chain.service.
+#
+# Why this exists: the chain sweep is the one job that cannot be caught up
+# later (docs/adr/0020). While it ran on GitHub Actions a failure produced a
+# red build and an email. Run from a local systemd timer instead, a failure
+# appends to a log nobody reads and exits non-zero into the void -- the sweep
+# degraded from "loud on failure" to "silent on failure", which for an
+# unrecoverable job is the worst possible direction.
+#
+# Fired by `OnFailure=`, so it runs only when the sweep actually failed. It
+# leaves three independent traces, because the failure happens at 23:35 local
+# time when nobody is watching and a toast nobody sees is not an alert:
+#   1. a marker FILE that persists until acknowledged (the durable one),
+#   2. this script's stdout, which journald attributes to the unit,
+#   3. a desktop notification at critical urgency.
+#
+# What each defence is for, all measured rather than assumed:
+#
+# * The marker is written FIRST and lands in ~6 ms, so a mid-run kill has
+#   almost no window. It is written to a temp file and renamed, because a
+#   plain `> "$MARKER"` opens O_TRUNC -- which destroys YESTERDAY's
+#   unacknowledged marker before knowing whether today's write can succeed.
+# * If the marker cannot be written to the repo, it falls back to $HOME and
+#   the script exits NON-ZERO. An OnFailure handler that loses the durable
+#   channel must not report success: a red alert unit is strictly better than
+#   a green one with no marker.
+# * `echo`, not `logger`. `logger` writes over /dev/log as _TRANSPORT=syslog
+#   and journald resolves the sender's cgroup via /proc/<pid>, which has
+#   usually exited -- measured, the unit fields were absent on 3 of 8 runs, so
+#   `journalctl --user -u tail-lab-chain-failed` found the line barely half the
+#   time. A oneshot's stdout goes to journald on the unit's own fd and is
+#   always attributed.
+# * `notify-send` is wrapped in `timeout`. It has no timeout of its own and
+#   against a bus that accepts but never answers (the realistic post-resume
+#   case) it blocks indefinitely -- measured at 60 s against a wedged socket,
+#   which would leave this unit in `activating` and cause systemd to COALESCE
+#   the next alert into it, disarming tomorrow.
+# * There is deliberately NO `if [ -n "$DBUS_SESSION_BUS_ADDRESS" ]` guard.
+#   Measured: with the variable UNSET, notify-send succeeds via
+#   $XDG_RUNTIME_DIR/bus; with it set to a stale path it fails harmlessly in
+#   6 ms. The guard bought nothing and suppressed the toast in exactly the
+#   case it was written for.
+set -uo pipefail
+
+REPO=/home/dio/Documents/apps/tail-lab
+MARKER="$REPO/.chain-sweep-FAILED"
+FALLBACK="$HOME/.chain-sweep-FAILED"
+LOG="$REPO/.chain-sweep-manual.log"
+VERIFY_LOG="$REPO/.chain-sweep-verify.log"
+WHEN=$(date -u +%FT%TZ)
+
+render() {
+  echo "tail-lab chain sweep FAILED at $WHEN"
+  echo
+  echo "The option-chain sweep is unrecoverable if missed: no free source"
+  echo "serves a retroactive chain (docs/adr/0020). Re-run TODAY, before the"
+  echo "session rolls, or this trading day is permanently blank:"
+  echo
+  echo "    cd $REPO && make ingest-option-chain"
+  echo
+  echo "Then delete this file:  rm $1"
+  echo
+  echo "--- last 25 lines of $LOG ---"
+  tail -25 "$LOG" 2>/dev/null || echo "(no sweep log found)"
+  echo
+  echo "--- last 15 lines of $VERIFY_LOG ---"
+  tail -15 "$VERIFY_LOG" 2>/dev/null || echo "(no verify log found)"
+}
+
+# Durable channel first, via temp+rename so a prior unacknowledged marker
+# survives a failed write.
+marker_ok=0
+TMP="$MARKER.tmp.$$"
+if render "$MARKER" > "$TMP" 2>/dev/null && [ -s "$TMP" ] && mv -f "$TMP" "$MARKER" 2>/dev/null; then
+  marker_ok=1
+else
+  rm -f "$TMP" 2>/dev/null
+  # Same temp+rename as above, for the same reason. A plain `> "$FALLBACK"`
+  # opens O_TRUNC and destroys yesterday's unacknowledged fallback marker
+  # before knowing today's render can finish -- measured under a write limit,
+  # it left a half-written 1024-byte marker where a 39-byte unacknowledged one
+  # had been. The fallback path runs precisely when the repo is unwritable,
+  # i.e. when this marker is the only channel left.
+  FTMP="$FALLBACK.tmp.$$"
+  if render "$FALLBACK" > "$FTMP" 2>/dev/null && [ -s "$FTMP" ] && mv -f "$FTMP" "$FALLBACK" 2>/dev/null; then
+    marker_ok=2
+  else
+    rm -f "$FTMP" 2>/dev/null
+  fi
+fi
+
+# Journal, on the unit's own stdout so it is always attributed to this unit.
+case "$marker_ok" in
+  1) echo "chain sweep FAILED at $WHEN; marker: $MARKER" ;;
+  2) echo "chain sweep FAILED at $WHEN; repo unwritable, marker: $FALLBACK" ;;
+  *) echo "chain sweep FAILED at $WHEN; COULD NOT WRITE ANY MARKER" ;;
+esac
+
+timeout 10 notify-send -u critical \
+  "tail-lab: chain sweep FAILED" \
+  "Today's option chain was NOT captured and cannot be back-filled. Run: make ingest-option-chain" \
+  2>/dev/null || true
+
+# Non-zero ONLY when the durable channel is gone -- see the header.
+[ "$marker_ok" = 0 ] && exit 1
+exit 0

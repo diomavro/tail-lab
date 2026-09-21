@@ -71,6 +71,24 @@ class LakeStore(ABC):
         no-op that preserves the original data untouched."""
 
     @abstractmethod
+    def bronze_partition_exists(self, dataset: str, ingest_date: dt.date) -> bool:
+        """Whether bronze already holds a partition for EXACTLY ``ingest_date``.
+
+        Exists because ``write_bronze`` returns the same location string
+        whether it wrote or no-opped, so a caller cannot otherwise tell
+        "captured 19,572 rows" from "did nothing". Callers that need to know
+        must ask *before* writing.
+
+        Deliberately NOT built on ``bronze_snapshot_id``: that goes through
+        as-of resolution, which (a) answers "the latest partition on or before
+        this date", not "this date", and (b) is memoised for
+        ``_RESOLVE_TTL_S`` seconds and is **not** invalidated by a write — so
+        a second ingest inside that window reads the pre-write answer and
+        concludes it created a partition it did not. Implementations must read
+        the same uncached source ``write_bronze`` itself branches on.
+        """
+
+    @abstractmethod
     def read_bronze_as_of(self, dataset: str, as_of: dt.date) -> pd.DataFrame:
         """Read the bronze snapshot known as of ``as_of``: the most recent
         snapshot ingested on or before that date. Raises ``LookupError`` if
@@ -283,6 +301,12 @@ class DeltaLakeStore(LakeStore):
         return df.drop(columns=[_INGEST_DATE_COL]).reset_index(drop=True)
 
     # ---- LakeStore implementation ------------------------------------------
+
+    def bronze_partition_exists(self, dataset: str, ingest_date: dt.date) -> bool:
+        """Same predicate, same source, as ``write_bronze``'s own short-circuit
+        below -- deliberately one expression so the two cannot drift."""
+        table_uri = self._table_uri(self._bronze_table_key(dataset))
+        return ingest_date.isoformat() in self._existing_bronze_ingest_date_strings(table_uri)
 
     def write_bronze(self, dataset: str, ingest_date: dt.date, df: pd.DataFrame) -> str:
         table_uri = self._table_uri(self._bronze_table_key(dataset))

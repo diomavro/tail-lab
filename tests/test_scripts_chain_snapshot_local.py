@@ -19,6 +19,8 @@ After the fix the same command swept 24/24 with no 429 at all.
 
 from __future__ import annotations
 
+import dataclasses
+import datetime as dt
 import importlib.util
 from pathlib import Path
 from typing import Any
@@ -34,12 +36,54 @@ _SPEC.loader.exec_module(chain_snapshot)
 
 
 class _Result:
-    """Enough of ``IngestResult`` for the local path to report on."""
+    """Enough of ``IngestResult`` for the local path to report on.
+
+    Kept in step with the real dataclass by
+    ``test_the_stub_still_matches_the_real_ingest_result`` below — a stub that
+    silently lags its subject turns an interface change into a green test.
+    """
 
     valid_rows = 19_525
     symbols_ok = ("spy", "qqq")
     symbols_failed: tuple[str, ...] = ()
+    symbols_off_session: tuple[str, ...] = ()
+    committed = True
+    quote_date = dt.date(2026, 9, 18)
     bronze_path = "s3://tail-lab-lake/bronze/option_chain_snapshot/ingest_date=2026-09-18"
+
+
+def test_the_stub_still_matches_the_real_ingest_result() -> None:
+    """``_Result`` is a hand-rolled double, so it can silently fall behind the
+    dataclass it stands in for — and then this file goes green while the real
+    caller raises ``AttributeError`` in production. That is not hypothetical:
+    adding ``committed`` and ``symbols_off_session`` to ``IngestResult`` broke the
+    local path here exactly that way.
+
+    Scope, honestly: ``consumed`` is a hand-maintained literal, so this does
+    NOT detect ``_run_local`` growing a new field read — the caller tests
+    catch that, by raising ``AttributeError``. What this uniquely catches is
+    the opposite drift: a stub that invents a field ``IngestResult`` does not
+    have, which would make the caller tests pass against an interface that
+    does not exist.
+    """
+    from tail_lab.ingestion.option_chain import IngestResult
+
+    real = {f.name for f in dataclasses.fields(IngestResult)}
+    stubbed = {n for n in vars(_Result) if not n.startswith("_")}
+    assert stubbed <= real, f"stub invents fields IngestResult lacks: {sorted(stubbed - real)}"
+    # The fields `_run_local` reads. If it grows another, add it here AND to
+    # the stub, rather than discovering it from a traceback.
+    consumed = {
+        "valid_rows",
+        "symbols_ok",
+        "symbols_failed",
+        "symbols_off_session",
+        "committed",
+        "quote_date",
+        "bronze_path",
+    }
+    assert consumed <= real
+    assert consumed <= stubbed
 
 
 def test_local_does_not_also_run_the_post_paths_sweep(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -78,3 +122,46 @@ def test_local_fails_on_an_implausibly_short_sweep(monkeypatch: pytest.MonkeyPat
         "tail_lab.ingestion.option_chain.ingest_option_chain", lambda _s, _y: _Short()
     )
     assert chain_snapshot.main(["--local", "--symbols", "spy"]) == 1
+
+
+def test_local_exits_non_zero_when_the_sweep_is_refused(monkeypatch: pytest.MonkeyPatch) -> None:
+    """``IncompleteSweepError`` must reach the shell as a non-zero exit.
+
+    That exit code is the ONLY thing that makes
+    ``OnFailure=tail-lab-chain-failed.service`` fire, which is in turn the only
+    thing that tells anyone the session was refused. Refusing to write is the
+    correct outcome, but a refusal nobody hears is indistinguishable from a
+    successful capture — and the chain cannot be back-filled after the next US
+    open.
+
+    Mutation-checked: flipping ``chain_snapshot.py``'s refusal branch from
+    ``return 1`` to ``return 0`` left the whole file green before this test
+    existed.
+    """
+    from tail_lab.ingestion.option_chain import IncompleteSweepError
+
+    def refuse(_store: Any, _symbols: Any) -> _Result:
+        raise IncompleteSweepError("only 15 of 24 chains returned quotes")
+
+    monkeypatch.setattr("tail_lab.config.get_lake_store", lambda: object())
+    monkeypatch.setattr("tail_lab.ingestion.option_chain.ingest_option_chain", refuse)
+    assert chain_snapshot.main(["--local", "--symbols", "spy"]) == 1
+
+
+def test_local_reports_a_no_op_rather_than_claiming_rows(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A no-op write must not print the in-memory row count as though it had
+    been committed — the misreport that hid two dead sweeps on 2026-09-19."""
+
+    class _NoOp(_Result):
+        committed = False
+
+    monkeypatch.setattr("tail_lab.config.get_lake_store", lambda: object())
+    monkeypatch.setattr(
+        "tail_lab.ingestion.option_chain.ingest_option_chain", lambda _s, _y: _NoOp()
+    )
+    assert chain_snapshot.main(["--local", "--symbols", "spy"]) == 0
+    out = capsys.readouterr().out
+    assert "NO-OP" in out
+    assert "committed 19525 rows" not in out

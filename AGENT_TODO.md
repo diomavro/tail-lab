@@ -18,6 +18,29 @@ a large one strictly in order.
 
 ## Next increments
 
+- [ ] **Carry the sweep-completeness fixes across to the `--post` path.**
+      `ingestion/option_chain.py` now (a) refuses to create a partition from
+      fewer than `MIN_SYMBOL_FRACTION` of the requested chains, (b) reports
+      `IngestResult.committed` so a no-op write stops being indistinguishable
+      from a real one, and (c) quarantines rows whose `quote_date` is an older
+      session than the partition's. `api/ingest_routes.py:95-125` does its own
+      write and has **all three** of the same defects: it reports
+      `rows=len(valid)` whether or not `write_bronze` short-circuited, derives
+      `ingest_date` from `.max()` with no stale-session split, and has no
+      symbol floor.
+      It could not simply reuse the helpers: the import-linter contract "The
+      read/serve side never imports ingestion" forbids `api` importing them,
+      so this needs the three helpers moved to `contracts/option_chain.py`
+      (a leaf both layers may import) and both call sites rewired — a
+      structural change, hence its own increment rather than a tack-on.
+      Currently dormant because `--post` only runs from
+      `.github/workflows/daily-chain-snapshot.yml` and Actions is blocked on
+      billing (`HUMAN_TODO.md`), **which is exactly the hazard**: restoring
+      billing silently reintroduces all three. Serves `docs/END_STATE.md` §4
+      via data integrity — the ARKK case below is a session already lost.
+      Evidence: `ingest_date=2026-09-08` holds 412 ARKK rows stamped
+      `2026-09-04`; 1 of 17 partitions is contaminated.
+
 - [x] Stand up the walking skeleton: VIX ingestion adapter (`ingestion/vix.py`)
       → bronze → silver → gold (`research/vix_stretch.py` orchestrating
       `transforms/vix.py`) → one dashboard tile reading it, deployed to Fly
