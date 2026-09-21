@@ -31,3 +31,9 @@ data/
 # every green main auto-deploys here, so committed logs ship.)
 .chain-sweep-*.log
 .chain-sweep-FAILED
+.chain-sweep-FAILED.tmp.*
+.daily-refresh-FAILED.tmp.*
+.daily-refresh.log
+.daily-refresh.log.1
+.daily-refresh.lock
+.daily-refresh-FAILED

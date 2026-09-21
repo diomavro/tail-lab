@@ -5,6 +5,17 @@ a human can action. It is separate from `AGENT_TODO.md` (`docs/adr/0002`).
 **The agent appends items here when it hits a real-world blocker; it never
 acts on, removes, or reorders anything in this file.**
 
+- [ ] **Put `FRED_API_KEY` in `.env`** so `rates` and `credit` refresh
+      locally while GitHub Actions is blocked on billing. The key already
+      exists — it is a GitHub repo secret (done 2026-08-17), so this is a
+      copy, not a signup; FRED is free and keyed. Until it is there,
+      `scripts/local_daily_refresh.sh` SKIPS both sources (loudly, and
+      without failing — an unconfigured feed must not make the daily alert
+      cry wolf). Measured 2026-09-21: both tables are absent from bronze
+      entirely, as are `vix_futures`, `vix_complex`, `event_calendar`,
+      `sp500_constituents` and `mpd`; the refresh now fills all but the two
+      FRED ones.
+
 ## Setup needed for v1
 
 - [x] Create the GitHub repo `diomavro/tail-lab`, push `main`, enable

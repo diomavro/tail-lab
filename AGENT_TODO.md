@@ -18,6 +18,38 @@ a large one strictly in order.
 
 ## Next increments
 
+- [ ] **Give `ingestion/options_expiry.py` the retry the chain adapter has.**
+      It fetches the SAME keyless Cboe endpoint the sweep uses
+      (`cdn.cboe.com/api/global/delayed_quotes/options/{symbol}.json`) but
+      with no retry and no backoff, where `ingestion/option_chain.py` has
+      `_FETCH_ATTEMPTS` + `_FETCH_BACKOFF_S` and explicitly retries 429/5xx.
+      Its only fallback is Yahoo, which its own module docstring records as
+      "serving HTTP 429 to residential and datacenter" clients.
+      That matters now that `scripts/local_daily_refresh.sh` pulls it for all
+      24 snapshot symbols every weekday: one transient Cboe blip on any single
+      symbol turns the whole refresh red, with a marker and a toast, daily —
+      the cry-wolf hazard the refresh's own FRED handling is built to avoid,
+      and the thing that makes an alert channel stop being read. Lift the
+      retry helper rather than re-implementing it. Serves
+      `docs/END_STATE.md` §4 by keeping `research/cadence.py` off its
+      hand-maintained fallback table.
+
+- [ ] **Combine the two `event_calendar` producers into one write.**
+      `ingestion/fomc.py` and `ingestion/earnings.py` both write the shared
+      `event_calendar` dataset, which is one immutable snapshot per
+      `ingest_date` from a single producer (`docs/DATA_CONTRACTS.md` #5).
+      Whichever runs first claims the day: `fomc` then loses its rows
+      silently, and `earnings` refuses loudly via
+      `_refuse_if_already_written_today`. Measured 2026-09-21 — running both
+      in one daily pass fails every time, so `scripts/local_daily_refresh.sh`
+      has to exclude both rather than silently decide which half of the
+      calendar exists on each date. `earnings.py`'s own docstring already
+      names the fix and says the next producer into this dataset (BLS CPI)
+      should carry the same guard "until the sources are combined into one
+      write". Do that: one adapter that fetches both and commits a single
+      snapshot. Serves `docs/END_STATE.md` §4 via event-aware screening,
+      which cannot work off half a calendar.
+
 - [ ] **Carry the sweep-completeness fixes across to the `--post` path.**
       `ingestion/option_chain.py` now (a) refuses to create a partition from
       fewer than `MIN_SYMBOL_FRACTION` of the requested chains, (b) reports

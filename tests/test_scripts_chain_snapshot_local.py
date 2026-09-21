@@ -128,7 +128,7 @@ def test_local_exits_non_zero_when_the_sweep_is_refused(monkeypatch: pytest.Monk
     """``IncompleteSweepError`` must reach the shell as a non-zero exit.
 
     That exit code is the ONLY thing that makes
-    ``OnFailure=tail-lab-chain-failed.service`` fire, which is in turn the only
+    ``OnFailure=tail-lab-alert@chain.service`` fire, which is in turn the only
     thing that tells anyone the session was refused. Refusing to write is the
     correct outcome, but a refusal nobody hears is indistinguishable from a
     successful capture — and the chain cannot be back-filled after the next US
