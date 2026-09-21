@@ -36,9 +36,26 @@ permissions:
 
 jobs:
   merge:
-    # Any branch, as long as the whole CI run passed (which now includes the
-    # adversarial review's verdict — see `agent-review` in ci.yml).
-    if: github.event.workflow_run.conclusion == 'success'
+    # Any branch OF THIS REPOSITORY, as long as the whole CI run passed (which
+    # now includes the adversarial review's verdict — see `agent-review` in
+    # ci.yml).
+    #
+    # The `head_repository` clause is what makes this safe in a PUBLIC repo,
+    # and it was added on the day the repo went public (2026-09-21). While the
+    # repo was private the only gate needed was "CI passed", because only
+    # collaborators could open a PR at all. Public, anyone can fork and open
+    # one — and this job would squash-merge it to main, after which
+    # `trigger-deploy` ships it to Fly. GitHub's first-time-contributor
+    # approval does not close that: it stops the FIRST run only, and once a
+    # contributor has had one run approved their later PRs trigger CI
+    # normally. Nor does fork-PR sandboxing help — `workflow_run` executes in
+    # the BASE repository's context with write permissions and secrets, which
+    # is the whole reason this job can merge anything.
+    #
+    # So: a branch pushed to this repo auto-merges; a fork PR needs a human.
+    if: >-
+      github.event.workflow_run.conclusion == 'success' &&
+      github.event.workflow_run.head_repository.full_name == github.repository
     runs-on: ubuntu-latest
     steps:
       - name: Squash-merge the reviewed PR
