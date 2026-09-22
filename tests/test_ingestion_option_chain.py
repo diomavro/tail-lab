@@ -883,3 +883,35 @@ def test_a_late_rerun_of_the_same_session_no_ops(tmp_path: Path) -> None:
 
     assert first.bronze_path == second.bronze_path
     assert len(store.read_bronze_as_of(DATASET, dt.date.fromisoformat(QUOTE_DAY))) == 1
+
+
+def test_a_failed_quarantine_write_does_not_fail_the_sweep(tmp_path: Path) -> None:
+    """The session is committed BEFORE quarantine, and bronze is immutable, so
+    a quarantine failure cannot be undone by re-running — it can only no-op.
+
+    Raising there turned a correct capture into a non-zero exit, which fires
+    the chain-loss alert and tells the operator to re-run. Measured in
+    production 2026-09-23: xbi lagged, its rows were correctly quarantined and
+    the other 23 chains correctly committed, and the sweep still exited 2
+    because the quarantine table carries a stale `__index_level_0__` column
+    that a clean frame no longer matches.
+
+    Quarantine is diagnostic. It must never hold the session hostage.
+    """
+    live = [f"SYM{i:02d}" for i in range(24)]
+    lagging = live[0]
+    payloads = {n: _payload(_put(95.0), symbol=n) for n in live}
+    payloads[lagging] = _payload(_put(95.0), symbol=lagging, day="2026-08-25")
+
+    class _QuarantineIsBroken(DeltaLakeStore):
+        def write_bronze(self, dataset: str, ingest_date: dt.date, df: pd.DataFrame) -> str:
+            if dataset.endswith("__quarantine"):
+                raise RuntimeError("SchemaMismatchError: number of fields does not match: 13 vs 14")
+            return super().write_bronze(dataset, ingest_date, df)
+
+    result = ingest_option_chain(_QuarantineIsBroken(tmp_path), live, fetch=_fetcher(**payloads))
+
+    assert result.committed is True, "the session must still be captured"
+    assert len(result.symbols_ok) == 23
+    assert result.symbols_off_session == (lagging.upper(),)
+    assert result.quarantine_path is None, "the failure is recorded as an absent path"

@@ -18,6 +18,23 @@ a large one strictly in order.
 
 ## Next increments
 
+- [ ] **Repair the `option_chain_snapshot__quarantine` schema.**
+      It carries a stale `__index_level_0__` column (14 fields against the
+      main table's 13), left from before `write_bronze` gained its
+      `reset_index(drop=True)`. Any clean frame written to it now raises
+      `SchemaMismatchError: number of fields does not match: 13 vs 14`.
+      Measured in production 2026-09-23 00:31, the first time an off-session
+      symbol met a non-empty quarantine table: xbi lagged, its rows were
+      correctly quarantined and the other 23 chains correctly committed — and
+      the sweep still exited 2 and fired the chain-loss alert on a session it
+      had captured.
+      The sweep no longer fails on it (the write is caught and logged, since
+      quarantine is diagnostic and the session commits first), so this is now
+      a data-inspection gap rather than an outage: quarantined chain rows are
+      not being persisted at all. Fix by rewriting the table with the correct
+      schema — it is diagnostic, so recreating it loses nothing of record —
+      and check the other `*__quarantine` tables for the same artifact.
+
 - [ ] **Give `scripts/chain_sweep_verify.sh` an automated test.**
       Its network-degradation path is currently verified only by hand fault
       injection, and that path has already produced the worst failure this

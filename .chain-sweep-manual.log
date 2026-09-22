@@ -152,3 +152,26 @@ env -u PYTHONPATH .venv/bin/python scripts/chain_snapshot.py --local
 2026-09-22 07:21:56,075 INFO tail_lab.ingestion.option_chain event=ingestion.option_chain.run dataset=option_chain_snapshot ingest_date=2026-09-21 quote_date=2026-09-21 valid_rows=19898 quarantined_rows=0 symbols_ok=24 committed=true bronze_path="s3://tail-lab-lake/bronze/option_chain_snapshot/ingest_date=2026-09-21"
 swept 24/24 chains -> committed 19898 rows -> s3://tail-lab-lake/bronze/option_chain_snapshot/ingest_date=2026-09-21
 === exit=0 2026-09-22T05:21:56Z ===
+=== local chain sweep 2026-09-22T22:31:25Z ===
+env -u PYTHONPATH .venv/bin/python scripts/chain_snapshot.py --local 
+2026-09-23 00:31:27,228 WARNING tail_lab.ingestion.option_chain event=ingestion.option_chain.symbol_retry symbol=spy attempt=1/3
+Traceback (most recent call last):
+  File "/home/dio/Documents/apps/tail-lab/scripts/chain_snapshot.py", line 267, in <module>
+    raise SystemExit(main())
+                     ^^^^^^
+  File "/home/dio/Documents/apps/tail-lab/scripts/chain_snapshot.py", line 202, in main
+    return _run_local(symbols)
+           ^^^^^^^^^^^^^^^^^^^
+  File "/home/dio/Documents/apps/tail-lab/scripts/chain_snapshot.py", line 156, in _run_local
+    result = ingest_option_chain(get_lake_store(), symbols)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/dio/Documents/apps/tail-lab/src/tail_lab/ingestion/option_chain.py", line 595, in ingest_option_chain
+    quarantine_path = store.write_bronze(QUARANTINE_DATASET, ingest_date, quarantined)
+                      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/dio/Documents/apps/tail-lab/src/tail_lab/lake/store.py", line 330, in write_bronze
+    write_deltalake(
+  File "/home/dio/Documents/apps/tail-lab/.venv/lib/python3.12/site-packages/deltalake/writer/writer.py", line 133, in write_deltalake
+    table._table.write(
+_internal.SchemaMismatchError: Cannot cast schema, number of fields does not match: 13 vs 14
+make: *** [Makefile:139: ingest-option-chain] Error 1
+=== exit=2 2026-09-22T22:32:02Z ===

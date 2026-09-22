@@ -592,7 +592,32 @@ def ingest_option_chain(
     bronze_path = store.write_bronze(DATASET, ingest_date, valid)
     quarantine_path: str | None = None
     if not quarantined.empty:
-        quarantine_path = store.write_bronze(QUARANTINE_DATASET, ingest_date, quarantined)
+        # A failed QUARANTINE write must never fail the sweep. Quarantine is
+        # diagnostic; the session itself is already committed on the line
+        # above, and bronze is immutable so it cannot be un-written. Raising
+        # here turns a correct capture into a non-zero exit, which fires the
+        # chain-loss alert and tells the operator to re-run -- a re-run that
+        # can only no-op. Cry-wolf on the one alert that must stay credible.
+        #
+        # Measured 2026-09-23 00:31, the first time an off-session symbol met
+        # a non-empty quarantine table in production: xbi lagged, its rows
+        # were correctly quarantined, the 23 fresh chains were correctly
+        # committed -- and the run still exited 2 with
+        # "SchemaMismatchError: number of fields does not match: 13 vs 14".
+        # The quarantine table carries a stale `__index_level_0__` column
+        # from before write_bronze's reset_index fix, so a clean frame no
+        # longer matches it. Repairing that table is queued in AGENT_TODO.md;
+        # it must not hold the sweep hostage meanwhile.
+        try:
+            quarantine_path = store.write_bronze(QUARANTINE_DATASET, ingest_date, quarantined)
+        except Exception:
+            _LOGGER.exception(
+                "event=ingestion.option_chain.quarantine_write_failed dataset=%s ingest_date=%s "
+                "rows=%d -- the session itself committed fine; these rows are not persisted",
+                QUARANTINE_DATASET,
+                ingest_date.isoformat(),
+                len(quarantined),
+            )
 
     quote_date = valid["quote_date"].max().date() if not valid.empty else ingest_date
     result = IngestResult(
