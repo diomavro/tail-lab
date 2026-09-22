@@ -5,6 +5,20 @@ a human can action. It is separate from `AGENT_TODO.md` (`docs/adr/0002`).
 **The agent appends items here when it hits a real-world blocker; it never
 acts on, removes, or reorders anything in this file.**
 
+- [x] **Done 2026-09-23 (Dio): `FRED_API_KEY` is in `.env`.** `credit`
+      ingested immediately — 1,569 rows, both OAS series, 2023-09-25 to
+      2026-09-21 — and `research/regimes/timeline.py` now escalates regime
+      labels on credit stress instead of running VIX-only, which is what
+      `docs/END_STATE.md` §1.3 asked for.
+      `rates` still does not ingest, and that is **not** a key problem: the
+      adapter requests FRED's full ALFRED vintage history, which Treasury
+      yields exceed (5,110 vintages, HTTP 400). Tracked in `AGENT_TODO.md`
+      with a warning against the obvious fix, since those revisions are real
+      and collapsing them would weaken point-in-time correctness. No
+      consumers today, so nothing is blocked.
+
+      Original item:
+
 - [ ] **Put `FRED_API_KEY` in `.env`** so `rates` and `credit` refresh
       locally while GitHub Actions is blocked on billing. The key already
       exists — it is a GitHub repo secret (done 2026-08-17), so this is a
