@@ -118,8 +118,29 @@ def symbols_at(frame, session):
 
 # ---- A. forward: is the session Cboe is serving actually captured? --------
 if os.environ["CHAIN_VERIFY_FORWARD"] == "1":
-    df, _ = parse_cboe_chain(fetch_chain_raw("spy"))
-    if df.empty:
+    # The fetch is wrapped because a monitor that DIES on a transient network
+    # fault is worse than no monitor. Measured 2026-09-22 10:00 CEST, on this
+    # machine's first scheduled verify: a DNS failure moments after resume
+    # ("Temporary failure in name resolution" for cdn.cboe.com) raised out of
+    # the script, so check B -- which needs no network and is the
+    # authoritative question -- never ran at all, and the non-zero exit fired
+    # the CHAIN alert. The marker then told the operator today's chain was
+    # permanently blank and to run `make ingest-option-chain`, which after the
+    # 13:30 UTC open claims the live session's partition. The data was
+    # perfectly healthy. A false alarm that routes a human into the one
+    # forbidden command is the worst failure this script can have.
+    #
+    # Unreachable Cboe is NOT evidence of a missing session. Say so, and let
+    # check B decide.
+    try:
+        df, _ = parse_cboe_chain(fetch_chain_raw("spy"))
+    except Exception as exc:  # noqa: BLE001 - any transport fault degrades the same way
+        print(f"NOTE: could not reach Cboe for the forward check ({type(exc).__name__}).")
+        print("      This is not evidence of a gap; the lake check below still runs.")
+        df = None
+    if df is None:
+        pass
+    elif df.empty:
         failures.append("Cboe returned no parseable SPY quotes; cannot establish the session")
     else:
         session = df["quote_date"].max().date()

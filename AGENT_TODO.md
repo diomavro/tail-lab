@@ -18,6 +18,22 @@ a large one strictly in order.
 
 ## Next increments
 
+- [ ] **Give `scripts/chain_sweep_verify.sh` an automated test.**
+      Its network-degradation path is currently verified only by hand fault
+      injection, and that path has already produced the worst failure this
+      monitor can have. On 2026-09-22, its first scheduled run, a DNS failure
+      moments after resume raised out of the unguarded `fetch_chain_raw`, so
+      the backward lake check never ran, the script exited 1, and the CHAIN
+      alert told the operator that day's chain was permanently blank and to
+      run `make ingest-option-chain` — which after the 13:30 UTC open claims
+      the live session's partition. The data was entirely healthy.
+      The fix (degrade, note it, let the lake check decide) is in, and
+      contrast-tested: guarded exits 0, unguarded exits 1. But nothing in
+      `tests/` exercises it. Follow `tests/test_scripts_chain_sweep_alert.py`:
+      sandbox `TAIL_LAB_REPO`, stub the venv python to raise on the Cboe
+      fetch, assert exit 0 and that the backward check still reported. Serves
+      `docs/END_STATE.md` §4 by keeping the one monitor trustworthy.
+
 - [ ] **Give `ingestion/options_expiry.py` the retry the chain adapter has.**
       It fetches the SAME keyless Cboe endpoint the sweep uses
       (`cdn.cboe.com/api/global/delayed_quotes/options/{symbol}.json`) but
