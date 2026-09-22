@@ -18,6 +18,26 @@ a large one strictly in order.
 
 ## Next increments
 
+- [ ] **`ingestion/rates.py` cannot fetch a daily-revised series from FRED.**
+      Measured 2026-09-23, the first call made with a real key:
+      `HTTP 400 — "There are 5110 vintage dates in the specified real-time
+      period: 1776-07-04 to 9999-12-31. This exceeds the max"`.
+      The adapter asks for FRED's full ALFRED vintage history via
+      `_ALFRED_REALTIME_START`/`_ALFRED_REALTIME_END`. That is fine for the
+      credit OAS series, which are never revised (one vintage, committed
+      1,569 rows the same minute), and impossible for `DGS1MO`..`DGS30`,
+      which are revised daily.
+      Do NOT "fix" it by dropping the vintage parameters. Treasury yields
+      genuinely ARE revised — that is what the 5,110 vintages are — so
+      collapsing to latest-only would silently weaken the point-in-time
+      correctness `docs/adr/0009` calls the #1 invariant, on one of the few
+      datasets where revision actually happens. Chunk the realtime window
+      instead (FRED caps vintages per request, not per series), or page by
+      `realtime_start` and concatenate, keeping `vintage_date` intact.
+      Not urgent: `rates` bronze has ZERO consumers in `research/`, `api/`
+      or `transforms/` today. It is queued so the next person to want the
+      curve does not rediscover this from a 400.
+
 - [ ] **Repair the `option_chain_snapshot__quarantine` schema.**
       It carries a stale `__index_level_0__` column (14 fields against the
       main table's 13), left from before `write_bronze` gained its
