@@ -30,6 +30,33 @@ acts on, removes, or reorders anything in this file.**
       `sp500_constituents` and `mpd`; the refresh now fills all but the two
       FRED ones.
 
+- [x] **Superseded 2026-09-23 (Dio): the repo is PUBLIC.**
+      `github.com/diomavro/tail-lab` was flipped from private on 2026-09-23,
+      to restore GitHub Actions (public repos get unlimited free minutes on
+      standard runners) after three days of local systemd stand-ins needing
+      daily attention.
+
+      **This supersedes the 2026-08-22 "not republished" call below** for the
+      lambdaclass `data-v1` slices. Current test fixtures are synthetic as of
+      commit `30995b5` and carry no vendor data, but the ORIGINAL real slices
+      remain in the three commits that introduced them (`3d7bbd7`, `4f449fe`,
+      `274050b`) and are therefore now publicly downloadable. Dio's call,
+      made with that stated: the app's data is what matters, not the tests or
+      the history. Recorded here so nobody later reads the older line as
+      still binding.
+
+      Verified before publishing: zero credential matches across all 294
+      commits, `.env` never tracked, the FRED key absent from history. The
+      2.3 GB real corpora in `data/vendor/` stay gitignored and were never in
+      git.
+
+      **Live consequence to watch:** `daily-chain-snapshot.yml` runs at 21:30
+      UTC, five minutes before the local timer, and writes through
+      `api/ingest_routes.py`, which has none of the symbol-floor /
+      off-session / `committed` protections added this week. It ran cleanly
+      for weeks before the outage, so it is not broken — but it is now the
+      primary writer again. Top item in `AGENT_TODO.md`.
+
 ## Setup needed for v1
 
 - [x] Create the GitHub repo `diomavro/tail-lab`, push `main`, enable
