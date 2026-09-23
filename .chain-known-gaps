@@ -12,3 +12,9 @@
 # it, `make ingest-option-chain` can still capture it, and the alert is doing
 # its job.
 2026-09-08	arkk
+# xbi lagged: Cboe served its 2026-09-21 session on 09-22 and was STILL
+# serving 09-21 three days later, so 09-22 never existed to capture. The
+# sweep correctly committed the other 23 chains rather than refusing.
+# Watch xbi: if it never advances it is delisted or dropped by Cboe, and
+# belongs out of DEFAULT_SNAPSHOT_SYMBOLS rather than lagging forever.
+2026-09-22	xbi

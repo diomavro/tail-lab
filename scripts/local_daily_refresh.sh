@@ -144,7 +144,23 @@ fi
     "from tail_lab.config import get_settings; print('KEY' if get_settings().fred_api_key else 'NOKEY')" \
     2>/dev/null)
   if [ "$fred" = "KEY" ]; then
-    for target in rates credit; do
+    # `rates` is KNOWN BROKEN and is not attempted. Its adapter requests
+    # FRED's full ALFRED vintage history, which Treasury yields exceed --
+    # 5,110 vintages, HTTP 400 (AGENT_TODO.md). It is not a transient fault
+    # and no re-run fixes it.
+    #
+    # Attempting it anyway turned the refresh RED every single morning from
+    # the day the key landed, for a bug with a queued fix and ZERO consumers
+    # in research/, api/ or transforms/. A daily false alarm is how an alert
+    # channel stops being read, and this one also has to carry the chain
+    # sweep's genuine failures. Skipping it loudly is the honest state: the
+    # source is broken, we know why, and pretending otherwise every 24 hours
+    # buys nothing.
+    #
+    # Delete this skip in the same change that fixes the adapter.
+    skipped+=("rates(known-broken: FRED vintage cap, see AGENT_TODO.md)")
+    echo "--- rates: SKIPPED (known-broken, not a transient fault -- AGENT_TODO.md)"
+    for target in credit; do
       run_one "$target" make "ingest-$target" || failed+=("$target")
     done
   elif [ "$fred" = "NOKEY" ]; then

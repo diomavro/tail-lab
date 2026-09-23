@@ -51,6 +51,33 @@ LOOKBACK="${CHAIN_VERIFY_LOOKBACK:-10}"
   # US opens 13:30 UTC; stop an hour early for safety. Bash's `[` parses
   # base-10, so a leading-zero hour like 08 is NOT an octal trap here (it
   # would be under `(( ))`).
+  # WAIT FOR THE NETWORK, then defer rather than fail if it never arrives.
+  #
+  # Persistent=true means this almost always runs seconds after a resume,
+  # when DNS is not up yet. Twice in two days that produced a RED verifier on
+  # perfectly healthy data: 2026-09-22 the Cboe fetch died with "Temporary
+  # failure in name resolution", and 2026-09-23 the S3 lake read died the
+  # same way after the first fix guarded only the Cboe half. Each fired the
+  # chain-loss alert, whose marker tells the operator to run
+  # `make ingest-option-chain` -- which after the 13:30 UTC open destroys
+  # that session. Two false alarms in two days is how the one channel that
+  # must stay credible stops being read.
+  #
+  # A verifier that cannot reach anything has not found a gap. It has found
+  # no network. Those are different answers and only one of them is an alert.
+  # A deferred day is cheap: the backward check covers the last ten sessions,
+  # so tomorrow's run inspects today's anyway.
+  for _ in $(seq 1 30); do
+    getent hosts fly.storage.tigris.dev >/dev/null 2>&1 && break
+    sleep 2
+  done
+  if ! getent hosts fly.storage.tigris.dev >/dev/null 2>&1; then
+    echo "DEFERRED: no DNS for the lake after 60s (resumed without network?)."
+    echo "          Not a gap -- nothing was checked. Tomorrow's run covers today."
+    echo "=== exit=0 $(date -u +%FT%TZ) ==="
+    exit 0
+  fi
+
   hour=$(date -u +%H)
   forward=1
   if [ "$hour" -ge 12 ]; then
@@ -187,6 +214,12 @@ while len(seen) < lookback:
     try:
         snapshot_id = store.bronze_snapshot_id(DATASET, probe)
     except LookupError:
+        break
+    except OSError as exc:
+        # A transport fault mid-walk is the same class as the DNS gate above:
+        # it means we could not look, not that something is missing.
+        print(f"NOTE: lake unreachable partway through the backward check ({exc.__class__.__name__}).")
+        print("      Stopping the walk; this is not evidence of a gap.")
         break
     resolved = dt.date.fromisoformat(snapshot_id.split("@", 1)[1].split("#", 1)[0])
     if resolved in seen:
