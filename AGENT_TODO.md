@@ -18,6 +18,93 @@ a large one strictly in order.
 
 ## Next increments
 
+- [ ] **Fix `rates.py` by paging FRED vintages — recipe verified, and the
+      obvious fix fabricates revisions.** `docs/PRIOR_ART.md` §19.
+      No FRED client pages vintages (`fredapi`'s issue #28 is this exact bug,
+      closed without a fix), so this is ours to write. **Do NOT chunk by
+      realtime window**: that clips `realtime_start` to the chunk boundary, so
+      a 2010 observation returns stamped with the chunk's start date, and
+      `rates.py:146`'s `drop_duplicates(subset=["obs_date","vintage_date"])`
+      would keep BOTH the true vintage and the fabricated one — a manufactured
+      revision in a point-in-time dataset.
+      Verified working against the live API 2026-09-23: enumerate with
+      `series/vintagedates?limit=10000` (DGS10 -> 5,115 dates), then batch 400
+      into `series/observations?vintage_dates=...&output_type=3` with
+      `observation_start`/`observation_end` bounded to the batch's era ->
+      HTTP 200, 8.3 s, 419 rows. `output_type=3` returns a WIDE frame with the
+      vintage in the COLUMN NAME (`DGS10_20250214`), so clipping is
+      structurally impossible; melt wide-to-long. Batches must stay <=600 or
+      Apache (not FRED) returns an HTML 400, and the observation window must
+      be bounded or the request times out.
+
+- [ ] **Make look-ahead unspellable instead of merely tested.**
+      `docs/PRIOR_ART.md` §20. `read_bronze_as_of(dataset, as_of)` puts the
+      clock in the caller's hands at 14+ independent `research/` call sites,
+      each an independent chance to pass the wrong date — which is why
+      `docs/adr/0009` needs a per-path adversarial test. zipline
+      (`_protocol.pyx::BarData`, Apache-2.0) injects `simulation_dt_func` at
+      construction and its public `current()`/`history()` take NO date, so the
+      unsafe call cannot be written.
+      Add `BronzeReader(store, as_of)` whose methods take `(dataset, columns)`
+      and no date, plus an import-linter `forbidden` contract stopping
+      `research/` importing `tail_lab.lake` directly — same shape as the
+      existing `api`/`research` -> `ingestion` contract. Converts the #1
+      invariant from test-enforced to CI-enforced by machinery already running.
+
+- [ ] **Three Delta Lake fixes, two of them live bugs.**
+      `docs/PRIOR_ART.md` §21.
+      (a) Rewrite `option_chain_snapshot__quarantine` with
+      `mode="overwrite", schema_mode="overwrite"` — delta-rs has no
+      column-drop API, and this preserves history and partitioning. Four lines.
+      (b) Replace `write_bronze`'s read-then-append with
+      `merge(...).when_not_matched_insert_all()` keyed on `ingest_date`.
+      Delta's conflict checker treats a blind append as non-conflicting, so
+      two concurrent appends to one partition BOTH commit and duplicate rows —
+      S3 conditional-put does not fix this, it prevents a lost commit rather
+      than a duplicated partition. **Re-measure partition pruning first**: the
+      surveyor saw `num_target_files_scanned=252, skipped=0` on a 250-partition
+      table, contrary to the docs.
+      (c) Set `delta.checkpointInterval = 10` on bronze tables — delta-rs
+      defaults to 100, and it compounds because
+      `_existing_bronze_ingest_date_strings` does a full snapshot load on
+      every write.
+      Also correct `lake/store.py`'s own comment: on pandas 3.0.5, filtering
+      PRESERVES `RangeIndex` (with a step), so the stated trigger is false.
+      The real ones are `pd.concat` without `ignore_index` and named indexes.
+
+- [ ] **A watchdog for the two ways a cron silently stops.**
+      `docs/PRIOR_ART.md` §23. Measured 2026-09-23: the 21:30 cron is
+      delivered 23:27-00:12 UTC (+2h to +2h42) and the 05:00 catch-up
+      09:02-09:37 (+4h to +4h37). **Not one run landed near its cron**, so the
+      workflow comment's assumed margin to the 13:30 open is ~4h, not ~8.5.
+      Move the catch-up off the hour and replace the assumption with the
+      measurement.
+      Worse, and new since going public: GitHub **disables scheduled workflows
+      in a public repo after 60 days without repository activity**, and it
+      disables BOTH crons together, so the redundancy is no defence. Add a
+      push-triggered watchdog asserting
+      `GET /actions/workflows/daily-chain-snapshot.yml` is `state == "active"`
+      and that its newest `?event=schedule` run is under 36 h old —
+      push-triggered workflows are never auto-disabled.
+
+- [ ] **Two ratchets that install clean today, and one exemption to narrow.**
+      `docs/PRIOR_ART.md` §25. Diff coverage at 100% (pytest's own
+      `codecov.yml` gates the patch at 100% and sets `project: false` — the
+      asymmetry this repo's project-level floors lack, and the reason new code
+      can hide behind existing coverage). Plus
+      `pylint --enable=duplicate-code --min-similarity-lines=10` over
+      `research/ api/ transforms/ lake/ contracts/`, which returns **zero**
+      today.
+      And narrow `agent-review`'s "one ingestion adapter per dataset is a
+      sanctioned near-duplicate" exemption to the fetch/parse seam: under it,
+      `ingestion/credit.py` (257 lines) and `ingestion/rates.py` (269) differ
+      in **60 lines after normalising the dataset name** — ~78% identical,
+      both FRED adapters, both by `claude[bot]`, four days apart.
+      While here, correct the **15.8:1** accretion figure quoted as current
+      fact in `weekly-cleanup.yml`, `pyproject.toml` and `docs/adr/0023`:
+      re-measured it is 6.9:1 for `claude[bot]` against 5.2:1 for `diomavro`.
+      Keep the number in ONE place.
+
 - [ ] **Select strikes by DELTA, and score them by convexity ratio.**
       `docs/PRIOR_ART.md` §11. `put_roll.py` picks strikes as
       `spot * (1 - moneyness_pct/100)`, which §1 established confounds every

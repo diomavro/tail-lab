@@ -101,6 +101,51 @@ acts on, removes, or reorders anything in this file.**
         `github.token`, so it needs testing on a repo that auto-deploys —
         not a blind toggle.
 
+- [ ] **Turn on GitHub's "Included usage alerts" (90% / 100%).**
+      `docs/PRIOR_ART.md` §23. github.com/settings/billing. This is the only
+      control that would have warned before EITHER outage — it emails at
+      percentages of the plan allowance, independent of any dollar budget.
+      Worth recording alongside it, because it falsifies the obvious
+      assumption: **going public did not lift the billing block.** A failed
+      payment blocks Actions account-wide and public-repo free minutes do not
+      exempt a delinquent account; the block lifted separately at 20:24 UTC on
+      2026-09-23. `quizkit` and `tip_app` are still private and still share
+      that same account-level quota.
+
+- [ ] **Pin `superfly/flyctl-actions/setup-flyctl@master` to a SHA, and
+      re-issue `FLY_API_TOKEN` scoped and expiring.**
+      `docs/PRIOR_ART.md` §24. A mutable `@master` ref on the one step that
+      holds the deploy token is the single worst supply-chain line in the
+      repo, and it matters more now the repo is public and forkable.
+      **Fly has no OIDC for GitHub Actions** (requested since Feb 2024, not
+      shipped), so scope plus expiry is the entire available mitigation:
+      `fly tokens create deploy --name gha --expiry 720h` is app-scoped, where
+      the default token expiry is **twenty years**. The current token dates
+      from 2026-08-19 and is almost certainly that default.
+      `AGENT_FIX_TOKEN` is the only remaining long-lived PAT; the daily agent
+      already mints a GitHub App token, so moving the fixer to the same App
+      removes it — and `token-check.yml`'s own header says to delete it once
+      the loop has been observed pushing, which it now has.
+
+- [ ] **Five repo settings, and one Dependabot correction.**
+      `docs/PRIOR_ART.md` §24. Secret scanning and push protection were
+      enabled 2026-09-23; these are what is left, all free on a public repo:
+      `default_workflow_permissions=read` with
+      `can_approve_pull_request_reviews=false` (the `backend`,
+      `constitution-guard` and `e2e` jobs hold a write token they never use,
+      and the three jobs that genuinely need more already declare it, so
+      nothing breaks); `secret_scanning_validity_checks`;
+      `secret_scanning_non_provider_patterns`; private vulnerability
+      reporting; and `sha_pinning_required` AFTER pinning.
+      **Correction to the earlier note in this file:** keeping Dependabot off
+      entirely was over-cautious. `automerge.yml`'s path check already greps
+      `^\.github/`, so **`github-actions`-ecosystem PRs edit guarded paths and
+      are left for a human by construction** — and they are exactly what makes
+      SHA-pinning maintainable. `pip` PRs touch the guarded `pyproject.toml`.
+      Only **npm** PRs would auto-merge and auto-deploy. So: enable Dependabot
+      for `github-actions` only; add npm after `automerge.yml` gains an author
+      check.
+
 ## Setup needed for v1
 
 - [x] Create the GitHub repo `diomavro/tail-lab`, push `main`, enable

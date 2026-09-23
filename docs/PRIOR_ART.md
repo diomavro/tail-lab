@@ -540,3 +540,214 @@ violation — it is Dio's repo and the reasoning about maintainer review time
 still does not apply — but the recorded justification no longer describes the
 situation, and the fork-PR hole it implies was closed separately in
 `automerge.yml`'s `head_repository` clause.
+
+
+---
+
+# Part four: data engineering and automation (2026-09-23)
+
+Same survey, two more dimensions. Findings marked **[verified here]** were
+re-run against this repo or the live API before being written down; the rest
+are the surveyor's measurements, marked as such.
+
+## 18. Free historical option chains: nothing better exists, and that is the finding
+
+Every "new" free chain dataset checked was a re-upload of optionsDX or of the
+Alpha Vantage feed already identified via lambdaclass. Academic repositories
+redistribute *derived* series, essentially never chains, because vendor
+licences forbid it. Exchange freebies are dead ends — OCC prices its series
+file at $1,750/mo, `nasdaqtrader.com`'s data-products page 302s to a 404.
+
+**Forward-collecting Cboe's delayed CDN remains correct, and is the only
+mechanism that grows 2026+ history.** `docs/adr/0020` stands.
+
+One real gap-filler: a Kaggle SPY chain covering **2014-2025**, CC0-asserted,
+which would take the OHLCV-chain overlap from the ~589 trading days
+`CLAUDE.md` records to ~1,075 and make 2023 a free vendor-disagreement check.
+Two caveats that decide whether it is worth it: its schema is
+character-for-character Alpha Vantage, so **AV's terms are the real
+constraint, not the CC0 label** — the same unresolved posture as lambdaclass;
+and its IV is **smoothed, not per-contract inverted** (383 strikes carrying
+109 distinct IV values), so the vendor greeks are decorative and
+`option_pricer.PutGreeks` must do the work. 8.7 GB uncompressed against
+**13 GB free** [verified here] — ingest year-by-year, never unpack whole.
+
+## 19. No FRED client pages vintages. Here is the recipe that works
+
+The `rates` adapter's HTTP 400 is not a bug with a library fix:
+`fredapi.get_series_all_releases` hardcodes the same unbounded window and
+does not page (its issue #28 is this exact bug, closed without a fix);
+`fredr` pages *observations*, not vintages; R's `alfred` has no chunking at
+all. The cap is documented: **2000 vintage dates per JSON request**.
+
+**The obvious fix is worse than the bug.** Chunking by realtime window clips
+`realtime_start` to the window boundary, so an observation from 2010 comes
+back stamped with the chunk's start date — and `rates.py`'s
+`drop_duplicates(subset=["obs_date","vintage_date"])` would keep both the
+true vintage and the fabricated one. **A manufactured revision in a
+point-in-time dataset** is the one failure this repo cannot tolerate.
+
+The working recipe [verified here, against the live API]:
+
+```
+GET series/vintagedates?series_id=DGS10&limit=10000      -> 5115 dates, HTTP 200
+GET series/observations?vintage_dates=<400 dates>&output_type=3
+    &observation_start=<batch[0]-400d>&observation_end=<batch[-1]>
+                                                          -> HTTP 200, 8.3 s, 419 rows
+```
+
+`output_type=3` returns a **wide** frame with the vintage in the column name
+(`{"date": "...", "DGS10_20250214": "..."}`), so clipping is structurally
+impossible — melt wide-to-long. Three constraints, none documented by FRED:
+batches must stay <=600 dates or **Apache**, not FRED, returns an HTML 400;
+the observation window must be bounded or the request times out; 5,115
+vintages is 13 requests, well inside the 120/min limit.
+
+## 20. Point-in-time: do not migrate. Steal the clock
+
+**The premise inverts.** `DeltaTable.history()` retains 30 days by default and
+vacuum retains files 7, so `load_as_version` is *less* durable than
+partition-by-`ingest_date`, where every historical snapshot is still
+referenced by the current version. ArcticDB, Iceberg, Dolt, XTDB and lakeFS
+offer no correctness guarantee this repo lacks. **Do not "upgrade".**
+
+What is worth copying is zipline's shape (`zipline-reloaded`,
+`src/zipline/_protocol.pyx::BarData`, Apache-2.0): `simulation_dt_func` is
+injected at construction, and the public `current()` / `history()` **take no
+date**. The algorithm physically cannot name a time, so no adversarial
+look-ahead test is needed — the unsafe call is unspellable.
+
+`read_bronze_as_of(dataset, as_of)` puts `as_of` in the caller's hands at
+**14+ independent call sites in `research/`**, each an independent chance to
+pass the wrong date, which is exactly why `docs/adr/0009` needs a per-path
+adversarial test. A `BronzeReader(store, as_of)` whose methods take no date,
+plus an import-linter `forbidden` contract stopping `research/` importing
+`tail_lab.lake` directly, converts the #1 invariant from test-enforced to
+**CI-enforced by machinery already running**.
+
+Second, smaller hole: a backfilled FRED vintage lands in a new partition and
+is **invisible** to an as-of read resolving to an earlier one. The
+`vintage_date` column is carried but never used for resolution.
+
+## 21. Four Delta Lake findings, two of them live bugs
+
+* **The quarantine table needs a rewrite, not a drop.** delta-rs has **no
+  column-drop API** (`drop_columns` is an open PR). `mode="overwrite",
+  schema_mode="overwrite"` removes the stale `__index_level_0__` and
+  **preserves history and partitioning** — four lines.
+* **A correction to this repo's own comment.** `lake/store.py` says the index
+  leak comes from "validation dropping rows leaves an `Index`, not a
+  `RangeIndex`". On pandas 3.0.5 that is **false** — filtering preserves
+  `RangeIndex` with a step. The real triggers are `pd.concat` without
+  `ignore_index` and named/string indexes. `reset_index(drop=True)` is still
+  load-bearing, for a different reason than stated.
+* **`write_bronze`'s TOCTOU is not fixed by compare-and-swap.** Delta's
+  conflict checker treats a blind append as non-conflicting, so two
+  concurrent appends to the same partition **both commit and duplicate rows**;
+  S3 conditional-put prevents a lost commit, not a duplicated partition. The
+  fix is `merge(...).when_not_matched_insert_all()` keyed on `ingest_date`,
+  which makes immutability structural rather than a preceding `if`. Exposure
+  today is limited by `daily-chain-snapshot.yml`'s `concurrency:` group.
+* **`delta.checkpointInterval` defaults to 100 in delta-rs, not 10.** Every
+  un-checkpointed commit is a separate `GetObject` on Tigris, and it compounds
+  because `_existing_bronze_ingest_date_strings` does a full snapshot load on
+  every write. One `set_table_properties` call per table.
+* **DynamoDB locking is gone** (removed in delta-rs 1.6.1, not 1.0), so
+  `AWS_S3_ALLOW_UNSAFE_RENAME` is inert and `docs/adr/0013`'s single-writer
+  note has lost its premise.
+
+## 22. No finance-specific validation library exists — and pandera is under-used
+
+A sweep across "market data validation", "tick data validation" and "ohlcv
+validation" found nothing above 8 stars that touches stale quotes, crossed
+bid-ask or sentinel detection. That is the normal state of the art, not a gap
+in the search: **this is domain code you write.**
+
+The useful finding is that the optionsDX blank-`P_IV`-with-garbage-greeks case
+is *a plain cross-field `pandera` Check nobody has written*, and
+`SchemaErrors.failure_cases` (carrying `check`, `failure_case`, `index` per
+row) could be persisted into `__quarantine` instead of only the failing rows.
+Zero new dependencies.
+
+Vocabulary worth stealing even without adopting the tool: `pointblank`'s
+`col_missing_coded(col, value)` names the Cboe zero-fill problem as a
+first-class check. `datacompy` (Apache-2.0) has **per-column tolerances**,
+which expresses "close must agree to 3e-5, adj_close is a different quantity"
+in one call. **Soda Core is disqualified on licence** (Elastic 2.0, not OSS,
+and its v4 CLI authenticates to a paid cloud); **whylogs is abandoned** (dead
+~20 months); Great Expectations removed auto-profiling in V1 and now
+redirects to `fivetran/great_expectations`.
+
+## 23. The crons are delivered hours late, and public repos silently disable them
+
+**[verified here]** Measured over the last eight scheduled runs of
+`daily-chain-snapshot.yml`:
+
+| cron | actual delivery | delay |
+|---|---|---|
+| `30 21 * * 1-5` | 23:27 - 00:12 UTC | **+2h00 to +2h42** |
+| `0 5 * * 2-6` | 09:02 - 09:37 UTC | **+4h02 to +4h37** |
+
+Not one run landed near its cron. The workflow's own comment assumes the
+catch-up sits safely inside the window to the 13:30 UTC open; the real margin
+is **under four hours**, not the ~8.5 implied. Moving the catch-up off the
+hour helps — GitHub's docs name the start of every hour as a high-load time.
+
+**New risk from going public:** GitHub disables scheduled workflows in a
+public repository after **60 days without repository activity**. That rule did
+not apply while private, it kills the one job that cannot be backfilled, and
+it disables **both crons together** — so the two-cron redundancy is no
+defence. A push-triggered watchdog asserting the workflow is still `active`
+and that its newest scheduled run is under 36 hours old closes it, because
+push-triggered workflows are never auto-disabled.
+
+Also worth recording in `docs/adr/0016` because it falsifies the obvious
+assumption: **going public did not lift the billing block.** A failed payment
+blocks Actions account-wide, and public-repo free minutes do not exempt a
+delinquent account.
+
+## 24. The single worst supply-chain line, and a linter that finds it
+
+`deploy.yml` pins `superfly/flyctl-actions/setup-flyctl@master` — **a mutable
+ref on the one step holding `FLY_API_TOKEN`.** Fly has **no OIDC for Actions**
+(requested since Feb 2024, not shipped), so scope and expiry are the entire
+available mitigation: `fly tokens create deploy` is app-scoped, and the
+default token expiry is **twenty years**.
+
+`zizmor` (`docs.zizmor.sh`, runs offline) found 87 issues, 25 high, including
+that pin, seven `actions/checkout` without `persist-credentials: false`, and a
+template-injection in `deploy.yml`'s notice line. `automerge.yml`'s
+`dangerous-triggers` finding is a **false positive to suppress with a
+comment** — the `head_repository` clause is the correct mitigation.
+
+One contradiction worth resolving: `agent-review` checks out
+`${{ github.head_ref }}` at workspace root and then runs Claude with
+`--allowedTools Bash`, while the action's own security doc says *"do not check
+out an untrusted ref into the workspace root before this action."* Three
+things save it today — fork PRs get no secrets, the action checks the
+triggering user has write access, and `head_ref` does not resolve in the base
+repo — but none of them is the workflow's own doing.
+
+## 25. The 15.8:1 accretion number is stale, and the real duplication is exempted
+
+Re-measured: `claude[bot]` is **6.9:1** added-to-deleted across 31 merged PRs,
+`diomavro` **5.2:1** across 76. The **15.8:1 vs 2.4:1** figure is quoted as
+current fact in three places — `weekly-cleanup.yml`, `pyproject.toml`'s ruff
+comment, and `docs/adr/0023`. It no longer holds. (Do not over-celebrate:
+restricted to source directories, August was 5.6:1 and September is 7.6:1 —
+*worse*. Pick one measurement and keep it in one place.)
+
+**And the exemption is hiding the real case.** `agent-review`'s prompt says
+one ingestion adapter per dataset is a sanctioned near-duplicate. Under it:
+**[verified here]** `ingestion/credit.py` (257 lines) and `ingestion/rates.py`
+(269 lines) differ in **60 lines after normalising the dataset name** — ~78%
+identical, both FRED adapters, both by `claude[bot]`, four days apart. That is
+not one-adapter-per-dataset; that is one adapter copied. Narrow the exemption
+to the fetch/parse seam.
+
+Two gates that install clean today and ratchet forever, same shape as
+`docs/adr/0023`'s lint ratchet: **diff coverage at 100%** (pytest's own
+`codecov.yml` gates the patch at 100% and deliberately sets `project: false`,
+which is exactly the asymmetry this repo's project-level floors lack), and a
+**duplication gate** — `pylint --enable=duplicate-code` over `research/ api/
+transforms/ lake/ contracts/` currently returns **zero**.
