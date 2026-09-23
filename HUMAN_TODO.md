@@ -57,6 +57,50 @@ acts on, removes, or reorders anything in this file.**
       for weeks before the outage, so it is not broken — but it is now the
       primary writer again. Top item in `AGENT_TODO.md`.
 
+- [ ] **Decide whether hedge premium is externally funded or reduces the
+      equity sleeve — it changes the platform's headline claim.**
+      `docs/PRIOR_ART.md` §12. `lambdaclass/options_portfolio_backtester`
+      reconstructs the Spitznagel-style strategy on 2008-2024 SPY and reports
+      +3.3%/yr excess — **with premium injected, not debited**. Under the AQR
+      framing where premium comes out of the equity allocation, excess falls
+      ~2.5pp/yr at every budget and **the strategy no longer beats SPY**.
+      `research/backtest/sizing.py`'s `FixedPremium` / `WealthFraction` seam
+      already takes a side on this, silently, and no surface says which. This
+      is not an agent decision: it determines whether the North Star is "beats
+      SPY" or "beats SPY given someone else funds the carry", and those are
+      different products. Whichever you pick, it belongs on the Screen and in
+      the README.
+
+- [ ] **Approve two dependencies (`pyproject.toml` is a guarded path, so this
+      needs a human-merged PR).**
+      Both are permissive and both unblock queued agent work:
+      * **`arch`** (NCSA, permissive) — `StationaryBootstrap` +
+        `optimal_block_length` for the Hill CI, and `MCS`/`SPA` for the
+        Bake-off's multiple testing, which `docs/PRIOR_ART.md` §13 argues is
+        currently using the wrong correction.
+      * **`Riskfolio-Lib`** (BSD-3) — `kelly="exact"`, the growth-optimal
+        sizing that answers `docs/END_STATE.md` §4 Q8's own objection (§14).
+      Neither is needed at runtime on Fly if the work stays in `research/`
+      offline paths; decide whether they go in `[dev]` or the main
+      dependencies before the agent opens the PR.
+
+- [ ] **Public-repo decisions now that Actions is restored (2026-09-23).**
+      Secret scanning and push protection were enabled the same day. Three
+      things left, each a judgement call rather than a fix:
+      * **Dependabot is deliberately still OFF.** `automerge.yml` squash-merges
+        any green PR from a branch in this repo, and Dependabot PRs are exactly
+        that — so enabling it auto-merges dependency bumps and auto-deploys
+        them to Fly unattended. `pyproject.toml` is guarded so Python bumps
+        would be blocked, but frontend/npm bumps would not.
+      * **Branch protection is now free** (it was paid-plan-only while
+        private). Requiring CI at the branch level would make
+        "`automerge` merges any green PR" far less load-bearing.
+      * **`default_workflow_permissions` is `write`** with
+        `can_approve_pull_request_reviews: true`. Tightening to `read` is the
+        standard hardening, but `ci.yml`'s auto-fix job falls back to
+        `github.token`, so it needs testing on a repo that auto-deploys —
+        not a blind toggle.
+
 ## Setup needed for v1
 
 - [x] Create the GitHub repo `diomavro/tail-lab`, push `main`, enable

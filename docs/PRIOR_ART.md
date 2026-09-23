@@ -1,4 +1,4 @@
-# Prior art: what three trading systems taught this one
+# Prior art: what other systems taught this one
 
 Read 2026-08-27. The repos are cloned shallow at `~/Documents/reference/`
 (not vendored here, not a dependency — reading material):
@@ -337,3 +337,206 @@ options pricing, vol surfaces, risk metrics, execution and regime models. That
 is out of scope here, but it is a ready-made seed for a market-microstructure
 content domain in the sibling `quizkit` repo, which is where Dio's stated
 interview-prep motivation actually belongs.
+
+
+---
+
+# Part three: an open-source survey (2026-09-23)
+
+A deliberate search rather than a set of clones, run the day the repo went
+public. Nothing below is vendored; the licences are recorded because several
+are copyleft and two of the best ideas can only be **reimplemented from the
+paper**, not copied.
+
+Every claim here was checked against the actual file, not a search snippet —
+repo metadata via `gh api`, and the quoted constants read out of the source.
+
+| Repo | Licence | What it answers |
+|---|---|---|
+| [`lambdaclass/options_portfolio_backtester`](https://github.com/lambdaclass/options_portfolio_backtester) | MIT, 272★ | §11, §12 — delta strikes, walk-forward, the funding question |
+| [`bashtage/arch`](https://github.com/bashtage/arch) | NCSA (permissive) | §13 — block-bootstrap CIs, and the right multiple-testing tool |
+| [`dcajasn/Riskfolio-Lib`](https://github.com/dcajasn/Riskfolio-Lib) | BSD-3 | §14 — exact Kelly without forming a variance |
+| [`marwinsteiner/pysvi`](https://github.com/marwinsteiner/pysvi) | MIT, 3★ | §15 — closes §7's open ask |
+| [`m-g-h/R.MFIV`](https://github.com/m-g-h/R.MFIV) | MIT (R) | §16 — the put-wing truncation bias |
+| `tea`, `evt0`, EQD (Technometrics 2024) | GPL / none | §17 — read-only; reimplement from the papers |
+
+## 11. Delta-based strike selection is a solved problem, and so is its score
+
+`options_portfolio_backtester` is the nearest neighbour this repo has, from
+the **same organisation whose `data-v1` chains** `ingestion/option_quotes.py`
+already reads, and built on **the same optionsDX panel** in
+`data/vendor/optionsdx/`. Its numbers are therefore reproducible here, which
+is rare.
+
+`rust/ob_core/src/convexity_scoring.rs` carries `find_target_put(deltas, dtes,
+asks, target_delta, dte_min, dte_max)`, and `convexity/config.py` pins the
+parameterisation (read 2026-09-23):
+
+```python
+target_delta: float = -0.10
+dte_min: int = 14
+dte_max: int = 60
+tail_drop: float = 0.20
+budget_pct: float = 0.005   # 0.5% of portfolio per month
+```
+
+That is §1's delta ladder, already written. It also supplies a ranking column
+this repo lacks — `convexity_ratio = tail_payoff / annual_cost`, the payoff in
+a 20% drop divided by the annualised ask. One number that serves as both a
+Screen ranking and `docs/adr/0021`'s missing Carry Budget.
+
+**Two defects not to copy**, both visible in the source: `find_target_put`
+breaks delta ties with no liquidity filter, and `annual_cost = ask * 100.0 *
+12.0` hardcodes twelve rolls a year regardless of the 14-60 DTE band it just
+selected on — internally inconsistent at 60 DTE.
+
+## 12. The depth this platform exists to test has an out-of-sample cliff
+
+`docs/SPITZNAGEL_RECONSTRUCTION.md` (20 KB, 2008-2024 SPY) does the thing this
+repo's Bake-off does not yet do: optimise on 2008-2016, evaluate on 2017-2024
+with no re-tuning. Its headline is a falsifiable claim about the exact
+strategy family here — **45-50% OTM is an overfitting cliff.** It wins
+in-sample on the GFC's -52% and goes *negative* out-of-sample, because COVID
+only reached -34%. 40% OTM is the depth ceiling that survives. Their rule of
+thumb: halve any in-sample excess for a forward estimate.
+
+**The caveat is the more important half.** Their 3.3%/yr premium is
+**externally funded** — injected, not debited from the equity sleeve. Under
+the AQR framing where premium reduces the sleeve, excess returns fall ~2.5pp/yr
+across every budget and **the strategy stops beating SPY**.
+`research/backtest/sizing.py`'s `FixedPremium` / `WealthFraction` seam takes a
+side on that question silently, and the surface does not say which.
+
+## 13. The Bake-off is using the wrong multiple-testing correction
+
+`arch/bootstrap/` exports `StationaryBootstrap`, `CircularBlockBootstrap`,
+`MovingBlockBootstrap` and **`optimal_block_length`** (Politis-White/Patton) —
+which is `AGENT_TODO`'s "block-bootstrap CI, never `alpha/sqrt(k)`" off the
+shelf, with the block length *chosen* rather than guessed.
+
+The larger win is `arch/bootstrap/multiple_comparison.py`: **`MCS`** (Model
+Confidence Set), **`SPA`** (Hansen's Superior Predictive Ability), `StepM`,
+`RealityCheck`. `research/backtest/metric_screen.py` currently applies
+Benjamini-Hochberg, which controls FDR over tests treated as exchangeable. A
+bake-off of nested sensitivity screens on SPY/QQQ correlated ~0.95 is not
+exchangeable — it is exactly the "effective N is 15-25, not 2,688" problem
+already recorded in the Paretan plan. **MCS returns the set of screens that
+cannot be statistically separated**, which is a more honest Bake-off output
+than a ranked list with stars.
+
+## 14. Exact Kelly answers the objection §4 Q8 raises against itself
+
+`docs/END_STATE.md` §4 Q8 objects that `l* = (mu-r)/sigma^2` does not transfer
+to a put, because a put's variance is mostly upside. Riskfolio-Lib's
+`riskfolio/src/Portfolio.py` `kelly="exact"` branch never forms a variance:
+
+```python
+ret = 1 / T * cp.sum(cp.log(1 + returns @ w))
+```
+
+It maximises empirical mean log-growth directly over the realised joint payoff
+matrix, so a bounded-loss, right-skewed column is handled by construction.
+Feed it two columns — benchmark and hedge overlay — and `w` is the answer,
+with `kelly="approx"` available in the same call as the naive-Kelly contrast
+to report beside it. Paper: Cajas, *Kelly Portfolio Optimization: A DCP
+Framework* (SSRN 3833617).
+
+For the fractional-Kelly question underneath it, `cvxgrp/kelly_code` (GPL-3,
+Busseti-Ryu-Boyd, arXiv 1603.06183) adds a convex **bound on drawdown
+probability** — a principled substitute for "half-Kelly because full Kelly is
+scary", same conservatism with a stated constraint instead of a folk factor.
+
+## 15. §7's open ask has an implementation, at three stars
+
+§7 wanted a measured replacement for `MODEL_PRICED_MAX_MONEYNESS_PCT = 10.0`
+via the Durrleman condition. `marwinsteiner/pysvi` `src/pysvi/diagnostics.py`
+is the first implementation surveyed that does it defensibly, and the reason
+is its **refusals**:
+
+* the grid defaults to the observed data's own log-moneyness range, so
+  verification and the calibration penalty cover the same domain;
+* points where total variance is non-finite or non-positive, or where `g` is
+  non-finite, are counted as `n_invalid` and **fail** the butterfly check —
+  freedom from arbitrage is never certified on an unevaluated region;
+* Lee's moment bounds on wing slopes, with `wing_slope_method="grid_edge"`
+  flagged where the parametrisation has no closed form (a known underestimate);
+* finite-difference densities (SABR, DirectSVI) are documented as carrying FD
+  noise above the default tolerance.
+
+The SVI corner of GitHub is the most saturated surveyed — a dozen repos fit a
+smile to a Yahoo chain and assert "arbitrage-free" from the parametrisation
+rather than checking `g(k)` on the evaluated domain. This was the only one
+whose arbitrage module survived reading. The "refuse rather than certify"
+shape is also what `ImpliedAlphaFit.refusal` is reaching for.
+
+## 16. A put-wing-only chain makes any naive model-free IV biased low
+
+`m-g-h/R.MFIV` (MIT — the `DESCRIPTION` says so; GitHub's detector reports
+NOASSERTION and is wrong) decomposes the Cboe VIX white paper into testable
+functions, **and** implements `JandT_2007_smoothing_method` — Jiang & Tian
+(2007)'s correction for truncation and discretisation bias when the strike
+range is insufficient.
+
+That second part is why it beats the dozen other VIX-replication repos *for
+this repo specifically*: `ingestion/option_chain.py` sweeps the **put wing
+only**, so a naive variance strip is truncated by construction and a per-name
+model-free IV would be biased low by an amount nobody here has measured. It is
+the honest prerequisite for the VRP column `AGENT_TODO` wants, since VRP needs
+its implied leg to be model-free or the flat-vol error is simply reimported.
+
+## 17. Python has no bias-corrected Hill — that gap is real, and it is ours
+
+The negative result is worth as much as the positive ones. `research/surface/
+hill.py` uses a plain Hill estimator with a plateau-finder gated on the
+Karamata onset. Serious EVT does better, and **all of it is R**:
+
+* **`tea`** (GPL-3): `danielsson()`, the Danielsson et al. (2001) double
+  bootstrap for the optimal `k`; plus Hall (1990), Caeiro & Gomes (2014, 2016).
+* **`evt0`** (GPL-2+): mean-of-order-*p*, peaks-over-random-threshold Hill, and
+  second-order reduced-bias estimators.
+* **EQD** — Murphy, Tawn & Varty, *Automated threshold selection and associated
+  inference uncertainty for univariate extremes*, Technometrics (2024),
+  [arXiv:2310.17999](https://arxiv.org/abs/2310.17999). Expected quantile
+  discrepancy: bootstrap GPD samples over candidate thresholds and pick the one
+  whose excesses are most GPD-consistent. **A criterion with a number, not an
+  eyeballed plateau** — the direct upgrade to `stable_k`. The reference
+  implementation has **no licence file at all** (= all rights reserved).
+
+So: `arch` is usable today for CIs; threshold selection and bias correction
+must be **reimplemented from the papers**. Orientation first: Belzile, Dutang,
+Northrop & Opitz, *A modeler's guide to extreme value software*,
+[arXiv:2205.07714](https://arxiv.org/abs/2205.07714).
+
+`georgebv/pyextremes` (MIT, 280★) is solid but solves a different problem — it
+is GPD/POT with *diagnostic plots for a human*, not an automated criterion. The
+one thing worth importing outright is its Bayesian/MCMC return-level interval:
+a posterior on the tail parameter is a better honest error bar than any point
+estimate.
+
+## Two searches that returned nothing usable
+
+**Fengler's arbitrage-free RND spline** (constrained smoothing splines under
+linear shape constraints) is the right method for a non-negative implied
+density, and has **no open implementation in any language** that this survey
+could find. Paper only; it is a QP, so it is buildable, but from scratch.
+
+**Realised-variance libraries** all need intraday data. This repo has daily
+bars on a rolling five-year window, so that whole dimension is blocked on
+data rather than code.
+
+**One warning for future searches.** `HealthCareVisor/tail-risk-hedging-platform`
+and `kruxholdings-max/tail-risk-research` were created eight minutes apart on
+2025-12-01 with byte-identical descriptions; one is a README with no code, the
+other ships `.pyc` files and two PPO `.zip` models with no training code. A
+content-farm pair, and they rank highly on exactly the search terms this repo
+invites. Not prior art.
+
+## Postscript: §5's premise expired on 2026-09-23
+
+§5 justified this repo's autonomous merge and AI co-author trailers on the
+grounds that "the blast radius is **one private repo** that never trades."
+The repo is public as of 2026-09-23 (`HUMAN_TODO.md`). Nothing about that is a
+violation — it is Dio's repo and the reasoning about maintainer review time
+still does not apply — but the recorded justification no longer describes the
+situation, and the fork-PR hole it implies was closed separately in
+`automerge.yml`'s `head_repository` clause.

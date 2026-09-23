@@ -18,6 +18,79 @@ a large one strictly in order.
 
 ## Next increments
 
+- [ ] **Select strikes by DELTA, and score them by convexity ratio.**
+      `docs/PRIOR_ART.md` §11. `put_roll.py` picks strikes as
+      `spot * (1 - moneyness_pct/100)`, which §1 established confounds every
+      cross-regime comparison. `lambdaclass/options_portfolio_backtester`
+      (MIT) has the selector written — `find_target_put(deltas, dtes, asks,
+      target_delta, dte_min, dte_max)` at `target_delta=-0.10`, `dte 14-60` —
+      and it runs on the SAME optionsDX panel in `data/vendor/optionsdx/`, so
+      its results are reproducible here rather than merely suggestive.
+      Two parts: (a) `StrikeRule.ByDelta(target)` reading the `delta` Cboe
+      already publishes on every contract, carrying an explicit delta
+      convention (QuantLib's `BlackDeltaCalculator` makes `DeltaType` a
+      required constructor argument for a reason — spot vs forward vs
+      premium-adjusted are different strikes); (b) `convexity_ratio =
+      tail_payoff / annual_cost` as a `RankedAsset` field and Screen column,
+      which is simultaneously a ranking and `docs/adr/0021`'s missing Carry
+      Budget. Do NOT copy their two defects: the tie-break has no liquidity
+      filter, and `annual_cost` hardcodes 12 rolls/yr regardless of the
+      14-60 DTE band. Serves `docs/END_STATE.md` §4 Q4.
+
+- [ ] **Add a walk-forward split to the Bake-off, and test the 45-50% cliff.**
+      `docs/PRIOR_ART.md` §12. Every Bake-off verdict here is in-sample.
+      `options_portfolio_backtester`'s `docs/SPITZNAGEL_RECONSTRUCTION.md`
+      optimises on 2008-2016 and evaluates on 2017-2024 with no re-tuning, and
+      reports that **45-50% OTM wins in-sample and goes negative
+      out-of-sample** — it fits the GFC's -52% and COVID only reached -34%.
+      40% is the depth ceiling that survives. That is a falsifiable claim
+      about the exact strategy family this repo exists to evaluate, on data
+      this repo already owns. Reproduce it before trusting any depth verdict,
+      and adopt their rule of thumb (halve in-sample excess for a forward
+      estimate). Serves `docs/END_STATE.md` §4 Q4.
+
+- [ ] **Make `sizing.py` solve for growth-optimal size instead of a constant.**
+      `docs/PRIOR_ART.md` §14. `premium_budget_per_leg` is a hardcoded $1,000.
+      `docs/END_STATE.md` §4 Q8 objects that `l* = (mu-r)/sigma^2` cannot
+      transfer because a put's variance is mostly upside — and Riskfolio-Lib's
+      (BSD-3) `kelly="exact"` branch answers exactly that by never forming a
+      variance: `ret = 1/T * cp.sum(cp.log(1 + returns @ w))`, maximised over
+      the realised joint payoff matrix. Feed it two columns (benchmark, hedge
+      overlay); `w` is the answer. Report `alpha*`, growth at `alpha=0` and the
+      zero-crossing, with `kelly="approx"` beside it as the naive contrast.
+      For the fractional-Kelly question, `cvxgrp/kelly_code` (GPL-3, read the
+      paper arXiv 1603.06183, do not copy) adds a convex drawdown-probability
+      bound — conservatism with a stated constraint rather than a folk factor.
+      NOTE the constraint the README already imposes: evaluate the COMBINED
+      portfolio, never the put book alone.
+
+- [ ] **Replace `MODEL_PRICED_MAX_MONEYNESS_PCT` with a measured Durrleman
+      boundary.** `docs/PRIOR_ART.md` §15 closes §7's open ask.
+      `marwinsteiner/pysvi` (MIT) `src/pysvi/diagnostics.py` is the first
+      surveyed implementation that checks `g(k)` defensibly, and the reason is
+      its refusals: the grid defaults to the observed data's own log-moneyness
+      range, and any point where total variance or `g` is non-finite is
+      counted `n_invalid` and FAILS the butterfly check — arbitrage-freedom is
+      never certified on an unevaluated region. Adopt the method (and Lee's
+      moment bounds on wing slopes); the hardcoded 10.0 becomes a per-name,
+      per-day measured depth beyond which the implied density goes negative.
+      Anti-circularity rule from §7 still binds: measure from MARKET quotes
+      only, or the model certifies itself at depths where it prices the option
+      at zero.
+
+- [ ] **Give `stable_k` a criterion with a number attached.**
+      `docs/PRIOR_ART.md` §17. `research/surface/hill.py` finds a plateau by
+      eyeball-equivalent (window + tolerance), gated on the Karamata onset —
+      and `docs/DISCOVERIES.md` §12 already records that this data supports no
+      plateau outside the body. The published fix is **expected quantile
+      discrepancy** (Murphy, Tawn & Varty, Technometrics 2024,
+      arXiv:2310.17999): bootstrap GPD samples across candidate thresholds and
+      choose the one whose excesses are most GPD-consistent. The reference
+      implementation has NO licence file, so reimplement from the paper.
+      Related and also R-only: bias-corrected Hill and the Danielsson double
+      bootstrap (`tea`, `evt0`, both GPL). **Python has none of this** — that
+      gap is real and filling it is ours. Read arXiv:2205.07714 first.
+
 - [ ] **`ingestion/rates.py` cannot fetch a daily-revised series from FRED.**
       Measured 2026-09-23, the first call made with a real key:
       `HTTP 400 — "There are 5110 vintage dates in the specified real-time
@@ -1226,7 +1299,10 @@ is a tab that says so, and that is still worth shipping. A surface that reports
         signature of the power law **failing**, which is the opposite of what an
         earlier draft of this backlog said.
       * **Horizon-match the realised `alpha`** (see `docs/adr/0026` §6) and
-        report it as an interval over the Hill plot with a block-bootstrap CI,
+        report it as an interval over the Hill plot with a block-bootstrap CI
+        (`bashtage/arch` is NCSA-permissive and has `StationaryBootstrap` plus
+        `optimal_block_length`, so the block length is chosen rather than
+        guessed -- `docs/PRIOR_ART.md` §13),
         never as a point with `alpha/sqrt(k)`.
       * **Take the realised leg from the optionsDX panel's own `spot` column,
         not from bronze OHLCV.** `docs/DISCOVERIES.md` §12: on the rolling
@@ -1251,7 +1327,14 @@ is a tab that says so, and that is still worth shipping. A surface that reports
       * **Pre-register every threshold before running**, and use a clustered or
         block-bootstrap SE: the grid's effective N is ~15-25, not ~2,700
         (anchors are nested, quarter-ends are serially correlated, SPY/QQQ
-        correlate ~0.95). `metric_screen.py` already applies Benjamini-Hochberg FDR
+        correlate ~0.95). **`docs/PRIOR_ART.md` §13 says BH is the wrong tool
+        here**: it controls FDR over tests treated as exchangeable, and a
+        bake-off of NESTED screens on names correlated ~0.95 is not. Hansen's
+        `SPA` and the Model Confidence Set `MCS` (`arch.bootstrap`, NCSA) are
+        built for precisely this, and `MCS` returns the SET of screens that
+        cannot be separated -- a more honest output than a ranked list with
+        stars.
+        `metric_screen.py` already applies Benjamini-Hochberg FDR
         across the bake-off's screens (`research/backtest/multiple_testing.py`,
         PRs #103/#104) -- follow that precedent rather than inventing a second
         convention, noting that the correction needed here is primarily a
@@ -1293,7 +1376,14 @@ written. Each needs its own ADR.
 - [ ] **`PricingBasis(paretan=...)` as a third roll-engine path** (amends 0004
       further). This is the structural fix for "the ranked screen is still
       model-priced": a Paretan-anchored roll pays a real anchor quote, so the
-      variance risk premium stops being zero by construction. Needs an
+      variance risk premium stops being zero by construction.
+      **Prerequisite nobody has measured (`docs/PRIOR_ART.md` §16):** the
+      Cboe sweep is PUT-WING ONLY, so a naive variance strip is truncated by
+      construction and a per-name model-free IV is biased LOW by an unknown
+      amount. `m-g-h/R.MFIV` (MIT, R) implements Jiang & Tian (2007)'s
+      truncation/discretisation correction alongside a decomposed CBOE white
+      paper; the implied leg has to be model-free or the flat-vol error this
+      item exists to escape is simply reimported. Needs an
       `AnchoredParetanPricer` adapter, a `sigma_is_ignored` capability flag on
       `OptionPricer`, and a guard in `skew.implied_vol_put` that turns the
       fabricated `IV_MIN` documented in 0026 §1 into a loud `TypeError`.
