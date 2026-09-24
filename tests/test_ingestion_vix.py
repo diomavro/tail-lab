@@ -292,8 +292,9 @@ def test_a_feed_whose_only_row_is_quarantined_counts_as_behind(tmp_path: Any) ->
     """A single row that fails the schema (here: a negative close) leaves
     ``valid`` empty without the source itself having answered with zero
     rows. Without ``expected`` naming the dataset, an empty ``valid`` frame
-    short-circuited the check entirely and committed a clean 0-row
-    partition on a day the market moved."""
+    short-circuited the check and the run reported "committed 0 rows" and
+    exited 0 on a day the market moved. (No partition is claimed -- an empty
+    append creates none -- so the harm is the silent success.)"""
     store = DeltaLakeStore(tmp_path)
     bad_only = "DATE,OPEN,HIGH,LOW,CLOSE\n09/23/2026,1,2,0.5,-14.2\n"
 
