@@ -231,7 +231,7 @@ spread series are revised too.
 - *Scheduled — macro*: Federal Reserve FOMC meeting calendar
   (`federalreserve.gov`, public HTML/ICS), BLS CPI release schedule
   (`bls.gov`, public), both keyless. **The FOMC half ships**
-  (`ingestion/fomc.py` + `make ingest-fomc`, done 2026-09-01) — HTML-only
+  (`ingestion/fomc.py` + `make ingest-event-calendar`, done 2026-09-01) — HTML-only
   (the ICS feed 404s), parsing `fomccalendars.htm`'s 2021-2027 window.
   `announced_at` is set to the ingestion timestamp for every row rather than
   the true historical announcement date (conservative and point-in-time-safe,
@@ -241,7 +241,7 @@ spread series are revised too.
 - *Scheduled — earnings*: Nasdaq's unofficial calendar endpoint
   (`api.nasdaq.com/api/calendar/earnings?date=YYYY-MM-DD`, browser UA + JSON
   Accept header, keyless). **Ships 2026-09-06** (`ingestion/earnings.py` +
-  `make ingest-earnings`) — one JSON page per calendar date, so this adapter
+  `make ingest-event-calendar`) — one JSON page per calendar date, so this adapter
   sweeps a rolling 30-day-forward window per run rather than the source's
   full 2010+ history (a deep backfill would be thousands of sequential
   requests to an endpoint the sourcing note already flags as
@@ -253,22 +253,21 @@ spread series are revised too.
   fetched) for unscheduled events — crises, surprise announcements,
   anything without a published future date. Not yet built.
 
-**A second producer must not write its own bronze snapshot on a day the
-first one already has.** Bronze immutability is keyed on `(dataset,
-ingest_date)`, not on which producer wrote it (`docs/adr/0013`) — so a
-producer that calls `write_bronze("event_calendar", today, ...)`
-independently on a day another one already committed gets a silent no-op,
-losing its own rows rather than merging them. `ingestion/earnings.py` is the
-first producer to actually guard against this: it checks for an existing
-same-day partition before fetching anything and raises loudly rather than
-risk a silent loss (mirroring `docs/adr/0020`'s "loud failure over silent
-no-op" stance). The next producer into this dataset (BLS CPI) should carry
-the same guard, or combine writes with the others at the point of calling
-(the `ingestion/cboe_strategy.py`/`ingestion/rates.py` family-in-one-write
-pattern), until an ADR gives the shared dataset a real merge path.
+**One writer, all sources.** Bronze immutability is keyed on `(dataset,
+ingest_date)`, not on which producer wrote it (`docs/adr/0013`), so a second
+per-source write on a day another already committed silently no-ops and
+loses its rows. As two writers, FOMC and earnings failed this way every day
+(measured 2026-09-21). Since 2026-09-24 `ingestion/event_calendar.py` is the
+only writer: `fomc.py` and `earnings.py` only fetch and parse, and every
+source lands in ONE snapshot (`make ingest-event-calendar`, in the daily
+refresh). It refuses to write when the FOMC page yields no valid meetings or
+more than half the earnings dates fail, since a half-calendar partition would
+shadow the last complete one. The next source (BLS CPI) joins that write; it
+does not get its own.
 
-**Cadence.** Scheduled: weekly refresh (calendars change rarely, but do
-change). Manual: edited by commit, not on a cadence.
+**Cadence.** Scheduled: daily, in the local refresh (the earnings window
+moves every day; the FOMC half changes rarely). Manual: edited by commit, not
+on a cadence.
 
 **Schema — `EventRow`:**
 

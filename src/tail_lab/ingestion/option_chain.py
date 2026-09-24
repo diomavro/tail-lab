@@ -36,7 +36,6 @@ from __future__ import annotations
 
 import datetime as dt
 import logging
-import time
 from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import Any
@@ -54,7 +53,8 @@ from tail_lab.contracts.option_chain import (
     plan_session_write,
     split_valid_and_quarantined,
 )
-from tail_lab.ingestion.ohlcv import fetch_nasdaq_raw, parse_nasdaq_historical
+from tail_lab.ingestion.ohlcv import latest_market_session
+from tail_lab.ingestion.sources import retry_transient
 from tail_lab.lake.store import LakeStore
 from tail_lab.observability import log_event
 
@@ -265,45 +265,19 @@ def fetch_chain_raw(symbol: str, *, timeout: int = _REQUEST_TIMEOUT_S) -> dict[s
     return payload
 
 
-def _retryable_fetch_error(exc: Exception) -> bool:
-    """Whether retrying THIS symbol's fetch could plausibly change the answer.
-
-    Mirrors ``scripts/chain_snapshot.py``'s ``_retryable`` for the POST leg:
-    a 5xx, a 429, or a connection/timeout fault says Cboe (or the network)
-    failed to answer a request it might answer next time. A 4xx other than
-    429 says Cboe understood the request and refused it -- most often a root
-    this host does not list at all -- and repeating the identical GET cannot
-    change that.
-    """
-    if isinstance(exc, requests.exceptions.HTTPError) and exc.response is not None:
-        return exc.response.status_code >= 500 or exc.response.status_code == 429
-    return isinstance(exc, requests.exceptions.RequestException)
-
-
 def _fetch_with_retry(
     fetcher: Callable[[str], Mapping[str, Any]], symbol: str
 ) -> Mapping[str, Any]:
-    """Fetch one symbol's chain, retrying a fault a retry could plausibly fix.
-
-    Deliberately does not retry an exception ``_retryable_fetch_error`` calls
-    a firm no (or one raised by an injected test fetcher, which is never a
-    ``requests`` exception) -- retrying those only burns time before the
-    symbol is recorded as failed anyway.
-    """
-    for attempt in range(1, _FETCH_ATTEMPTS + 1):
-        try:
-            return fetcher(symbol)
-        except Exception as exc:
-            if not _retryable_fetch_error(exc) or attempt == _FETCH_ATTEMPTS:
-                raise
-            _LOGGER.warning(
-                "event=ingestion.option_chain.symbol_retry symbol=%s attempt=%d/%d",
-                symbol,
-                attempt,
-                _FETCH_ATTEMPTS,
-            )
-            time.sleep(_FETCH_BACKOFF_S)
-    raise AssertionError("_FETCH_ATTEMPTS must be >= 1")
+    """Fetch one symbol's chain, retrying a fault a retry could plausibly fix
+    (``sources.retry_transient``). An exception that is not a ``requests``
+    fault -- e.g. one raised by an injected test fetcher -- is never retried."""
+    return retry_transient(
+        lambda: fetcher(symbol),
+        attempts=_FETCH_ATTEMPTS,
+        backoff_s=_FETCH_BACKOFF_S,
+        event="ingestion.option_chain.symbol_retry",
+        symbol=symbol,
+    )
 
 
 def validate_and_quarantine(df: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame]:
@@ -313,38 +287,6 @@ def validate_and_quarantine(df: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFram
     so the caller can persist them for inspection.
     """
     return split_valid_and_quarantined(df)
-
-
-#: The instrument whose daily bars stand in for "did the US market trade".
-#: SPY because it is the most liquid listed name and already an OHLCV source
-#: here; Nasdaq's historical endpoint lists only COMPLETED sessions (measured
-#: 2026-09-24 17:36 UTC, mid-session: newest bar 2026-09-23), so a sweep run
-#: during market hours cannot mistake a live session for a finished one.
-_MARKET_REFERENCE_SYMBOL = "SPY"
-
-
-def latest_market_session(
-    fetch: Callable[[], Mapping[str, Any]] | None = None,
-) -> dt.date | None:
-    """The newest completed US equity session, from a source that is not Cboe.
-
-    Exists because Cboe cannot testify against itself: when its feed freezes,
-    every chain agrees on the stale session and nothing inside the sweep can
-    tell. Returns ``None`` -- logged, never raised -- when the reference
-    cannot be read: a failed cross-check must not cost the sweep it guards.
-    """
-    try:
-        raw = fetch() if fetch is not None else fetch_nasdaq_raw(_MARKET_REFERENCE_SYMBOL, years=1)
-        bars = parse_nasdaq_historical(_MARKET_REFERENCE_SYMBOL, dict(raw))
-        newest = pd.to_datetime(bars["trade_date"]).max()
-    except Exception:
-        _LOGGER.exception("event=ingestion.option_chain.market_session_unavailable")
-        return None
-    if pd.isna(newest):
-        _LOGGER.warning("event=ingestion.option_chain.market_session_unavailable reason=no_bars")
-        return None
-    session: dt.date = newest.date()
-    return session
 
 
 def ingest_option_chain(

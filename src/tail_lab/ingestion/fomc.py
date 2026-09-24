@@ -31,20 +31,20 @@ Two functions, deliberately split so tests never touch the network:
   source_id)`` frame. Unit-tested against a committed fixture built from a
   real fetch of the page (``tests/fixtures/fomc_calendar_sample.html``).
 - :func:`fetch_fomc_calendar_raw` -- makes the HTTP call. Exercised only by
-  ``make ingest-fomc`` (human/manually run), never by CI/pytest.
-- :func:`ingest_fomc_calendar` -- orchestrates fetch -> parse -> attach
-  ``announced_at`` -> validate/quarantine -> commit-to-bronze, landing rows
-  in the shared ``event_calendar`` dataset (`contracts/event_calendar.py`)
-  that a future CPI/earnings adapter and the manual table also write into.
+  ``make ingest-event-calendar`` (human/manually run), never by CI/pytest.
+The write lives in ``ingestion/event_calendar.py``, which commits this and
+the earnings half as ONE snapshot -- see the next paragraph for why a
+per-source write cannot work.
 
-**Whoever builds the next producer into this dataset should read this
-first.** Bronze immutability is keyed on ``(dataset, ingest_date)``, not on
+**Why this module does not write.** Bronze immutability is keyed on ``(dataset, ingest_date)``, not on
 which producer wrote it (`docs/adr/0013`) -- so a CPI or manual writer that
 calls ``write_bronze("event_calendar", today, ...)`` independently on a day
 this adapter already committed will silently no-op and lose its own rows,
-not merge with them. Combine sources into one write before they land here
-(the ``ingestion/cboe_strategy.py``/``ingestion/rates.py`` pattern), or this
-shared-dataset design needs an ADR before a second producer ships.
+not merge with them. Measured 2026-09-21: running this and the earnings
+adapter as separate writers failed every time. So sources are combined into
+one write (``ingestion/event_calendar.py``, the
+``ingestion/cboe_strategy.py``/``ingestion/rates.py`` pattern), and the next
+producer (BLS CPI) joins that write rather than adding its own.
 """
 
 from __future__ import annotations
@@ -52,7 +52,6 @@ from __future__ import annotations
 import datetime as dt
 import logging
 import re
-from dataclasses import dataclass
 
 import pandas as pd
 import requests
@@ -62,15 +61,11 @@ from tail_lab.contracts.event_calendar import (
     empty_event_frame,
     validate_and_quarantine,
 )
-from tail_lab.lake.store import LakeStore
-from tail_lab.observability import log_event
 
 __all__ = [
     "DATASET",
     "QUARANTINE_DATASET",
-    "IngestResult",
     "fetch_fomc_calendar_raw",
-    "ingest_fomc_calendar",
     "parse_fomc_calendar_html",
     "validate_and_quarantine",
 ]
@@ -107,16 +102,6 @@ _MONTH_NUMBERS: dict[str, int] = {
 _DATE_CELL = re.compile(r"^(\d{1,2})(?:-(\d{1,2}))?(\*)?$")
 
 
-@dataclass(frozen=True)
-class IngestResult:
-    """Outcome of one ingestion run: what was committed vs. quarantined."""
-
-    bronze_path: str
-    valid_rows: int
-    quarantined_rows: int
-    quarantine_path: str | None
-
-
 def fetch_fomc_calendar_raw(*, timeout: float = 30.0) -> str:
     """Fetch the calendar page's HTML. Network call -- not used by tests."""
     resp = requests.get(
@@ -132,7 +117,7 @@ def parse_fomc_calendar_html(html: str) -> pd.DataFrame:
     """Parse the FOMC calendar page into a typed event frame.
 
     Pure function -- no network, no filesystem, no wall clock (``announced_at``
-    is attached later by :func:`ingest_fomc_calendar`, since it depends on
+    is attached later by ``ingestion/event_calendar``, since it depends on
     when the scrape actually happened, not on anything in the page itself).
 
     A meeting's ``event_date`` is its *last* day -- the day the statement and
@@ -205,76 +190,3 @@ def _malformed_row(month_text: str, date_text: str) -> dict[str, object]:
         "description": f"unparsed FOMC row: {month_text} {date_text}",
         "source_id": SOURCE_ID,
     }
-
-
-def ingest_fomc_calendar(
-    store: LakeStore,
-    *,
-    ingest_date: dt.date | None = None,
-    raw: str | None = None,
-) -> IngestResult:
-    """Fetch (or use supplied) the calendar page, validate, and commit one
-    bronze snapshot to the shared ``event_calendar`` dataset.
-
-    ``raw`` lets callers (tests) inject the page HTML instead of hitting the
-    network; :func:`fetch_fomc_calendar_raw` is called only when it is absent.
-    """
-    # UTC, not local: snapshot dates must be timezone-consistent with the
-    # as-of clock the API/backtest read with (matches vix.py; docs/adr/0009).
-    ingest_date = ingest_date or dt.datetime.now(dt.UTC).date()
-    html = raw if raw is not None else fetch_fomc_calendar_raw()
-
-    parsed = parse_fomc_calendar_html(html)
-    # See the module docstring: every row gets the same conservative
-    # announced_at (the ingestion timestamp) since this adapter has no way
-    # to recover the true historical announcement date from a single scrape.
-    announced_at = pd.Timestamp(dt.datetime.combine(ingest_date, dt.time.min))
-    parsed["announced_at"] = announced_at
-
-    valid, quarantined = validate_and_quarantine(parsed)
-
-    bronze_path = store.write_bronze(DATASET, ingest_date, valid)
-
-    # Quarantined rows go through the store as an immutable bronze snapshot
-    # under a sibling dataset name -- never a raw filesystem write (matches
-    # vix.py/cboe_strategy.py; the lake is the only thing allowed to touch
-    # storage).
-    quarantine_path: str | None = None
-    if not quarantined.empty:
-        quarantine_path = store.write_bronze(QUARANTINE_DATASET, ingest_date, quarantined)
-
-    result = IngestResult(
-        bronze_path=bronze_path,
-        valid_rows=len(valid),
-        quarantined_rows=len(quarantined),
-        quarantine_path=quarantine_path,
-    )
-    _log_run(result, ingest_date, valid)
-    return result
-
-
-def _log_run(result: IngestResult, ingest_date: dt.date, valid: pd.DataFrame) -> None:
-    """Emit the run's full surface (`docs/STANDARDS.md` §f) -- an automated
-    action without a runtime record is below the bar."""
-    log_event(
-        _LOGGER,
-        "ingest.fomc",
-        dataset=DATASET,
-        source=SOURCE_ID,
-        ingest_date=ingest_date.isoformat(),
-        valid_rows=result.valid_rows,
-        quarantined_rows=result.quarantined_rows,
-        bronze_path=result.bronze_path,
-        quarantine_path=result.quarantine_path,
-        first_event_date=_edge(valid, "min"),
-        last_event_date=_edge(valid, "max"),
-    )
-
-
-def _edge(valid: pd.DataFrame, which: str) -> str | None:
-    """Window boundary of the committed rows, for the run log. ``None`` on an
-    empty frame so the log line drops the field rather than printing "NaT"."""
-    if valid.empty:
-        return None
-    stamp = valid["event_date"].min() if which == "min" else valid["event_date"].max()
-    return str(pd.Timestamp(stamp).date())

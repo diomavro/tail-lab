@@ -6,7 +6,7 @@ from typing import Any
 import pandas as pd
 import pytest
 
-from tail_lab.ingestion.sources import AllSourcesFailed
+from tail_lab.ingestion.sources import AllSourcesFailed, SourceBehindMarket
 from tail_lab.ingestion.vix import (
     ingest_vix,
     parse_cboe_vix_csv,
@@ -256,3 +256,46 @@ def test_ingest_raises_when_every_source_is_dead(tmp_path: Any) -> None:
                 }
             },
         )
+
+
+# ---- a source frozen behind the market ---------------------------------------
+
+_THROUGH_SEP_22 = "DATE,OPEN,HIGH,LOW,CLOSE\n09/21/2026,1,2,0.5,14.9\n09/22/2026,1,2,0.5,14.2\n"
+
+
+def test_a_history_behind_the_market_is_refused_and_leaves_the_day_free(tmp_path: Any) -> None:
+    """Measured 2026-09-24: Cboe's old host answered 200 with a VIX history
+    ending 09-22 after the market had completed 09-23. Writing it would claim
+    today's partition, so the healthy re-run after Cboe recovers would no-op."""
+    store = DeltaLakeStore(tmp_path)
+
+    with pytest.raises(SourceBehindMarket, match="vix ends 2026-09-22"):
+        ingest_vix(
+            store,
+            ingest_date=dt.date(2026, 9, 24),
+            cboe_csv=_THROUGH_SEP_22,
+            market_session=dt.date(2026, 9, 23),
+        )
+    assert not store.bronze_partition_exists("vix", dt.date(2026, 9, 24))
+
+    current = _THROUGH_SEP_22 + "09/23/2026,1,2,0.5,15.2\n"
+    result = ingest_vix(
+        store,
+        ingest_date=dt.date(2026, 9, 24),
+        cboe_csv=current,
+        market_session=dt.date(2026, 9, 23),
+    )
+    assert result.valid_rows == 3
+
+
+@pytest.mark.parametrize("witness", [dt.date(2026, 9, 22), None])
+def test_a_current_history_or_no_witness_writes_normally(
+    tmp_path: Any, witness: dt.date | None
+) -> None:
+    """Equal dates are a holiday or an up-to-date source; no witness means the
+    check could not run and must not cost the ingest."""
+    store = DeltaLakeStore(tmp_path)
+    result = ingest_vix(
+        store, ingest_date=dt.date(2026, 9, 23), cboe_csv=_THROUGH_SEP_22, market_session=witness
+    )
+    assert result.valid_rows == 2

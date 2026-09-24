@@ -1,17 +1,11 @@
 from __future__ import annotations
 
-import datetime as dt
-from typing import Any
-
 import pandas as pd
-import pytest
 
 from tail_lab.ingestion.fomc import (
-    ingest_fomc_calendar,
     parse_fomc_calendar_html,
     validate_and_quarantine,
 )
-from tail_lab.lake.store import DeltaLakeStore
 
 _YEAR_PANEL = (
     '<div class="panel panel-default"><div class="panel-heading">'
@@ -129,70 +123,3 @@ def test_validate_and_quarantine_splits_bad_rows() -> None:
     assert len(valid) == 1
     assert len(quarantined) == 1
     assert quarantined["event_id"].iloc[0] == "fomc_unparsed_x_y"
-
-
-def test_ingest_commits_a_bronze_snapshot(tmp_path: Any, fomc_calendar_sample: str) -> None:
-    store = DeltaLakeStore(tmp_path)
-    ingest_date = dt.date(2026, 9, 1)
-    result = ingest_fomc_calendar(store, ingest_date=ingest_date, raw=fomc_calendar_sample)
-
-    assert result.valid_rows == 8
-    assert result.quarantined_rows == 0
-    assert result.quarantine_path is None
-
-    bronze = store.read_bronze_as_of("event_calendar", ingest_date)
-    assert len(bronze) == 8
-    assert (bronze["announced_at"] == pd.Timestamp("2026-09-01")).all()
-
-
-def test_ingest_announced_at_never_predates_the_actual_scrape(
-    tmp_path: Any, fomc_calendar_sample: str
-) -> None:
-    """Adversarial positive control for the point-in-time limitation this
-    adapter documents: every row's announced_at must equal the ingest
-    timestamp, so an as-of read for any date before this ingest sees none
-    of these events -- conservative, never a look-ahead leak, even though
-    the Fed actually published this schedule long before the scrape."""
-    store = DeltaLakeStore(tmp_path)
-    ingest_date = dt.date(2026, 9, 1)
-    ingest_fomc_calendar(store, ingest_date=ingest_date, raw=fomc_calendar_sample)
-
-    bronze = store.read_bronze_as_of("event_calendar", ingest_date)
-    simulated_asof = pd.Timestamp("2026-08-31")
-    assert (bronze["announced_at"] > simulated_asof).all()
-
-
-def test_ingest_quarantines_unparsed_rows_without_losing_good_ones(tmp_path: Any) -> None:
-    store = DeltaLakeStore(tmp_path)
-    html = _YEAR_PANEL.format(
-        year=2026,
-        rows=_row("January", "27-28") + _row("Xyzember", "1-2"),
-    )
-    ingest_date = dt.date(2026, 9, 1)
-    result = ingest_fomc_calendar(store, ingest_date=ingest_date, raw=html)
-
-    assert result.valid_rows == 1
-    assert result.quarantined_rows == 1
-    assert result.quarantine_path is not None
-
-    quarantined = store.read_bronze_as_of("event_calendar__quarantine", ingest_date)
-    assert len(quarantined) == 1
-
-
-def test_ingest_logs_the_full_run_surface(
-    tmp_path: Any, caplog: pytest.LogCaptureFixture, fomc_calendar_sample: str
-) -> None:
-    """docs/STANDARDS.md §f: an automated action without a runtime record is
-    below the bar, so the run line is part of the contract, not decoration."""
-    store = DeltaLakeStore(tmp_path)
-    with caplog.at_level("INFO", logger="tail_lab.ingestion.fomc"):
-        ingest_fomc_calendar(store, ingest_date=dt.date(2026, 9, 1), raw=fomc_calendar_sample)
-
-    line = "\n".join(caplog.messages)
-    assert "event=ingest.fomc" in line
-    assert "dataset=event_calendar" in line
-    assert "source=fed_calendar" in line
-    assert "valid_rows=8" in line
-    assert "quarantined_rows=0" in line
-    assert "first_event_date=2024-01-31" in line
-    assert "last_event_date=2024-12-18" in line

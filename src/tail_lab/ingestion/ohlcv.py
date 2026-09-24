@@ -52,6 +52,7 @@ from __future__ import annotations
 
 import datetime as dt
 import logging
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from typing import Any
 
@@ -70,6 +71,7 @@ __all__ = [
     "fetch_nasdaq_raw",
     "fetch_ohlcv_raw",
     "ingest_ohlcv",
+    "latest_market_session",
     "parse_nasdaq_historical",
     "parse_yahoo_chart_ohlcv",
     "validate_and_quarantine",
@@ -430,3 +432,35 @@ def ingest_ohlcv(
         ),
     )
     return result
+
+
+#: The instrument whose daily bars stand in for "did the US market trade".
+#: SPY because it is the most liquid listed name and already an OHLCV source
+#: here; Nasdaq's historical endpoint lists only COMPLETED sessions (measured
+#: 2026-09-24 17:36 UTC, mid-session: newest bar 2026-09-23), so a sweep run
+#: during market hours cannot mistake a live session for a finished one.
+_MARKET_REFERENCE_SYMBOL = "SPY"
+
+
+def latest_market_session(
+    fetch: Callable[[], Mapping[str, Any]] | None = None,
+) -> dt.date | None:
+    """The newest completed US equity session, from a source that is not Cboe.
+
+    Exists because Cboe cannot testify against itself: when its feed freezes,
+    every chain agrees on the stale session and nothing inside the sweep can
+    tell. Returns ``None`` -- logged, never raised -- when the reference
+    cannot be read: a failed cross-check must not cost the sweep it guards.
+    """
+    try:
+        raw = fetch() if fetch is not None else fetch_nasdaq_raw(_MARKET_REFERENCE_SYMBOL, years=1)
+        bars = parse_nasdaq_historical(_MARKET_REFERENCE_SYMBOL, dict(raw))
+        newest = pd.to_datetime(bars["trade_date"]).max()
+    except Exception:
+        _LOGGER.exception("event=ingest.market_session_unavailable")
+        return None
+    if pd.isna(newest):
+        _LOGGER.warning("event=ingest.market_session_unavailable reason=no_bars")
+        return None
+    session: dt.date = newest.date()
+    return session

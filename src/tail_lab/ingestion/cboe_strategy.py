@@ -51,7 +51,7 @@ from tail_lab.contracts.cboe_strategy import (
     DEFAULT_TICKERS,
     CboeStrategySchema,
 )
-from tail_lab.ingestion.sources import find_header_line
+from tail_lab.ingestion.sources import find_header_line, require_current
 from tail_lab.lake.store import LakeStore
 from tail_lab.observability import log_event
 
@@ -186,6 +186,7 @@ def ingest_cboe_strategy(
     *,
     ingest_date: dt.date | None = None,
     raw: Mapping[str, str] | None = None,
+    market_session: dt.date | None = None,
 ) -> IngestResult:
     """Fetch (or use supplied) index CSVs, validate, and commit one bronze snapshot.
 
@@ -211,6 +212,14 @@ def ingest_cboe_strategy(
     combined = pd.concat(parsed, ignore_index=True) if parsed else _empty_frame()
     valid, quarantined = validate_and_quarantine(combined)
 
+    require_current(
+        valid,
+        date_col="trade_date",
+        market_session=market_session,
+        dataset=DATASET,
+        group_col="index_symbol",
+        expected=resolved,
+    )
     bronze_path = store.write_bronze(DATASET, ingest_date, valid)
 
     # Quarantined rows go through the store as an immutable bronze snapshot

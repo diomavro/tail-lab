@@ -45,7 +45,7 @@ import requests
 from pandera.errors import SchemaErrors
 
 from tail_lab.contracts.vix import VixSchema
-from tail_lab.ingestion.sources import Source, find_header_line, first_available
+from tail_lab.ingestion.sources import Source, find_header_line, first_available, require_current
 from tail_lab.lake.store import LakeStore
 from tail_lab.observability import log_event
 
@@ -231,6 +231,7 @@ def ingest_vix(
     ingest_date: dt.date | None = None,
     raw: dict[str, Any] | None = None,
     cboe_csv: str | None = None,
+    market_session: dt.date | None = None,
 ) -> IngestResult:
     """Resolve a source, validate, and commit to bronze.
 
@@ -248,6 +249,7 @@ def ingest_vix(
     )
     valid, quarantined = validate_and_quarantine(parsed)
 
+    require_current(valid, date_col="date", market_session=market_session, dataset=DATASET)
     bronze_path = store.write_bronze(DATASET, ingest_date, valid)
 
     # Quarantined rows are committed through the store too (as an immutable
