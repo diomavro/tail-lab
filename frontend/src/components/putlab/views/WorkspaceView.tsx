@@ -139,7 +139,11 @@ function Result({
       cls: bt.roi_on_premium >= 0 ? 'pl-pos' : 'pl-neg',
       // roi_on_premium divides by n_cycles x notional and carries no brokerage
       // term -- so the basis is named here and the fee figure lives on Net P&L.
-      note: `${bt.n_cycles} rolls × ${fmtDollar(bt.notional)} budget`,
+      // Also names priced_from: a reader seeing "+1867%" with no qualifier
+      // cannot tell whether that denominator was priced by the model or a
+      // real quote (AGENT_TODO.md, "roi_on_premium needs its denominator
+      // named on the surface").
+      note: `${bt.priced_from === 'market' ? 'Market-priced' : 'Model-priced'} · ${bt.n_cycles} rolls × ${fmtDollar(bt.notional)} budget`,
       concept: 'roi_on_premium',
     },
     {

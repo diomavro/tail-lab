@@ -47,6 +47,10 @@ test('states the hit-rate and ROI bases the numbers actually use', async ({ page
   await expect(roi).toContainText('12 rolls × $1,000 budget')
   await expect(roi).not.toContainText(/brokerage/i)
 
+  // priced_from is named right beside the figure -- a reader must not have to
+  // guess whether this ROI's denominator came from the model or a real quote.
+  await expect(roi).toContainText('Model-priced')
+
   const net = stats.locator('div', { hasText: /^Net P&L/ }).first()
   await expect(net).toContainText('−$5,858')
   await expect(net).toContainText('$78')

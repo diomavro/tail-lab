@@ -1243,7 +1243,7 @@ wrong side of the join.
       (or which has no quote at all) cannot reach the top of the ranking
       without that multiple being displayed beside it.
 
-- [ ] **`roi_on_premium` needs its denominator named on the surface.**
+- [x] **`roi_on_premium` needs its denominator named on the surface.**
       `put_roll.py:773` computes `net_pnl / total_premium` — return on
       premium *spent*, not on capital. README already says this metric
       "cannot say how much to hold", and #96 added time-average growth
@@ -1252,6 +1252,46 @@ wrong side of the join.
       denominator was paid or modelled. *Success*: every ROI on the screen
       carries its basis and its denominator in the same glance, per README's
       "accuracy is surfaced, not filed".
+      **Partial, done 2026-09-24.** Two surfaces were genuinely missing a
+      fact the backend already had, not new analysis: the Workspace's
+      headline "Return on premium" note already stated the $ denominator
+      (`n_cycles × notional`) but never the basis, even though
+      `PutBacktestResult.priced_from` was already on the wire — only the TS
+      `PutBacktestResponse` type didn't declare it, so it silently dropped on
+      the way to the browser. Now declared and shown ("Model-priced · 12
+      rolls × $1,000 budget"). Recommendations had the opposite gap: basis is
+      page-level constant there (the screen never passes real quotes in
+      today, stated in the caveat), but the per-row $ stake behind
+      `best_roi_on_premium` was missing even though `notional` and
+      `best_n_cycles` were both already in `RankedAsset`/
+      `PutLabLeaderboardResponse` — two rows can show the same % on a
+      $1,000 budget and a $17,000 one. Now shown as a sub-line under the
+      figure. Portfolio and the single-asset stat's Net P&L note already did
+      this correctly (`fmtDollar(r.total_premium)` next to the figure) and
+      needed nothing.
+      **Left undone, and why:** BakeOff (`MetricScreenEntry`), the regime
+      memory teaser (`RegimeSlice`) and the sweep grid tooltip
+      (`SweepCell`) show `roi_on_premium` too, but none of their response
+      types carry a per-entry premium figure or `notional` today — showing
+      one there needs real backend work (threading `notional`/`total_premium`
+      through `metric_screen.py` and `regime_verdict.py`, and deciding what
+      "the premium" means for a basket-of-`top_k` metric-screen entry, which
+      is not a mechanical passthrough), not a frontend-only fix. Queued as
+      its own item below rather than folded into this one, since it is a
+      different shape of change.
+
+- [ ] **Thread `notional`/`total_premium` through the Bake-off and the
+      regime-verdict slices, so their `roi_on_premium` figures can name a
+      denominator too.** Carved out of the item above. `MetricScreenEntry`
+      (`api/schemas.py` / `research/backtest/metric_screen.py`) aggregates
+      `top_k_assets` into one screen-level ROI, so "the premium" here means
+      the summed budget across the basket, not a single leg's — define that
+      before adding the field, the same care `portfolio.py`'s `total_premium`
+      already took. `RegimeSlice` (`research/backtest/regime_verdict.py`) is
+      simpler: it already has `n_cycles` per regime, so a `notional` echoed
+      once at `RegimeVerdictResponse` level (mirroring
+      `PutLabLeaderboardResponse.notional`) is enough for the frontend to
+      compute `notional × n_cycles` per slice, no per-slice field needed.
 
 **Why this is worth a slot despite being mostly known.** The platform's own
 specification already concludes that "the standalone answer is zero" and that
