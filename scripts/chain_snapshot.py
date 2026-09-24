@@ -28,6 +28,7 @@ that must never look like a good day.
 from __future__ import annotations
 
 import argparse
+import datetime as dt
 import json
 import sys
 import time
@@ -36,7 +37,7 @@ import urllib.request
 from typing import Any
 
 from tail_lab.contracts.option_chain import DEFAULT_SNAPSHOT_SYMBOLS
-from tail_lab.ingestion.option_chain import sweep_to_records
+from tail_lab.ingestion.option_chain import latest_market_session, sweep_to_records
 from tail_lab.observability import configure_logging
 
 #: Below this, assume something broke upstream rather than that the market
@@ -131,6 +132,22 @@ def _post(base_url: str, token: str, payload: dict[str, Any], timeout: int) -> d
     raise AssertionError("POST_ATTEMPTS must be >= 1")
 
 
+def _market_session() -> dt.date | None:
+    """Newest completed US session per Nasdaq, for the stale-feed check.
+
+    ``None`` is survivable -- the check is skipped, the sweep still runs --
+    but it is announced, because a sweep that silently lost its only witness
+    against a frozen Cboe feed is back to trusting Cboe about itself.
+    """
+    session = latest_market_session()
+    if session is None:
+        print(
+            "::warning::could not read the latest market session from Nasdaq; "
+            "a frozen Cboe feed would go undetected on this run"
+        )
+    return session
+
+
 def _run_local(symbols: list[str]) -> int:
     """Fetch and write in one process, for a human at a terminal.
 
@@ -153,7 +170,7 @@ def _run_local(symbols: list[str]) -> int:
     from tail_lab.ingestion.option_chain import IncompleteSweepError, ingest_option_chain
 
     try:
-        result = ingest_option_chain(get_lake_store(), symbols)
+        result = ingest_option_chain(get_lake_store(), symbols, market_session=_market_session())
     except IncompleteSweepError as exc:
         # Refusing to write is the CORRECT outcome, but it is still a failed
         # sweep for the operator: the session is recoverable only until the
@@ -225,7 +242,12 @@ def main(argv: list[str] | None = None) -> int:
     # quotes belong to. Sending today's date here is what put 2026-08-26's
     # session into an ingest_date=2026-08-27 partition when GitHub ran the
     # 21:30 cron at 00:57 (docs/adr/0020, "the partition is the session").
-    payload = {"rows": records}
+    session = _market_session()
+    payload = {
+        "rows": records,
+        "symbols": symbols,
+        "market_session": session.isoformat() if session else None,
+    }
     try:
         result_json = _post(args.post, args.token, payload, args.timeout)
     except urllib.error.HTTPError as exc:
@@ -251,11 +273,34 @@ def main(argv: list[str] | None = None) -> int:
         )
         return 1
 
+    return _report_post(result_json)
+
+
+def _report_post(result_json: dict[str, Any]) -> int:
+    """Say which of the two things the app did -- commit or no-op.
+
+    The endpoint used to echo ``rows`` either way, so this printed
+    "committed 20078 rows" on 2026-09-23 and again on 2026-09-24 for a session
+    the lake already held, while 2026-09-23 was being lost unmentioned.
+    """
+    if result_json.get("committed", True):
+        print(
+            f"committed {result_json['rows']} rows for {result_json['symbols']} symbols "
+            f"(session {result_json['quote_date']}) -> {result_json['bronze_path']}"
+        )
+    else:
+        print(
+            f"NO-OP: session {result_json['quote_date']} was already captured, wrote "
+            f"nothing -> {result_json['bronze_path']}"
+        )
+    if result_json.get("symbols_failed"):
+        print(f"::warning::no quotes landed for {', '.join(result_json['symbols_failed'])}")
+    if result_json.get("symbols_off_session"):
+        print(
+            f"::warning::off-session quotes for {', '.join(result_json['symbols_off_session'])}"
+            f"; their rows were quarantined, so they have NO {result_json['quote_date']} quotes"
+        )
     quarantined = result_json.get("quarantined", 0)
-    print(
-        f"committed {result_json['rows']} rows for {result_json['symbols']} symbols "
-        f"(session {result_json['quote_date']}) -> {result_json['bronze_path']}"
-    )
     if quarantined:
         # Expected in small numbers -- far-OTM strikes with no resting offer.
         # Worth surfacing, never worth failing the sweep over.

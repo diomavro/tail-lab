@@ -60,8 +60,23 @@ def _row(**overrides: Any) -> dict[str, Any]:
     return row
 
 
-def _body(*rows: dict[str, Any], ingest_date: str = "2026-08-26") -> dict[str, Any]:
-    return {"rows": list(rows) or [_row()], "ingest_date": ingest_date}
+def _body(
+    *rows: dict[str, Any],
+    ingest_date: str | None = "2026-08-26",
+    symbols: list[str] | None = None,
+    market_session: str | None = None,
+) -> dict[str, Any]:
+    """A sweep body. ``symbols`` defaults to exactly the names in ``rows`` --
+    a sweep that got every chain it asked for."""
+    body_rows = list(rows) or [_row()]
+    body: dict[str, Any] = {
+        "rows": body_rows,
+        "symbols": symbols or sorted({r["underlying"] for r in body_rows}),
+        "market_session": market_session,
+    }
+    if ingest_date is not None:
+        body["ingest_date"] = ingest_date
+    return body
 
 
 # ---- the gate --------------------------------------------------------------
@@ -180,7 +195,7 @@ def test_an_empty_sweep_is_a_client_error_not_an_empty_partition(
     _set_token(monkeypatch, TOKEN)
     resp = client.post(
         "/api/ingest/option-chain",
-        json={"rows": [], "ingest_date": "2026-08-26"},
+        json={"rows": [], "symbols": ["SPY"], "ingest_date": "2026-08-26"},
         headers={"Authorization": f"Bearer {TOKEN}"},
     )
     assert resp.status_code == 400
@@ -246,10 +261,144 @@ def test_the_partition_defaults_to_the_session_not_the_server_clock(
     _set_token(monkeypatch, TOKEN)
     resp = client.post(
         "/api/ingest/option-chain",
-        json={"rows": [_row()]},
+        json=_body(ingest_date=None),
         headers={"Authorization": f"Bearer {TOKEN}"},
     )
 
     assert resp.status_code == 200
     assert "ingest_date=2026-08-26" in resp.json()["bronze_path"]
     assert len(store.read_bronze_as_of(DATASET, dt.date(2026, 8, 26))) == 1
+
+
+# ---- parity with the local writer --------------------------------------------
+#
+# The scheduled sweep writes through this route, and for weeks it lacked every
+# protection the local adapter gained: it reported no-ops as commits, filed
+# laggard symbols under a session they never traded in, had no symbol floor,
+# and could not see a frozen feed. Both now run
+# ``contracts.option_chain.plan_session_write``; these pin that it is wired.
+
+
+def _post(client: TestClient, body: dict[str, Any]) -> Any:
+    return client.post(
+        "/api/ingest/option-chain", json=body, headers={"Authorization": f"Bearer {TOKEN}"}
+    )
+
+
+def test_a_rerun_of_a_captured_session_reports_a_no_op(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Measured 2026-09-23 23:50 and 2026-09-24 09:36 UTC: the workflow printed
+    "committed 20078 rows for 24 symbols (session 2026-09-22)" twice for a
+    partition the lake already held -- the log read as healthy while session
+    2026-09-23 was being lost."""
+    _set_token(monkeypatch, TOKEN)
+    assert _post(client, _body(ingest_date=None)).json()["committed"] is True
+    assert _post(client, _body(ingest_date=None)).json()["committed"] is False
+
+
+def test_a_frozen_feed_is_refused_rather_than_no_opped(
+    client: TestClient, store: DeltaLakeStore, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _set_token(monkeypatch, TOKEN)
+    _post(client, _body(ingest_date=None))
+
+    resp = _post(client, _body(ingest_date=None, market_session="2026-08-27"))
+
+    assert resp.status_code == 409
+    assert "Cboe's feed is behind" in resp.json()["detail"]
+
+
+def test_a_laggard_symbol_is_quarantined_not_filed_under_the_session(
+    client: TestClient, store: DeltaLakeStore, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The ARKK case: ``ingest_date=2026-09-08`` holds 412 ARKK rows stamped
+    2026-09-04, because Cboe was still serving ARKK's pre-holiday chain and
+    this route filed everything under the newest date it saw."""
+    _set_token(monkeypatch, TOKEN)
+    rows = [
+        _row(underlying="SPY"),
+        _row(underlying="QQQ"),
+        _row(underlying="ARKK", quote_date="2026-08-25"),
+    ]
+
+    resp = _post(client, _body(*rows, ingest_date=None))
+
+    assert resp.status_code == 200
+    assert resp.json()["symbols_off_session"] == ["ARKK"]
+    stored = store.read_bronze_as_of(DATASET, dt.date(2026, 8, 26))
+    assert sorted(stored["underlying"].unique()) == ["QQQ", "SPY"]
+
+
+def test_too_few_chains_cannot_define_a_session(
+    client: TestClient, store: DeltaLakeStore, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Measured 2026-09-19: Cboe 429'd 9 of 24 symbols and the sweep still
+    committed the other 15 -- permanently, since bronze is immutable. One
+    chain landing out of the full default universe must be refused while
+    the session is still recoverable."""
+    _set_token(monkeypatch, TOKEN)
+
+    resp = _post(client, _body(ingest_date=None, symbols=list(DEFAULT_SNAPSHOT_SYMBOLS)))
+
+    assert resp.status_code == 409
+    assert not store.bronze_partition_exists(DATASET, dt.date(2026, 8, 26))
+
+
+def test_a_failed_quarantine_write_does_not_fail_a_committed_session(
+    client: TestClient, store: DeltaLakeStore, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Production's quarantine table carried a stale 14th column, so any
+    quarantine write raised SchemaMismatchError AFTER the session committed.
+    A 500 there makes the script retry into a no-op and alert on a session
+    that was in fact captured."""
+    _set_token(monkeypatch, TOKEN)
+    real_write = store.write_bronze
+
+    def write(dataset: str, day: dt.date, frame: Any) -> str:
+        if dataset.endswith("__quarantine"):
+            raise RuntimeError("SchemaMismatchError: 13 vs 14")
+        return real_write(dataset, day, frame)
+
+    monkeypatch.setattr(store, "write_bronze", write)
+
+    resp = _post(client, _body(_row(strike=700.0, ask=0.0), _row(strike=710.0)))
+
+    assert resp.status_code == 200
+    assert resp.json()["committed"] is True
+    assert store.read_bronze_as_of(DATASET, dt.date(2026, 8, 26))["strike"].tolist() == [710.0]
+
+
+def test_a_full_production_sweep_matches_lowercase_requests_to_uppercase_rows(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The script requests ``spy`` and Cboe's rows say ``SPY``. If that match
+    ever breaks, every real sweep reads as 0 of 24 chains and is refused --
+    every session lost, while tests built from ``_body()``'s already-uppercase
+    names stay green."""
+    _set_token(monkeypatch, TOKEN)
+    rows = [_row(underlying=s.upper()) for s in DEFAULT_SNAPSHOT_SYMBOLS]
+
+    resp = _post(client, _body(*rows, ingest_date=None, symbols=list(DEFAULT_SNAPSHOT_SYMBOLS)))
+
+    assert resp.status_code == 200
+    assert resp.json()["committed"] is True
+    assert resp.json()["symbols"] == len(DEFAULT_SNAPSHOT_SYMBOLS)
+
+
+def test_a_tolerated_partial_sweep_names_the_chains_it_lost(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """22 of 24 clears the floor and commits -- and those two chains are gone
+    for that session. The response is the only place the script can learn
+    their names for its ``::warning::``; a silent partial is the ARKK/XBI
+    class of loss nobody notices."""
+    _set_token(monkeypatch, TOKEN)
+    landed, lost = DEFAULT_SNAPSHOT_SYMBOLS[:-2], DEFAULT_SNAPSHOT_SYMBOLS[-2:]
+    rows = [_row(underlying=s.upper()) for s in landed]
+
+    resp = _post(client, _body(*rows, ingest_date=None, symbols=list(DEFAULT_SNAPSHOT_SYMBOLS)))
+
+    assert resp.status_code == 200
+    assert resp.json()["committed"] is True
+    assert sorted(resp.json()["symbols_failed"]) == sorted(s.upper() for s in lost)

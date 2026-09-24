@@ -52,10 +52,9 @@ acts on, removes, or reorders anything in this file.**
 
       **Live consequence to watch:** `daily-chain-snapshot.yml` runs at 21:30
       UTC, five minutes before the local timer, and writes through
-      `api/ingest_routes.py`, which has none of the symbol-floor /
-      off-session / `committed` protections added this week. It ran cleanly
-      for weeks before the outage, so it is not broken — but it is now the
-      primary writer again. Top item in `AGENT_TODO.md`.
+      `api/ingest_routes.py`. That route lacked the symbol-floor /
+      off-session / `committed` protections until 2026-09-24; it now shares
+      them with the local path (`contracts.option_chain.plan_session_write`).
 
 - [ ] **Decide whether hedge premium is externally funded or reduces the
       equity sleeve — it changes the platform's headline claim.**

@@ -33,6 +33,10 @@ anything that needs an IV can compute its own from them.
 
 from __future__ import annotations
 
+import datetime as dt
+import math
+from collections.abc import Callable, Sequence
+from dataclasses import dataclass
 from typing import ClassVar
 
 import pandas as pd
@@ -169,3 +173,325 @@ def split_valid_and_quarantined(df: pd.DataFrame) -> tuple[pd.DataFrame, pd.Data
         quarantined = df.loc[df.index.isin(bad_index)]
         kept = df.loc[~df.index.isin(bad_index)]
         return OptionChainSnapshotSchema.validate(kept, lazy=True), quarantined
+
+
+#: Fraction of the REQUESTED symbols that must return quotes before a sweep is
+#: allowed to create a partition. Bronze is immutable, so the first write of a
+#: session is the only one: a partial sweep does not merely under-report, it
+#: permanently defines that session. Measured 2026-09-19 on this workstation,
+#: Cboe returned 429 for 9 of 24 symbols and the run still exited 0 with
+#: 14,091 rows -- far above the driving script's 200-row floor, which checks
+#: rows and therefore cannot see a missing symbol at all. Every one of the 24
+#: chains clears 200 rows on its own (thinnest: FXI at 213), so that floor
+#: tolerated losing 23 of 24 names.
+#:
+#: 0.9 rather than 1.0 deliberately: demanding every symbol would let one
+#: delisted or permanently-dead chain block the other 23 from ever being
+#: captured, which is the same unrecoverable loss in the other direction.
+#:
+#: Note what the ceiling does to that argument on SMALL universes. Tolerated
+#: losses are ``n - ceil(n * 0.9)``: 2 at the production 24, 7 at the 70 the
+#: docstring above imagines -- but **0 for any n below 10**, where this floor
+#: is effectively 1.0 and the paragraph above does not hold. That only
+#: reaches a human running ``make ingest-option-chain CHAIN_SYMBOLS=spy,qqq``
+#: by hand, who gets a loud refusal and can re-run; the scheduled sweep
+#: always passes all 24. It is called out because the rationale reads as
+#: universal and is not.
+MIN_SYMBOL_FRACTION = 0.9
+
+
+class IncompleteSweepError(RuntimeError):
+    """Too few chains returned to define a session, and none exists yet.
+
+    Raised INSTEAD of writing. A partial partition cannot be completed later
+    (bronze is immutable), so refusing is strictly better than committing: the
+    caller exits non-zero, the operator is alerted, and the session is still
+    recoverable until the next US open. Never raised when the partition
+    already exists -- that write would be a no-op anyway.
+    """
+
+
+def session_from_quotes(valid: pd.DataFrame) -> dt.date:
+    """The session an ABSOLUTE MAJORITY of symbols agree on -- one vote each.
+
+    NOT ``max(quote_date)``, which this used to be and which inverts on a
+    single bad record. ``parse_cboe_chain`` falls back to the payload's
+    ``timestamp`` when a symbol carries no ``last_trade_time``, and that field
+    is Cboe's CDN **wall clock**, not a session: measured live on 2026-09-21
+    it read ``09:11:43`` on a session of ``2026-09-18``, three days apart. One
+    symbol missing that field was enough to elect a session nobody traded in,
+    whereupon every correct symbol looked off-session and was quarantined --
+    a one-row partition stamped with a FUTURE date, permanent by
+    immutability, which also pre-claimed the next session's key so the next
+    real sweep no-opped.
+
+    **More than half** is required, not merely the most votes, and there is
+    deliberately no tie-break. A plurality rule left the degenerate
+    distributions writing tiny partitions under a future key -- measured at
+    24 symbols: a 12/12 tie wrote 12 rows dated to the wall clock, an 8/8/8
+    split wrote 8, and 24 distinct dates wrote **1**. An earlier version broke
+    ties toward the later date, which is precisely the side this function
+    exists to distrust.
+
+    An absolute majority is unique, so requiring one removes the tie-break
+    rather than repairing it. When no date commands one, the session is not
+    identifiable from this sweep and ``IncompleteSweepError`` is raised:
+    bronze is immutable, so writing a partition whose own session is in doubt
+    is the one thing that cannot be undone.
+    """
+    # One vote per symbol: its own freshest quote date.
+    per_symbol = valid.groupby("underlying")["quote_date"].max().dt.date
+    tally: dict[dt.date, int] = {}
+    for raw in per_symbol.tolist():
+        day = raw if isinstance(raw, dt.date) else dt.date.fromisoformat(str(raw))
+        tally[day] = tally.get(day, 0) + 1
+
+    voters = sum(tally.values())
+    for day, votes in tally.items():
+        if votes * 2 > voters:
+            return day
+
+    spread = ", ".join(f"{d}:{n}" for d, n in sorted(tally.items()))
+    raise IncompleteSweepError(
+        f"no session commands a majority of the {voters} chains that returned "
+        f"quotes ({spread}); refusing to write, because the partition would be "
+        "named for a session this sweep cannot identify and bronze is immutable."
+    )
+
+
+def quarantine_off_session_rows(
+    valid: pd.DataFrame, quarantined: pd.DataFrame, session: dt.date
+) -> tuple[pd.DataFrame, pd.DataFrame, tuple[str, ...], dt.date | None]:
+    """Move rows that do not belong to ``session`` out of ``valid``.
+
+    Catches both directions, which is the point: a LAGGARD (Cboe still
+    serving a symbol's previous session) and a WALL-CLOCK outlier (a symbol
+    with no ``last_trade_time``, dated from the CDN's clock) are the same
+    defect seen from either side, and only one of them is "stale".
+
+    The laggard case is not hypothetical: ``ingest_date=2026-09-08`` in
+    production holds 412 ARKK rows stamped ``2026-09-04``, ARKK's last trade
+    before Labor Day. ARKK's 2026-09-08 session was never captured, and
+    nothing noticed, because the partition looks healthy in aggregate.
+
+    Off-session rows go to quarantine rather than the bin: they are real
+    quotes, just not this session's. One honest limit -- quarantine is written
+    with the same ``write_bronze``, so on a re-run of an already-captured
+    session that write no-ops too and these rows are NOT persisted. That is
+    immutability working as intended (the first run's quarantine stands), but
+    it makes "preserved" a claim about the run that creates the partition.
+    """
+    if valid.empty:
+        return valid, quarantined, (), None
+    on_session = valid["quote_date"].dt.date == session
+    if bool(on_session.all()):
+        return valid, quarantined, (), None
+    off = valid[~on_session]
+    off_symbols = tuple(sorted({str(u).upper() for u in off["underlying"].unique()}))
+    newest_off = off["quote_date"].max().date()
+    return (
+        valid[on_session].reset_index(drop=True),
+        pd.concat([quarantined, off], ignore_index=True),
+        off_symbols,
+        newest_off,
+    )
+
+
+def require_enough_symbols(
+    responded: int,
+    requested: int,
+    min_fraction: float,
+    session: dt.date,
+    missing: Sequence[str] = (),
+) -> None:
+    """Refuse to define a session from too few chains. See ``MIN_SYMBOL_FRACTION``.
+
+    **What this actually bounds, precisely, because the loose reading is
+    wrong:** it bounds the number of *recoverable* losses, NOT the number of
+    symbols missing from the partition. ``responded`` counts every symbol Cboe
+    answered with usable rows for SOME session, so an off-session symbol
+    (quarantined by ``quarantine_off_session_rows``) does not count against
+    the floor and the partition can therefore hold fewer names than
+    ``requested - tolerated``. Measured: two fetch failures plus nine
+    laggards writes a 13-of-24 partition, while three fetch failures and no
+    laggards refuses at 21-of-24.
+
+    That asymmetry is deliberate, and it is the whole design:
+
+    * a fetch failure (429, timeout) or a symbol whose rows all fail the
+      schema is **recoverable** -- a re-run before the next US open gets it.
+      Writing now would lock that symbol out permanently, so refusing is the
+      cheaper mistake;
+    * a laggard, where Cboe serves a symbol's previous session, is **not** --
+      the re-run returns the same stale chain. Counting it against the floor
+      would discard every healthy chain alongside it, permanently, to avoid a
+      partial that is already the best answer obtainable.
+
+    Measured before the distinction existed: three laggards refused a sweep in
+    which 21 of 24 chains were fresh, and no re-run could have recovered them.
+    Off-session symbols are surfaced through ``symbols_off_session`` and the
+    caller's ``::warning::`` instead.
+
+    The separate guarantee that the partition is named for a session this
+    sweep can actually identify lives in ``session_from_quotes``, which
+    requires an absolute majority -- that is what stops a handful of symbols
+    defining a session between them.
+    """
+    required = max(1, math.ceil(requested * min_fraction))
+    if responded >= required:
+        return
+    raise IncompleteSweepError(
+        f"only {responded} of {requested} chains returned usable quotes for session "
+        f"{session.isoformat()} (need {required}); refusing to create the partition, "
+        "because bronze is immutable and a partial session can never be completed. "
+        f"Missing: {', '.join(missing) if missing else '(unknown)'}. Re-run before the "
+        "next US open -- and if the same names fail every day they are delisted or "
+        "dead, and belong out of DEFAULT_SNAPSHOT_SYMBOLS rather than blocking every "
+        "future session."
+    )
+
+
+@dataclass(frozen=True)
+class SessionPlan:
+    """What a sweep should write, decided identically by both writers.
+
+    This dataset has two writers -- ``ingestion/option_chain`` on the local
+    path and ``api/ingest_routes`` on the scheduled one (``docs/adr/0020``) --
+    and they drifted. The local path gained the symbol floor, the off-session
+    split and an honest ``committed`` flag; the endpoint kept none of them,
+    and for weeks reported every re-run of an already-captured session as
+    "committed N rows". Everything between "rows validated" and "write" lives
+    here, once, so the next protection lands in both places or neither.
+    """
+
+    valid: pd.DataFrame
+    quarantined: pd.DataFrame
+    session: dt.date
+    ingest_date: dt.date
+    #: The partition already exists, so the write will be a no-op.
+    already_captured: bool
+    symbols_ok: tuple[str, ...]
+    symbols_failed: tuple[str, ...]
+    symbols_off_session: tuple[str, ...]
+
+
+def plan_session_write(
+    valid: pd.DataFrame,
+    quarantined: pd.DataFrame,
+    *,
+    requested: Sequence[str],
+    fetched_ok: Sequence[str],
+    fetch_failed: Sequence[str],
+    partition_exists: Callable[[dt.date], bool],
+    min_symbol_fraction: float = MIN_SYMBOL_FRACTION,
+    ingest_date: dt.date | None = None,
+    market_session: dt.date | None = None,
+) -> SessionPlan:
+    """Name the session, split off-session rows, and refuse unsafe writes.
+
+    ``fetched_ok`` are the symbols whose chains fetched and parsed;
+    ``fetch_failed`` those that did not. ``market_session`` is the newest
+    COMPLETED US equity session according to a source independent of Cboe
+    (``None`` when that source could not be read -- the check is then
+    skipped, never guessed).
+
+    Raises ``IncompleteSweepError`` instead of returning a plan whose write
+    would lose a session silently.
+    """
+    session = session_from_quotes(valid) if not valid.empty else dt.date.today()
+    valid, quarantined, off_session, newest_off = quarantine_off_session_rows(
+        valid, quarantined, session
+    )
+    off_set = set(off_session)
+    # `fetched_ok` is decided on PARSE success, BEFORE validation, so a symbol
+    # whose every row failed the schema counted as captured and counted toward
+    # the floor while contributing nothing to the partition. Measured: nine
+    # symbols served with a null ask produced `symbols_ok=24` on a partition
+    # holding 15 -- the same 15-of-24 outcome the floor refuses by the fetch
+    # route, reached silently by the validation route.
+    #
+    # They belong with the fetch failures, not with the laggards: a symbol
+    # that returned unusable rows may well return usable ones on a re-run, so
+    # the loss is recoverable and SHOULD count against the floor.
+    landed = {str(u).upper() for u in valid["underlying"].unique()} if not valid.empty else set()
+    ok = tuple(s.upper() for s in fetched_ok if s.upper() in landed)
+    failed = tuple(s.upper() for s in fetch_failed) + tuple(
+        s.upper() for s in fetched_ok if s.upper() not in landed and s.upper() not in off_set
+    )
+    ingest_date = ingest_date or session
+
+    # Order matters: the floor is checked ONLY when this run would create the
+    # partition. On a re-run, weekend or holiday the write is a no-op anyway,
+    # and raising there would turn a correct, benign outcome into a red alert.
+    already = partition_exists(ingest_date)
+    if (
+        already
+        and newest_off is not None
+        and newest_off > session
+        and not partition_exists(newest_off)
+    ):
+        # The majority elected a session we have ALREADY captured, while a
+        # minority carried FRESHER quotes. Cboe serves per-symbol CDN
+        # snapshots of wildly different ages -- measured 2026-09-21, the
+        # `timestamp` field spanned ten hours across the universe -- so when
+        # most chains are still serving yesterday, the majority vote elects
+        # yesterday, `write_bronze` no-ops on its existing partition, and the
+        # run reports "already captured" and exits 0. Today is then gone,
+        # silently, with the fresh chains discarded as "off-session".
+        #
+        # Measured at 24 symbols with yesterday already in the lake: 13 stale
+        # chains lost the day, 20 stale chains lost the day, both exit 0.
+        # This is the one combination where the majority rule is worse than
+        # the max() it replaced, so it is refused explicitly rather than
+        # rebalanced -- the operator can re-run once the CDN catches up, and
+        # the session is recoverable until the next US open.
+        raise IncompleteSweepError(
+            f"the majority of chains still report {session}, which is already captured, "
+            f"but {len(off_session)} chain(s) carry quotes as new as {newest_off} "
+            f"({', '.join(off_session)}); refusing rather than no-opping, because that "
+            f"would silently discard {newest_off} and exit 0. Re-run once Cboe's "
+            "per-symbol caches catch up, before the next US open."
+        )
+    if (
+        already
+        and market_session is not None
+        and market_session > session
+        and not partition_exists(market_session)
+    ):
+        # The same silent loss with NO fresh minority to betray it: every
+        # chain is behind. Measured 2026-09-23..24: Cboe moved /api/global/ to
+        # a new host and the old one froze at 03:55 UTC on the 23rd, still
+        # answering 200 (`Last-Modified` stuck), so each sweep read session
+        # 2026-09-22 -- already
+        # captured -- and reported a green no-op while 2026-09-23 was lost
+        # for good. Cboe cannot testify against itself, so the evidence has to come
+        # from outside it. A market holiday cannot trip this: the reference
+        # did not trade either, so it reports the same session Cboe does.
+        # Nor can a CDN that steps BACK to an older snapshot after the newer
+        # session landed: then nothing is missing, and an alarm claiming a
+        # loss would be the cry-wolf this job cannot afford.
+        raise IncompleteSweepError(
+            f"Cboe is serving session {session}, which is already captured, but the "
+            f"market has since completed session {market_session}; refusing rather "
+            "than no-opping, because Cboe's feed is behind and that session is not "
+            "in the lake. Re-run once Cboe catches up, before the next US open -- "
+            "if it does not, the session is lost."
+        )
+    if not already:
+        require_enough_symbols(
+            len(ok) + len(off_session),
+            len(requested),
+            min_symbol_fraction,
+            session,
+            missing=sorted(failed),
+        )
+    return SessionPlan(
+        valid=valid,
+        quarantined=quarantined,
+        session=session,
+        ingest_date=ingest_date,
+        already_captured=already,
+        symbols_ok=ok,
+        symbols_failed=failed,
+        symbols_off_session=off_session,
+    )
