@@ -92,6 +92,12 @@ export interface PutBacktestResponse {
   sharpe_ratio: number | null
   annualized_so_far: AnnualizedPoint[]
   benchmark_annualized: number | null
+  /** "model" or "market" -- whether every premium in this run came from
+   *  BlackScholesPricer or a real listed ask. The route never passes real
+   *  quotes in today (see RankedAsset.priced_from), so this is always
+   *  "model"; carried through so a model-priced ROI never looks identical to
+   *  a market-priced one once the route can serve either. */
+  priced_from: 'model' | 'market'
   equity_curve: EquityPoint[]
   mtm_curve: EquityPoint[]
   price_path: PricePoint[]

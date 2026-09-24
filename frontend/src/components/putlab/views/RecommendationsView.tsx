@@ -1,5 +1,5 @@
 import type { PutLabLeaderboardResponse, RankedAsset, Verdict } from '../../../api/client'
-import { fmtPct } from '../format'
+import { fmtDollar, fmtPct } from '../format'
 import type { ResourceState } from '../PutLab'
 import type { PutLabControls } from '../types'
 
@@ -139,11 +139,20 @@ export function RecommendationsView({ ranking, controls, onSelectAsset }: Props)
                   {fmtPct(r.best_annualized)}
                 </td>
                 <td
-                  className={`num dim ${
+                  className={`num dim pl-rec-premium ${
                     (r.best_roi_on_premium ?? 0) >= 0 ? 'pl-pos' : 'pl-neg'
                   }`}
                 >
                   {r.best_roi_on_premium == null ? '—' : fmtPct(r.best_roi_on_premium)}
+                  {/* The % alone hides the stake behind it -- two rows can show
+                      the same return on a $1,000 budget and a $17,000 one.
+                      best_n_cycles is measured at the same cell as
+                      best_roi_on_premium, so it is the right multiplier
+                      (AGENT_TODO.md, "roi_on_premium needs its denominator
+                      named on the surface"). */}
+                  {r.best_n_cycles != null && (
+                    <div className="pl-micro">{fmtDollar(ranking.data.notional * r.best_n_cycles)}</div>
+                  )}
                 </td>
                 <td className="num dim pl-rec-hit">
                   {r.best_hit_rate == null ? '—' : `${Math.round(r.best_hit_rate * 100)}%`}

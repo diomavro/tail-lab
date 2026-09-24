@@ -101,6 +101,7 @@ export const BACKTEST: PutBacktestResponse = {
   // The hedge loses to the plain long, so the hero spread is negative -- the
   // ordinary case for a tail hedge, and the one the copy has to survive.
   benchmark_annualized: 0.1132,
+  priced_from: 'model',
   hit_rate: 2 / 12,
   biggest_payoff_mult: 3.2,
   worst_bleed_streak: 7,

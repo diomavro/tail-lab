@@ -61,6 +61,18 @@ test('takes every figure on a row from that same cell', async ({ page }) => {
   expect(top.best_hit_rate).not.toBe(top.hit_rate)
 })
 
+test('names the premium a return on premium was measured against', async ({ page }) => {
+  // The % alone does not say whether two rows staked the same amount to get
+  // there -- best_n_cycles varies per row, so the $ budget does too, even
+  // though every row shares the same per-leg notional.
+  const top = LEADERBOARD.ranked.reduce((a, b) =>
+    (b.best_annualized ?? -9) > (a.best_annualized ?? -9) ? b : a,
+  )
+  const row = page.getByRole('table', { name: 'Ranked strategies' }).locator('tbody tr').first()
+  const premium = LEADERBOARD.notional * top.best_n_cycles!
+  await expect(row.locator('td.pl-rec-premium')).toContainText(`$${premium.toLocaleString('en-US')}`)
+})
+
 test('never recommends a strike the model cannot price', async ({ page }) => {
   const cells = page.getByRole('table', { name: 'Ranked strategies' }).locator('.pl-rec-strike')
   // allTextContents() does not auto-wait -- assert the count first or this
