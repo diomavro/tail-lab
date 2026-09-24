@@ -5,7 +5,9 @@ from typing import Any
 
 import pandas as pd
 import pytest
+import requests
 
+from tail_lab.ingestion import options_expiry, sources
 from tail_lab.ingestion.options_expiry import (
     ingest_options_expiry,
     parse_cboe_options_expiry,
@@ -217,3 +219,87 @@ def test_ingest_falls_back_to_yahoo_when_cboe_chain_is_empty(tmp_path: Any) -> N
 
     assert result.source_id == "yahoo"
     assert result.valid_rows == 1
+
+
+# ---- transient Cboe faults ---------------------------------------------------
+
+
+class _Resp:
+    def __init__(self, status: int, payload: dict[str, Any] | None = None) -> None:
+        self.status_code = status
+        self._payload = payload or {}
+
+    def raise_for_status(self) -> None:
+        if self.status_code >= 400:
+            raise requests.exceptions.HTTPError(response=self)  # type: ignore[arg-type]
+
+    def json(self) -> dict[str, Any]:
+        return self._payload
+
+
+_CHAIN = {"data": {"options": [{"option": "SPY260925P00500000"}]}}
+
+
+def _scripted(monkeypatch: pytest.MonkeyPatch, responses: list[_Resp]) -> list[str]:
+    calls: list[str] = []
+
+    def fake_get(url: str, **_kw: Any) -> _Resp:
+        calls.append(url)
+        return responses.pop(0)
+
+    monkeypatch.setattr(options_expiry.requests, "get", fake_get)
+    monkeypatch.setattr(sources.time, "sleep", lambda _s: None)
+    return calls
+
+
+def test_a_transient_cboe_fault_is_retried_not_escalated(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The daily refresh pulls this for all 24 snapshot symbols; one Cboe 503
+    on any of them used to turn the whole refresh red -- with Yahoo, the only
+    fallback, 429ing everyone. A blip must cost a retry, not the day."""
+    calls = _scripted(monkeypatch, [_Resp(503), _Resp(429), _Resp(200, _CHAIN)])
+
+    assert options_expiry.fetch_cboe_chain_raw("spy") == _CHAIN
+    assert len(calls) == 3
+    assert all(url.endswith("/SPY.json") for url in calls)
+
+
+def test_a_refusal_is_not_retried_and_the_index_form_is_tried_next(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A 403/404 means Cboe does not list the bare root -- it files index
+    chains under ``_SPX``. Retrying the refusal only burns the backoff."""
+    calls = _scripted(monkeypatch, [_Resp(403), _Resp(200, _CHAIN)])
+
+    assert options_expiry.fetch_cboe_chain_raw("spx") == _CHAIN
+    assert [url.rsplit("/", 1)[-1] for url in calls] == ["SPX.json", "_SPX.json"]
+
+
+def test_a_persistent_fault_still_fails_after_the_budget(monkeypatch: pytest.MonkeyPatch) -> None:
+    calls = _scripted(monkeypatch, [_Resp(503)] * 6)
+
+    with pytest.raises(ValueError, match="no usable chain"):
+        options_expiry.fetch_cboe_chain_raw("spy")
+    assert len(calls) == 2 * options_expiry._FETCH_ATTEMPTS
+
+
+def test_a_hung_cboe_stays_inside_the_refresh_budget() -> None:
+    """The daily refresh's systemd unit (TimeoutStartSec=120min) is sized on
+    ~165s of worst case per symbol for this step. Retries multiply the
+    per-request timeout, so raising either knob without re-sizing the unit
+    gets the refresh killed mid-loop -- later symbols and the FRED step never
+    run, and the only alert says "timeout"."""
+    import inspect
+
+    def default_timeout(fn: Any) -> float:
+        return float(inspect.signature(fn).parameters["timeout"].default)
+
+    attempts, backoff = options_expiry._FETCH_ATTEMPTS, options_expiry._FETCH_BACKOFF_S
+    cboe_worst = 2 * (
+        attempts * default_timeout(options_expiry.fetch_cboe_chain_raw) + (attempts - 1) * backoff
+    )
+    # Yahoo's fallback is three requests (cookie, crumb, options). Read from
+    # the code, not restated: a hardcoded 3 x 15 here once let that default
+    # drift to 60s with every test green (adversarial review, 2026-09-24).
+    yahoo_fallback = 3 * default_timeout(options_expiry.fetch_options_expiry_raw)
+
+    assert cboe_worst + yahoo_fallback <= 165

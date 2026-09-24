@@ -11,7 +11,7 @@ VENV := .venv
 PY := env -u PYTHONPATH $(VENV)/bin/python
 PIP := env -u PYTHONPATH $(VENV)/bin/pip
 
-.PHONY: setup lint format typecheck import-lint test check cov-floors ingest-vix ingest-vix-complex ingest-ohlcv ingest-cboe-strategy ingest-rates ingest-credit ingest-fomc ingest-earnings ingest-option-quotes residual skew tail-alpha api frontend clean ingest-mpd ingest-options-expiry ingest-sp500-constituents ingest-vix-futures
+.PHONY: setup lint format typecheck import-lint test check cov-floors ingest-vix ingest-vix-complex ingest-ohlcv ingest-cboe-strategy ingest-rates ingest-credit ingest-event-calendar ingest-option-quotes residual skew tail-alpha api frontend clean ingest-mpd ingest-options-expiry ingest-sp500-constituents ingest-vix-futures
 
 help:
 	@echo "Targets:"
@@ -29,7 +29,7 @@ help:
 	@echo "  ingest-cboe-strategy  Live Cboe strategy-index fetch -> bronze (TICKERS=... ; network; not run in CI)"
 	@echo "  ingest-rates Live FRED rates fetch -> bronze (SERIES=... ; needs FRED_API_KEY; network; not run in CI)"
 	@echo "  ingest-credit Live FRED credit-spread fetch -> bronze (SERIES=... ; needs FRED_API_KEY; network; not run in CI)"
-	@echo "  ingest-fomc  Live FOMC calendar fetch -> bronze (keyless; network; not run in CI)"
+	@echo "  ingest-event-calendar  Live FOMC + earnings calendar fetch -> ONE bronze snapshot (keyless; network; not run in CI)"
 	@echo "  ingest-sp500-constituents  Live point-in-time S&P 500 membership fetch -> bronze (network; not run in CI)"
 	@echo "  ingest-mpd   Live Minneapolis Fed MPD fetch -> bronze, whole market family (network; not run in CI)"
 	@echo "  ingest-vix-futures  Live VX futures term structure fetch -> bronze (keyless; network; not run in CI)"
@@ -76,14 +76,14 @@ cov-floors:
 check: lint typecheck import-lint test cov-floors
 
 ingest-vix:
-	env -u PYTHONPATH $(VENV)/bin/python -c "from tail_lab.ingestion.vix import ingest_vix; from tail_lab.config import get_lake_store; from tail_lab.observability import configure_logging; configure_logging(); r = ingest_vix(get_lake_store()); print(f'committed {r.valid_rows} rows from {r.source_id} -> {r.bronze_path} ({r.quarantined_rows} quarantined)')"
+	env -u PYTHONPATH $(VENV)/bin/python -c "from tail_lab.ingestion.vix import ingest_vix; from tail_lab.config import get_lake_store; from tail_lab.observability import configure_logging; configure_logging(); from tail_lab.ingestion.ohlcv import latest_market_session; r = ingest_vix(get_lake_store(), market_session=latest_market_session()); print(f'committed {r.valid_rows} rows from {r.source_id} -> {r.bronze_path} ({r.quarantined_rows} quarantined)')"
 
 # VIX_SERIES is an optional comma-separated override; empty means the
 # adapter's full SERIES_NAMES (VIX3M, VIX9D, VVIX, SKEW). Spot VIX itself is
 # ingest-vix above, not this target -- see contracts/vix_complex.py.
 VIX_SERIES ?=
 ingest-vix-complex:
-	env -u PYTHONPATH $(VENV)/bin/python -c "from tail_lab.ingestion.vix_complex import ingest_vix_complex; from tail_lab.config import get_lake_store; from tail_lab.observability import configure_logging; configure_logging(); s = '$(VIX_SERIES)'.split(',') if '$(VIX_SERIES)' else None; r = ingest_vix_complex(get_lake_store(), s); print(f'committed {r.valid_rows} rows for {len(r.series)} series -> {r.bronze_path} ({r.quarantined_rows} quarantined)')"
+	env -u PYTHONPATH $(VENV)/bin/python -c "from tail_lab.ingestion.vix_complex import ingest_vix_complex; from tail_lab.config import get_lake_store; from tail_lab.observability import configure_logging; configure_logging(); s = '$(VIX_SERIES)'.split(',') if '$(VIX_SERIES)' else None; from tail_lab.ingestion.ohlcv import latest_market_session; r = ingest_vix_complex(get_lake_store(), s, market_session=latest_market_session()); print(f'committed {r.valid_rows} rows for {len(r.series)} series -> {r.bronze_path} ({r.quarantined_rows} quarantined)')"
 
 # Reads a LOCAL, hash-verified vendor download (docs/DATA_VERDICTS.md), not the
 # network, and extracts ~42k rows of real put smile from its 632 MB. Optional
@@ -122,7 +122,7 @@ ingest-options-expiry:
 # DEFAULT_TICKERS (the tail-hedge family + SPX).
 TICKERS ?=
 ingest-cboe-strategy:
-	env -u PYTHONPATH $(VENV)/bin/python -c "from tail_lab.ingestion.cboe_strategy import ingest_cboe_strategy, ticker_labels; from tail_lab.config import get_lake_store; from tail_lab.observability import configure_logging; configure_logging(); t = ticker_labels('$(TICKERS)'.split(',')) if '$(TICKERS)' else None; r = ingest_cboe_strategy(get_lake_store(), t); print(f'committed {r.valid_rows} rows for {len(r.tickers)} indices -> {r.bronze_path} ({r.quarantined_rows} quarantined)')"
+	env -u PYTHONPATH $(VENV)/bin/python -c "from tail_lab.ingestion.cboe_strategy import ingest_cboe_strategy, ticker_labels; from tail_lab.config import get_lake_store; from tail_lab.observability import configure_logging; configure_logging(); t = ticker_labels('$(TICKERS)'.split(',')) if '$(TICKERS)' else None; from tail_lab.ingestion.ohlcv import latest_market_session; r = ingest_cboe_strategy(get_lake_store(), t, market_session=latest_market_session()); print(f'committed {r.valid_rows} rows for {len(r.tickers)} indices -> {r.bronze_path} ({r.quarantined_rows} quarantined)')"
 
 # SERIES is an optional comma-separated override; empty means the adapter's
 # DEFAULT_SERIES_IDS (the Treasury curve + SOFR + fed funds).
@@ -163,11 +163,11 @@ ingest-optionsdx:
 ingest-credit:
 	env -u PYTHONPATH $(VENV)/bin/python -c "from tail_lab.ingestion.credit import ingest_credit; from tail_lab.config import get_lake_store, get_settings; from tail_lab.observability import configure_logging; configure_logging(); s = [x.upper() for x in '$(SERIES)'.split(',')] if '$(SERIES)' else None; r = ingest_credit(get_lake_store(), s, api_key=get_settings().fred_api_key); print(f'committed {r.valid_rows} rows for {len(r.series_ids)} series -> {r.bronze_path} ({r.quarantined_rows} quarantined)')"
 
-ingest-fomc:
-	env -u PYTHONPATH $(VENV)/bin/python -c "from tail_lab.ingestion.fomc import ingest_fomc_calendar; from tail_lab.config import get_lake_store; from tail_lab.observability import configure_logging; configure_logging(); r = ingest_fomc_calendar(get_lake_store()); print(f'committed {r.valid_rows} rows -> {r.bronze_path} ({r.quarantined_rows} quarantined)')"
-
-ingest-earnings:
-	env -u PYTHONPATH $(VENV)/bin/python -c "from tail_lab.ingestion.earnings import ingest_earnings_calendar; from tail_lab.config import get_lake_store; from tail_lab.observability import configure_logging; configure_logging(); r = ingest_earnings_calendar(get_lake_store()); print(f'committed {r.valid_rows} rows ({r.dates_fetched} dates fetched, {r.dates_failed} failed) -> {r.bronze_path} ({r.quarantined_rows} quarantined)')"
+# FOMC and earnings share the event_calendar dataset -- one immutable snapshot
+# per day -- so they are fetched and committed together, never separately
+# (ingestion/event_calendar.py).
+ingest-event-calendar:
+	env -u PYTHONPATH $(VENV)/bin/python -c "from tail_lab.ingestion.event_calendar import ingest_event_calendar; from tail_lab.config import get_lake_store; from tail_lab.observability import configure_logging; configure_logging(); r = ingest_event_calendar(get_lake_store()); print(('committed' if r.committed else 'NO-OP (already captured today):') + f' {r.valid_rows} rows {dict(r.rows_by_source)} ({r.earnings_dates_fetched} earnings dates fetched, {r.earnings_dates_failed} failed) -> {r.bronze_path} ({r.quarantined_rows} quarantined)')"
 
 ingest-sp500-constituents:
 	env -u PYTHONPATH $(VENV)/bin/python -c "from tail_lab.ingestion.sp500_constituents import ingest_sp500_constituents; from tail_lab.config import get_lake_store; from tail_lab.observability import configure_logging; configure_logging(); r = ingest_sp500_constituents(get_lake_store()); print(f'committed {r.valid_rows} rows -> {r.bronze_path} ({r.quarantined_rows} quarantined)')"

@@ -40,6 +40,7 @@ import datetime as dt
 import logging
 import re
 from dataclasses import dataclass
+from functools import partial
 from typing import Any
 
 import pandas as pd
@@ -47,7 +48,7 @@ import requests
 from pandera.errors import SchemaErrors
 
 from tail_lab.contracts.options_expiry import OptionsExpirySchema, dataset_id
-from tail_lab.ingestion.sources import Source, first_available
+from tail_lab.ingestion.sources import Source, first_available, retry_transient
 from tail_lab.lake.store import LakeStore
 from tail_lab.observability import log_event
 
@@ -90,9 +91,29 @@ class IngestResult:
     source_id: str
 
 
-def fetch_cboe_chain_raw(symbol: str, *, timeout: float = 60.0) -> Any:
-    """Fetch Cboe's delayed-quote chain JSON for ``symbol``. Network -- not
-    used by tests.
+#: Same budget as the chain sweep's (``ingestion/option_chain._FETCH_ATTEMPTS``),
+#: against the same endpoint. Measured need: the daily refresh pulls this for
+#: all 24 snapshot symbols, and one transient Cboe blip on any one of them used
+#: to turn the whole refresh red -- its only fallback, Yahoo, 429s everyone.
+_FETCH_ATTEMPTS = 3
+_FETCH_BACKOFF_S = 3.0
+
+
+def _get_json(url: str, timeout: float) -> Any:
+    resp = requests.get(url, headers={"User-Agent": _USER_AGENT}, timeout=timeout)
+    resp.raise_for_status()
+    return resp.json()
+
+
+def fetch_cboe_chain_raw(symbol: str, *, timeout: float = 15.0) -> Any:
+    """Fetch Cboe's delayed-quote chain JSON for ``symbol``. Network; tests
+    drive it only through a patched ``requests.get``.
+
+    ``timeout`` is 15s, not the 60s it was before retries existed: a hung Cboe
+    now costs 2 candidates x ``_FETCH_ATTEMPTS`` requests plus backoff, and the
+    daily refresh's systemd ``TimeoutStartSec=120min`` is sized on ~165s of
+    worst case per symbol for this step (6 x 15 + 12 + Yahoo's 45 = 147s). A
+    real fetch takes 1-3s, and requests applies the limit per socket read.
 
     Tries the bare symbol then the underscore-prefixed index form, because
     Cboe files index chains under ``_SPX``/``_VIX``/``_RUT`` and everything
@@ -100,13 +121,16 @@ def fetch_cboe_chain_raw(symbol: str, *, timeout: float = 60.0) -> Any:
     last_error: Exception | None = None
     for candidate in (symbol.upper(), f"_{symbol.upper().lstrip('_')}"):
         try:
-            resp = requests.get(
-                CBOE_CHAIN_URL_TEMPLATE.format(symbol=candidate),
-                headers={"User-Agent": _USER_AGENT},
-                timeout=timeout,
+            # Retried per REQUEST, not around the whole candidate loop: the
+            # loop turns every failure into a ValueError, which no retry
+            # policy can tell apart from "this root does not exist".
+            payload: Any = retry_transient(
+                partial(_get_json, CBOE_CHAIN_URL_TEMPLATE.format(symbol=candidate), timeout),
+                attempts=_FETCH_ATTEMPTS,
+                backoff_s=_FETCH_BACKOFF_S,
+                event="ingestion.options_expiry.cboe_retry",
+                symbol=candidate,
             )
-            resp.raise_for_status()
-            payload: Any = resp.json()
             if (payload.get("data") or {}).get("options"):
                 return payload
             last_error = ValueError(f"no options in chain for {candidate!r}")

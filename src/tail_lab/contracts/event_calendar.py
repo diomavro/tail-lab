@@ -6,10 +6,10 @@ This module is a LEAF: it must never import anything else from
 
 Drives the cockpit's proximity flags (`docs/END_STATE.md` §1.4) and is a
 required input to research questions 3/5 (IV behavior around FOMC/CPI/crises).
-Two independent producers write into the one ``event_calendar`` dataset —
-scheduled adapters (FOMC today, CPI/earnings later) and a hand-maintained
-manual table for unscheduled events — sharing this schema so a consumer reads
-one dataset regardless of source.
+Every source (FOMC and earnings today; CPI and a hand-maintained manual table
+for unscheduled events later) shares this schema and lands through ONE writer,
+``ingestion/event_calendar.py`` -- the dataset is one immutable snapshot per
+day, so per-source writers would claim the day from each other.
 
 ``announced_at`` is the point-in-time field, deliberately distinct from
 ``event_date``: a scheduled FOMC meeting six months out is legitimately

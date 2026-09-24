@@ -240,7 +240,11 @@ a large one strictly in order.
       fetch, assert exit 0 and that the backward check still reported. Serves
       `docs/END_STATE.md` §4 by keeping the one monitor trustworthy.
 
-- [ ] **Give `ingestion/options_expiry.py` the retry the chain adapter has.**
+- [x] **Give `ingestion/options_expiry.py` the retry the chain adapter has.**
+      **Done 2026-09-24**: the policy now lives once in
+      `ingestion/sources.retry_transient` (+ `is_transient_fetch_error`), used
+      by both adapters; options_expiry retries per request, so a refusal still
+      falls through to the `_`-prefixed index form immediately.
       It fetches the SAME keyless Cboe endpoint the sweep uses
       (`cdn.cboe.com/api/global/delayed_quotes/options/{symbol}.json`) but
       with no retry and no backoff, where `ingestion/option_chain.py` has
@@ -256,7 +260,13 @@ a large one strictly in order.
       `docs/END_STATE.md` §4 by keeping `research/cadence.py` off its
       hand-maintained fallback table.
 
-- [ ] **Combine the two `event_calendar` producers into one write.**
+- [x] **Combine the two `event_calendar` producers into one write.**
+      **Done 2026-09-24**: `ingestion/event_calendar.py` is the only writer;
+      `fomc.py`/`earnings.py` now only fetch + parse. It refuses to write half
+      a calendar (FOMC page yields nothing, or more than half the earnings dates fail),
+      because a half partition would shadow the last complete one. `make
+      ingest-event-calendar` replaces the two targets and is in the daily
+      refresh.
       `ingestion/fomc.py` and `ingestion/earnings.py` both write the shared
       `event_calendar` dataset, which is one immutable snapshot per
       `ingest_date` from a single producer (`docs/DATA_CONTRACTS.md` #5).
@@ -272,7 +282,13 @@ a large one strictly in order.
       snapshot. Serves `docs/END_STATE.md` §4 via event-aware screening,
       which cannot work off half a calendar.
 
-- [ ] **The Cboe index-history adapters cannot see a frozen 200 either.**
+- [x] **The Cboe index-history adapters cannot see a frozen 200 either.**
+      **Done 2026-09-24**: `ingestion/sources.require_current` refuses the
+      write (`SourceBehindMarket`) when any series ends before the Nasdaq
+      witness (now `ingestion/ohlcv.latest_market_session`); the three make
+      targets pass it. Refuse, not warn: these key the partition on the
+      clock, so a stale write would block the recovered re-run. Verified live:
+      the frozen old host is refused, the new one passes.
       `vix.py`, `vix_complex.py`, `cboe_strategy.py` have no freshness check,
       and `ingest_vix` keys the partition on the clock, so during the
       2026-09-23 host freeze `make ingest-vix` would have committed a
@@ -281,6 +297,25 @@ a large one strictly in order.
       partition is still read as-of. Compare the newest row against the
       Nasdaq witness (`ingestion.option_chain.latest_market_session`) and
       warn -- or refuse -- when the source is behind the market.
+
+- [ ] **Compare each `event_calendar` snapshot against the previous one.**
+      `ingestion/event_calendar.py` refuses a source that fails outright,
+      but not one that answers PARTIALLY -- a Fed page redesign that leaves
+      one year panel parseable writes 8 meetings where the last snapshot held
+      56, and as-of reads then see only those 8. Found by adversarial review
+      2026-09-24. Refuse (or at least fail loud) when a source's valid row
+      count falls far below the previous partition's for the same
+      `source_id`; decide the threshold from the history, which is short.
+
+- [ ] **Measure when Nasdaq posts the day's SPY bar vs Cboe's index CSVs.**
+      `sources.require_current` (vix, vix_complex, cboe_strategy) refuses when
+      the Nasdaq witness is ahead of Cboe. Verified quiet at the 06:30 UTC
+      refresh (prod partitions 09-21..09-23 all current); NOT measured for an
+      evening run -- a hand re-run or `Persistent=` catch-up after the close
+      could see Nasdaq's new bar before Cboe publishes (~00:30 UTC for VIX).
+      Poll both for a few evenings; if Nasdaq leads, skip the check before
+      Cboe's publish hour rather than alarm. Also feeds the wall-clock item
+      below, which needs the same measurement.
 
 - [ ] **A wall-clock outlier turns a morning catch-up red for nothing.**
       Found by adversarial review 2026-09-24, and now on BOTH writers (the
@@ -1599,7 +1634,7 @@ gap `docs/adr/0023`'s step 2b exists to close. Neither was small enough to
 fold into today's unrelated PR, so they're queued here instead of being
 lost a second time.
 
-- [ ] **`_refuse_if_already_written_today` (`ingestion/earnings.py`)
+- [x] (**Moot 2026-09-24**: the function was deleted when `ingestion/event_calendar.py` became the single writer.) **`_refuse_if_already_written_today` (`ingestion/earnings.py`)
       string-parses `LakeStore.bronze_snapshot_id`'s output** to recover a
       partition's resolved date, even though that method's docstring
       (`lake/store.py:94-99`) describes it as an opaque citation string, not
@@ -1610,7 +1645,7 @@ lost a second time.
       the next time a same-day-collision guard is needed on a shared
       dataset (the BLS CPI adapter, still blocked on Akamai, will need
       exactly this) — fix it there rather than adding a third string-parse.
-- [ ] **`lookahead_days` (`ingestion/earnings.py`) is never exercised with a
+- [x] (**Done 2026-09-24**: `test_lookahead_days_sets_the_window`.) **`lookahead_days` (`ingestion/earnings.py`) is never exercised with a
       non-default value** — not by `make ingest-earnings`, not by any test.
       Either add a test that calls `ingest_earnings_calendar` with a
       non-default value, or trim the parameter if nothing is meant to use it

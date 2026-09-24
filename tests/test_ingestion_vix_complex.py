@@ -6,6 +6,7 @@ from typing import Any
 import pandas as pd
 import pytest
 
+from tail_lab.ingestion.sources import SourceBehindMarket
 from tail_lab.ingestion.vix_complex import (
     ingest_vix_complex,
     parse_vix_complex_csv,
@@ -239,3 +240,41 @@ def test_ingest_logs_the_full_run_surface(tmp_path: Any, caplog: pytest.LogCaptu
     assert "series=SKEW" in line
     assert "valid_rows=2" in line
     assert "quarantined_rows=0" in line
+
+
+def test_one_series_behind_the_market_refuses_the_whole_panel(tmp_path: Any) -> None:
+    """The panel is one immutable snapshot, so one stale series would be
+    frozen into it for the day. Name the laggard; write nothing."""
+    store = DeltaLakeStore(tmp_path)
+    raw = {
+        "VVIX": "DATE,VVIX\n09/22/2026,85.0\n09/23/2026,86.0\n",
+        "SKEW": "DATE,SKEW\n09/22/2026,130.0\n",
+    }
+
+    with pytest.raises(SourceBehindMarket, match=r"SKEW ends 2026-09-22") as err:
+        ingest_vix_complex(
+            store,
+            ["VVIX", "SKEW"],
+            ingest_date=dt.date(2026, 9, 24),
+            raw=raw,
+            market_session=dt.date(2026, 9, 23),
+        )
+    assert "VVIX" not in str(err.value)
+    assert not store.bronze_partition_exists("vix_complex", dt.date(2026, 9, 24))
+
+
+def test_a_series_whose_rows_are_all_quarantined_counts_as_behind(tmp_path: Any) -> None:
+    store = DeltaLakeStore(tmp_path)
+    raw = {
+        "VVIX": "DATE,VVIX\n09/23/2026,86.0\n",
+        "SKEW": "DATE,SKEW\n09/23/2026,-1.0\n",
+    }
+
+    with pytest.raises(SourceBehindMarket, match="SKEW has no rows"):
+        ingest_vix_complex(
+            store,
+            ["VVIX", "SKEW"],
+            ingest_date=dt.date(2026, 9, 24),
+            raw=raw,
+            market_session=dt.date(2026, 9, 23),
+        )

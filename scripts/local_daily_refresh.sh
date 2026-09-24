@@ -85,19 +85,11 @@ fi
   failed=()
   skipped=()
 
-  # NOT in this list: `fomc` and `earnings`. Both write the SHARED
-  # `event_calendar` dataset, which holds one immutable snapshot per
-  # ingest_date from ONE producer (docs/DATA_CONTRACTS.md #5). Whichever runs
-  # first claims the day; the second either loses its rows silently (fomc) or
-  # refuses loudly (earnings, via _refuse_if_already_written_today). Measured
-  # here: running both in one pass fails every single day.
-  #
-  # So a daily loop cannot include them without silently deciding which HALF
-  # of the event calendar exists on each date -- a data question, not a
-  # scheduling one. `ingestion/earnings.py`'s docstring names the real fix
-  # ("combine sources into one write"); it is queued in AGENT_TODO.md. Until
-  # then run whichever you want by hand, on a day the other has not claimed.
-  # NOT here either: `option-quotes`. It reads a hand-downloaded,
+  # `event-calendar` is ONE target for FOMC + earnings on purpose: they share
+  # the `event_calendar` dataset (one immutable snapshot per ingest_date), and
+  # as two writers whichever ran first claimed the day -- measured failing
+  # every single day (2026-09-21). ingestion/event_calendar.py commits both.
+  # NOT here: `option-quotes`. It reads a hand-downloaded,
   # hash-verified vendor parquet (data/vendor/lambdaclass-data-v1/, dated
   # 2026-08-21, last quote 2025-11-21) — a frozen file, not a feed. Ingesting
   # it daily rewrites the same 42,131 rows to object storage every weekday,
@@ -109,7 +101,7 @@ fi
   # bronze, and `research/cadence.py` falls back to a hand-maintained table
   # without the latter.
   for target in vix vix-complex vix-futures cboe-strategy \
-                sp500-constituents mpd; do
+                sp500-constituents mpd event-calendar; do
     run_one "$target" make "ingest-$target" || failed+=("$target")
   done
 

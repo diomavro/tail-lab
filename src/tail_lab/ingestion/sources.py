@@ -32,15 +32,31 @@ Two deliberate design choices:
 
 from __future__ import annotations
 
+import datetime as dt
 import logging
+import time
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
+from typing import Any
 
 import pandas as pd
+import requests
 
 from tail_lab.observability import log_event
 
-__all__ = ["AllSourcesFailed", "Source", "find_header_line", "first_available"]
+__all__ = [
+    "AllSourcesFailed",
+    "Source",
+    "SourceBehindMarket",
+    "find_header_line",
+    "first_available",
+    "is_transient_fetch_error",
+    "require_current",
+    "retry_transient",
+]
+
+
+_LOGGER = logging.getLogger(__name__)
 
 
 def find_header_line(raw: str, *, header_prefix: str = "DATE,") -> int:
@@ -158,3 +174,117 @@ def first_available(
         attempted=len(sources),
     )
     raise AllSourcesFailed(dataset, errors)
+
+
+def is_transient_fetch_error(exc: Exception) -> bool:
+    """Whether retrying the SAME request could plausibly change the answer.
+
+    A 5xx, a 429, or a connection/timeout fault says the host (or the
+    network) failed to answer a request it might answer next time. A 4xx
+    other than 429 says it understood the request and refused it -- most
+    often a symbol it does not list -- and repeating the identical GET cannot
+    change that. Anything that is not a ``requests`` fault (an injected test
+    double, a KeyError in the caller) is not transient either. Note that
+    ``Response.json()`` raises ``requests.exceptions.JSONDecodeError``, a
+    ``RequestException``: a truncated or HTML 200 IS retried, which is what a
+    blip that serves half a body wants.
+    """
+    if isinstance(exc, requests.exceptions.HTTPError) and exc.response is not None:
+        return exc.response.status_code >= 500 or exc.response.status_code == 429
+    return isinstance(exc, requests.exceptions.RequestException)
+
+
+def retry_transient[T](
+    call: Callable[[], T],
+    *,
+    attempts: int,
+    backoff_s: float,
+    event: str,
+    **fields: Any,
+) -> T:
+    """Run ``call``, retrying only faults :func:`is_transient_fetch_error`
+    accepts, sleeping ``backoff_s`` between attempts.
+
+    One implementation for every keyless fetch that can blip: the chain sweep
+    grew this first (a per-symbol Cboe 429 used to cost that symbol its whole
+    session), and ``options_expiry`` hits the same endpoint with none of it.
+    Each retry is logged as ``event`` with ``fields`` so a flaky source shows
+    up in the run log before it becomes a failed one.
+    """
+    for attempt in range(1, attempts + 1):
+        try:
+            return call()
+        except Exception as exc:
+            if not is_transient_fetch_error(exc) or attempt == attempts:
+                raise
+            detail = " ".join(f"{k}={v}" for k, v in fields.items())
+            _LOGGER.warning("event=%s %s attempt=%d/%d", event, detail, attempt, attempts)
+            time.sleep(backoff_s)
+    raise AssertionError("attempts must be >= 1")
+
+
+class SourceBehindMarket(RuntimeError):
+    """A source answered, parsed and validated -- and is still stale.
+
+    Raised INSTEAD of writing. These adapters key the partition on the day
+    they run, so a stale write would occupy today's key and a re-run after
+    the source recovers would no-op against it (bronze is immutable). Not
+    writing costs nothing: as-of reads fall back to the previous partition,
+    which holds the same history.
+    """
+
+
+def require_current(
+    frame: pd.DataFrame,
+    *,
+    date_col: str,
+    market_session: dt.date | None,
+    dataset: str,
+    group_col: str | None = None,
+    expected: Sequence[str] = (),
+) -> None:
+    """Refuse a history whose newest row predates the newest completed session.
+
+    ``market_session`` comes from a source independent of the one being
+    checked (``ingestion.ohlcv.latest_market_session``); ``None`` skips the
+    check. Measured 2026-09-24: Cboe's old ``cdn.cboe.com`` host kept
+    answering 200 with index histories ending 2026-09-22 after the market had
+    completed 2026-09-23 -- a feed that fails nothing and parses perfectly.
+    A holiday cannot trip this, because the reference did not trade either.
+    With ``group_col`` every group (series, ticker) must be current, and the
+    laggards are named -- including any name in ``expected`` with no valid
+    rows at all (a header-only CSV, or one whose every row was quarantined),
+    which is the half-broken-feed case this exists for. A single-series
+    caller (no ``group_col``) gets the same "has no rows" coverage by
+    passing ``expected=(dataset,)``.
+    """
+    if market_session is None or (frame.empty and not expected):
+        return
+    newest = (
+        frame.groupby(group_col)[date_col].max()
+        if group_col is not None
+        else pd.Series({dataset: frame[date_col].max()})
+        if not frame.empty
+        else pd.Series(dtype=object)
+    )
+    behind = {
+        str(name): f"ends {pd.Timestamp(day).date()}"
+        for name, day in newest.items()
+        if pd.Timestamp(day).date() < market_session
+    }
+    present = {str(name) for name in newest.index}
+    behind.update({name: "has no rows" for name in expected if name not in present})
+    if not behind:
+        return
+    detail = ", ".join(f"{name} {state}" for name, state in sorted(behind.items()))
+    _LOGGER.error(
+        "event=ingest.source_behind_market dataset=%s market_session=%s %s",
+        dataset,
+        market_session.isoformat(),
+        detail,
+    )
+    raise SourceBehindMarket(
+        f"{dataset}: the market has completed {market_session} but the source's "
+        f"history does not reach it ({detail}); refusing to write, so a re-run "
+        "after the source catches up can still claim today's partition."
+    )

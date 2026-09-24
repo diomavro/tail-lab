@@ -12,6 +12,7 @@ from tail_lab.ingestion.cboe_strategy import (
     ticker_labels,
     validate_and_quarantine,
 )
+from tail_lab.ingestion.sources import SourceBehindMarket
 from tail_lab.lake.store import DeltaLakeStore
 
 
@@ -210,3 +211,57 @@ def test_ingest_logs_the_full_run_surface(tmp_path: Any, caplog: pytest.LogCaptu
 
 def test_ticker_labels_uppercases_and_dedupes_preserving_order() -> None:
     assert ticker_labels(["pput", "SPX", "PPUT", "vxth"]) == ["PPUT", "SPX", "VXTH"]
+
+
+def test_one_index_behind_the_market_refuses_the_whole_family(tmp_path: Any) -> None:
+    store = DeltaLakeStore(tmp_path)
+    raw = {
+        "PPUT": "DATE,PPUT\n09/22/2026,101.5\n",
+        "SPX": "DATE,SPX\n09/22/2026,5900.0\n09/23/2026,5925.0\n",
+    }
+
+    with pytest.raises(SourceBehindMarket, match=r"PPUT ends 2026-09-22"):
+        ingest_cboe_strategy(
+            store,
+            ["PPUT", "SPX"],
+            ingest_date=dt.date(2026, 9, 24),
+            raw=raw,
+            market_session=dt.date(2026, 9, 23),
+        )
+    assert not store.bronze_partition_exists("cboe_strategy", dt.date(2026, 9, 24))
+
+
+def test_an_index_with_no_rows_counts_as_behind(tmp_path: Any) -> None:
+    """A header-only CSV -- or one whose every row was quarantined -- is the
+    half-broken feed this check exists for. Only looking at the names that
+    DID arrive let it through and claimed the day's partition."""
+    store = DeltaLakeStore(tmp_path)
+    raw = {"PPUT": "DATE,PPUT\n", "SPX": "DATE,SPX\n09/22/2026,5900.0\n09/23/2026,5925.0\n"}
+
+    with pytest.raises(SourceBehindMarket, match="PPUT has no rows"):
+        ingest_cboe_strategy(
+            store,
+            ["PPUT", "SPX"],
+            ingest_date=dt.date(2026, 9, 24),
+            raw=raw,
+            market_session=dt.date(2026, 9, 23),
+        )
+    assert not store.bronze_partition_exists("cboe_strategy", dt.date(2026, 9, 24))
+
+
+def test_a_wholly_dead_feed_is_refused_not_written_empty(tmp_path: Any) -> None:
+    """Every CSV answers with headers and no rows: the frame is empty, and an
+    early "nothing to check" return let the run print "committed 0 rows" and
+    exit 0 -- a dead feed reported as a healthy day. (No partition is claimed:
+    an empty append creates none, so the harm is the silent success.)"""
+    store = DeltaLakeStore(tmp_path)
+    raw = {"PPUT": "DATE,PPUT\n", "SPX": "DATE,SPX\n"}
+
+    with pytest.raises(SourceBehindMarket, match="PPUT has no rows, SPX has no rows"):
+        ingest_cboe_strategy(
+            store,
+            ["PPUT", "SPX"],
+            ingest_date=dt.date(2026, 9, 24),
+            raw=raw,
+            market_session=dt.date(2026, 9, 23),
+        )

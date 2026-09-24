@@ -5,10 +5,12 @@ from typing import Any
 
 import pandas as pd
 import pytest
+import requests
 
 from tail_lab.ingestion.ohlcv import (
     dataset_id,
     ingest_ohlcv,
+    latest_market_session,
     parse_nasdaq_historical,
     parse_yahoo_chart_ohlcv,
     validate_and_quarantine,
@@ -384,3 +386,38 @@ def test_injecting_one_source_never_reaches_the_network_for_the_other(
     }
     result = ingest_ohlcv(store, "SPY", ingest_date=dt.date(2026, 1, 6), raw=yahoo_raw)
     assert result.source_id == "yahoo"
+
+
+# ---- the market-session witness ----------------------------------------------
+
+
+def _nasdaq(*days: str) -> dict[str, Any]:
+    """Nasdaq's historical payload, newest first as the live API serves it."""
+    rows = [
+        {
+            "date": dt.date.fromisoformat(d).strftime("%m/%d/%Y"),
+            "close": "$500.00",
+            "volume": "1,000",
+            "open": "$499.00",
+            "high": "$501.00",
+            "low": "$498.00",
+        }
+        for d in days
+    ]
+    return {"data": {"tradesTable": {"rows": rows}}}
+
+
+def test_latest_market_session_is_the_newest_completed_bar() -> None:
+    assert latest_market_session(lambda: _nasdaq("2026-09-23", "2026-09-22")) == dt.date(
+        2026, 9, 23
+    )
+
+
+def test_an_unreadable_reference_skips_the_check_rather_than_failing_the_sweep() -> None:
+    """The witness guards the sweep; it must never be the thing that costs it."""
+
+    def boom() -> dict[str, Any]:
+        raise requests.exceptions.ConnectionError("nasdaq down")
+
+    assert latest_market_session(boom) is None
+    assert latest_market_session(lambda: {"data": {"tradesTable": {"rows": []}}}) is None

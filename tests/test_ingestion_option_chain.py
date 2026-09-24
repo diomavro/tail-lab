@@ -22,7 +22,6 @@ from tail_lab.ingestion.option_chain import (
     _fetch_with_retry,
     cboe_symbol,
     ingest_option_chain,
-    latest_market_session,
     parse_cboe_chain,
     parse_osi_symbol,
     sweep_to_records,
@@ -246,9 +245,9 @@ def _http_error(status_code: int) -> requests.exceptions.HTTPError:
 @pytest.fixture(autouse=True)
 def _no_sleeping(monkeypatch: pytest.MonkeyPatch) -> None:
     """The backoff is real in production and pointless in a test."""
-    import tail_lab.ingestion.option_chain as option_chain_module
+    import tail_lab.ingestion.sources as sources_module
 
-    monkeypatch.setattr(option_chain_module.time, "sleep", lambda _s: None)
+    monkeypatch.setattr(sources_module.time, "sleep", lambda _s: None)
 
 
 def test_a_transient_fault_is_retried_and_the_symbol_is_saved() -> None:
@@ -970,56 +969,6 @@ def test_a_behind_feed_still_captures_a_session_the_lake_lacks(tmp_path: Path) -
     assert result.quote_date == dt.date(2026, 8, 25)
 
 
-def _nasdaq(*days: str) -> dict[str, Any]:
-    """Nasdaq's historical payload, newest first as the live API serves it."""
-    rows = [
-        {
-            "date": dt.date.fromisoformat(d).strftime("%m/%d/%Y"),
-            "close": "$500.00",
-            "volume": "1,000",
-            "open": "$499.00",
-            "high": "$501.00",
-            "low": "$498.00",
-        }
-        for d in days
-    ]
-    return {"data": {"tradesTable": {"rows": rows}}}
-
-
-def test_latest_market_session_is_the_newest_completed_bar() -> None:
-    assert latest_market_session(lambda: _nasdaq("2026-09-23", "2026-09-22")) == dt.date(
-        2026, 9, 23
-    )
-
-
-def test_an_unreadable_reference_skips_the_check_rather_than_failing_the_sweep() -> None:
-    """The witness guards the sweep; it must never be the thing that costs it."""
-
-    def boom() -> dict[str, Any]:
-        raise requests.exceptions.ConnectionError("nasdaq down")
-
-    assert latest_market_session(boom) is None
-    assert latest_market_session(lambda: {"data": {"tradesTable": {"rows": []}}}) is None
-
-
-def test_a_cdn_rollback_after_the_newer_session_landed_is_not_an_alarm(tmp_path: Path) -> None:
-    """Cboe's per-symbol CDN snapshots vary in age by hours; if it briefly
-    serves an older snapshot AFTER the newer session was captured, nothing is
-    lost. Refusing there would raise an alert whose message ("the session is
-    lost") is false -- and a false alarm on this job teaches people to ignore
-    the true one."""
-    live = [f"SYM{i:02d}" for i in range(24)]
-    store = DeltaLakeStore(tmp_path)
-    older = _fetcher(**{n: _payload(_put(95.0), symbol=n, day="2026-08-25") for n in live})
-    newer = _fetcher(**{n: _payload(_put(95.0), symbol=n, day="2026-08-26") for n in live})
-    ingest_option_chain(store, live, fetch=older)
-    ingest_option_chain(store, live, fetch=newer)
-
-    rerun = ingest_option_chain(store, live, fetch=older, market_session=dt.date(2026, 8, 26))
-
-    assert rerun.committed is False
-
-
 def test_a_lagging_witness_cannot_raise_an_alarm(tmp_path: Path) -> None:
     """Nasdaq may post a session's bar after Cboe serves its chains. Then the
     witness is OLDER than Cboe's session, which says nothing about Cboe being
@@ -1064,5 +1013,23 @@ def test_a_partial_cdn_rollback_after_capture_is_not_an_alarm(tmp_path: Path) ->
     )
 
     rerun = ingest_option_chain(store, live, fetch=mixed)
+
+    assert rerun.committed is False
+
+
+def test_a_cdn_rollback_after_the_newer_session_landed_is_not_an_alarm(tmp_path: Path) -> None:
+    """Cboe's per-symbol CDN snapshots vary in age by hours; if it briefly
+    serves an older snapshot AFTER the newer session was captured, nothing is
+    lost. Refusing there would raise an alert whose message ("the session is
+    lost") is false -- and a false alarm on this job teaches people to ignore
+    the true one."""
+    live = [f"SYM{i:02d}" for i in range(24)]
+    store = DeltaLakeStore(tmp_path)
+    older = _fetcher(**{n: _payload(_put(95.0), symbol=n, day="2026-08-25") for n in live})
+    newer = _fetcher(**{n: _payload(_put(95.0), symbol=n, day="2026-08-26") for n in live})
+    ingest_option_chain(store, live, fetch=older)
+    ingest_option_chain(store, live, fetch=newer)
+
+    rerun = ingest_option_chain(store, live, fetch=older, market_session=dt.date(2026, 8, 26))
 
     assert rerun.committed is False
