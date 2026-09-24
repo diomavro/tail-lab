@@ -72,6 +72,25 @@ case "$CONTEXT" in
     TOAST_BODY="One or more bronze sources did not refresh. They serve history on demand, so a re-run recovers them."
     LOGS="$REPO/.daily-refresh.log"
     ;;
+  budget)
+    # GitHub's own "Included usage alerts" (90%/100% of plan allowance) are a
+    # UI-only toggle -- there is no API for them, and the billing usage
+    # endpoint needs a `user` scope this machine's token does not carry. This
+    # context is the local substitute: `scripts/actions-budget.sh` in the
+    # sibling workspace reconstructs billed minutes from run data with no
+    # extra scope, and exits non-zero above 80% of the allowance.
+    #
+    # It exists because hitting the limit is what killed CI, deploys and the
+    # daily agent for four days in September 2026, and nothing warned first.
+    MARKER="$REPO/.actions-budget-FAILED"
+    FALLBACK="$HOME/.actions-budget-FAILED"
+    HEADLINE="tail-lab: GitHub Actions minutes are running out ($WHEN)"
+    REMEDY="../scripts/actions-budget.sh"
+    URGENCY="normal"
+    TOAST_TITLE="GitHub Actions budget"
+    TOAST_BODY="Billed Actions minutes are above 80% of the monthly allowance. CI, deploys and the daily agent all stop at 100%."
+    LOGS="$REPO/.actions-budget.log"
+    ;;
   chain)
     MARKER="$REPO/.chain-sweep-FAILED"
     FALLBACK="$HOME/.chain-sweep-FAILED"
@@ -114,6 +133,14 @@ render() {
       echo "These sources all serve history on demand, so nothing is lost --"
       echo "a re-run recovers them. This is NOT the option-chain sweep, and it"
       echo "is NOT time-critical. Do not run the chain sweep because of this."
+      ;;
+    budget)
+      echo "Billed Actions minutes are above 80% of the monthly allowance."
+      echo "At 100% every workflow in EVERY repo on this account stops --"
+      echo "CI, deploys, the daily agent and the chain sweep together. That"
+      echo "is what happened in September 2026 and nothing warned first."
+      echo "Public repos are free and do not count; quizkit and tip_app are"
+      echo "still private and still bill. Per-repo breakdown:"
       ;;
     chain)
       echo "The option-chain sweep is unrecoverable if missed: no free source"

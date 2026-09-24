@@ -37,3 +37,6 @@ data/
 .daily-refresh.log.1
 .daily-refresh.lock
 .daily-refresh-FAILED
+.actions-budget.log
+.actions-budget.log.1
+.actions-budget-FAILED
