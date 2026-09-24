@@ -146,6 +146,28 @@ acts on, removes, or reorders anything in this file.**
       for `github-actions` only; add npm after `automerge.yml` gains an author
       check.
 
+- [ ] **Decide on the Kaggle SPY 2014-2025 chain corpus — it is the only
+      free thing that closes the 2024-2025 hole.**
+      `docs/PRIOR_ART.md` §18. optionsDX stops 2023-12. This runs to 2025 and
+      would take the OHLCV-chain overlap from the ~589 trading days
+      `CLAUDE.md` records to ~1,075, and make 2023 a free vendor-disagreement
+      check against optionsDX. Measured against your own
+      `spy_eod_2023q2` slice on one date: identical 176-strike set, put bid
+      median difference $0.02.
+      **Two reasons it needs you rather than the agent.** Its schema is
+      character-for-character Alpha Vantage `HISTORICAL_OPTIONS`, so despite
+      the CC0 label **Alpha Vantage's terms are the real constraint** — the
+      same unresolved posture as the lambdaclass call already in this file,
+      and you may simply want to apply the same answer. And it is **8.7 GB
+      uncompressed against 12 GB free** (root is at 95%, not the 87%
+      `CLAUDE.md` records — verified 2026-09-24), so it must be ingested
+      year-by-year straight to parquet, never unpacked whole.
+      One quality caveat to carry into the contract if you say yes: its IV is
+      **smoothed, not per-contract inverted** (383 strikes carrying 109
+      distinct IV values), so the vendor greeks are decorative and
+      `option_pricer.PutGreeks` must do the work — the same house rule as
+      Cboe's zero-fill and optionsDX's blank `P_IV`.
+
 ## Setup needed for v1
 
 - [x] Create the GitHub repo `diomavro/tail-lab`, push `main`, enable
