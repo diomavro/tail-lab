@@ -254,7 +254,9 @@ def require_current(
     With ``group_col`` every group (series, ticker) must be current, and the
     laggards are named -- including any name in ``expected`` with no valid
     rows at all (a header-only CSV, or one whose every row was quarantined),
-    which is the half-broken-feed case this exists for.
+    which is the half-broken-feed case this exists for. A single-series
+    caller (no ``group_col``) gets the same "has no rows" coverage by
+    passing ``expected=(dataset,)``.
     """
     if market_session is None or (frame.empty and not expected):
         return
@@ -262,6 +264,8 @@ def require_current(
         frame.groupby(group_col)[date_col].max()
         if group_col is not None
         else pd.Series({dataset: frame[date_col].max()})
+        if not frame.empty
+        else pd.Series(dtype=object)
     )
     behind = {
         str(name): f"ends {pd.Timestamp(day).date()}"

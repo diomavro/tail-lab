@@ -249,7 +249,9 @@ def ingest_vix(
     )
     valid, quarantined = validate_and_quarantine(parsed)
 
-    require_current(valid, date_col="date", market_session=market_session, dataset=DATASET)
+    require_current(
+        valid, date_col="date", market_session=market_session, dataset=DATASET, expected=(DATASET,)
+    )
     bronze_path = store.write_bronze(DATASET, ingest_date, valid)
 
     # Quarantined rows are committed through the store too (as an immutable

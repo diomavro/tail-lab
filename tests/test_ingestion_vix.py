@@ -288,6 +288,25 @@ def test_a_history_behind_the_market_is_refused_and_leaves_the_day_free(tmp_path
     assert result.valid_rows == 3
 
 
+def test_a_feed_whose_only_row_is_quarantined_counts_as_behind(tmp_path: Any) -> None:
+    """A single row that fails the schema (here: a negative close) leaves
+    ``valid`` empty without the source itself having answered with zero
+    rows. Without ``expected`` naming the dataset, an empty ``valid`` frame
+    short-circuited the check entirely and committed a clean 0-row
+    partition on a day the market moved."""
+    store = DeltaLakeStore(tmp_path)
+    bad_only = "DATE,OPEN,HIGH,LOW,CLOSE\n09/23/2026,1,2,0.5,-14.2\n"
+
+    with pytest.raises(SourceBehindMarket, match="vix has no rows"):
+        ingest_vix(
+            store,
+            ingest_date=dt.date(2026, 9, 24),
+            cboe_csv=bad_only,
+            market_session=dt.date(2026, 9, 23),
+        )
+    assert not store.bronze_partition_exists("vix", dt.date(2026, 9, 24))
+
+
 @pytest.mark.parametrize("witness", [dt.date(2026, 9, 22), None])
 def test_a_current_history_or_no_witness_writes_normally(
     tmp_path: Any, witness: dt.date | None
