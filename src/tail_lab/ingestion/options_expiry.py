@@ -3,7 +3,7 @@
 cadence adapter" item).
 
 **Primary source: Cboe** --
-``https://cdn.cboe.com/api/global/delayed_quotes/options/{SYMBOL}.json``.
+``https://cdn-api.cboe.com/api/global/delayed_quotes/options/{SYMBOL}.json``.
 Keyless, no cookie, no crumb, no account: a plain GET returns the whole
 listed chain (14,402 contracts for SPY when measured on 2026-08-21), and
 every contract carries its expiration inside its OCC symbol. Deriving the
@@ -64,7 +64,7 @@ __all__ = [
 
 _LOGGER = logging.getLogger(__name__)
 
-CBOE_CHAIN_URL_TEMPLATE = "https://cdn.cboe.com/api/global/delayed_quotes/options/{symbol}.json"
+CBOE_CHAIN_URL_TEMPLATE = "https://cdn-api.cboe.com/api/global/delayed_quotes/options/{symbol}.json"
 
 #: OCC option symbol: root, then YYMMDD, then C/P, then the 8-digit strike.
 #: Only the date group is needed here.

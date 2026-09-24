@@ -53,7 +53,7 @@ a large one strictly in order.
 
 - [ ] **Three Delta Lake fixes, two of them live bugs.**
       `docs/PRIOR_ART.md` §21.
-      (a) Rewrite `option_chain_snapshot__quarantine` with
+      (a) **Done 2026-09-24** — see the quarantine-schema item. Rewrite `option_chain_snapshot__quarantine` with
       `mode="overwrite", schema_mode="overwrite"` — delta-rs has no
       column-drop API, and this preserves history and partitioning. Four lines.
       (b) Replace `write_bronze`'s read-then-append with
@@ -198,7 +198,16 @@ a large one strictly in order.
       or `transforms/` today. It is queued so the next person to want the
       curve does not rediscover this from a 400.
 
-- [ ] **Repair the `option_chain_snapshot__quarantine` schema.**
+- [x] **Repair the `option_chain_snapshot__quarantine` schema.**
+      **Done 2026-09-24** (by hand, not in code): rewritten with
+      `mode="overwrite", schema_mode="overwrite"` from v11 to v12; all 6,422
+      rows preserved and verified identical, the stray column held only stale pandas row positions (0 nulls, values
+      406-21898 -- no quote data),
+      and the Arrow schema now equals the main table's exactly. Pre-repair copy
+      at `data/backups/option_chain_snapshot__quarantine_v11_2026-09-24.parquet`
+      (and v11 remains reachable by Delta time travel until a vacuum). The
+      other 62 bronze tables, including every other `*__quarantine`, were
+      scanned and are clean.
       It carries a stale `__index_level_0__` column (14 fields against the
       main table's 13), left from before `write_bronze` gained its
       `reset_index(drop=True)`. Any clean frame written to it now raises
@@ -263,7 +272,43 @@ a large one strictly in order.
       snapshot. Serves `docs/END_STATE.md` §4 via event-aware screening,
       which cannot work off half a calendar.
 
-- [ ] **Carry the sweep-completeness fixes across to the `--post` path.**
+- [ ] **The Cboe index-history adapters cannot see a frozen 200 either.**
+      `vix.py`, `vix_complex.py`, `cboe_strategy.py` have no freshness check,
+      and `ingest_vix` keys the partition on the clock, so during the
+      2026-09-23 host freeze `make ingest-vix` would have committed a
+      partition ending 09-22 without complaint. Lower stakes than the chain
+      (the CSVs carry full history, so a later run heals it), but a stale
+      partition is still read as-of. Compare the newest row against the
+      Nasdaq witness (`ingestion.option_chain.latest_market_session`) and
+      warn -- or refuse -- when the source is behind the market.
+
+- [ ] **A wall-clock outlier turns a morning catch-up red for nothing.**
+      Found by adversarial review 2026-09-24, and now on BOTH writers (the
+      local path always had it). A symbol with no `last_trade_time` is dated
+      from Cboe's CDN clock, so a 05:00 UTC catch-up after a good evening
+      capture sees majority = yesterday (already captured) plus one "fresher"
+      chain dated today, and the stale-majority guard refuses with "would
+      silently discard <today>" -- false: today has not traded yet.
+      The tempting fix -- ignore a fresh minority newer than the Nasdaq
+      witness (`market_session`) -- re-opens the silent loss the guard exists
+      for IF Nasdaq posts today's bar later than Cboe updates chains in the
+      evening. **Measure first**: when (UTC) Nasdaq's SPY historical endpoint
+      adds the day's bar, across several days. If it is reliably before
+      21:30, apply the fix; otherwise distinguish timestamp-fallback rows in
+      `parse_cboe_chain` instead.
+
+- [x] **Carry the sweep-completeness fixes across to the `--post` path.**
+      **Done 2026-09-24**: everything between "validated" and "write" is now
+      `contracts.option_chain.plan_session_write`, called by both writers, and
+      the endpoint reports `committed`/`symbols_off_session`. The same change
+      added a fourth protection neither path had: a **frozen feed** — Cboe's
+      old CDN host froze 2026-09-23 03:55 UTC after `/api/global/` moved to
+      `cdn-api.cboe.com` (all five Cboe adapters now point there; `/data/`
+      VX futures stayed on `cdn.cboe.com` and never froze), every chain agreed on
+      the already-captured 2026-09-22, and both writers no-opped green while
+      the 23rd was lost for good (the 24th still at risk when this landed). The sweep now asks Nasdaq for the newest
+      completed SPY session and refuses a no-op when the market is ahead of
+      Cboe (holiday-proof: on a holiday the witness did not trade either).
       `ingestion/option_chain.py` now (a) refuses to create a partition from
       fewer than `MIN_SYMBOL_FRACTION` of the requested chains, (b) reports
       `IngestResult.committed` so a no-op write stops being indistinguishable

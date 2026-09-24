@@ -1,7 +1,7 @@
 """VIX ingestion adapter — bronze layer (`docs/DATA_CONTRACTS.md` #2).
 
 **Primary source: Cboe** —
-``https://cdn.cboe.com/api/global/us_indices/daily_prices/VIX_History.csv``.
+``https://cdn-api.cboe.com/api/global/us_indices/daily_prices/VIX_History.csv``.
 Keyless, no account, `DATE,OPEN,HIGH,LOW,CLOSE` from **1990-01-02**, and it
 is what `docs/DATA_CONTRACTS.md` #2 specified all along. Cboe computes the
 VIX, so this is the index's own publisher rather than a redistributor.
@@ -63,7 +63,7 @@ __all__ = [
 
 _LOGGER = logging.getLogger(__name__)
 
-CBOE_VIX_URL = "https://cdn.cboe.com/api/global/us_indices/daily_prices/VIX_History.csv"
+CBOE_VIX_URL = "https://cdn-api.cboe.com/api/global/us_indices/daily_prices/VIX_History.csv"
 YAHOO_CHART_URL = "https://query1.finance.yahoo.com/v8/finance/chart/%5EVIX"
 DATASET = "vix"
 QUARANTINE_DATASET = f"{DATASET}__quarantine"

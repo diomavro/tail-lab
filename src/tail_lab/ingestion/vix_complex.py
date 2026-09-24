@@ -1,7 +1,7 @@
 """Vix-complex ingestion adapter — bronze layer (`docs/DATA_CONTRACTS.md` #2).
 
 Source: Cboe's public index CSVs,
-``https://cdn.cboe.com/api/global/us_indices/daily_prices/{TICKER}_History.csv``
+``https://cdn-api.cboe.com/api/global/us_indices/daily_prices/{TICKER}_History.csv``
 — the same keyless CDN host and URL family ``ingestion/vix.py`` and
 ``ingestion/cboe_strategy.py`` already use. No API key, no account, no login.
 
@@ -68,7 +68,7 @@ __all__ = [
 _LOGGER = logging.getLogger(__name__)
 
 INDEX_HISTORY_URL_TEMPLATE = (
-    "https://cdn.cboe.com/api/global/us_indices/daily_prices/{ticker}_History.csv"
+    "https://cdn-api.cboe.com/api/global/us_indices/daily_prices/{ticker}_History.csv"
 )
 QUARANTINE_DATASET = f"{DATASET}__quarantine"
 

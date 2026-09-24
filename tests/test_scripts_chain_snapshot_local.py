@@ -35,6 +35,13 @@ chain_snapshot = importlib.util.module_from_spec(_SPEC)
 _SPEC.loader.exec_module(chain_snapshot)
 
 
+@pytest.fixture(autouse=True)
+def _no_market_reference(monkeypatch: pytest.MonkeyPatch) -> None:
+    """``main`` now asks Nasdaq for the latest session before every sweep;
+    tests never touch the network, so the witness is stubbed out here."""
+    monkeypatch.setattr(chain_snapshot, "latest_market_session", lambda: None)
+
+
 class _Result:
     """Enough of ``IngestResult`` for the local path to report on.
 
@@ -96,7 +103,7 @@ def test_local_does_not_also_run_the_post_paths_sweep(monkeypatch: pytest.Monkey
         swept += 1
         return [{"underlying": "SPY"}] * 20_000
 
-    def fake_ingest(_store: Any, _symbols: Any) -> _Result:
+    def fake_ingest(_store: Any, _symbols: Any, **_kw: Any) -> _Result:
         nonlocal ingested
         ingested += 1
         return _Result()
@@ -119,7 +126,7 @@ def test_local_fails_on_an_implausibly_short_sweep(monkeypatch: pytest.MonkeyPat
 
     monkeypatch.setattr("tail_lab.config.get_lake_store", lambda: object())
     monkeypatch.setattr(
-        "tail_lab.ingestion.option_chain.ingest_option_chain", lambda _s, _y: _Short()
+        "tail_lab.ingestion.option_chain.ingest_option_chain", lambda _s, _y, **_kw: _Short()
     )
     assert chain_snapshot.main(["--local", "--symbols", "spy"]) == 1
 
@@ -140,7 +147,7 @@ def test_local_exits_non_zero_when_the_sweep_is_refused(monkeypatch: pytest.Monk
     """
     from tail_lab.ingestion.option_chain import IncompleteSweepError
 
-    def refuse(_store: Any, _symbols: Any) -> _Result:
+    def refuse(_store: Any, _symbols: Any, **_kw: Any) -> _Result:
         raise IncompleteSweepError("only 15 of 24 chains returned quotes")
 
     monkeypatch.setattr("tail_lab.config.get_lake_store", lambda: object())
@@ -159,9 +166,27 @@ def test_local_reports_a_no_op_rather_than_claiming_rows(
 
     monkeypatch.setattr("tail_lab.config.get_lake_store", lambda: object())
     monkeypatch.setattr(
-        "tail_lab.ingestion.option_chain.ingest_option_chain", lambda _s, _y: _NoOp()
+        "tail_lab.ingestion.option_chain.ingest_option_chain", lambda _s, _y, **_kw: _NoOp()
     )
     assert chain_snapshot.main(["--local", "--symbols", "spy"]) == 0
     out = capsys.readouterr().out
     assert "NO-OP" in out
     assert "committed 19525 rows" not in out
+
+
+def test_local_hands_the_market_witness_to_the_adapter(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The systemd stand-in runs THIS path. If it stops forwarding the
+    witness, a frozen Cboe feed goes back to no-opping green on the local
+    sweep while every other test here still passes."""
+    seen: dict[str, Any] = {}
+
+    def fake_ingest(_store: Any, _symbols: Any, **kw: Any) -> _Result:
+        seen.update(kw)
+        return _Result()
+
+    monkeypatch.setattr("tail_lab.config.get_lake_store", lambda: object())
+    monkeypatch.setattr("tail_lab.ingestion.option_chain.ingest_option_chain", fake_ingest)
+    monkeypatch.setattr(chain_snapshot, "latest_market_session", lambda: dt.date(2026, 9, 23))
+
+    assert chain_snapshot.main(["--local", "--symbols", "spy"]) == 0
+    assert seen.get("market_session") == dt.date(2026, 9, 23)

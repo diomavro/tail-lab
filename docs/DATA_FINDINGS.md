@@ -37,7 +37,7 @@ a vendor's marketing page — the difference has already mattered twice
 
 | Source | What it gives | Status | Verified | Detail |
 |---|---|---|---|---|
-| **Cboe strategy indices** `cdn.cboe.com/api/global/us_indices/daily_prices/{T}_History.csv` | Real OPRA-transaction-priced put/collar/putwrite program NAVs. `PPUT` 1986→, `PPUT3M` (Tail Risk) 2004→, `VXTH` 2006→, `LTV` 2006→, `CLLZ` 1986→, `SPX` 1975→ | ✅ **Ingested** — 74,367 rows, dataset #7 | 2026-08-21 | §9.1 |
+| **Cboe strategy indices** `cdn-api.cboe.com/api/global/us_indices/daily_prices/{T}_History.csv` (moved from `cdn.cboe.com`, which froze 2026-09-23) | Real OPRA-transaction-priced put/collar/putwrite program NAVs. `PPUT` 1986→, `PPUT3M` (Tail Risk) 2004→, `VXTH` 2006→, `LTV` 2006→, `CLLZ` 1986→, `SPX` 1975→ | ✅ **Ingested** — 74,367 rows, dataset #7 | 2026-08-21 | §9.1 |
 | **FRED / ALFRED** | Rates, credit, vintages (`realtime_start/end`) | ✅ Live, free key held | 2026-08-19 | §2 |
 | **Cboe VX futures archive** | Per-contract VIX futures settlement, 2004→ | ✅ Live, keyless | 2026-08-19 | §2 |
 | **Nasdaq earnings calendar** `api.nasdaq.com/api/calendar/earnings` | Historical earnings dates + EPS surprise, 2010→ | ✅ Live, keyless (browser UA required) | 2026-08-19 | §2 |

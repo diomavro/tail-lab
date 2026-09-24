@@ -12,6 +12,7 @@ it; instead a human had to notice a red run.
 
 from __future__ import annotations
 
+import datetime as dt
 import importlib.util
 import urllib.error
 from pathlib import Path
@@ -25,6 +26,13 @@ _SPEC = importlib.util.spec_from_file_location(
 assert _SPEC and _SPEC.loader
 chain_snapshot = importlib.util.module_from_spec(_SPEC)
 _SPEC.loader.exec_module(chain_snapshot)
+
+
+@pytest.fixture(autouse=True)
+def _no_market_reference(monkeypatch: pytest.MonkeyPatch) -> None:
+    """``main`` now asks Nasdaq for the latest session before every sweep;
+    tests never touch the network, so the witness is stubbed out here."""
+    monkeypatch.setattr(chain_snapshot, "latest_market_session", lambda: None)
 
 
 def _http_error(code: int) -> urllib.error.HTTPError:
@@ -132,3 +140,46 @@ def test_a_wedged_app_reports_a_failure_rather_than_a_traceback(
 
     assert rc == 1
     assert "::error::" in capsys.readouterr().err
+
+
+def test_the_post_carries_the_floor_and_the_witness(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Without ``symbols`` the app cannot apply the symbol floor to chains
+    that never reached it; without ``market_session`` it cannot see a frozen
+    feed. Both have to cross the wire or the server-side checks are inert."""
+    sent: list[dict[str, Any]] = []
+
+    def fake(_url: str, _token: str, payload: dict[str, Any], _timeout: int) -> dict[str, Any]:
+        sent.append(payload)
+        return {
+            "rows": 1,
+            "symbols": 1,
+            "quote_date": "2026-09-22",
+            "bronze_path": "p",
+            "committed": True,
+        }
+
+    monkeypatch.setattr(chain_snapshot, "_post_once", fake)
+    monkeypatch.setattr(chain_snapshot, "latest_market_session", lambda: dt.date(2026, 9, 23))
+    monkeypatch.setattr(
+        chain_snapshot, "sweep_to_records", lambda _s: [{"underlying": "SPY"}] * 20_000
+    )
+
+    assert chain_snapshot.main(["--post", "http://x", "--token", "t", "--symbols", "spy,qqq"]) == 0
+    assert sent[0]["symbols"] == ["spy", "qqq"]
+    assert sent[0]["market_session"] == "2026-09-23"
+
+
+def test_a_no_op_is_reported_as_one(capsys: pytest.CaptureFixture[str]) -> None:
+    rc = chain_snapshot._report_post(
+        {
+            "rows": 20078,
+            "symbols": 24,
+            "quote_date": "2026-09-22",
+            "bronze_path": "p",
+            "committed": False,
+        }
+    )
+    out = capsys.readouterr().out
+    assert rc == 0
+    assert "NO-OP" in out
+    assert "committed 20078" not in out

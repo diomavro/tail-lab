@@ -101,7 +101,7 @@ and the regime panel are built from.
 **Source (free, keyless) — an ordered chain.** `ingestion/vix.py`
 resolves through `ingestion/sources.py`:
 
-1. **Cboe** — `cdn.cboe.com/api/global/us_indices/daily_prices/VIX_History.csv`,
+1. **Cboe** — `cdn-api.cboe.com/api/global/us_indices/daily_prices/VIX_History.csv`,
    `DATE,OPEN,HIGH,LOW,CLOSE` from **1990-01-02**. Cboe computes the VIX, so
    this is the index's publisher rather than a redistributor. Promoted to
    primary 2026-08-21; the first live run committed **9,255 rows covering
@@ -312,7 +312,7 @@ residual from a constant measured on one vendor's SPY history into a function
 of name and regime.
 
 **Source (free, keyless).** Cboe's delayed-quote CDN,
-`https://cdn.cboe.com/api/global/delayed_quotes/options/{SYMBOL}.json` —
+`https://cdn-api.cboe.com/api/global/delayed_quotes/options/{SYMBOL}.json` —
 15-minute delayed, the exchange's own feed, no key, no cookie, no crumb. Cash
 indices take an underscore prefix (`_SPX`, `_VIX`); equities and ETFs use the
 bare root. Yahoo's `/v7/finance/options`, the originally-planned source, now
@@ -404,7 +404,7 @@ mispricing the platform is looking for. See `docs/DATA_SOURCING.md` §9.1
 for why this replaced a $99/mo–$1,495 purchase.
 
 **Source (free, keyless).** Cboe's public index CSVs,
-`https://cdn.cboe.com/api/global/us_indices/daily_prices/{TICKER}_History.csv`
+`https://cdn-api.cboe.com/api/global/us_indices/daily_prices/{TICKER}_History.csv`
 — same host and URL family as dataset #2's vol complex. Per Cboe's
 published methodology, each roll is priced at the **volume-weighted average
 of actual OPRA transaction prices** (fallback: last reported ask), which is

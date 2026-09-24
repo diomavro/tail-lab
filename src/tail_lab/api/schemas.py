@@ -124,6 +124,15 @@ class OptionChainSnapshotRequest(BaseModel):
 
     rows: list[OptionChainSnapshotRow]
     ingest_date: dt.date | None = None
+    #: Every symbol the sweep ASKED for, not just those that answered -- the
+    #: only way the server can apply the symbol floor
+    #: (``contracts.option_chain.MIN_SYMBOL_FRACTION``) to a sweep whose
+    #: failures never reach it as rows.
+    symbols: list[str] = Field(min_length=1)
+    #: Newest completed US session per a source independent of Cboe, or
+    #: ``None`` when the sweep could not read one. See
+    #: ``contracts.option_chain.plan_session_write``.
+    market_session: dt.date | None = None
 
 
 class OptionChainSnapshotResponse(BaseModel):
@@ -137,6 +146,12 @@ class OptionChainSnapshotResponse(BaseModel):
     symbols: int
     quote_date: dt.date
     bronze_path: str
+    #: False when the session was already captured and nothing was written.
+    #: Before this field the endpoint echoed ``rows`` either way, so a re-run
+    #: read exactly like a fresh capture in the workflow log.
+    committed: bool = True
+    symbols_failed: tuple[str, ...] = ()
+    symbols_off_session: tuple[str, ...] = ()
 
 
 class OptionChainSnapshotStatus(BaseModel):

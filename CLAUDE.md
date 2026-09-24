@@ -89,6 +89,16 @@ them.
   immutable, so a per-symbol write persists only the first), and Cboe
   **zero-fills** `iv`/`delta`/`theo` it cannot compute — the adapter maps those to
   null, and a 0.0 in those columns is never a measurement.
+  **Cboe can also freeze wholesale**: it moved `/api/global/` to
+  `cdn-api.cboe.com`, and the old `cdn.cboe.com` host froze on 2026-09-23
+  03:55 UTC while still answering 200 (`Last-Modified` stuck); chain paths
+  began redirecting only on 09-24, index-history CSVs never did,
+  every sweep read the already-captured 2026-09-22 and no-opped **green**, and
+  2026-09-23 was lost. Both writers now take Nasdaq's newest completed SPY
+  session as a witness and fail red when the market is ahead of Cboe. If you
+  see "Cboe's feed is behind", check `curl -sIL` (follow the redirect) on
+  `cdn-api.cboe.com/api/global/delayed_quotes/options/SPY.json`'s `last-modified`
+  before blaming the code.
 - **Surfaces are named after desk functions** (`docs/adr/0021`): Screen, Tape,
   Bake-off, Prior Art, Carry Budget, Regime. Code layers keep their plumbing
   names; anything a human reads takes a desk word or argues for a new one in an

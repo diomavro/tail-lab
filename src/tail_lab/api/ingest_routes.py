@@ -40,6 +40,8 @@ from tail_lab.config import get_lake_store as _get_configured_lake_store
 from tail_lab.contracts.option_chain import (
     DATASET,
     DEFAULT_SNAPSHOT_SYMBOLS,
+    IncompleteSweepError,
+    plan_session_write,
     split_valid_and_quarantined,
 )
 from tail_lab.lake.store import LakeStore
@@ -100,30 +102,72 @@ def ingest_option_chain_snapshot(
     # tomorrow's real sweep then no-ops against it (bronze is immutable) and
     # is lost. Deriving it from the quotes makes a late run land correctly and
     # a re-run of the same session no-op the way immutability intends.
-    ingest_date = body.ingest_date or valid["quote_date"].max().date()
-    bronze_path = store.write_bronze(DATASET, ingest_date, valid)
-    if not quarantined.empty:
-        store.write_bronze(QUARANTINE_DATASET, ingest_date, quarantined)
+    #
+    # Session naming, the off-session split, the symbol floor and the
+    # stale-feed refusal are the SAME code the local adapter runs
+    # (``contracts.option_chain.plan_session_write``); this route had drifted
+    # to none of them.
+    requested = sorted({s.upper() for s in body.symbols})
+    present = {str(u).upper() for u in frame["underlying"].unique()}
+    try:
+        plan = plan_session_write(
+            valid,
+            quarantined,
+            requested=requested,
+            fetched_ok=[s for s in requested if s in present],
+            fetch_failed=[s for s in requested if s not in present],
+            partition_exists=lambda day: store.bronze_partition_exists(DATASET, day),
+            ingest_date=body.ingest_date,
+            market_session=body.market_session,
+        )
+    except IncompleteSweepError as exc:
+        # 409, not 422: the body is well-formed; writing it NOW would lose a
+        # session. The sweep script does not retry a 4xx, so this lands as a
+        # red run with this message on it.
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
 
+    bronze_path = store.write_bronze(DATASET, plan.ingest_date, plan.valid)
+    if not plan.quarantined.empty:
+        # Diagnostic only, and the session is already committed above: a
+        # failed quarantine write must not turn a correct capture into a 500
+        # the script then retries into a no-op. Same rule as the local path.
+        try:
+            store.write_bronze(QUARANTINE_DATASET, plan.ingest_date, plan.quarantined)
+        except Exception:
+            _LOGGER.exception(
+                "event=api.ingest.option_chain.quarantine_write_failed ingest_date=%s rows=%d",
+                plan.ingest_date.isoformat(),
+                len(plan.quarantined),
+            )
+
+    symbols = int(plan.valid["underlying"].nunique())
+    quote_date = plan.valid["quote_date"].max().date() if not plan.valid.empty else plan.session
     log_event(
         _LOGGER,
         "api.ingest.option_chain",
         dataset=DATASET,
-        ingest_date=ingest_date,
-        rows=len(valid),
-        quarantined=len(quarantined),
-        symbols=valid["underlying"].nunique(),
-        quote_date=str(valid["quote_date"].max().date()),
+        ingest_date=plan.ingest_date,
+        rows=len(plan.valid),
+        quarantined=len(plan.quarantined),
+        symbols=symbols,
+        quote_date=str(quote_date),
+        committed=not plan.already_captured,
+        symbols_failed=",".join(plan.symbols_failed) or None,
+        symbols_off_session=",".join(plan.symbols_off_session) or None,
+        market_session=body.market_session,
         bronze_path=bronze_path,
     )
     return OptionChainSnapshotResponse(
         dataset=DATASET,
-        ingest_date=ingest_date,
-        rows=len(valid),
-        quarantined=len(quarantined),
-        symbols=int(valid["underlying"].nunique()),
-        quote_date=valid["quote_date"].max().date(),
+        ingest_date=plan.ingest_date,
+        rows=len(plan.valid),
+        quarantined=len(plan.quarantined),
+        symbols=symbols,
+        quote_date=quote_date,
         bronze_path=bronze_path,
+        committed=not plan.already_captured,
+        symbols_failed=plan.symbols_failed,
+        symbols_off_session=plan.symbols_off_session,
     )
 
 
