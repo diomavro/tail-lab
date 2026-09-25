@@ -52,6 +52,7 @@ from __future__ import annotations
 
 import datetime as dt
 import logging
+import time
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from typing import Any
@@ -441,6 +442,23 @@ def ingest_ohlcv(
 #: during market hours cannot mistake a live session for a finished one.
 _MARKET_REFERENCE_SYMBOL = "SPY"
 
+#: Retry budget for the witness. Measured 2026-09-25 05:01 UTC, the first
+#: scheduled run after it shipped: a resume-time DNS failure made the single
+#: attempt give up, so the frozen-feed check was silently skipped while Cboe's
+#: own fetch recovered the same fault by retrying. Any exception is retried
+#: (``fetch_nasdaq_raw`` folds every failure into a ValueError), and the
+#: per-request timeout is short because the daily refresh calls this three
+#: times and its unit budget (TimeoutStartSec=120min) is nearly spent in the
+#: all-sources-hang worst case -- ~119 min counted by adversarial review on
+#: 2026-09-25, including the refresh's 5-minute lock wait. NOMINAL cost here:
+#: 3 attempts x 2 asset classes x 10s + 2 x 10s backoff = 80s per call. Not a
+#: true ceiling -- requests' timeout bounds connect and each read separately,
+#: per resolved address, and DNS not at all -- so a genuine hang is bounded by
+#: the systemd units, not by this arithmetic.
+_WITNESS_ATTEMPTS = 3
+_WITNESS_BACKOFF_S = 10.0
+_WITNESS_TIMEOUT_S = 10.0
+
 
 def latest_market_session(
     fetch: Callable[[], Mapping[str, Any]] | None = None,
@@ -452,13 +470,26 @@ def latest_market_session(
     tell. Returns ``None`` -- logged, never raised -- when the reference
     cannot be read: a failed cross-check must not cost the sweep it guards.
     """
-    try:
-        raw = fetch() if fetch is not None else fetch_nasdaq_raw(_MARKET_REFERENCE_SYMBOL, years=1)
-        bars = parse_nasdaq_historical(_MARKET_REFERENCE_SYMBOL, dict(raw))
-        newest = pd.to_datetime(bars["trade_date"]).max()
-    except Exception:
-        _LOGGER.exception("event=ingest.market_session_unavailable")
-        return None
+    for attempt in range(1, _WITNESS_ATTEMPTS + 1):
+        try:
+            raw = (
+                fetch()
+                if fetch is not None
+                else fetch_nasdaq_raw(_MARKET_REFERENCE_SYMBOL, years=1, timeout=_WITNESS_TIMEOUT_S)
+            )
+            bars = parse_nasdaq_historical(_MARKET_REFERENCE_SYMBOL, dict(raw))
+            newest = pd.to_datetime(bars["trade_date"]).max()
+            break
+        except Exception:
+            if attempt == _WITNESS_ATTEMPTS:
+                _LOGGER.exception(
+                    "event=ingest.market_session_unavailable attempts=%d", _WITNESS_ATTEMPTS
+                )
+                return None
+            _LOGGER.warning(
+                "event=ingest.market_session_retry attempt=%d/%d", attempt, _WITNESS_ATTEMPTS
+            )
+            time.sleep(_WITNESS_BACKOFF_S)
     if pd.isna(newest):
         _LOGGER.warning("event=ingest.market_session_unavailable reason=no_bars")
         return None

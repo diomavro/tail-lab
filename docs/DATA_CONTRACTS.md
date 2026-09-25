@@ -231,7 +231,8 @@ spread series are revised too.
 - *Scheduled — macro*: Federal Reserve FOMC meeting calendar
   (`federalreserve.gov`, public HTML/ICS), BLS CPI release schedule
   (`bls.gov`, public), both keyless. **The FOMC half ships**
-  (`ingestion/fomc.py` + `make ingest-event-calendar`, done 2026-09-01) — HTML-only
+  (`ingestion/fomc.py`, done 2026-09-01; written since 2026-09-24 through
+  `make ingest-event-calendar`) — HTML-only
   (the ICS feed 404s), parsing `fomccalendars.htm`'s 2021-2027 window.
   `announced_at` is set to the ingestion timestamp for every row rather than
   the true historical announcement date (conservative and point-in-time-safe,
@@ -240,8 +241,8 @@ spread series are revised too.
   Akamai bot-block, `AGENT_TODO.md`).
 - *Scheduled — earnings*: Nasdaq's unofficial calendar endpoint
   (`api.nasdaq.com/api/calendar/earnings?date=YYYY-MM-DD`, browser UA + JSON
-  Accept header, keyless). **Ships 2026-09-06** (`ingestion/earnings.py` +
-  `make ingest-event-calendar`) — one JSON page per calendar date, so this adapter
+  Accept header, keyless). **Ships 2026-09-06** (`ingestion/earnings.py`; written since 2026-09-24
+  through `make ingest-event-calendar`) — one JSON page per calendar date, so this adapter
   sweeps a rolling 30-day-forward window per run rather than the source's
   full 2010+ history (a deep backfill would be thousands of sequential
   requests to an endpoint the sourcing note already flags as

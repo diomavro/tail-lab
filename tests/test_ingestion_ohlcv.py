@@ -7,6 +7,7 @@ import pandas as pd
 import pytest
 import requests
 
+import tail_lab.ingestion.ohlcv as ohlcv_module
 from tail_lab.ingestion.ohlcv import (
     dataset_id,
     ingest_ohlcv,
@@ -413,11 +414,42 @@ def test_latest_market_session_is_the_newest_completed_bar() -> None:
     )
 
 
-def test_an_unreadable_reference_skips_the_check_rather_than_failing_the_sweep() -> None:
+def test_an_unreadable_reference_skips_the_check_rather_than_failing_the_sweep(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     """The witness guards the sweep; it must never be the thing that costs it."""
+    monkeypatch.setattr(ohlcv_module.time, "sleep", lambda _s: None)
+    calls: list[int] = []
 
     def boom() -> dict[str, Any]:
+        calls.append(1)
         raise requests.exceptions.ConnectionError("nasdaq down")
 
     assert latest_market_session(boom) is None
+    assert len(calls) == ohlcv_module._WITNESS_ATTEMPTS
     assert latest_market_session(lambda: {"data": {"tradesTable": {"rows": []}}}) is None
+
+
+def test_a_transient_witness_failure_is_retried_not_given_up(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Measured 2026-09-25 05:01 UTC, the first scheduled run after the
+    witness shipped: a resume-time DNS failure made its single attempt give
+    up, and the frozen-feed check was silently skipped -- while Cboe's fetch
+    recovered the very same fault by retrying. The runs most likely to start
+    before DNS is up are exactly the catch-up runs the check matters for."""
+    sleeps: list[float] = []
+    monkeypatch.setattr(ohlcv_module.time, "sleep", sleeps.append)
+    answers: list[Any] = [
+        requests.exceptions.ConnectionError("Temporary failure in name resolution"),
+        _nasdaq("2026-09-24", "2026-09-23"),
+    ]
+
+    def flaky() -> dict[str, Any]:
+        answer = answers.pop(0)
+        if isinstance(answer, Exception):
+            raise answer
+        return dict(answer)
+
+    assert latest_market_session(flaky) == dt.date(2026, 9, 24)
+    assert sleeps == [ohlcv_module._WITNESS_BACKOFF_S]
