@@ -445,10 +445,12 @@ class _Resp:
 
 
 def _scripted_get(monkeypatch: pytest.MonkeyPatch, responses: list[_Resp]) -> list[str]:
+    """Records each request's ``assetclass`` -- the URL is the same for both
+    classes, so recording it could not tell a retry from a fall-through."""
     calls: list[str] = []
 
-    def fake_get(url: str, **_kw: Any) -> _Resp:
-        calls.append(url)
+    def fake_get(url: str, **kw: Any) -> _Resp:
+        calls.append(kw["params"]["assetclass"])
         return responses.pop(0)
 
     monkeypatch.setattr(ohlcv_module.requests, "get", fake_get)
@@ -462,13 +464,17 @@ def test_a_transient_nasdaq_fault_is_retried_not_escalated(
     """Measured 2026-09-25 05:01 UTC: a resume-time DNS failure made the
     market-session witness's single attempt give up, silently skipping the
     frozen-feed check -- while Cboe's own fetch recovered the same fault by
-    retrying. The retry now lives in the shared fetcher, so both the witness
-    and ``ingest_ohlcv``'s main path, which call the same function, benefit."""
+    retrying. The witness asks the shared fetcher for retries."""
     payload = _nasdaq("2026-09-24", "2026-09-23")
     calls = _scripted_get(monkeypatch, [_Resp(503), _Resp(200, payload)])
+    sleeps: list[float] = []
+    monkeypatch.setattr(sources.time, "sleep", sleeps.append)
 
-    assert ohlcv_module.fetch_nasdaq_raw("SPY") == payload
-    assert len(calls) == 2
+    assert ohlcv_module.fetch_nasdaq_raw("SPY", attempts=ohlcv_module._FETCH_ATTEMPTS) == payload
+    assert calls == ["etf", "etf"]  # the same class again, not a fall-through
+    # A real pause: an immediate retry into a resolver that is still coming up
+    # after resume fails the same way.
+    assert sleeps == [ohlcv_module._FETCH_BACKOFF_S] and sleeps[0] > 0
 
 
 def test_a_persistent_nasdaq_fault_still_fails_after_the_budget(
@@ -477,7 +483,7 @@ def test_a_persistent_nasdaq_fault_still_fails_after_the_budget(
     calls = _scripted_get(monkeypatch, [_Resp(503)] * (2 * ohlcv_module._FETCH_ATTEMPTS))
 
     with pytest.raises(ValueError, match="no usable data"):
-        ohlcv_module.fetch_nasdaq_raw("SPY")
+        ohlcv_module.fetch_nasdaq_raw("SPY", attempts=ohlcv_module._FETCH_ATTEMPTS)
     assert len(calls) == 2 * ohlcv_module._FETCH_ATTEMPTS
 
 
@@ -488,5 +494,51 @@ def test_a_nasdaq_refusal_is_not_retried(monkeypatch: pytest.MonkeyPatch) -> Non
     payload = _nasdaq("2026-09-24")
     calls = _scripted_get(monkeypatch, [_Resp(400), _Resp(200, payload)])
 
-    assert ohlcv_module.fetch_nasdaq_raw("SPY") == payload
-    assert len(calls) == 2
+    # With retries ON: a refusal must still fall straight through.
+    assert ohlcv_module.fetch_nasdaq_raw("SPY", attempts=ohlcv_module._FETCH_ATTEMPTS) == payload
+    assert calls == ["etf", "stocks"]
+
+
+def test_the_ingest_path_does_not_retry_by_default(monkeypatch: pytest.MonkeyPatch) -> None:
+    """At the ingest path's 30s timeout, retrying would raise its hang worst
+    case from 60s to 220s per symbol -- ~64 extra minutes across the daily
+    refresh's 24 symbols, past the unit's 120-minute budget."""
+    calls = _scripted_get(monkeypatch, [_Resp(503), _Resp(503)])
+
+    with pytest.raises(ValueError, match="no usable data"):
+        ohlcv_module.fetch_nasdaq_raw("SPY")
+    assert calls == ["etf", "stocks"]  # one per asset class, no retries
+
+
+def test_the_witness_asks_for_retries_with_its_short_timeout(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    seen: dict[str, Any] = {}
+
+    def fake(symbol: str, **kw: Any) -> dict[str, Any]:
+        seen.update(kw)
+        return _nasdaq("2026-09-24")
+
+    monkeypatch.setattr(ohlcv_module, "fetch_nasdaq_raw", fake)
+
+    assert latest_market_session() == dt.date(2026, 9, 24)
+    assert seen["attempts"] == ohlcv_module._FETCH_ATTEMPTS > 1
+    assert seen["timeout"] == ohlcv_module._WITNESS_TIMEOUT_S
+
+
+def test_ingest_ohlcv_itself_asks_for_no_retries(
+    tmp_path: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The default alone proves nothing if the ingest caller passes its own
+    ``attempts``: that one argument is the 220s-per-symbol regression."""
+    calls: list[dict[str, Any]] = []
+
+    def fake(symbol: str, **kw: Any) -> dict[str, Any]:
+        calls.append(kw)
+        return _nasdaq("2026-09-24", "2026-09-23")
+
+    monkeypatch.setattr(ohlcv_module, "fetch_nasdaq_raw", fake)
+
+    ingest_ohlcv(DeltaLakeStore(tmp_path), "SPY", ingest_date=dt.date(2026, 9, 25))
+    assert len(calls) == 1, "ingest_ohlcv no longer reaches fetch_nasdaq_raw -- this test is blind"
+    assert calls[0].get("attempts", 1) == 1
