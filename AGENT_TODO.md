@@ -1408,208 +1408,702 @@ exists.
 
 ## Paretan tail pricing (2026-09-18 — Taleb et al., arXiv 1908.02347v3)
 
-The kernel, the tail estimator and `docs/adr/0026` shipped together. These are
-the increments that build on them. Read the ADR first: it records what this
-model is *not* allowed to do, and two of the items below are explicitly gated.
+*Section rewritten 2026-09-25 so that each item can be picked up cold. Every
+measured figure from the version it replaces is carried over unchanged; the
+new figures (the data table, the TSLA split in PX1 point 4, the
+`anchor_l_put` domain numbers in P1/P2) were measured on 2026-09-25 for this
+rewrite.*
 
-**Value bar (`docs/AGENT_MISSION.md`).** The Surface items serve
-`docs/END_STATE.md` §4 **Q6** ("how much volatility risk premium does the screen
-pay") — implied-vs-realised `alpha` is a basis-free cheapness measure the
+### Read this block before touching ANY item in this section
+
+(Item labels here — P1–P5 the Surface, PX1–PX3 the experiments, PM1 the
+metric, PG1–PG2 the gated items — are local to this section. They are NOT the
+README's "S1"/"S2" strategies or `HUMAN_TODO.md`'s data gaps.)
+
+**What already exists (PR #108, merged 2026-09-18, `docs/adr/0026` Accepted).**
+`src/tail_lab/research/surface/`:
+
+| module | what it gives you | the entry points you will call |
+|---|---|---|
+| `paretan.py` | the pricing kernel | `ParetanTail(alpha, karamata_l, basis)` (frozen) with `.put_price(*, strike, spot)`, `.call_price(...)`, `.lambda_correction()`, `.deepest_valid_put_strike(*, spot)`; free functions `put_ratio(*, k_from, k_to, spot, alpha)`, `anchor_l_put(*, price, strike, spot, alpha) -> ParetanTail`, `heuristic_is_valid(*, sigma, t_years)` |
+| `hill.py` | the tail-index estimator | `hill_alpha(sample, *, k) -> HillEstimate`, `hill_plot(...)`, `stable_k(..., min_threshold=...)`; `MIN_K = 10` |
+| `karamata.py` | where the power law starts (the gate) | `karamata_onset(...) -> KaramataFit`, `slowly_varying(sample, *, alpha)` |
+| `returns.py` | the only sanctioned Hill input | `loss_magnitudes(prices)` (arithmetic), `log_loss_magnitudes(prices)` (shown and dismissed), `compare_return_bases(prices, *, k)` |
+
+`scripts/tail_alpha.py` + `make tail-alpha TAIL_SYMBOL=spy` is the existing
+read-only report; copy its shape (a script, not an inline `python -c`).
+
+**What the ADR forbids — these are rules, violating one is a DEFECT:**
+1. Paretan is **not** an `OptionPricer` (0026 §1). Do not subclass it, do not
+   pass a `ParetanTail` anywhere a pricer is expected. `skew.implied_vol_put`
+   given a sigma-independent pricer returns `IV_MIN = 0.01` for the one price
+   it can reach — a fabricated IV, not a refusal.
+2. Every price is **relative to a market-quoted anchor** (0026 §2). No public
+   function you add may take a bare `alpha` + `karamata_l` and return an
+   absolute price; it takes an `Anchor` (defined in P1 below).
+3. The put formula in the paper's PDF is a **typo** (`S_0^(1-a)` must be
+   `S_0^(-a)`, 0026 §3). `paretan.put_price` is correct and guarded by
+   `tests/test_research_surface_paretan.py::test_zero_strike_put_is_worthless`
+   plus three independent checks. Never "fix" it back to the printed form.
+4. Tail indices are fitted on **arithmetic** returns only (0026 §5):
+   `returns.loss_magnitudes`, never log returns.
+5. `alpha` is **not aggregation-invariant** (0026 §6): an option-implied alpha
+   at a 14–90 day horizon may only be compared with a realised alpha measured
+   at the SAME horizon.
+6. A Hill plateau is **not evidence of a tail** (0026 §7): every realised fit
+   goes through `karamata_onset` as its `min_threshold` gate.
+
+**What the data actually is (measured on the production lake 2026-09-25):**
+
+| bronze table | covers | notes |
+|---|---|---|
+| `optionsdx_quotes_spy` | 2010-01-04 → 2023-12-29, 3,276,579 rows | per-symbol tables (`optionsdx_quotes_qqq` from 2012-01-03, `…_nvda` and `…_tsla` from 2016-01-04, `…_vix` from 2010; no SPX); **one** `ingest_date` partition (2026-09-03) holds the whole panel; columns `underlying, quote_date, expiration, strike, bid, ask, volume, spot, iv, delta, vega, theta` — **no `open_interest`** (so `marks.MIN_OPEN_INTEREST` cannot apply — see P2's hygiene predicate); `spot` is **as-traded**, not split-adjusted (NVDA differs from OHLCV by exactly 10); a blank `P_IV` means the vendor's solver failed and the rest of that row's greeks are garbage (`CLAUDE.md`) |
+| `option_chain_snapshot` | 2026-08-26 → today, forward daily, 24 symbols | put wing only (moneyness 0.40–1.05, tenor ≤ 180 d); has bid/ask/OI/iv/delta; Cboe zero-fills greeks it cannot compute and the adapter maps those to null; one partition per session |
+| `mpd` | 2006-01-12 → 2026-08-26, 71,520 rows (all markets) | Minneapolis Fed risk-neutral densities; the S&P markets `sp6m` / `sp12m` run **2007-01-12** → (`contracts/mpd.py`); columns `market, obs_date, maturity_months, mu, sd, skew, kurt, p10, p50, p90, prob_large_decline, prob_large_increase`; in the local daily refresh since 2026-09-21 |
+| `ohlcv_<sym>` | rolling ~5 years (Tiingo/Nasdaq) | **useless for the realised leg**: `docs/DISCOVERIES.md` §12 — no name has a measurable Karamata region on it |
+
+**You cannot see any of that data.** The daily-agent workflow passes no lake
+credentials (`.github/workflows/daily-agent.yml` carries only
+`TAIL_LAB_FEEDBACK_TOKEN`), and CI's lake is a `DeltaLakeStore(tmp_path)`.
+Therefore every item here is delivered as **code + tests on synthetic data
+with a known analytic answer**, and the real-data measurement happens in one
+of two ways, which the item must say explicitly:
+- a read-only `make` target a human runs (add a line to `HUMAN_TODO.md`
+  naming the command and what the output decides), or
+- a read-only API route: the deployed app on Fly **does** hold the lake
+  credentials, so once your route is merged and deployed you can `curl
+  https://tail-lab.fly.dev/api/...` on your next run and read real results.
+
+**Glossary — one letter, two meanings, do not mix them.**
+- `alpha` in this section = the **tail index** of a power law (smaller =
+  fatter tail). Taleb et al. use 2.75 for SPX; the 2.75 that `stable_k`
+  reports for SPY on our OHLCV is a SPURIOUS plateau (`docs/DISCOVERIES.md`
+  §12) — never quote it as a replication.
+- The position-sizing items further down this file (`g(alpha)` sweep, Kelly)
+  use `alpha` for the **fraction of capital allocated to the hedge**. Those
+  are unrelated quantities. In NEW code or docs, call the allocation `f` (or
+  `allocation`) and reserve `alpha` for the tail index. Do NOT rename the
+  existing `research/backtest/sizing.WealthFraction.alpha` — that is an
+  unrequested refactor.
+- `l` / `karamata_l` = the Pareto scale (the paper writes `l^alpha`); `L` is
+  the slowly varying function Karamata's test checks for flatness. Different
+  objects.
+- **anchor** = one real, liquid put quote `(strike, price)` on one
+  `(underlying, quote_date, expiration)`; every Paretan price is a ratio to it.
+
+**Value bar (`docs/AGENT_MISSION.md`).** The Surface serves
+`docs/END_STATE.md` §4 **Q6** ("how much volatility risk premium does the
+screen pay"): implied-vs-realised `alpha` is a basis-free cheapness measure the
 platform has never had. The screen item serves §4 **Q1**.
 
-**ORDER: build the implied-alpha fit BEFORE the tab** (decided with Dio,
-2026-09-19). Both are wanted; the sequence is not arbitrary.
+**ORDER (decided with Dio 2026-09-19 — do not reorder):**
 
-`make tail-alpha` currently **refuses on every name in the universe** — SPY,
-QQQ, TSLA, NVDA and HYG all report no Karamata region, because `L` is not flat
-anywhere in a five-year daily window (`docs/DISCOVERIES.md` §12). That refusal
-is correct and is the point of the gate. But it means a Surface tab built on
-today's inputs would render "REFUSED" in every panel: an honest page with
-nothing on it.
+```
+P1 ladder.py ──► P2 implied_alpha.py ──► P3 alpha_bound.py ──► P4 route ──► P5 tab
+                        │
+                        ├──► PX1 experiment (make surface-alpha) ──► PM1 alpha_gap (needs PX1 + a human)
+                        ├──► PX2 MPD cross-check
+                        └──► PX3 alpha stability
+PG1, PG2: gated — need an ADR and Dio's decision; never start them unprompted.
+```
 
-What gives the tab something to show is the **implied** side — `ladder.py` and
-`implied_alpha.py` fitted against the optionsDX chains, which do not depend on
-the realised-alpha gate at all. So: `ladder.py` → `implied_alpha.py` →
-`alpha_bound.py` → the route → the tab, in that order. The tab item stays last
-in the list below for readability, not for scheduling.
+Why the implied side comes first: `make tail-alpha` **refuses on every name**
+(`docs/DISCOVERIES.md` §12), so a tab built on realised alpha alone would say
+"REFUSED" in every panel. The implied fit does not depend on the realised gate
+at all. If the implied fit ALSO mostly refuses — which `ImpliedAlphaFit.refusal`
+exists to allow, and which PX1's Gate 0 makes a real possibility — the honest
+deliverable is a tab that says so, and that is still worth shipping.
 
-One consequence worth stating: if the implied fit ALSO comes back mostly
-refusing — which `ImpliedAlphaFit.refusal` is built to allow, and which Gate 0
-in the experiment notes makes a real possibility — then the honest deliverable
-is a tab that says so, and that is still worth shipping. A surface that reports
-"this data does not support the claim" is the platform working, not failing.
+**One item = one PR.** Each item below lists its files. If yours touches files
+outside that list, stop and ask whether it is really one increment (the design
+reviewer flags accretion, and `AGENT_TODO.md` is the place to queue the rest).
+`make cov-floors` enforces ≥ 90 % over `research/` + `transforms/` in
+AGGREGATE, so one poorly tested module drags the floor for everyone: keep each
+new module near-complete, with a pinned synthetic case with a known answer
+(`docs/STANDARDS.md`). Tests mirror modules: `tests/test_research_surface_<module>.py`.
 
-### The Surface (one increment each — the whole tab in one PR is too large)
+---
 
-- [ ] **`research/surface/ladder.py`.** `Anchor` (required on every public entry
-      point — that is how the paper's "relative to a given strike, never
-      absolute" scope limit is enforced by type rather than by docstring),
-      `LadderRung`, `build_ladder`. Each rung carries `paretan_price`,
-      `market_price`, `paretan_iv`, `market_iv` and `iv_ratio`. Reuse
-      `research/skew.implied_vol_put` for the inversion — do not write a second
-      one. *Success*: a rung's `paretan_iv`, re-priced through
-      `BlackScholesPricer`, reproduces `paretan_price` to the bisection
-      tolerance.
+### P1 — `research/surface/ladder.py`: the anchor and the strike ladder
 
-- [ ] **`research/surface/implied_alpha.py`.** Fit `alpha` from a quoted put
-      ladder by golden-section on squared log-price error (deterministic, no
-      seed, so `docs/STANDARDS.md`'s bit-for-bit requirement is met by
-      construction). **`ImpliedAlphaFit` must be able to refuse**, populating
-      `refusal` instead of `alpha`, below thresholds on `n_strikes` and strike
-      span or above an RMSE ceiling.
-      **Two traps, both measured, both non-obvious:**
-      (a) the lake's bronze tables are **per symbol** (`optionsdx_quotes_spy`,
-      not `optionsdx_quotes`);
-      (b) `read_bronze_as_of` resolves the **`ingest_date` partition**, and the
-      whole 2010-2023 optionsDX panel sits in a single `ingest_date=2026-09-03`
-      partition — so a historical `quote_date` is **not** an `as_of` and passing
-      one raises `LookupError`. Carry both parameters. The point-in-time test
-      that matters is therefore intra-panel: write a steeper smile at
-      `quote_date = T+1` **in the same partition** and assert the fit at `T`
-      ignores it. Writing a new `ingest_date` tests partition resolution and
-      leaves the real hazard untested.
+- [ ] **Goal.** Given one real put quote (the anchor) and a tail index, price
+      the deeper puts on the same expiry the Paretan way, and put each beside
+      the market's own quote and both implied vols. This is the object every
+      later item consumes.
 
-- [ ] **`research/surface/alpha_bound.py`.** The paper's no-arbitrage lower
-      bound on `alpha`. **Take the `Anchor`, never a free `karamata_l`**: the
-      bound's RHS is `lambda l^a [(S0/(S0-K))^a - 1]`, exponentially sensitive
-      to `l`, and `l` is determined by the anchor price at the trial `alpha`.
-      Passing a `KaramataFit.karamata_l` from a different estimator on different
-      data returns a confident wrong answer (measured: `alpha >= 1.08` vs `5.65`
-      on that argument alone). Also: the `vega` in `dBSP/dK` is `dP/dsigma`
-      **per unit sigma**, *not* `PutGreeks.vega`, which carries
-      `VEGA_PER_VOL_POINT = 0.01` — a 100x error if wired to the obvious source.
-      At `K = (1-l)S0` the RHS collapses to 1 for all `alpha`; return `None`
-      rather than bisecting for a root that does not exist.
+      **Files:** `src/tail_lab/research/surface/ladder.py`,
+      `tests/test_research_surface_ladder.py`. Nothing else.
 
-- [ ] **`GET /api/putlab/surface` + `SurfaceResponse`.** Flat in
-      `putlab_routes.py`, reusing `get_lake_store` / `_resolve_as_of` /
-      `_snapshot` / `_log_run` and a TTL memo shaped like `_SWEEP_CACHE`. Carry
-      realised `alpha` in **both** bases side by side (the log one shown and
-      dismissed), the Karamata fit, the implied fits, the ladder, `alpha_gap`,
-      `lambda_guard_ok`, snapshot ids and code SHA.
+      **Build:**
+      ```python
+      @dataclass(frozen=True)
+      class Anchor:
+          underlying: str
+          quote_date: dt.date
+          expiration: dt.date
+          spot: float          # the quote's own spot (as-traded for optionsDX)
+          strike: float        # must satisfy strike < spot (a downside put)
+          price: float         # the MID used as the anchor price
+          bid: float
+          ask: float
+          # __post_init__ validates: 0 < bid <= price <= ask, strike < spot,
+          # expiration > quote_date, all finite. Raise ValueError otherwise.
+          @property
+          def t_years(self) -> float: ...   # (expiration - quote_date).days / index_replication.DAYS_PER_YEAR (what skew.py uses)
 
-- [ ] **The Surface tab.** New `TabId` `'surface'` (it lives in `PutLab.tsx`,
-      not `TabNav.tsx`), a `SURFACE_CACHE` + one `useCachedResource` gated to
-      `null` when the tab is off, presentational `views/SurfaceView.tsx`.
-      Three constraints from `docs/adr/0017` and the README's one-screen rule:
-      **no new control** — the anchor *is* the existing `ParamRail` OOM control,
-      which makes the anchor-relativity physically obvious; **two fixed-height
-      panes** — a `ZipfPlot` (two log-log survival curves, `S` and arithmetic
-      `r`, with the Karamata onset as a vertical rule, and a toggle to the
-      paper's log-price-vs-log-strike view with Black-Scholes overlaid) beside a
-      `TailLadder` IV-ratio table **capped at 8 rungs**; and a one-line
-      `AlphaStrip` plus a collapsed `SurfaceCaveat` carrying the `sigma*sqrt(t)`
-      guard, the anchor-relative sentence, `n_beyond`, the `stable: false`
-      branch and the bid/ask error bar. Per the README that caveat ships in the
-      **same** increment as the number.
+      @dataclass(frozen=True)
+      class LadderRung:
+          strike: float
+          paretan_price: float
+          market_price: float | None     # mid, None if the strike has no usable quote
+          paretan_iv: float | None       # None when implied_vol_put refuses
+          market_iv: float | None
+          iv_ratio: float | None         # paretan_iv / market_iv, None if either is None
 
-### The validation experiment — read the design notes before starting
+      def build_ladder(
+          anchor: Anchor, *, alpha: float, strikes: Sequence[float],
+          market_mids: Mapping[float, float], r: float, q: float,
+      ) -> tuple[LadderRung, ...]: ...
+      ```
+      - **First** call `anchor_l_put(price=anchor.price, strike=anchor.strike,
+        spot=anchor.spot, alpha=alpha)` and let its `ValueError` propagate —
+        that is the ONLY domain check (`put_ratio` cannot check, because it
+        never sees `l`; its docstring says so). Test it:
+        `test_an_anchor_outside_the_tail_domain_raises`.
+      - `paretan_price` for strike `K` = `anchor.price * put_ratio(k_from=anchor.strike,
+        k_to=K, spot=anchor.spot, alpha=alpha)`. Only strikes **strictly below**
+        the anchor strike get a rung; a strike at or above it raises (the
+        model extrapolates deeper, never shallower). The domain check lives on
+        the ANCHOR, not the rungs: `anchor_l_put` already raises when the
+        anchor strike exceeds `(1 - l) * spot` (`deepest_valid_put_strike` is,
+        despite its name, the **shallowest** valid anchor — the UPPER bound of
+        the put domain, `paretan.py`). Rungs below a valid anchor need no
+        extra check. Do not add a "strike below deepest_valid_put_strike"
+        refusal: measured, `anchor_l_put(price=1, strike=90, spot=100,
+        alpha=3)` gives 94.10, so that check would reject every rung.
+      - IVs: **reuse `research/skew.implied_vol_put`** with the default
+        Black-Scholes pricer — do not write a second inversion. Pass the
+        caller's `r` and `q`; do not invent a rate source (the `rates` bronze
+        table has zero consumers and a known FRED fetch bug).
+      - Sorted by strike descending (nearest the money first).
 
-- [ ] **`research/surface/experiment.py` + `make surface-alpha`.** Does the
-      paper's headline (market-implied `alpha` thinner than realised) reproduce
-      on our own chains? Follow `scripts/greeks_check.py` + `make greeks-check`
-      for shape — `make skew` and `make residual` are inline `python -c` and are
-      *not* the pattern. Read-only, no lake writes; covered on CI against a
-      `DeltaLakeStore(tmp_path)` seeded with synthetic quotes, since
-      `data/vendor/optionsdx/` is absent there.
+      **Tests (all synthetic, no lake):**
+      - `test_a_rung_prices_by_the_ratio_to_the_anchor`: at `S0=100, anchor K=90,
+        alpha=3`, `put_ratio(90→80)` is **0.23045** (0026 §4) — assert the rung
+        at 80 is `anchor.price * 0.23045` to 1e-5.
+      - `test_paretan_iv_round_trips_through_black_scholes`: re-price each
+        rung's `paretan_iv` with `BlackScholesPricer` and recover
+        `paretan_price` to a relative 1e-6 (skew.py bounds sigma by
+        `IV_ITERATIONS = 60` bisection steps, not a price tolerance — state
+        the tolerance you assert and why it is reachable).
+      - `test_prices_are_generated_by_a_known_tail`: build market mids FROM a
+        `ParetanTail` at alpha 2.5 **with `karamata_l` fixed at 0.05** (and
+        say why in the test: with `l = 0.10` the 90-strike anchor is worth
+        6.19 and `anchor_l_put` at alpha 3.5 raises, so the second half of
+        this test could not build), anchor on one of them, build the ladder at
+        alpha 2.5, assert every `iv_ratio` is 1 to 1e-6 (the model agrees with
+        itself), and at alpha 3.5 every ratio is < 1 on strikes where both
+        IVs exist (an IV above `IV_MAX` comes back `None`; choose strikes that
+        avoid it, and assert that you did) (thinner tail ⇒ cheaper;
+        measured: `put_ratio(90→80)` at S0=100 is 0.30678 / 0.23045 / 0.16903
+        for alpha 2.5 / 3.0 / 3.5).
+      - `test_the_anchor_refuses_a_crossed_or_zero_bid_quote` and
+        `…_refuses_a_strike_at_or_above_the_anchor`.
+      - `test_a_strike_with_no_quote_gets_a_rung_without_market_fields`.
 
-      **The naive version of this experiment is unfalsifiable, and that was
-      established by simulation before any of it was written.** A Merton
-      jump-diffusion with exponential tails and no power law anywhere reproduces
-      the "confirming" signature — median implied `alpha` 2.89 against realised
-      2.29, a gap of +0.60, depth-monotone in 22 of 22 parameterisations. So:
+      **Acceptance:** all above pass; `mypy --strict`; no import of
+      `option_pricer.OptionPricer` except via `skew`; coverage ≥ 90 %.
+      **Out of scope:** reading the lake (P2), choosing the anchor (P2/PX1),
+      any API or UI.
 
-      * **The headline is a difference against a null**, not a raw `alpha`:
-        calibrate a thin-tailed model to the *same day's* ATM and 5 %-OTM
-        quotes, fit implied `alpha` to the null's prices with the identical
-        pipeline, report `alpha(market) - alpha(null)`.
-      * **The primary diagnostic is anchor dispersion**, `max - min` of `alpha`
-        across anchors on one date and tenor. A *genuine* power law is
-        anchor-invariant — fitting Paretan-generated prices returns the same
-        `alpha` at every anchor to six decimals. So depth-ordering is the
-        signature of the power law **failing**, which is the opposite of what an
-        earlier draft of this backlog said.
-      * **Horizon-match the realised `alpha`** (see `docs/adr/0026` §6) and
-        report it as an interval over the Hill plot with a block-bootstrap CI
-        (`bashtage/arch` is NCSA-permissive and has `StationaryBootstrap` plus
-        `optimal_block_length`, so the block length is chosen rather than
-        guessed -- `docs/PRIOR_ART.md` §13),
-        never as a point with `alpha/sqrt(k)`.
-      * **Take the realised leg from the optionsDX panel's own `spot` column,
-        not from bronze OHLCV.** `docs/DISCOVERIES.md` §12: on the rolling
-        five-year OHLCV window no name in the universe has a measurable
-        Karamata region at any sane tolerance, so the realised leg simply is not
-        available there. The panel gives ~3,520 trading days instead of 1,254,
-        and it is the same column the implied leg is fitted on -- which also
-        sidesteps the as-traded-vs-split-adjusted hazard between the two.
-      * **Anchor by delta, not fixed moneyness.** Holding the tail identical and
-        moving only diffusive vol moves the 90 %-anchor `alpha` by +0.96 from
-        calm to crisis — this is `docs/PRIOR_ART.md` §1's confound, dominant
-        here.
-      * **Quote hygiene, because the biases point at the headline.** Tick-pinned
-        deep quotes bias `alpha` +0.25 to +0.33 *toward* the paper's result; a
-        zero-bid contract marked at ask/2 biases it -0.34; one tick on a
-        sub-dollar anchor is ±0.27. Apply `marks.py`'s `MIN_OPEN_INTEREST` and
-        `MAX_RELATIVE_SPREAD`, require `bid > 0`, refuse minimum-tick quotes and
-        anchors under ~$0.25.
-      * **Fix the strike span.** Span alone moves `alpha` by 0.68, and since
-        RMSE rises with span, an RMSE ceiling plus a span floor is a non-random
+### P2 — `research/surface/implied_alpha.py`: fit alpha from quoted puts, able to refuse
+
+- [ ] **Goal.** For one `(underlying, quote_date, expiration)`, choose an anchor,
+      fit the single `alpha` that best explains the deeper quoted puts, and
+      **refuse** when the data cannot support a fit. This is the first number
+      the Surface can actually show, because it does not depend on the
+      realised-alpha gate that refuses everywhere today.
+
+      **Files:** `src/tail_lab/research/surface/implied_alpha.py`,
+      `tests/test_research_surface_implied_alpha.py`. Optionally a small
+      read-only loader in the same module. For the optionsDX panel read with
+      `store.read_bronze_columns_as_of(f"optionsdx_quotes_{sym}", ingest_date,
+      [...])` (`lake/store.py`), projecting only the columns you need **and
+      including `iv`** — a whole-partition `read_bronze_as_of` is ~1.2 GB for
+      one asset. Do NOT use `OptionsDxQuoteSource.from_store`: it serves one
+      leg at a time through `fill`/`mark`, keeps its chains in private state,
+      and does not project `iv`. Split by session with a plain
+      `groupby("quote_date")` — NOT `quote_fills.build_session_index`, which
+      keeps only `expiration, strike, bid, ask, spot` (+ `open_interest`) and
+      silently drops `iv`. Call
+      `contracts/optionsdx.month_coverage` before spanning a date range
+      (`CLAUDE.md`). The panel is pre-sliced to moneyness 0.60–1.02 and
+      ≤ 120 DTE (`contracts/optionsdx.py`), and a vendor solver failure shows
+      in bronze as `iv IS NULL` with garbage greeks on that row. **Refuse
+      VIX** (`underlying == "VIX"`): its panel `spot` is the index while VIX
+      options settle on futures (`CLAUDE.md`), so moneyness and `Anchor.spot`
+      would be on the wrong basis.
+
+      **Build:**
+      ```python
+      @dataclass(frozen=True)
+      class ImpliedAlphaFit:
+          anchor: Anchor
+          alpha: float | None            # None iff refused
+          rmse_log_price: float | None
+          n_strikes: int                 # rungs actually used (after hygiene)
+          strike_span: float             # (anchor.strike - deepest used) / anchor.spot
+          refusal: str | None            # human-readable reason, None iff fitted
+
+      def fit_implied_alpha(
+          anchor: Anchor, quotes: pd.DataFrame, *,
+          alpha_lo: float = 1.05, alpha_hi: float = 10.0,
+      ) -> ImpliedAlphaFit: ...
+      ```
+      - **`quotes` columns:** `strike`, `bid`, `ask`, `expiration`,
+        `quote_date`, optionally `open_interest` and `iv`; the underlying
+        comes from `anchor.underlying`. One `(quote_date, expiration)` per
+        call, matching the anchor — a mismatch is a caller bug, so raise
+        `ValueError` for it (this is the one exception; data-quality problems
+        are refusals).
+      - **Choosing the anchor is the caller's job**, not this function's:
+        `fit_implied_alpha` takes an `Anchor`. P4 chooses by fixed moneyness
+        (the existing OOM control, labelled as such); PX1 chooses by delta
+        (point 6 there). Do not bake either rule in here.
+      - **Objective:** minimise `sum((log(paretan_price_K) - log(market_mid_K))^2)`
+        over the hygienic deeper strikes. **Golden-section search** on
+        `[alpha_lo, alpha_hi]` — deterministic, no seed, so `docs/STANDARDS.md`'s
+        bit-for-bit requirement holds by construction. Do not use a stochastic
+        optimiser. Iterate to an alpha tolerance of 1e-8 (tighter than every
+        test tolerance below) and name it as a constant.
+      - **Trial alphas outside the anchor's domain.** `anchor_l_put` can raise
+        for part of the bracket, depending on the anchor price (measured: a $3 anchor at 90/100 fails
+        for alpha ≳ 4.33, 38 of 60 grid points on [1.05, 10]; the valid alphas
+        always form one block starting at `alpha_lo`). Shrink the
+        bracket to the valid domain first (find where `anchor_l_put` stops
+        raising); if too little remains, refuse. A domain error must never
+        escape `fit_implied_alpha` — refusal is a return value.
+      - **Quote hygiene (the biases all point at the paper's headline — measured):**
+        tick-pinned deep quotes bias alpha **+0.25 to +0.33** toward the paper's
+        result; a zero-bid contract marked at ask/2 biases it **−0.34**; one tick
+        on a sub-dollar anchor is **±0.27**. So: require `bid > 0`; refuse
+        minimum-tick quotes (no tick constant exists in `src/` yet — define
+        one as a module constant, take its value from the exchange's
+        published tick rules, cite the source in a comment, and note that
+        penny-program names tick finer); anchor price ≥ **$0.25**; relative spread ≤
+        `marks.MAX_RELATIVE_SPREAD` (0.50); OI ≥ `marks.MIN_OPEN_INTEREST` (10)
+        **only where the column exists** (Cboe snapshot yes, optionsDX no).
+        Build this one hygiene predicate in `implied_alpha.py` from those
+        PUBLIC constants; do not import the private `marks._is_liquid` /
+        `quote_fills._is_liquid` (they are the with-OI and without-OI
+        versions of the same rule, and this module needs both behaviours).
+      - **Refusal thresholds** — name them as module constants, choose them
+        BEFORE looking at any real output, and say in the PR how they were
+        chosen: minimum `n_strikes` (≥ 4 is a reasonable start), minimum
+        `strike_span`, maximum `rmse_log_price`. **Fix the span** rather than
+        letting it float: span alone moves alpha by **0.68**, and because RMSE
+        rises with span, an RMSE ceiling plus a span floor is a non-random
         selection on the estimate itself.
-      * **Pre-register every threshold before running**, and use a clustered or
-        block-bootstrap SE: the grid's effective N is ~15-25, not ~2,700
-        (anchors are nested, quarter-ends are serially correlated, SPY/QQQ
-        correlate ~0.95). **`docs/PRIOR_ART.md` §13 says BH is the wrong tool
-        here**: it controls FDR over tests treated as exchangeable, and a
-        bake-off of NESTED screens on names correlated ~0.95 is not. Hansen's
-        `SPA` and the Model Confidence Set `MCS` (`arch.bootstrap`, NCSA) are
-        built for precisely this, and `MCS` returns the SET of screens that
-        cannot be separated -- a more honest output than a ranked list with
-        stars.
-        `metric_screen.py` already applies Benjamini-Hochberg FDR
-        across the bake-off's screens (`research/backtest/multiple_testing.py`,
-        PRs #103/#104) -- follow that precedent rather than inventing a second
-        convention, noting that the correction needed here is primarily a
-        **clustered/HAC standard error** on an aggregate, with family-wise
-        control reserved for the monotonicity claims, which genuinely are
-        selected over many slices.
+      - Refuse also when the optimum sits on either bracket edge (it is a
+        boundary, not a fit).
 
-- [ ] **MPD cross-check.** `contracts/mpd.py` defines the Minneapolis Fed's
-      Breeden-Litzenberger risk-neutral densities (`prob_large_decline`, sp6m /
-      sp12m from 2007) — different data, different method, and it reaches 2008,
-      which optionsDX does not. Convert `(alpha, l, S0)` to `P(6m decline > 20%)`
-      and compare on the same week. **`mpd` has no bronze table yet** (the lake
-      holds `cboe_strategy`, `ohlcv_*`, `option_chain_snapshot`, `option_quotes`,
-      `optionsdx_quotes_*`, `vix`), so ingesting it is step one.
+      **Two lake traps, both measured, both non-obvious** (only matter for the
+      loader and its point-in-time test):
+      (a) bronze tables are **per symbol** (`optionsdx_quotes_spy`, not
+      `optionsdx_quotes`);
+      (b) `read_bronze_as_of` resolves the **`ingest_date` partition**, and the
+      whole 2010–2023 panel sits in the single `ingest_date=2026-09-03`
+      partition — a historical `quote_date` is **not** an `as_of`, and passing
+      one raises `LookupError`. Carry both parameters. The point-in-time test
+      that matters is therefore **intra-panel**: write a steeper smile at
+      `quote_date = T+1` **in the same partition** and assert the fit at `T`
+      ignores it. Writing a new `ingest_date` instead tests partition
+      resolution and leaves the real hazard untested.
 
-- [ ] **Test `alpha` stability rather than assuming it.** The paper asserts
-      `alpha` "fluctuates minimally" over time. A rolling `alpha` series over the
-      optionsDX window with its coefficient of variation reported is what makes
-      that a finding.
+      **Tests (synthetic):**
+      - `test_recovers_the_alpha_that_generated_the_quotes`: quotes generated
+        by `ParetanTail` at alpha ∈ {2.0, 2.75, 4.0}, `karamata_l = 0.05`,
+        at **spot = 1000** (prices scale linearly in the returns basis; at
+        spot 100 the alpha-4.0 chain is 0.21 at the 90 anchor and ~0.06 or
+        less deeper, so the quote-hygiene rules — which `fit_implied_alpha`
+        applies to every input — would correctly refuse it; even at spot 1000
+        the 700 strike is only 0.07, so use a strike grid fine enough that
+        each of the three anchors in the invariance test keeps ≥ 4 hygienic
+        deeper strikes)
+        (every anchor strike must lie below `(1 - l) * spot`; `l = 0.10` with
+        a 90 anchor sits exactly on that boundary — see P1) → fit within 1e-3.
+      - `test_the_fit_is_anchor_invariant_on_a_true_power_law`: same
+        generated chain, three different anchors → the same alpha to 1e-6.
+        (This is the property PX1 relies on; pin it here.)
+      - `test_refuses_too_few_strikes`, `…_too_narrow_a_span`,
+        `…_an_rmse_above_the_ceiling`, `…_an_optimum_on_the_bracket_edge`,
+        `…_a_sub_quarter_anchor`, `…_zero_bid_rows`.
+      - `test_a_thin_tailed_chain_is_not_mistaken_for_a_power_law`: prices
+        from Black-Scholes at a flat vol → either refused or anchor-dispersed
+        (assert which, and say why in the docstring).
+      - If you ship the loader: the intra-panel point-in-time test above.
 
-### The cheapness metric
+      **Acceptance:** tests pass; deterministic (run twice, identical floats);
+      refusal is a normal return value, never an exception.
+      **Real-data run:** not possible for the agent — add a `HUMAN_TODO.md`
+      line only if you ship a `make` target; otherwise P4 exposes it.
 
-- [ ] **`alpha_gap` as a Screen input.** `implied_alpha - realised_alpha` is the
-      basis-free cheapness measure §4 Q6 and the README's "attractively-priced"
-      have been asking for. **It cannot be a `research/metrics/` module**: every
+### P3 — `research/surface/alpha_bound.py`: the paper's no-arbitrage floor on alpha
+
+- [ ] **Goal.** The paper derives a lower bound on alpha from the requirement
+      that the implied density stays non-negative. Report, per ladder, the
+      smallest alpha the market's own quotes allow — a sanity rail for P2.
+
+      **Files:** `src/tail_lab/research/surface/alpha_bound.py`,
+      `tests/test_research_surface_alpha_bound.py`.
+
+      **Build:** `def alpha_lower_bound(anchor: Anchor, *, strike: float, sigma: float, r: float, q: float) -> float | None`.
+      - **Take the `Anchor`, never a free `karamata_l`**: the RHS is
+        `lambda l^a [(S0/(S0-K))^a - 1]`, exponentially sensitive to `l`, and
+        `l` is determined by the anchor price **at the trial alpha** (use
+        `anchor_l_put` inside the root search). Passing a `KaramataFit.karamata_l`
+        from another estimator on other data returns a confident wrong answer
+        — measured: **`alpha >= 1.08` vs `5.65`** on that argument alone.
+      - The `vega` in `dBSP/dK` is `dP/dsigma` **per unit sigma**, *not*
+        `PutGreeks.vega`, which carries `VEGA_PER_VOL_POINT = 0.01`
+        (`research/option_pricer.py`) — a **100×** error if wired to the
+        obvious source. Compute it directly or divide explicitly, and pin it.
+      - For a FIXED `l`, the RHS collapses to 1 at `K = (1 - l) S0` for all
+        alpha. Here `l` moves with the trial alpha (it comes from the anchor),
+        so that strike moves too and sits at or above the anchor; the robust
+        rule is simply: if the root search's bracket holds no sign change,
+        return `None` — never bisect for a root that does not exist. Apply the
+        same domain-shrinking as P2 for trial alphas where `anchor_l_put`
+        raises.
+
+      **Tests:** a hand-computed case at one `(S0, K, sigma, t)`; the
+      100× vega trap as its own test (`test_vega_is_per_unit_sigma_not_per_vol_point`);
+      the `None` at the collapse strike; monotonicity of the bound in `K`
+      over a grid (state the expected direction and why).
+
+### P4 — `GET /api/putlab/surface` + `SurfaceResponse`
+
+- [ ] **Goal.** Expose P1–P3 plus the realised side read-only, so the tab
+      (and you, via `curl` on the deployed app) can see real results.
+
+      **Files:** `src/tail_lab/api/putlab_routes.py` (flat — no `routes/`
+      package), `src/tail_lab/api/schemas.py`, tests in the existing
+      `tests/test_api_putlab.py`, **plus** a new
+      `src/tail_lab/research/surface/realised.py` (+
+      `tests/test_research_surface_realised.py`) and a small change to
+      `scripts/tail_alpha.py` to call it. The realised-alpha gating exists
+      today only inline in `scripts/tail_alpha.py:main()`, mixed with
+      `print`s, and `api/` cannot import `scripts/`. (The script's refusal
+      branches also print an UNGATED plateau for diagnosis; keep that in the
+      script, computed there, rather than adding an ungated field to the
+      shared result.) Extract it as
+      `gated_realised_alpha(prices: pd.Series, *, horizon_days: int = 1) ->
+      RealisedAlpha` (a frozen result carrying the `KaramataFit` or `None`,
+      the plateau or `None`, `n_beyond`, a `refusal` string, AND the
+      horizon-stepped price series it fitted, so the route can compute the
+      log-basis figure on the same series without re-stepping), have the
+      script print from it, and have the route call it. If that makes the PR
+      too large, ship the extraction as its own PR first — but never copy
+      the logic.
+
+      **Data source — the live route's ONLY option-quote source is
+      `option_chain_snapshot`** (~20k rows per session partition); it also
+      reads `ohlcv_<sym>` for the realised side. It never reads the optionsDX
+      panel. Reading
+      the panel in a request is an out-of-memory crash on the deployed 1 GB
+      Fly VM: `OptionsDxQuoteSource.from_store` takes 13–38 s per SPY call
+      (past the 5 s health check) and two concurrent builds peak ~1066 MB
+      (`fly.toml`); see also the open item "Wire a route THROUGH the cache"
+      in this file, which must land before ANY route touches the panel. Green
+      main auto-deploys, so this is a production outage, not a slow page.
+      The panel is for PX1/PX3's offline `make` targets.
+
+      **Build:** reuse `get_lake_store`, `_resolve_as_of`, `_snapshot`,
+      `_log_run`, and a TTL memo shaped like `_SWEEP_CACHE` for the (small)
+      snapshot reads — do not add a second caching convention. Query params:
+      `symbol`, `as_of` (optional; `_resolve_as_of` falls back to today's UTC
+      date, so tests must always pass it explicitly), `moneyness_pct` (the
+      anchor, same meaning as the existing OOM control), and `tenor_days`
+      (default 30: pick the expiry nearest it on the resolved session; the
+      tenor is what the realised alpha must be horizon-matched to).
+      Fixed-moneyness anchoring carries the regime confound PX1 point 6
+      measures (+0.96) — the response must **say which parameterisation it
+      used** (`CLAUDE.md`: "say which parameterisation a result used").
+      Response carries, side by side:
+      - realised alpha in **both** bases (arithmetic shown, log shown and
+        labelled "dismissed — 0026 §5"), gated exactly as
+        `scripts/tail_alpha.py` does it: `karamata_onset` raising `ValueError`
+        → refused; `KaramataFit.converged` False → refused (its docstring says
+        a non-converged onset must not be reported — the script only labels
+        it; the API must refuse); `KaramataFit.is_flat` False → refused
+        (its `onset` is then only the `min_beyond` floor, NOT a measured onset,
+        so `stable_k(..., min_threshold=fit.onset)` could still return a
+        plateau — do not use it); only then the gated `stable_k`, which can
+        itself return `None` (no plateau beyond the onset) — a fourth outcome,
+        also a refusal. That is
+        `gated_realised_alpha` above. Expect it to refuse on bronze OHLCV for
+        every name (`docs/DISCOVERIES.md` §12) — render that, do not hide it.
+        The log-basis figure is NOT gated and is computed EVEN WHEN the gate
+        refuses (the script returns before reaching it on a refusal — that is
+        the one place P4 deliberately differs): `returns.compare_return_bases(
+        realised.stepped_prices, k=min(100, len(losses) // 4))`, `losses`
+        being that series' down-moves. Report `k < hill.MIN_K` as "too few
+        losses" — a policy refusal (`hill_alpha` itself only raises at
+        `k = 0`), so guard that too — and also catch `ValueError` from
+        `compare_return_bases` (tie-degenerate tail, no down-moves, < 2
+        prices) and report it as a refusal, never a 500.
+      - **Horizon matching (0026 §6):** `T` is the CHOSEN expiry's actual
+        calendar days to expiry (not the requested `tenor_days`). OHLCV rows
+        are trading days, so convert: step = `round(T * 252 / 365)` rows, and
+        take non-overlapping arithmetic returns at that step
+        (`gated_realised_alpha(..., horizon_days=T)` does the conversion; its
+        docstring must say which unit `horizon_days` is in — calendar).
+        Expect it to refuse: five years at a 30-calendar-day step is ~60
+        observations. `alpha_gap` is
+        then `null` with that reason — correct, not a bug to work around.
+      - **`r` and `q`:** use the platform's existing defaults —
+        `research/backtest/put_roll.DEFAULT_RATE` (0.04) and
+        `research/backtest/index_replication.DEFAULT_DIVIDEND_YIELD` (0.019),
+        the same pair `skew.measure_skew` defaults to. Do not add a rate
+        source (P1). Put both in the response, and note on the surface that
+        q = 0.019 is an index-like yield that is WRONG for income names
+        (HYG, TLT — `CLAUDE.md`'s q = 0 greeks bug is the same class). `iv_ratio`
+        is largely insensitive to r/q (both sides share them); `anchor_iv`,
+        `lambda_guard_ok` and the overlay are not.
+      - **The anchor's IV**, computed once in the route:
+        `anchor_iv = skew.implied_vol_put(anchor.price, spot=anchor.spot,
+        strike=anchor.strike, t_years=anchor.t_years, r=r, q=q)`. (The ladder
+        has no anchor rung — P1 prices strictly deeper strikes only — and the
+        snapshot's `iv` column is null wherever Cboe zero-filled, so neither
+        is a source.)
+      - `lambda_guard_ok` = `heuristic_is_valid(sigma=anchor_iv,
+        t_years=anchor.t_years)`; if `anchor_iv` is `None`, report `null`,
+        not `true`. (At a 30-day tenor it passes for any sigma
+        up to ~1.75, so expect `true` almost always.)
+      - the implied fits (`ImpliedAlphaFit`, refusals included — never drop a
+        refused fit from the payload);
+      - the ladder (≤ 8 rungs, P5's cap), each rung with its `bid`/`ask`
+        (P5's error bar — `LadderRung` has no such fields, so join them from
+        the quotes in the route) and the rung's Black-Scholes price at
+        `anchor_iv` (P5's "Black-Scholes overlaid" view needs it);
+      - **what P5 draws** (P5 may not edit backend files, so P4 must carry
+        it): the empirical survival curves for `S` and for arithmetic `r`
+        as `(x, P(X > x))` point lists, down-sampled to a fixed cap (e.g.
+        200 points each) so the payload stays small; the Karamata onset;
+        `n_beyond`; `is_flat`;
+      - `alpha_gap` = implied − realised **only when both exist and are
+        horizon-matched** (0026 §6), else `null` with the reason;
+      - snapshot ids for every dataset read and the code SHA (the
+        provenance rule: results are never surfaced without it).
+      The route is **read-only**: `research/` and `api/` may never import
+      `ingestion/` (import-linter enforces it).
+
+      **Tests:** hermetic — seed a `DeltaLakeStore(tmp_path)` with a
+      synthetic chain generated from a known `ParetanTail` (at spot 1000, for
+      the quote-hygiene reason given in P2), assert the
+      response recovers that alpha; a refusing case renders with
+      `alpha: null` and a `refusal` string; every test passes `as_of`
+      explicitly (the default reads the wall clock); a test asserts the route
+      never reads an `optionsdx_quotes_*` table. Add the fixture to
+      `frontend/e2e/fixtures/` in P5, not here.
+
+### P5 — The Surface tab
+
+- [ ] **Goal.** One screen, no new control, that shows the ladder and the
+      two alphas honestly — including when they refuse.
+
+      **Files:** `frontend/src/components/putlab/PutLab.tsx` (add `'surface'`
+      to the `TabId` type, which lives there), `frontend/src/components/putlab/TabNav.tsx`
+      (add the entry to its `TABS` list — without it the tab is unreachable),
+      `frontend/src/api/client.ts` (the fetch function and response types),
+      `frontend/e2e/fixtures/mock-api.ts` (a route case for `/api/putlab/surface`),
+      a `SURFACE_CACHE` +
+      one `useCachedResource` gated to `null` when the tab is off, a
+      presentational `frontend/src/components/putlab/views/SurfaceView.tsx`
+      (beside the existing views there),
+      an e2e fixture under `frontend/e2e/fixtures/` and a Playwright spec.
+      CI gates on `npm run e2e`; it mocks every `/api/**` call, so it needs no lake.
+
+      **Constraints** (`docs/adr/0017` and the README's one-screen rule):
+      - **No new control.** The anchor *is* the existing `ParamRail` OOM
+        control — that makes anchor-relativity physically obvious.
+      - **Two fixed-height panes:** a `ZipfPlot` (two log-log survival curves,
+        `S` and arithmetic `r`, with the Karamata onset as a vertical rule,
+        and a toggle to the paper's log-price-vs-log-strike view with
+        Black-Scholes overlaid) beside a `TailLadder` IV-ratio table **capped
+        at 8 rungs**.
+      - A one-line `AlphaStrip` plus a collapsed `SurfaceCaveat` carrying the
+        `sigma*sqrt(t)` guard, the anchor-relative sentence, `n_beyond`, the
+        `stable: false` branch and the bid/ask error bar. Per the README the
+        caveat ships in the **same** increment as the number.
+      - Desk vocabulary (`docs/adr/0021`): the tab is "Surface". Not
+        "dashboard", "panel" or "leaderboard".
+      - A refused fit renders as the word **REFUSED** with its reason, never
+        as a blank, a dash or a zero.
+
+      **Acceptance:** `npm run typecheck && npm run lint && npm run build &&
+      npm run e2e` all green; the e2e spec covers both a fitted and a refused
+      payload.
+
+---
+
+### PX1 — The validation experiment: `research/surface/experiment.py` + `make surface-alpha`
+
+- [ ] **Question.** Does the paper's headline — market-implied alpha
+      **thinner** (higher) than realised — reproduce on our own chains?
+
+      **Shape.** Follow `scripts/greeks_check.py` + `make greeks-check`
+      (a script + a make target). `make skew` / `make residual` are inline
+      `python -c` and are **not** the pattern. Read-only, no lake writes.
+      Covered on CI against a `DeltaLakeStore(tmp_path)` seeded with
+      synthetic quotes, since `data/vendor/optionsdx/` is absent there. The
+      real run is a human's (`HUMAN_TODO.md` line: the command, the expected
+      runtime, and which gate decides what).
+
+      **The naive version is unfalsifiable — established by simulation before
+      any of this was written.** A Merton jump-diffusion with exponential
+      tails and **no power law anywhere** reproduces the "confirming"
+      signature: median implied alpha **2.89** against realised **2.29**, a gap
+      of **+0.60**, depth-monotone in **22 of 22** parameterisations. So the
+      design is fixed as follows:
+
+      1. **Gate 0 — does the implied fit exist at all?** Report the refusal
+         rate of P2 over the grid first. If most cells refuse, that IS the
+         result; stop and report it.
+      2. **The headline is a difference against a null**, never a raw alpha:
+         calibrate a thin-tailed model (Merton or Black-Scholes-with-skew) to
+         the *same day's* ATM and 5 %-OTM quotes, run the identical P2
+         pipeline on the null's prices, report
+         `alpha(market) − alpha(null)`.
+      3. **The primary diagnostic is anchor dispersion**, `max − min` of alpha
+         across anchors on one date and tenor. A *genuine* power law is
+         anchor-invariant (P2 pins this to six decimals), so **depth-ordering
+         is the signature of the power law FAILING** — the opposite of what an
+         earlier draft of this backlog said.
+      4. **Realised leg from the optionsDX panel's own `spot` column**, not
+         bronze OHLCV: `docs/DISCOVERIES.md` §12 shows OHLCV has no Karamata
+         region anywhere; the panel gives ~3,520 trading days instead of 1,254
+         and is the same column the implied leg uses, so the implied and
+         realised legs are on one basis. **But that column is as-traded, so
+         every split inside the window is a fake crash** at the very top of the
+         Hill tail: TSLA's `spot` goes 2213.40 → 498.41 across 2020-08-28/31
+         (its 5:1 split) — a −77.5 % "loss" (measured in the vendor file).
+         TSLA's 3:1 (2022-08-25) and NVDA's 4:1 (2021-07-20) are the same
+         hazard (not yet checked in the file — check them). Split-adjust the
+         panel spot, or drop split days, before `returns.loss_magnitudes`; say
+         which in the PR. SPY and QQQ have no splits in the window. **Exclude
+         VIX from the realised leg entirely**: its `spot` is the index, while
+         VIX options settle on futures (`CLAUDE.md`).
+      5. **Horizon-match** the realised alpha to the option tenor (0026 §6) and
+         report it as an **interval over the Hill plot** with a
+         block-bootstrap CI — `arch.bootstrap.StationaryBootstrap` with
+         `optimal_block_length` (NCSA-licensed, `docs/PRIOR_ART.md` §13) — never
+         as a point estimate with `alpha/sqrt(k)`. Adding `arch` is a
+         `pyproject.toml` change, which is a **guarded path**: open that PR as
+         a draft and ask.
+      6. **Anchor by delta, not fixed moneyness.** Holding the tail identical
+         and moving only diffusive vol moves the 90 %-anchor alpha by **+0.96**
+         from calm to crisis — `docs/PRIOR_ART.md` §1's confound, dominant here.
+      7. **Pre-register every threshold** (grid, anchors, tenors, hygiene,
+         refusal limits) in the PR description **before** the first real run.
+      8. **Inference:** the grid's effective N is **~15–25, not ~2,700**
+         (anchors are nested, quarter-ends are serially correlated, SPY/QQQ
+         correlate ~0.95). Use a clustered or block-bootstrap standard error
+         on the aggregate — that is the PRIMARY correction. Family-wise
+         control is reserved for the **monotonicity claims** (depth-ordering,
+         calm-vs-crisis), which genuinely are selected over many slices.
+         **Do not reach for Benjamini-Hochberg**: `docs/PRIOR_ART.md` §13
+         argues BH is the wrong tool for nested, ~0.95-correlated tests — and
+         says so about the bake-off itself, whose BH
+         (`research/backtest/multiple_testing.py`, PRs #103/#104) is therefore
+         not a precedent to copy. Hansen's SPA / the Model Confidence Set in
+         `arch.bootstrap` are the right family if a set-valued answer is
+         wanted.
+
+      **Deliverable:** the code, the synthetic CI test (a chain generated from
+      a known power law must come out anchor-invariant with a gap vs the null;
+      a Merton chain must come out anchor-dispersed), the make target, the
+      `HUMAN_TODO.md` line, and — once a human has run it — a
+      `docs/DISCOVERIES.md` entry either way. A negative result is a result.
+
+### PX2 — MPD cross-check
+
+- [ ] **Goal.** Compare the Paretan tail's probability of a large decline with
+      the Minneapolis Fed's independent risk-neutral estimate: different data,
+      different method (Breeden-Litzenberger), and its S&P markets reach back
+      to 2007-01-12 — through 2008, which optionsDX does not.
+
+      **Data (corrected 2026-09-25):** the `mpd` bronze table **exists** and
+      is refreshed daily (`make ingest-mpd`, in `scripts/local_daily_refresh.sh`
+      since 2026-09-21); earlier text here saying "no bronze table yet" is
+      obsolete. Use markets `sp6m` / `sp12m`, column `prob_large_decline`.
+      The threshold is not a constant in code: `contracts/mpd.py`'s prose
+      says a symmetric ±20 % band for non-inflation markets (and "<1%"/">3%"
+      for inflation) — confirm against the Fed's own MPD documentation and
+      cite it in the PR before converting.
+
+      **Build:** convert a fitted `(alpha, l, S0)` (from P2's anchor, not a
+      free `l` — same rule as P3) to `P(decline > threshold over 6m/12m)`,
+      horizon-matched (0026 §6), and compare week by week where both exist.
+      Its own PR and its own `make` target (one item = one PR); same
+      read-only / synthetic-CI / human-run rules.
+
+### PX3 — Test alpha stability rather than assuming it
+
+- [ ] **Goal.** The paper asserts alpha "fluctuates minimally" over time.
+      Measure it: a rolling implied-alpha series (P2) over the optionsDX
+      window per symbol, with its coefficient of variation and the fraction
+      of refused windows, reported next to the realised side's interval.
+      Same delivery rules as PX1, including its split-adjustment and
+      no-VIX rules for any realised series. Serves PX1's interpretation and PG2's
+      precondition ("the Karamata onset proves stable per name").
+
+---
+
+### PM1 — `alpha_gap` as a Screen input (needs PX1's result first)
+
+- [ ] **Goal.** `implied_alpha − realised_alpha` is the basis-free cheapness
+      measure §4 Q6 and the README's "attractively-priced" have been asking
+      for. **Do not start until PX1 has been run on real data and its result
+      recorded in `docs/DISCOVERIES.md`**: if PX1 says the gap is an artefact
+      of thin-tailed pricing (Gate 0 or the null comparison), a Screen column
+      built on it would rank names by noise.
+
+      **Where it goes:** it **cannot** be a `research/metrics/` module — every
       module there is `(asset_returns, benchmark_returns) -> float` on two
-      aligned Series, and this needs an option chain. It belongs as a field on
-      `ranking.RankedAsset`, displayed as a Screen column. Folding it into
-      `fragility_score` is a *separate* decision — the composite is five
-      equal-weighted benchmark-regressed metrics, and adding a quantity of a
-      different kind needs its own argument plus the same Benjamini-Hochberg
-      treatment `metric_screen.py` already applies to the bake-off's screens.
+      aligned Series, and this needs an option chain. It is a field on
+      `research/backtest/ranking.RankedAsset` (next to `fragility_score`,
+      `priced_from`), `None` when either side refuses, displayed as a Screen
+      column with its refusal reason on hover.
+      **Folding it into `fragility_score` is a separate decision** (the
+      composite is five equal-weighted benchmark-regressed metrics; adding a
+      quantity of a different kind needs its own argument plus a
+      multiple-testing treatment for the added screen — read
+      `docs/PRIOR_ART.md` §13 on why BH may be the wrong one) — do not do it
+      in the same PR.
 
-### Gated — do not start these without a human decision
+      **Expected coverage — say it in the PR:** the realised side refuses on
+      bronze OHLCV for every name (§12), and chains exist only for the 24
+      snapshot symbols (optionsDX: 5 names, ending 2023). So the column will
+      be mostly `None` until PX1/PX3 establish a realised leg that works; a
+      column that is `None` everywhere is not worth shipping, and that is a
+      legitimate reason to defer PM1.
+
+---
+
+### Gated — do not start these without a human decision (each needs its own ADR)
 
 Both were considered and deliberately scoped out when `docs/adr/0026` was
-written. Each needs its own ADR.
+written. If you believe the preconditions are now met, the deliverable is a
+**draft ADR PR** (`docs/adr/` is a guarded path, so it will not auto-merge)
+with the evidence — never the implementation.
 
-- [ ] **`PricingBasis(paretan=...)` as a third roll-engine path** (amends 0004
-      further). This is the structural fix for "the ranked screen is still
+- [ ] **PG1 — `PricingBasis(paretan=...)` as a third roll-engine path** (amends
+      0004 further). The structural fix for "the ranked screen is still
       model-priced": a Paretan-anchored roll pays a real anchor quote, so the
       variance risk premium stops being zero by construction.
-      **Prerequisite nobody has measured (`docs/PRIOR_ART.md` §16):** the
-      Cboe sweep is PUT-WING ONLY, so a naive variance strip is truncated by
+      **Prerequisite nobody has measured (`docs/PRIOR_ART.md` §16):** the Cboe
+      sweep is PUT-WING ONLY, so a naive variance strip is truncated by
       construction and a per-name model-free IV is biased LOW by an unknown
       amount. `m-g-h/R.MFIV` (MIT, R) implements Jiang & Tian (2007)'s
       truncation/discretisation correction alongside a decomposed CBOE white
@@ -1619,15 +2113,15 @@ written. Each needs its own ADR.
       `OptionPricer`, and a guard in `skew.implied_vol_put` that turns the
       fabricated `IV_MIN` documented in 0026 §1 into a loud `TypeError`.
 
-- [ ] **Measured priced depth replacing `MODEL_PRICED_MAX_MONEYNESS_PCT`**
+- [ ] **PG2 — Measured priced depth replacing `MODEL_PRICED_MAX_MONEYNESS_PCT`**
       (supersedes 0018). Closes `docs/PRIOR_ART.md` §7 with a per-name measured
       scalar — beyond the Karamata onset *and* where the implied density stays
-      non-negative — instead of one hardcoded 10.0. **Reopens only if** the
-      experiment above confirms and the Karamata onset proves stable per name.
-      Carries a hard anti-circularity rule: measured from **market quotes only**,
-      never from a Paretan extrapolation of model prices, or the model certifies
-      its own validity at depths where `docs/MODEL_RESIDUAL.md` measures it
-      reports the option is free.
+      non-negative (P3) — instead of one hardcoded 10.0. **Reopens only if**
+      PX1 confirms and PX3 shows the onset stable per name. Carries a hard
+      anti-circularity rule: measured from **market quotes only**, never from
+      a Paretan extrapolation of model prices, or the model certifies its own
+      validity at depths where `docs/MODEL_RESIDUAL.md` measures it reports
+      the option is free.
 
 ## Results are surfaced without their provenance (found 2026-09-19)
 
@@ -1926,7 +2420,9 @@ that nothing depends on a number the platform cannot yet compute honestly.
       items below is the natural next step and needs this ruin case handled
       exactly as it is here (a sweep must see `g` go to `None`/very negative
       near ruin, not crash) — no further plumbing needed to consume it.
-- [ ] **The leverage analytic Dio asked for: a `g(alpha)` sweep.** Sweep alpha
+- [ ] **The leverage analytic Dio asked for: a `g(alpha)` sweep.** (**Naming:** here
+      `alpha` is the fraction of capital allocated to the hedge, NOT the Paretan
+      tail index of the section above — in code call it `f` / `allocation`.) Sweep alpha
       across a grid, plot the time-average growth of the combined portfolio,
       and report three numbers: the argmax `alpha*`, the growth at `alpha = 0`
       (hold no hedge), and the `alpha` at which `g` returns to zero — the
