@@ -212,6 +212,20 @@ class IncompleteSweepError(RuntimeError):
     """
 
 
+class IngestDateMismatch(ValueError):
+    """A caller-supplied ``ingest_date`` disagrees with what the quotes elect.
+
+    The partition key is supposed to come from the quotes themselves
+    (``session_from_quotes``), not from a caller's say-so -- that is the
+    whole point of deriving it. Found by adversarial review 2026-09-25:
+    posting a session's quotes with an ``ingest_date`` one day ahead of them
+    returned 200 and filed them under tomorrow's key, so that evening's real
+    sweep read the already-claimed partition and no-opped. Refusing instead
+    of honouring the override keeps the partition key unspellable-wrong
+    rather than merely untested.
+    """
+
+
 def session_from_quotes(valid: pd.DataFrame) -> dt.date:
     """The session an ABSOLUTE MAJORITY of symbols agree on -- one vote each.
 
@@ -494,6 +508,19 @@ def plan_session_write(
     failed = tuple(s.upper() for s in fetch_failed) + tuple(
         s.upper() for s in fetched_ok if s.upper() not in landed and s.upper() not in off_set
     )
+    # A caller-supplied date that disagrees with what the quotes themselves
+    # elect must be refused, not honoured: honouring it is exactly how a
+    # correctly-dated batch gets filed under the wrong partition key (see
+    # IngestDateMismatch). Only checked when the session came from real
+    # quotes -- with none, ``session`` is already a clock fallback the
+    # symbol-floor refusal below will catch on its own terms.
+    if ingest_date is not None and have_quotes and ingest_date != session:
+        raise IngestDateMismatch(
+            f"supplied ingest_date {ingest_date.isoformat()} does not match the session "
+            f"{session.isoformat()} the quotes themselves elect; refusing rather than "
+            "filing this batch under the wrong partition key. Send no ingest_date, or "
+            "one equal to the session."
+        )
     ingest_date = ingest_date or session
 
     # Order matters: the floor is checked ONLY when this run would create the

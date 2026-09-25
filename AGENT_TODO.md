@@ -318,13 +318,24 @@ a large one strictly in order.
       Cboe's publish hour rather than alarm. Also feeds the wall-clock item
       below, which needs the same measurement.
 
-- [ ] **The POST route still honours a client-supplied `ingest_date`.**
-      Found by adversarial review 2026-09-25: posting 09-24 quotes with
-      `ingest_date=2026-09-25` returns 200 and claims 09-25, so that
-      evening's real sweep no-ops -- the clock-keyed bug
-      `scripts/chain_snapshot.py` stopped sending the field to avoid. No
-      caller sends it today and no test pins the case. Reject a supplied
-      `ingest_date` that differs from the elected session, or drop the field.
+- [x] **The POST route still honours a client-supplied `ingest_date`.**
+      **Done 2026-09-25**: `contracts/option_chain.py` gained
+      `IngestDateMismatch` (`ValueError`), raised by `plan_session_write`
+      whenever a caller supplies `ingest_date` that disagrees with the
+      session the quotes themselves elect (checked only when the session
+      came from real quotes, matching the existing `session_in_progress`
+      guard's `have_quotes` gate). `api/ingest_routes.py` maps it to 400,
+      alongside the existing `SessionInProgress`/`IncompleteSweepError`
+      handling. Pinned by
+      `test_a_supplied_ingest_date_that_disagrees_with_the_session_is_refused`
+      (`tests/test_api_ingest.py`), reproducing the exact finding: posting
+      2026-08-26 quotes with `ingest_date=2026-08-27` now 400s and commits
+      neither partition, instead of silently filing the session under
+      tomorrow's key. Found by adversarial review 2026-09-25.
+      Originally: posting 09-24 quotes with `ingest_date=2026-09-25` returns
+      200 and claims 09-25, so that evening's real sweep no-ops -- the
+      clock-keyed bug `scripts/chain_snapshot.py` stopped sending the field
+      to avoid. No caller sends it today and no test pinned the case.
 
 - [ ] **A wall-clock outlier turns a morning catch-up red for nothing.**
       (Update 2026-09-25, adversarial review: it also fires on a GitHub
