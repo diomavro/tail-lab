@@ -41,9 +41,12 @@ def test_falls_through_to_the_backup_when_primary_raises() -> None:
 
 
 def test_an_empty_source_is_a_failed_source() -> None:
-    """A source answering 200-with-no-rows must not stop the chain. If it
-    did, an empty bronze partition would be written, and because as-of
-    resolution reads the latest partition it would shadow good data."""
+    """A source answering 200-with-no-rows must not stop the chain. An empty
+    append commits no partition at all (``write_bronze`` on a 0-row frame
+    produces no add-file action -- verified live, see
+    ``test_ingestion_vix.py::test_a_feed_whose_only_row_is_quarantined_counts_as_behind``'s
+    docstring), so the harm is not a shadowing write; it is that the chain
+    silently stops instead of falling through to a source that has data."""
     result, source_id = first_available(
         [Source("primary", lambda: _rows(0)), Source("backup", lambda: _rows(3))],
         dataset="d",

@@ -270,6 +270,27 @@ def test_the_partition_defaults_to_the_session_not_the_server_clock(
     assert len(store.read_bronze_as_of(DATASET, dt.date(2026, 8, 26))) == 1
 
 
+def test_a_supplied_ingest_date_that_disagrees_with_the_session_is_refused(
+    client: TestClient, store: DeltaLakeStore, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Found by adversarial review 2026-09-25: posting 2026-08-26 quotes
+    (``_row``'s default ``quote_date``) with ``ingest_date=2026-08-27``
+    returned 200 and claimed the 27th, so that evening's real sweep for the
+    27th would read the already-claimed partition and no-op. Refuse the
+    mismatch instead of honouring it."""
+    _set_token(monkeypatch, TOKEN)
+    resp = client.post(
+        "/api/ingest/option-chain",
+        json=_body(ingest_date="2026-08-27"),
+        headers={"Authorization": f"Bearer {TOKEN}"},
+    )
+
+    assert resp.status_code == 400
+    assert "does not match the session" in resp.json()["detail"]
+    assert not store.bronze_partition_exists(DATASET, dt.date(2026, 8, 26))
+    assert not store.bronze_partition_exists(DATASET, dt.date(2026, 8, 27))
+
+
 # ---- parity with the local writer --------------------------------------------
 #
 # The scheduled sweep writes through this route, and for weeks it lacked every

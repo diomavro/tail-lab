@@ -117,10 +117,15 @@ class OptionChainSnapshotRow(BaseModel):
 
 
 class OptionChainSnapshotRequest(BaseModel):
-    """One day's sweep. ``ingest_date`` is the bronze partition (defaults to
-    today on the server); ``quote_date`` on each row is the session the
-    quotes belong to, and the two differ whenever a sweep runs after
-    midnight UTC."""
+    """One day's sweep. ``ingest_date`` is the bronze partition; leave it
+    unset and the server derives it from the session the rows themselves
+    elect (``contracts.option_chain.session_from_quotes``) -- the safe
+    default. A supplied value that disagrees with that session is refused
+    (``IngestDateMismatch``, 400), not honoured: the whole reason the
+    partition is derived from the quotes rather than the wall clock is that
+    a caller-supplied date can silently misfile a batch under the wrong key.
+    ``quote_date`` on each row is the session the quotes belong to, and the
+    two differ whenever a sweep runs after midnight UTC."""
 
     rows: list[OptionChainSnapshotRow]
     ingest_date: dt.date | None = None

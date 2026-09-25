@@ -41,6 +41,7 @@ from tail_lab.contracts.option_chain import (
     DATASET,
     DEFAULT_SNAPSHOT_SYMBOLS,
     IncompleteSweepError,
+    IngestDateMismatch,
     SessionInProgress,
     plan_session_write,
     split_valid_and_quarantined,
@@ -127,6 +128,12 @@ def ingest_option_chain_snapshot(
             market_session=body.market_session,
             now=_utcnow(),
         )
+    except IngestDateMismatch as exc:
+        # 400, not 409/422: the body is well-formed and the rows are fine --
+        # only the caller's own ingest_date is wrong. No caller sends this
+        # field today (see OptionChainSnapshotRequest), so this is a refusal
+        # of a hazard, not an expected path.
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
     except SessionInProgress as exc:
         # 425 Too Early, not 409: nothing is wrong and nothing is lost -- the
         # session is still trading. The script exits 0 on this code alone.
