@@ -8,6 +8,7 @@ import pytest
 import requests
 
 import tail_lab.ingestion.ohlcv as ohlcv_module
+from tail_lab.ingestion import sources
 from tail_lab.ingestion.ohlcv import (
     dataset_id,
     ingest_ohlcv,
@@ -414,42 +415,78 @@ def test_latest_market_session_is_the_newest_completed_bar() -> None:
     )
 
 
-def test_an_unreadable_reference_skips_the_check_rather_than_failing_the_sweep(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """The witness guards the sweep; it must never be the thing that costs it."""
-    monkeypatch.setattr(ohlcv_module.time, "sleep", lambda _s: None)
-    calls: list[int] = []
+def test_an_unreadable_reference_skips_the_check_rather_than_failing_the_sweep() -> None:
+    """The witness guards the sweep; it must never be the thing that costs it.
+    Retrying a transient fault is ``fetch_nasdaq_raw``'s job (see the tests
+    below), not this function's -- an injected ``fetch`` that raises is
+    reported and skipped on the first failure."""
 
     def boom() -> dict[str, Any]:
-        calls.append(1)
         raise requests.exceptions.ConnectionError("nasdaq down")
 
     assert latest_market_session(boom) is None
-    assert len(calls) == ohlcv_module._WITNESS_ATTEMPTS
     assert latest_market_session(lambda: {"data": {"tradesTable": {"rows": []}}}) is None
 
 
-def test_a_transient_witness_failure_is_retried_not_given_up(
+# ---- fetch_nasdaq_raw's per-request retry ------------------------------------
+
+
+class _Resp:
+    def __init__(self, status: int, payload: dict[str, Any] | None = None) -> None:
+        self.status_code = status
+        self._payload = payload or {}
+
+    def raise_for_status(self) -> None:
+        if self.status_code >= 400:
+            raise requests.exceptions.HTTPError(response=self)  # type: ignore[arg-type]
+
+    def json(self) -> dict[str, Any]:
+        return self._payload
+
+
+def _scripted_get(monkeypatch: pytest.MonkeyPatch, responses: list[_Resp]) -> list[str]:
+    calls: list[str] = []
+
+    def fake_get(url: str, **_kw: Any) -> _Resp:
+        calls.append(url)
+        return responses.pop(0)
+
+    monkeypatch.setattr(ohlcv_module.requests, "get", fake_get)
+    monkeypatch.setattr(sources.time, "sleep", lambda _s: None)
+    return calls
+
+
+def test_a_transient_nasdaq_fault_is_retried_not_escalated(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Measured 2026-09-25 05:01 UTC, the first scheduled run after the
-    witness shipped: a resume-time DNS failure made its single attempt give
-    up, and the frozen-feed check was silently skipped -- while Cboe's fetch
-    recovered the very same fault by retrying. The runs most likely to start
-    before DNS is up are exactly the catch-up runs the check matters for."""
-    sleeps: list[float] = []
-    monkeypatch.setattr(ohlcv_module.time, "sleep", sleeps.append)
-    answers: list[Any] = [
-        requests.exceptions.ConnectionError("Temporary failure in name resolution"),
-        _nasdaq("2026-09-24", "2026-09-23"),
-    ]
+    """Measured 2026-09-25 05:01 UTC: a resume-time DNS failure made the
+    market-session witness's single attempt give up, silently skipping the
+    frozen-feed check -- while Cboe's own fetch recovered the same fault by
+    retrying. The retry now lives in the shared fetcher, so both the witness
+    and ``ingest_ohlcv``'s main path, which call the same function, benefit."""
+    payload = _nasdaq("2026-09-24", "2026-09-23")
+    calls = _scripted_get(monkeypatch, [_Resp(503), _Resp(200, payload)])
 
-    def flaky() -> dict[str, Any]:
-        answer = answers.pop(0)
-        if isinstance(answer, Exception):
-            raise answer
-        return dict(answer)
+    assert ohlcv_module.fetch_nasdaq_raw("SPY") == payload
+    assert len(calls) == 2
 
-    assert latest_market_session(flaky) == dt.date(2026, 9, 24)
-    assert sleeps == [ohlcv_module._WITNESS_BACKOFF_S]
+
+def test_a_persistent_nasdaq_fault_still_fails_after_the_budget(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls = _scripted_get(monkeypatch, [_Resp(503)] * (2 * ohlcv_module._FETCH_ATTEMPTS))
+
+    with pytest.raises(ValueError, match="no usable data"):
+        ohlcv_module.fetch_nasdaq_raw("SPY")
+    assert len(calls) == 2 * ohlcv_module._FETCH_ATTEMPTS
+
+
+def test_a_nasdaq_refusal_is_not_retried(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A 400 means Nasdaq does not recognize the asset class -- see
+    ``_NASDAQ_ASSET_CLASSES`` -- not a blip; retrying it only burns the
+    backoff before falling through to the next class."""
+    payload = _nasdaq("2026-09-24")
+    calls = _scripted_get(monkeypatch, [_Resp(400), _Resp(200, payload)])
+
+    assert ohlcv_module.fetch_nasdaq_raw("SPY") == payload
+    assert len(calls) == 2
