@@ -4,10 +4,10 @@
 #
 # WHAT THIS IS NOT: it does **not** sweep the option chain. That has its own
 # unit (`tail-lab-chain.timer`) for a reason -- it is the one source nobody
-# sells retroactively, so it must run AFTER the US close, and bronze
-# immutability means an early write claims the session's partition and the
-# post-close run then silently no-ops. Running it from here, at a morning
-# hour, would destroy exactly the data this repo exists to collect. Every
+# sells retroactively, so it must run AFTER the US close. An early write used
+# to claim the session's partition and silently no-op the post-close run; the
+# 2026-09-25 settle-time guard now refuses it, but a morning run from here
+# would still be pointless at best and a false red at worst. Every
 # source below is the opposite: it serves history on demand, so a missed day
 # costs a re-run and nothing more.
 #

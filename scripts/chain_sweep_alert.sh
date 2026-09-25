@@ -57,9 +57,10 @@ WHEN=$(date -u +%FT%TZ)
 # That is false (every refresh source serves history on demand), it OVERWRITES
 # a genuine unacknowledged chain marker with text indistinguishable from the
 # real thing, and the marker is durable: a human acting on it after the 13:30
-# UTC open claims the live session's partition with mid-session quotes and
-# no-ops that evening's real sweep. A false alarm that routes a human into the
-# one forbidden command is worse than no alarm.
+# UTC open used to claim the live session's partition with mid-session quotes
+# and no-op that evening's real sweep (refused since 2026-09-25 by the
+# settle-time guard). A false alarm that routes a human into a useless command
+# is still worse than no alarm.
 CONTEXT="${1:-}"
 case "$CONTEXT" in
   refresh)
@@ -144,15 +145,15 @@ render() {
       ;;
     chain)
       echo "The option-chain sweep is unrecoverable if missed: no free source"
-      echo "serves a retroactive chain (docs/adr/0020). Re-run TODAY, and only"
-      echo "BEFORE the 13:30 UTC open -- an intraday write claims the session's"
-      echo "partition and makes the post-close run a silent no-op:"
+      echo "serves a retroactive chain (docs/adr/0020). Re-run TODAY, BEFORE the"
+      echo "13:30 UTC open -- after it Cboe serves the new session and the missed"
+      echo "one is gone (a re-run then refuses or skips; it cannot write intraday):"
       ;;
     *)
       echo "A tail-lab unit failed but did not identify which job it was, so"
       echo "no remedy can be printed: the chain sweep's and the refresh's are"
-      echo "not interchangeable, and running the chain one by mistake after"
-      echo "the 13:30 UTC open destroys that session. Identify the unit first:"
+      echo "not interchangeable, and a chain re-run after the 13:30 UTC open"
+      echo "cannot recover a missed session. Identify the unit first:"
       ;;
   esac
   echo

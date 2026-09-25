@@ -50,6 +50,7 @@ from tail_lab.contracts.option_chain import (
     MONEYNESS_MAX,
     MONEYNESS_MIN,
     IncompleteSweepError,
+    SessionInProgress,
     plan_session_write,
     split_valid_and_quarantined,
 )
@@ -65,6 +66,7 @@ __all__ = [
     "QUARANTINE_DATASET",
     "IncompleteSweepError",
     "IngestResult",
+    "SessionInProgress",
     "fetch_chain_raw",
     "ingest_option_chain",
     "latest_market_session",
@@ -297,6 +299,7 @@ def ingest_option_chain(
     fetch: Callable[[str], Mapping[str, Any]] | None = None,
     min_symbol_fraction: float = MIN_SYMBOL_FRACTION,
     market_session: dt.date | None = None,
+    now: dt.datetime | None = None,
 ) -> IngestResult:
     """Sweep ``symbols``, slice each chain, and commit ONE bronze partition.
 
@@ -359,6 +362,7 @@ def ingest_option_chain(
         min_symbol_fraction=min_symbol_fraction,
         ingest_date=ingest_date,
         market_session=market_session,
+        now=now,
     )
     valid, quarantined, ingest_date = plan.valid, plan.quarantined, plan.ingest_date
 

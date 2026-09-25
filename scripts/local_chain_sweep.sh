@@ -11,11 +11,15 @@
 # CRON_TZ=UTC in the crontab keeps that fixed across DST on both sides.
 #
 # Safe to run repeatedly: bronze is immutable, so a second write for the same
-# ingest_date is a no-op that preserves the first. That also means running it
-# EARLY is not safe -- an intraday write claims the day's partition and the
-# post-close run then silently does nothing. Do not move this earlier.
+# ingest_date is a no-op that preserves the first. Running it EARLY cannot
+# claim the day's partition any more: since 2026-09-25 plan_session_write
+# refuses quotes that have not settled (before 16:30 ET), skipping only when
+# the lake confirms the previous session and failing red otherwise. An early run is
+# still useless -- keep this after the close.
 #
-# Exit code mirrors the workflow's contract: non-zero if no quotes landed.
+# Exit code mirrors scripts/chain_snapshot.py's contract: non-zero whenever a
+# session may be lost; 0 for a capture, a re-run no-op, or an unsettled-session
+# skip whose previous session is confirmed in the lake.
 set -uo pipefail
 REPO=/home/dio/Documents/apps/tail-lab
 LOG="$REPO/.chain-sweep-manual.log"

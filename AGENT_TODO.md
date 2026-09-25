@@ -231,8 +231,9 @@ a large one strictly in order.
       moments after resume raised out of the unguarded `fetch_chain_raw`, so
       the backward lake check never ran, the script exited 1, and the CHAIN
       alert told the operator that day's chain was permanently blank and to
-      run `make ingest-option-chain` — which after the 13:30 UTC open claims
-      the live session's partition. The data was entirely healthy.
+      run `make ingest-option-chain` — which after the 13:30 UTC open claimed
+      the live session's partition (refused since the 2026-09-25 settle-time
+      guard). The data was entirely healthy.
       The fix (degrade, note it, let the lake check decide) is in, and
       contrast-tested: guarded exits 0, unguarded exits 1. But nothing in
       `tests/` exercises it. Follow `tests/test_scripts_chain_sweep_alert.py`:
@@ -317,7 +318,19 @@ a large one strictly in order.
       Cboe's publish hour rather than alarm. Also feeds the wall-clock item
       below, which needs the same measurement.
 
+- [ ] **The POST route still honours a client-supplied `ingest_date`.**
+      Found by adversarial review 2026-09-25: posting 09-24 quotes with
+      `ingest_date=2026-09-25` returns 200 and claims 09-25, so that
+      evening's real sweep no-ops -- the clock-keyed bug
+      `scripts/chain_snapshot.py` stopped sending the field to avoid. No
+      caller sends it today and no test pins the case. Reject a supplied
+      `ingest_date` that differs from the elected session, or drop the field.
+
 - [ ] **A wall-clock outlier turns a morning catch-up red for nothing.**
+      (Update 2026-09-25, adversarial review: it also fires on a GitHub
+      EVENING run delivered after 00:00 UTC once the local writer has already
+      captured the session, so with both writers live one incident alarms
+      twice.)
       Found by adversarial review 2026-09-24, and now on BOTH writers (the
       local path always had it). A symbol with no `last_trade_time` is dated
       from Cboe's CDN clock, so a 05:00 UTC catch-up after a good evening

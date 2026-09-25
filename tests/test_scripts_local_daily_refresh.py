@@ -106,9 +106,10 @@ def test_the_happy_path_exits_zero(tmp_path: Path) -> None:
 
 
 def test_it_never_invokes_the_option_chain_sweep(tmp_path: Path) -> None:
-    """The one catastrophic outcome. This script runs at a morning hour, and
-    bronze is immutable, so an option-chain write here would claim the
-    session's partition and make that evening's real sweep a silent no-op."""
+    """This script runs at a morning hour. An option-chain write here used to
+    claim the session's partition and silently no-op that evening's real
+    sweep; the settle-time guard now refuses it, but the refresh must still
+    never invoke the chain sweep."""
     repo = _sandbox(tmp_path)
     # Make any chain target fail loudly rather than succeed silently.
     (repo / "Makefile").write_text(

@@ -38,6 +38,7 @@ import math
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from typing import ClassVar
+from zoneinfo import ZoneInfo
 
 import pandas as pd
 import pandera.pandas as pa
@@ -351,6 +352,75 @@ def require_enough_symbols(
     )
 
 
+class SessionInProgress(IncompleteSweepError):
+    """Cboe is serving a session that has not closed yet, and nothing is lost.
+
+    BENIGN, unlike its parent: the previous session is already in the lake,
+    and the post-close sweep will capture this one. Callers should skip, not
+    alarm. Raised only when the witness confirms the previous session landed;
+    otherwise the parent is raised, because that session is gone for good.
+    """
+
+
+#: When a session's delayed quotes are final: SPX options trade until 16:15 ET
+#: and the feed is 15 minutes delayed. A sweep before this sees a session that
+#: is still moving. Measured against the schedules: the local 21:35 UTC sweep
+#: is 16:35 EST in winter, and GitHub's 21:30 cron has never been delivered
+#: less than 99 minutes late (2026-09-04, 23:09 UTC = 19:09 EDT).
+SESSION_SETTLED_ET = dt.time(16, 30)
+_NEW_YORK = ZoneInfo("America/New_York")
+
+
+def session_in_progress(session: dt.date, now: dt.datetime) -> bool:
+    """Whether quotes dated ``session`` cannot yet be a settled close.
+
+    True for today in New York before :data:`SESSION_SETTLED_ET`, and for any
+    date AFTER today -- which only a quote dated from Cboe's UTC-stamped
+    fallback clock can carry, and which must never name a partition.
+    """
+    now_et = now.astimezone(_NEW_YORK)
+    today = now_et.date()
+    return session > today or (session == today and now_et.time() < SESSION_SETTLED_ET)
+
+
+def _refuse_unsettled(
+    session: dt.date,
+    now: dt.datetime,
+    market_session: dt.date | None,
+    partition_exists: Callable[[dt.date], bool],
+) -> None:
+    """Raise the right refusal for quotes dated ``session`` that have not settled.
+
+    A date AFTER today in New York is never a real session -- only Cboe's
+    UTC-stamped fallback clock produces one -- so it is always red. Otherwise
+    the question is whether the PREVIOUS session made it in. Skipping is
+    benign only when the lake holds the witness's session; anything else -- no
+    witness, or a missing partition -- is red, because nothing has vouched for
+    the previous session. A witness that already lists THIS session names no
+    earlier date, so that case is red too -- deliberately: it costs a false
+    alarm on a catch-up between Nasdaq posting the day's bar and 16:30 ET,
+    never a lost session, and a green there once vouched for nothing.
+    """
+    if session > now.astimezone(_NEW_YORK).date():
+        raise IncompleteSweepError(
+            f"Cboe's quotes elect {session}, a date that has not begun in New York -- a "
+            "majority is dated from Cboe's UTC fallback clock, not a trade. Nothing "
+            "written; this must never name a partition."
+        )
+    if market_session is not None and market_session < session and partition_exists(market_session):
+        raise SessionInProgress(
+            f"Cboe's quotes are dated {session}, which has not settled (final after "
+            f"{SESSION_SETTLED_ET:%H:%M} ET); nothing written. The previous session "
+            f"{market_session} is in the lake, and the post-close sweep will take this one."
+        )
+    raise IncompleteSweepError(
+        f"Cboe's quotes are dated {session}, which has not settled, and the previous "
+        "session could not be confirmed in the lake (check the latest partitions) -- if "
+        "it is missing and Cboe has moved on, it is lost for good. Nothing written; the "
+        "post-close sweep will take the current one."
+    )
+
+
 @dataclass(frozen=True)
 class SessionPlan:
     """What a sweep should write, decided identically by both writers.
@@ -386,6 +456,7 @@ def plan_session_write(
     min_symbol_fraction: float = MIN_SYMBOL_FRACTION,
     ingest_date: dt.date | None = None,
     market_session: dt.date | None = None,
+    now: dt.datetime | None = None,
 ) -> SessionPlan:
     """Name the session, split off-session rows, and refuse unsafe writes.
 
@@ -398,7 +469,12 @@ def plan_session_write(
     Raises ``IncompleteSweepError`` instead of returning a plan whose write
     would lose a session silently.
     """
-    session = session_from_quotes(valid) if not valid.empty else dt.date.today()
+    # Whether ``session`` was read from quotes at all: with nothing valid it is
+    # a clock fallback, which the in-progress guard below must not mistake for
+    # a session Cboe is serving -- a total outage would then read as "still
+    # trading" and skip green (adversarial review, 2026-09-25).
+    have_quotes = not valid.empty
+    session = session_from_quotes(valid) if have_quotes else dt.date.today()
     valid, quarantined, off_session, newest_off = quarantine_off_session_rows(
         valid, quarantined, session
     )
@@ -423,6 +499,12 @@ def plan_session_write(
     # Order matters: the floor is checked ONLY when this run would create the
     # partition. On a re-run, weekend or holiday the write is a no-op anyway,
     # and raising there would turn a correct, benign outcome into a red alert.
+    if now is not None and have_quotes and session_in_progress(session, now):
+        # systemd fires a missed timer the moment the laptop wakes, so a
+        # catch-up can land mid-session. Writing then would file intraday
+        # quotes as the day's close, and the real post-close sweep would
+        # no-op against them (adversarial review, 2026-09-25).
+        _refuse_unsettled(session, now, market_session, partition_exists)
     already = partition_exists(ingest_date)
     if (
         already

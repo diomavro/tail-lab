@@ -41,6 +41,7 @@ from tail_lab.contracts.option_chain import (
     DATASET,
     DEFAULT_SNAPSHOT_SYMBOLS,
     IncompleteSweepError,
+    SessionInProgress,
     plan_session_write,
     split_valid_and_quarantined,
 )
@@ -52,6 +53,11 @@ router = APIRouter()
 _LOGGER = logging.getLogger(__name__)
 
 QUARANTINE_DATASET = f"{DATASET}__quarantine"
+
+
+def _utcnow() -> dt.datetime:
+    """The server clock, as a seam tests can replace without patching datetime."""
+    return dt.datetime.now(dt.UTC)
 
 
 @lru_cache(maxsize=1)
@@ -119,7 +125,12 @@ def ingest_option_chain_snapshot(
             partition_exists=lambda day: store.bronze_partition_exists(DATASET, day),
             ingest_date=body.ingest_date,
             market_session=body.market_session,
+            now=_utcnow(),
         )
+    except SessionInProgress as exc:
+        # 425 Too Early, not 409: nothing is wrong and nothing is lost -- the
+        # session is still trading. The script exits 0 on this code alone.
+        raise HTTPException(status_code=425, detail=str(exc)) from exc
     except IncompleteSweepError as exc:
         # 409, not 422: the body is well-formed; writing it NOW would lose a
         # session. The sweep script does not retry a 4xx, so this lands as a
