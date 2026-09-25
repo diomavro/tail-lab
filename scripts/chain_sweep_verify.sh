@@ -59,8 +59,8 @@ LOOKBACK="${CHAIN_VERIFY_LOOKBACK:-10}"
   # failure in name resolution", and 2026-09-23 the S3 lake read died the
   # same way after the first fix guarded only the Cboe half. Each fired the
   # chain-loss alert, whose marker tells the operator to run
-  # `make ingest-option-chain` -- which after the 13:30 UTC open destroys
-  # that session. Two false alarms in two days is how the one channel that
+  # `make ingest-option-chain` -- which after the 13:30 UTC open destroyed
+  # that session (until the 2026-09-25 settle-time guard). Two false alarms in two days is how the one channel that
   # must stay credible stops being read.
   #
   # A verifier that cannot reach anything has not found a gap. It has found
@@ -153,7 +153,8 @@ if os.environ["CHAIN_VERIFY_FORWARD"] == "1":
     # authoritative question -- never ran at all, and the non-zero exit fired
     # the CHAIN alert. The marker then told the operator today's chain was
     # permanently blank and to run `make ingest-option-chain`, which after the
-    # 13:30 UTC open claims the live session's partition. The data was
+    # 13:30 UTC open claimed the live session's partition (refused since the
+    # 2026-09-25 settle-time guard). The data was
     # perfectly healthy. A false alarm that routes a human into the one
     # forbidden command is the worst failure this script can have.
     #

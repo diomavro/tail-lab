@@ -4,6 +4,7 @@ import datetime as dt
 import math
 from pathlib import Path
 from typing import Any
+from zoneinfo import ZoneInfo
 
 import pandas as pd
 import pytest
@@ -13,6 +14,8 @@ from tail_lab.contracts.option_chain import (
     DATASET,
     DEFAULT_SNAPSHOT_SYMBOLS,
     MAX_TENOR_DAYS,
+    SessionInProgress,
+    session_in_progress,
 )
 from tail_lab.ingestion.option_chain import (
     _FETCH_ATTEMPTS,
@@ -1033,3 +1036,192 @@ def test_a_cdn_rollback_after_the_newer_session_landed_is_not_an_alarm(tmp_path:
     rerun = ingest_option_chain(store, live, fetch=older, market_session=dt.date(2026, 8, 26))
 
     assert rerun.committed is False
+
+
+# ---- a sweep that lands mid-session --------------------------------------------
+
+_UTC = dt.UTC
+
+
+def _live(day: str, expiry: str = NEAR_EXPIRY) -> Any:
+    live = [f"SYM{i:02d}" for i in range(24)]
+    return live, _fetcher(**{n: _payload(_put(95.0, expiry), symbol=n, day=day) for n in live})
+
+
+def test_a_mid_session_catch_up_writes_nothing_when_the_previous_session_is_safe(
+    tmp_path: Path,
+) -> None:
+    """systemd fires a missed timer the moment the laptop wakes, so a catch-up
+    can land at 15:00 UTC with Cboe serving the session in progress. Writing
+    it filed intraday quotes as the day's close, and the post-close sweep then
+    no-opped against them (adversarial review, 2026-09-25)."""
+    store = DeltaLakeStore(tmp_path)
+    live, yesterday = _live("2026-09-24")
+    ingest_option_chain(store, live, fetch=yesterday)
+    _, today = _live("2026-09-25")
+
+    with pytest.raises(SessionInProgress):
+        ingest_option_chain(
+            store,
+            live,
+            fetch=today,
+            market_session=dt.date(2026, 9, 24),
+            now=dt.datetime(2026, 9, 25, 15, 0, tzinfo=_UTC),
+        )
+    assert not store.bronze_partition_exists("option_chain_snapshot", dt.date(2026, 9, 25))
+
+    after_close = ingest_option_chain(
+        store,
+        live,
+        fetch=today,
+        market_session=dt.date(2026, 9, 24),
+        now=dt.datetime(2026, 9, 25, 21, 35, tzinfo=_UTC),
+    )
+    assert after_close.committed is True
+
+
+@pytest.mark.parametrize("witness", [dt.date(2026, 9, 24), None])
+def test_a_mid_session_catch_up_alarms_when_the_previous_session_may_be_lost(
+    tmp_path: Path, witness: dt.date | None
+) -> None:
+    """Cboe has moved on, so if the previous session never landed it is gone:
+    that is the red case, not the benign skip -- and an unreadable witness
+    cannot vouch for it either."""
+    store = DeltaLakeStore(tmp_path)
+    live, today = _live("2026-09-25")
+
+    with pytest.raises(IncompleteSweepError, match="could not be confirmed in the lake") as err:
+        ingest_option_chain(
+            store,
+            live,
+            fetch=today,
+            market_session=witness,
+            now=dt.datetime(2026, 9, 25, 15, 0, tzinfo=_UTC),
+        )
+    assert not isinstance(err.value, SessionInProgress)
+
+
+@pytest.mark.parametrize(
+    ("now_utc", "in_progress"),
+    [
+        (dt.datetime(2026, 9, 25, 20, 29, tzinfo=_UTC), True),  # 16:29 EDT
+        (dt.datetime(2026, 9, 25, 20, 30, tzinfo=_UTC), False),  # 16:30 EDT
+        (dt.datetime(2026, 12, 7, 21, 29, tzinfo=_UTC), True),  # 16:29 EST
+        (dt.datetime(2026, 12, 7, 21, 35, tzinfo=_UTC), False),  # the local sweep, winter
+        (dt.datetime(2026, 9, 26, 3, 0, tzinfo=_UTC), False),  # 23:00 EDT, same NY date
+    ],
+)
+def test_settlement_is_judged_in_new_york_time_across_dst(
+    now_utc: dt.datetime, in_progress: bool
+) -> None:
+    session = now_utc.astimezone(ZoneInfo("America/New_York")).date()
+    assert session_in_progress(session, now_utc) is in_progress
+
+
+def test_yesterdays_session_is_never_in_progress() -> None:
+    assert not session_in_progress(
+        dt.date(2026, 9, 24), dt.datetime(2026, 9, 25, 14, 0, tzinfo=_UTC)
+    )
+
+
+def test_a_total_outage_is_a_floor_refusal_not_a_session_in_progress(tmp_path: Path) -> None:
+    """With no quotes the session is only a clock fallback. Reading it as
+    "still trading" turned a dead feed at 05:00 UTC into a green skip, or into
+    a false "lost for good" while the session was still recoverable
+    (adversarial review, 2026-09-25). The symbol floor's re-run advice is the
+    right answer."""
+    store = DeltaLakeStore(tmp_path)
+    live, yesterday = _live("2026-09-24")
+    ingest_option_chain(store, live, fetch=yesterday)
+
+    def dead(_symbol: str) -> dict[str, Any]:
+        raise ValueError("cboe down")
+
+    with pytest.raises(IncompleteSweepError, match="Re-run before the") as err:
+        ingest_option_chain(
+            store,
+            live,
+            fetch=dead,
+            market_session=dt.date(2026, 9, 24),
+            now=dt.datetime(2026, 9, 25, 5, 0, tzinfo=_UTC),
+        )
+    assert not isinstance(err.value, SessionInProgress)
+
+
+def test_an_early_close_wake_skips_only_when_the_lake_vouches(tmp_path: Path) -> None:
+    """On an early-close day (13:00 ET) a 14:00 ET wake still sees quotes
+    before the 16:30 ET settle time, and must not write them: Nasdaq listing
+    the equity bar does not make 15-minute-delayed options quotes final.
+
+    Whether the skip is green depends only on the LAKE: with the previous
+    session (11-25) confirmed it is benign; with a witness that already lists
+    today there is no earlier date to check, so nothing has vouched for the
+    previous session and it is red (round-3 review: an unchecked "the previous
+    session is safe" green could hide a missed day)."""
+    store = DeltaLakeStore(tmp_path)
+    live, previous = _live("2026-11-25", expiry="261218")
+    ingest_option_chain(store, live, fetch=previous)
+    _, early_close = _live("2026-11-27", expiry="261218")
+    wake = dt.datetime(2026, 11, 27, 19, 0, tzinfo=_UTC)  # 14:00 EST
+
+    with pytest.raises(SessionInProgress):
+        ingest_option_chain(
+            store, live, fetch=early_close, market_session=dt.date(2026, 11, 25), now=wake
+        )
+    with pytest.raises(IncompleteSweepError, match="could not be confirmed") as err:
+        ingest_option_chain(
+            store, live, fetch=early_close, market_session=dt.date(2026, 11, 27), now=wake
+        )
+    assert not isinstance(err.value, SessionInProgress)
+
+    evening = ingest_option_chain(
+        store,
+        live,
+        fetch=early_close,
+        market_session=dt.date(2026, 11, 27),
+        now=dt.datetime(2026, 11, 27, 21, 35, tzinfo=_UTC),
+    )
+    assert evening.committed is True
+
+
+def test_a_future_dated_session_never_names_a_partition(tmp_path: Path) -> None:
+    """Cboe's fallback ``timestamp`` is UTC-dated, so between 00:00 and 04:00
+    UTC a fallback majority can elect tomorrow's New York date -- a partition
+    that would pre-claim the next real session."""
+    store = DeltaLakeStore(tmp_path)
+    live, previous = _live("2026-09-24")
+    ingest_option_chain(store, live, fetch=previous)  # the previous session IS safe
+    _, tomorrow = _live("2026-09-26", expiry="261016")
+
+    with pytest.raises(IncompleteSweepError, match="has not begun in New York") as err:
+        ingest_option_chain(
+            store,
+            live,
+            fetch=tomorrow,
+            market_session=dt.date(2026, 9, 24),
+            now=dt.datetime(2026, 9, 26, 2, 0, tzinfo=_UTC),  # 22:00 EDT on 09-25
+        )
+    assert not isinstance(err.value, SessionInProgress)  # red, even with the previous one safe
+    assert not store.bronze_partition_exists("option_chain_snapshot", dt.date(2026, 9, 26))
+
+
+def test_a_witness_naming_this_session_never_vouches_even_if_its_partition_exists(
+    tmp_path: Path,
+) -> None:
+    """Only the API's ``ingest_date`` override can create today's partition
+    before it settles. Treating that partition as "the previous session"
+    printed a green skip that named the current session as the previous one
+    and promised a post-close sweep that would then no-op (round-4 review)."""
+    store = DeltaLakeStore(tmp_path)
+    live, today = _live("2026-09-24")
+    ingest_option_chain(store, live, fetch=today)  # stands in for the override write
+
+    with pytest.raises(IncompleteSweepError, match="could not be confirmed") as err:
+        ingest_option_chain(
+            store,
+            live,
+            fetch=today,
+            market_session=dt.date(2026, 9, 24),
+            now=dt.datetime(2026, 9, 24, 20, 15, tzinfo=_UTC),  # 16:15 EDT
+        )
+    assert not isinstance(err.value, SessionInProgress)

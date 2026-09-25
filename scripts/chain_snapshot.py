@@ -19,10 +19,11 @@ Two modes, one code path:
         Fetch + slice + write straight to the configured lake. For a human
         at a terminal with credentials already in the environment.
 
-Exit codes are the contract with the scheduler: 0 only if quotes actually
-landed. A sweep that returns nothing is a FAILURE, not a quiet success —
-today's chain is only available today, so a silent no-op is the one outcome
-that must never look like a good day.
+Exit codes are the contract with the scheduler: non-zero whenever a session
+may be lost -- a sweep that returns nothing, too few chains, a feed behind the
+market. 0 means nothing is at risk: quotes landed, the session was already
+captured (a re-run), or the session is still trading and the previous one is
+confirmed in the lake. Each 0 prints which of those it was.
 """
 
 from __future__ import annotations
@@ -167,10 +168,24 @@ def _run_local(symbols: list[str]) -> int:
     # Imported here, not at module scope: the --post path must stay importable
     # (and runnable in CI) without any lake configuration.
     from tail_lab.config import get_lake_store
-    from tail_lab.ingestion.option_chain import IncompleteSweepError, ingest_option_chain
+    from tail_lab.ingestion.option_chain import (
+        IncompleteSweepError,
+        SessionInProgress,
+        ingest_option_chain,
+    )
 
     try:
-        result = ingest_option_chain(get_lake_store(), symbols, market_session=_market_session())
+        result = ingest_option_chain(
+            get_lake_store(),
+            symbols,
+            market_session=_market_session(),
+            now=dt.datetime.now(dt.UTC),
+        )
+    except SessionInProgress as exc:
+        # A wake-time catch-up that landed mid-session. Benign by
+        # construction: raised only once the lake confirms the previous session.
+        print(f"SKIPPED: {exc}")
+        return 0
     except IncompleteSweepError as exc:
         # Refusing to write is the CORRECT outcome, but it is still a failed
         # sweep for the operator: the session is recoverable only until the
@@ -251,6 +266,10 @@ def main(argv: list[str] | None = None) -> int:
     try:
         result_json = _post(args.post, args.token, payload, args.timeout)
     except urllib.error.HTTPError as exc:
+        if exc.code == 425:
+            # SessionInProgress on the app side: nothing lost, nothing written.
+            print(f"SKIPPED: {exc.read()[:400]!r}")
+            return 0
         print(
             f"::error::app rejected the sweep: HTTP {exc.code} {exc.read()[:400]!r}",
             file=sys.stderr,

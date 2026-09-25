@@ -402,3 +402,23 @@ def test_a_tolerated_partial_sweep_names_the_chains_it_lost(
     assert resp.status_code == 200
     assert resp.json()["committed"] is True
     assert sorted(resp.json()["symbols_failed"]) == sorted(s.upper() for s in lost)
+
+
+def test_a_mid_session_post_is_too_early_not_a_refusal(
+    client: TestClient, store: DeltaLakeStore, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """425, not 409: the session is still trading and the previous one is in
+    the lake, so the script must exit 0 rather than raise a false alarm."""
+    _set_token(monkeypatch, TOKEN)
+    _post(client, _body(ingest_date=None))  # 2026-08-26 captured
+
+    monkeypatch.setattr(
+        "tail_lab.api.ingest_routes._utcnow", lambda: dt.datetime(2026, 8, 27, 15, 0, tzinfo=dt.UTC)
+    )
+    resp = _post(
+        client,
+        _body(_row(quote_date="2026-08-27"), ingest_date=None, market_session="2026-08-26"),
+    )
+
+    assert resp.status_code == 425
+    assert not store.bronze_partition_exists(DATASET, dt.date(2026, 8, 27))

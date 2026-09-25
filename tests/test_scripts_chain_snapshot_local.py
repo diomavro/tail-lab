@@ -190,3 +190,34 @@ def test_local_hands_the_market_witness_to_the_adapter(monkeypatch: pytest.Monke
 
     assert chain_snapshot.main(["--local", "--symbols", "spy"]) == 0
     assert seen.get("market_session") == dt.date(2026, 9, 23)
+
+
+def test_local_treats_a_session_in_progress_as_a_quiet_skip(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    from tail_lab.contracts.option_chain import SessionInProgress
+
+    def mid_session(_store: Any, _symbols: Any, **_kw: Any) -> _Result:
+        raise SessionInProgress("session 2026-09-25 is still trading")
+
+    monkeypatch.setattr("tail_lab.config.get_lake_store", lambda: object())
+    monkeypatch.setattr("tail_lab.ingestion.option_chain.ingest_option_chain", mid_session)
+
+    assert chain_snapshot.main(["--local", "--symbols", "spy"]) == 0
+    assert "SKIPPED" in capsys.readouterr().out
+
+
+def test_local_passes_the_clock_so_the_mid_session_guard_is_live(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    seen: dict[str, Any] = {}
+
+    def fake_ingest(_store: Any, _symbols: Any, **kw: Any) -> _Result:
+        seen.update(kw)
+        return _Result()
+
+    monkeypatch.setattr("tail_lab.config.get_lake_store", lambda: object())
+    monkeypatch.setattr("tail_lab.ingestion.option_chain.ingest_option_chain", fake_ingest)
+
+    assert chain_snapshot.main(["--local", "--symbols", "spy"]) == 0
+    assert isinstance(seen.get("now"), dt.datetime) and seen["now"].tzinfo is not None

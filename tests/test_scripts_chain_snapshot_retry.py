@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import datetime as dt
 import importlib.util
+import io
 import urllib.error
 from pathlib import Path
 from typing import Any
@@ -183,3 +184,32 @@ def test_a_no_op_is_reported_as_one(capsys: pytest.CaptureFixture[str]) -> None:
     assert rc == 0
     assert "NO-OP" in out
     assert "committed 20078" not in out
+
+
+def test_a_too_early_answer_is_a_quiet_skip(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """425 means the session is still trading and nothing is lost."""
+
+    def fake(*_a: Any, **_k: Any) -> dict[str, Any]:
+        raise urllib.error.HTTPError("http://x", 425, "Too Early", {}, io.BytesIO(b"still trading"))  # type: ignore[arg-type]
+
+    monkeypatch.setattr(chain_snapshot, "_post_once", fake)
+    monkeypatch.setattr(
+        chain_snapshot, "sweep_to_records", lambda _s: [{"underlying": "SPY"}] * 20_000
+    )
+
+    assert chain_snapshot.main(["--post", "http://x", "--token", "t", "--symbols", "spy"]) == 0
+    assert "SKIPPED" in capsys.readouterr().out
+
+
+def test_an_unreadable_witness_is_announced_not_silent(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """When Nasdaq cannot be read the frozen-feed check is off for the run,
+    and this warning is the ONLY trace of that (adversarial review: removing
+    it broke nothing)."""
+    monkeypatch.setattr(chain_snapshot, "latest_market_session", lambda: None)
+
+    assert chain_snapshot._market_session() is None
+    assert "frozen Cboe feed would go undetected" in capsys.readouterr().out

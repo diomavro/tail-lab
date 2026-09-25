@@ -4,9 +4,10 @@
 scheduled job died, and the two jobs it serves have OPPOSITE recovery
 properties. The chain sweep is unrecoverable, so its remedy is "re-run now".
 The daily refresh is fully recoverable, and running the chain sweep because
-of a refresh failure -- after the 13:30 UTC open -- claims the live session's
-partition with mid-session quotes and makes that evening's real sweep a
-silent no-op. One missed night becomes two lost sessions.
+of a refresh failure -- after the 13:30 UTC open -- used to claim the live
+session's partition with mid-session quotes and no-op that evening's real
+sweep. The 2026-09-25 settle-time guard now refuses that write, but routing a
+human to a useless command is still the wrong remedy.
 
 That is not hypothetical: the refresh's `OnFailure=` was wired at the chain
 handler, so a refresh failure wrote "this trading day is permanently blank --
@@ -25,7 +26,7 @@ from pathlib import Path
 import pytest
 
 SCRIPT = Path(__file__).resolve().parents[1] / "scripts" / "chain_sweep_alert.sh"
-#: The command that destroys a session if run at the wrong hour.
+#: The command that used to destroy a session if run at the wrong hour.
 FORBIDDEN = "ingest-option-chain"
 #: The sentence that makes a reader run it from memory.
 PANIC = "unrecoverable if missed"
