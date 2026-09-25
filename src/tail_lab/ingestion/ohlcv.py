@@ -45,7 +45,9 @@ Functions split so tests never touch the network:
 - :func:`parse_nasdaq_historical` / :func:`parse_yahoo_chart_ohlcv` — pure
   parsers, one per source, each pinned to a committed fixture.
 - :func:`fetch_nasdaq_raw` / :func:`fetch_ohlcv_raw` — the HTTP calls,
-  exercised only by ``make ingest-ohlcv``, never by CI/pytest.
+  exercised by ``make ingest-ohlcv`` and (via :func:`latest_market_session`)
+  by the chain sweep and the vix / vix-complex / cboe-strategy targets; tests
+  reach them only through a patched ``requests.get``.
 """
 
 from __future__ import annotations
@@ -94,9 +96,12 @@ _NASDAQ_ASSET_CLASSES = ("etf", "stocks")
 _NASDAQ_MAX_ROWS = 2513
 _NASDAQ_DATE_FORMAT = "%m/%d/%Y"
 
-#: Retry budget for one Nasdaq request, shared by every caller of
-#: :func:`fetch_nasdaq_raw` -- the main ingest path and the market-session
-#: witness alike. Measured 2026-09-25 05:01 UTC: a resume-time DNS failure
+#: Retry budget for one Nasdaq request, used by the market-session witness
+#: (:func:`latest_market_session`). NOT the ingest path's default: at its 30s
+#: timeout, 3 attempts per asset class raise ``ingest_ohlcv``'s hang worst case
+#: from 60s to 220s per symbol -- ~64 extra minutes across the daily refresh's
+#: 24 symbols, past its TimeoutStartSec=120min (adversarial review,
+#: 2026-09-25). Measured 2026-09-25 05:01 UTC: a resume-time DNS failure
 #: made a single attempt give up, silently skipping the witness's
 #: frozen-feed check while Cboe's own fetch recovered the same fault by
 #: retrying. Wrapped around the individual ``requests.get`` per asset class,
@@ -132,14 +137,16 @@ class IngestResult:
     adjustment_basis: str
 
 
-def fetch_nasdaq_raw(symbol: str, *, years: int = 10, timeout: float = 30.0) -> Any:
+def fetch_nasdaq_raw(
+    symbol: str, *, years: int = 10, timeout: float = 30.0, attempts: int = 1
+) -> Any:
     """Fetch raw Nasdaq historical JSON for ``symbol``. Network — not used by tests.
 
     Tries each asset class until one answers with rows: Nasdaq 400s on the
-    wrong class and offers no lookup, so trying is the only option. Each
-    request is retried on its own (``sources.retry_transient``) -- see
-    ``_FETCH_ATTEMPTS`` -- so a single flaky attempt costs a backoff, not
-    the whole asset class.
+    wrong class and offers no lookup, so trying is the only option. With
+    ``attempts`` > 1 each request is retried on its own
+    (``sources.retry_transient``), so a flaky attempt costs a backoff, not the
+    whole asset class; the default of 1 keeps the ingest path's budget.
     """
     today = dt.datetime.now(dt.UTC).date()
     params = {
@@ -152,7 +159,7 @@ def fetch_nasdaq_raw(symbol: str, *, years: int = 10, timeout: float = 30.0) -> 
         try:
             payload: Any = retry_transient(
                 partial(_get_nasdaq_json, symbol, {**params, "assetclass": asset_class}, timeout),
-                attempts=_FETCH_ATTEMPTS,
+                attempts=attempts,
                 backoff_s=_FETCH_BACKOFF_S,
                 event="ingestion.ohlcv.nasdaq_retry",
                 symbol=symbol.upper(),
@@ -477,8 +484,9 @@ _MARKET_REFERENCE_SYMBOL = "SPY"
 #: this witness three times, and its unit budget (TimeoutStartSec=120min) is
 #: nearly spent in the all-sources-hang worst case -- ~119 min counted by
 #: adversarial review on 2026-09-25, including the refresh's 5-minute lock
-#: wait. NOMINAL cost here: ``_FETCH_ATTEMPTS`` attempts x 2 asset classes x
-#: 10s + (``_FETCH_ATTEMPTS`` - 1) x ``_FETCH_BACKOFF_S`` = 80s per call. Not
+#: wait. NOMINAL cost here: 2 asset classes x (``_FETCH_ATTEMPTS`` x 10s +
+#: (``_FETCH_ATTEMPTS`` - 1) x ``_FETCH_BACKOFF_S``) = 100s per call (measured:
+#: 6 requests, 40s of backoff; the budget figure above is ~1 min low). Not
 #: a true ceiling -- requests' timeout bounds connect and each read
 #: separately, per resolved address, and DNS not at all -- so a genuine hang
 #: is bounded by the systemd units, not by this arithmetic.
@@ -496,15 +504,20 @@ def latest_market_session(
     cannot be read: a failed cross-check must not cost the sweep it guards.
     A transient fault -- e.g. the resume-time DNS failure measured
     2026-09-25 05:01 UTC, which made the previous single-shot fetch give up
-    and silently skip the frozen-feed check -- is already retried inside
-    ``fetch_nasdaq_raw`` (``_FETCH_ATTEMPTS``), so this function makes one
-    call and does not retry a second time on top of it.
+    and silently skip the frozen-feed check -- is retried because this function asks
+    ``fetch_nasdaq_raw`` for ``_FETCH_ATTEMPTS`` per-request attempts (its
+    default is 1), so it does not retry a second time on top.
     """
     try:
         raw = (
             fetch()
             if fetch is not None
-            else fetch_nasdaq_raw(_MARKET_REFERENCE_SYMBOL, years=1, timeout=_WITNESS_TIMEOUT_S)
+            else fetch_nasdaq_raw(
+                _MARKET_REFERENCE_SYMBOL,
+                years=1,
+                timeout=_WITNESS_TIMEOUT_S,
+                attempts=_FETCH_ATTEMPTS,
+            )
         )
         bars = parse_nasdaq_historical(_MARKET_REFERENCE_SYMBOL, dict(raw))
         newest = pd.to_datetime(bars["trade_date"]).max()
