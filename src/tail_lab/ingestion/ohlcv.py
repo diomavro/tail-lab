@@ -54,6 +54,7 @@ import datetime as dt
 import logging
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
+from functools import partial
 from typing import Any
 
 import pandas as pd
@@ -61,7 +62,7 @@ import requests
 from pandera.errors import SchemaErrors
 
 from tail_lab.contracts.ohlcv import OhlcvSchema, dataset_id
-from tail_lab.ingestion.sources import Source, first_available
+from tail_lab.ingestion.sources import Source, first_available, retry_transient
 from tail_lab.lake.store import LakeStore
 from tail_lab.observability import log_event
 
@@ -93,6 +94,18 @@ _NASDAQ_ASSET_CLASSES = ("etf", "stocks")
 _NASDAQ_MAX_ROWS = 2513
 _NASDAQ_DATE_FORMAT = "%m/%d/%Y"
 
+#: Retry budget for one Nasdaq request, shared by every caller of
+#: :func:`fetch_nasdaq_raw` -- the main ingest path and the market-session
+#: witness alike. Measured 2026-09-25 05:01 UTC: a resume-time DNS failure
+#: made a single attempt give up, silently skipping the witness's
+#: frozen-feed check while Cboe's own fetch recovered the same fault by
+#: retrying. Wrapped around the individual ``requests.get`` per asset class,
+#: not around this function as a whole: :func:`fetch_nasdaq_raw` folds every
+#: per-asset-class failure into a ``ValueError``, which
+#: ``is_transient_fetch_error`` never recognizes as retriable.
+_FETCH_ATTEMPTS = 3
+_FETCH_BACKOFF_S = 10.0
+
 #: What ``adj_close`` means for each source. Recorded on the result and in
 #: the run log because the two are not interchangeable.
 ADJUSTMENT_BASIS = {
@@ -123,7 +136,10 @@ def fetch_nasdaq_raw(symbol: str, *, years: int = 10, timeout: float = 30.0) -> 
     """Fetch raw Nasdaq historical JSON for ``symbol``. Network — not used by tests.
 
     Tries each asset class until one answers with rows: Nasdaq 400s on the
-    wrong class and offers no lookup, so trying is the only option.
+    wrong class and offers no lookup, so trying is the only option. Each
+    request is retried on its own (``sources.retry_transient``) -- see
+    ``_FETCH_ATTEMPTS`` -- so a single flaky attempt costs a backoff, not
+    the whole asset class.
     """
     today = dt.datetime.now(dt.UTC).date()
     params = {
@@ -134,20 +150,36 @@ def fetch_nasdaq_raw(symbol: str, *, years: int = 10, timeout: float = 30.0) -> 
     last_error: Exception | None = None
     for asset_class in _NASDAQ_ASSET_CLASSES:
         try:
-            resp = requests.get(
-                NASDAQ_HISTORICAL_URL_TEMPLATE.format(symbol=symbol.upper()),
-                params={**params, "assetclass": asset_class},
-                headers={"User-Agent": _USER_AGENT, "Accept": "application/json"},
-                timeout=timeout,
+            payload: Any = retry_transient(
+                partial(_get_nasdaq_json, symbol, {**params, "assetclass": asset_class}, timeout),
+                attempts=_FETCH_ATTEMPTS,
+                backoff_s=_FETCH_BACKOFF_S,
+                event="ingestion.ohlcv.nasdaq_retry",
+                symbol=symbol.upper(),
+                assetclass=asset_class,
             )
-            resp.raise_for_status()
-            payload: Any = resp.json()
             if _nasdaq_rows(payload):
                 return payload
             last_error = ValueError(f"no rows for assetclass={asset_class}")
         except Exception as exc:
             last_error = exc
     raise ValueError(f"Nasdaq returned no usable data for {symbol!r}: {last_error}")
+
+
+def _get_nasdaq_json(symbol: str, params: dict[str, str], timeout: float) -> Any:
+    """One unretried GET against Nasdaq's historical endpoint. Split out of
+    :func:`fetch_nasdaq_raw` so the real ``requests.exceptions.RequestException``
+    reaches ``retry_transient`` before the caller folds it into a ``ValueError``.
+    """
+    resp = requests.get(
+        NASDAQ_HISTORICAL_URL_TEMPLATE.format(symbol=symbol.upper()),
+        params=params,
+        headers={"User-Agent": _USER_AGENT, "Accept": "application/json"},
+        timeout=timeout,
+    )
+    resp.raise_for_status()
+    payload: Any = resp.json()
+    return payload
 
 
 def fetch_ohlcv_raw(
@@ -441,6 +473,17 @@ def ingest_ohlcv(
 #: during market hours cannot mistake a live session for a finished one.
 _MARKET_REFERENCE_SYMBOL = "SPY"
 
+#: Shorter than ``fetch_nasdaq_raw``'s 30s default: the daily refresh calls
+#: this witness three times, and its unit budget (TimeoutStartSec=120min) is
+#: nearly spent in the all-sources-hang worst case -- ~119 min counted by
+#: adversarial review on 2026-09-25, including the refresh's 5-minute lock
+#: wait. NOMINAL cost here: ``_FETCH_ATTEMPTS`` attempts x 2 asset classes x
+#: 10s + (``_FETCH_ATTEMPTS`` - 1) x ``_FETCH_BACKOFF_S`` = 80s per call. Not
+#: a true ceiling -- requests' timeout bounds connect and each read
+#: separately, per resolved address, and DNS not at all -- so a genuine hang
+#: is bounded by the systemd units, not by this arithmetic.
+_WITNESS_TIMEOUT_S = 10.0
+
 
 def latest_market_session(
     fetch: Callable[[], Mapping[str, Any]] | None = None,
@@ -451,9 +494,18 @@ def latest_market_session(
     every chain agrees on the stale session and nothing inside the sweep can
     tell. Returns ``None`` -- logged, never raised -- when the reference
     cannot be read: a failed cross-check must not cost the sweep it guards.
+    A transient fault -- e.g. the resume-time DNS failure measured
+    2026-09-25 05:01 UTC, which made the previous single-shot fetch give up
+    and silently skip the frozen-feed check -- is already retried inside
+    ``fetch_nasdaq_raw`` (``_FETCH_ATTEMPTS``), so this function makes one
+    call and does not retry a second time on top of it.
     """
     try:
-        raw = fetch() if fetch is not None else fetch_nasdaq_raw(_MARKET_REFERENCE_SYMBOL, years=1)
+        raw = (
+            fetch()
+            if fetch is not None
+            else fetch_nasdaq_raw(_MARKET_REFERENCE_SYMBOL, years=1, timeout=_WITNESS_TIMEOUT_S)
+        )
         bars = parse_nasdaq_historical(_MARKET_REFERENCE_SYMBOL, dict(raw))
         newest = pd.to_datetime(bars["trade_date"]).max()
     except Exception:
