@@ -542,3 +542,120 @@ def test_ingest_ohlcv_itself_asks_for_no_retries(
     ingest_ohlcv(DeltaLakeStore(tmp_path), "SPY", ingest_date=dt.date(2026, 9, 25))
     assert len(calls) == 1, "ingest_ohlcv no longer reaches fetch_nasdaq_raw -- this test is blind"
     assert calls[0].get("attempts", 1) == 1
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [["not", "an", "object"], {"data": "a string"}, {"data": {"tradesTable": {"rows": [None]}}}],
+)
+def test_a_malformed_nasdaq_payload_is_a_named_failure(
+    monkeypatch: pytest.MonkeyPatch, payload: object
+) -> None:
+    """A payload of the wrong shape is ``ValueError`` ("no usable data"), the
+    one failure callers catch -- never a stray AttributeError."""
+    monkeypatch.setattr(ohlcv_module.requests, "get", lambda *_a, **_k: _Resp(200, payload))  # type: ignore[arg-type]
+
+    with pytest.raises(ValueError, match="no usable data"):
+        ohlcv_module.fetch_nasdaq_raw("SPY")
+
+
+def test_a_bug_inside_the_witness_propagates(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The witness survives network and data faults (it returns None); a
+    programming error is not one of those and must not be hidden."""
+
+    def buggy() -> dict[str, object]:
+        raise KeyError("a bug")
+
+    with pytest.raises(KeyError):
+        latest_market_session(buggy)
+
+
+def test_a_bug_in_the_nasdaq_fetch_propagates(monkeypatch: pytest.MonkeyPatch) -> None:
+    def buggy(*_a: object, **_k: object) -> object:
+        raise KeyError("a bug")
+
+    monkeypatch.setattr(ohlcv_module.requests, "get", buggy)
+
+    with pytest.raises(KeyError):
+        ohlcv_module.fetch_nasdaq_raw("SPY")
+
+
+def test_a_non_mapping_witness_payload_is_unavailable_not_a_crash() -> None:
+    """``dict(raw)`` on a bare number raises TypeError (a list would raise
+    ValueError instead): a failed cross-check, so None, not a crash."""
+    assert latest_market_session(lambda: 42) is None  # type: ignore[arg-type,return-value]
+
+
+def test_an_infinite_volume_on_the_only_bar_makes_the_witness_unavailable() -> None:
+    """``int(inf)`` in the parser raises OverflowError; before this it escaped
+    the witness and killed the --post sweep with its records unsent. With
+    older good bars present the witness falls back to the newest of those
+    instead -- that is the parser dropping the bar, not this test's subject."""
+    payload = _nasdaq("2026-09-24")
+    payload["data"]["tradesTable"]["rows"][0]["volume"] = "Infinity"  # type: ignore[index]
+
+    assert latest_market_session(lambda: payload) is None
+
+
+def test_a_trades_table_of_the_wrong_shape_is_a_named_failure() -> None:
+    with pytest.raises(ValueError, match="tradesTable"):
+        ohlcv_module._nasdaq_rows({"data": {"tradesTable": "a string"}})
+
+
+@pytest.mark.parametrize("cell", ["Infinity", "1e400", "nan", "$inf"])
+def test_a_non_finite_cell_is_unparseable_not_a_crash(cell: str) -> None:
+    """``int(inf)`` in the parser raised OverflowError out of every caller --
+    the witness, the verifier's check C, the OHLCV ingest. A non-finite cell
+    is unparseable, so its bar is dropped like any other bad cell."""
+    payload = _nasdaq("2026-09-24", "2026-09-23")
+    payload["data"]["tradesTable"]["rows"][0]["volume"] = cell  # type: ignore[index]
+
+    bars = parse_nasdaq_historical("SPY", payload)
+
+    assert len(bars) == 1  # the bad bar dropped, the good one kept
+
+
+@pytest.mark.parametrize("field", ["volume", "close"])
+@pytest.mark.parametrize("cell", ["N/A", "nan", "Infinity", "--"])
+def test_a_day_with_an_unreadable_number_is_still_a_trading_day(field: str, cell: str) -> None:
+    """The verifier's whole-session check asks WHICH days traded. Built on the
+    OHLCV parser it lost any day whose volume read "N/A", and a partition
+    missing on that day passed as complete (round-3 review, 2026-09-26)."""
+    payload = _nasdaq("2026-09-24", "2026-09-23")
+    payload["data"]["tradesTable"]["rows"][1][field] = cell  # type: ignore[index]
+
+    assert ohlcv_module.nasdaq_trading_days(payload) == {
+        dt.date(2026, 9, 24),
+        dt.date(2026, 9, 23),
+    }
+
+
+def test_trading_days_keep_the_bar_nasdaq_really_served_with_na_volume() -> None:
+    """Verbatim the row Nasdaq's live SPY page carried on 2026-09-26: prices
+    unprefixed and all equal, volume "N/A". The parser drops it; the
+    trading-day list must not."""
+    payload = _nasdaq("2026-04-21")
+    payload["data"]["tradesTable"]["rows"].append(  # type: ignore[index]
+        {
+            "date": "04/20/2026",
+            "close": "710.14",
+            "volume": "N/A",
+            "open": "710.14",
+            "high": "710.14",
+            "low": "710.14",
+        }
+    )
+
+    assert dt.date(2026, 4, 20) in ohlcv_module.nasdaq_trading_days(payload)
+    assert list(parse_nasdaq_historical("SPY", payload)["trade_date"].dt.date) == [
+        dt.date(2026, 4, 21)
+    ]
+
+
+def test_trading_days_drop_an_unreadable_date_and_refuse_a_bad_envelope() -> None:
+    payload = _nasdaq("2026-09-24", "2026-09-23")
+    payload["data"]["tradesTable"]["rows"][1]["date"] = "Sept 23"  # type: ignore[index]
+
+    assert ohlcv_module.nasdaq_trading_days(payload) == {dt.date(2026, 9, 24)}
+    with pytest.raises(ValueError, match="tradesTable"):
+        ohlcv_module.nasdaq_trading_days({"data": {"tradesTable": "a string"}})

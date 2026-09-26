@@ -303,3 +303,24 @@ def test_a_hung_cboe_stays_inside_the_refresh_budget() -> None:
     yahoo_fallback = 3 * default_timeout(options_expiry.fetch_options_expiry_raw)
 
     assert cboe_worst + yahoo_fallback <= 165
+
+
+@pytest.mark.parametrize("payload", [["a", "list"], {"data": "a string"}, {"data": {}}])
+def test_a_malformed_cboe_payload_is_not_a_chain(
+    monkeypatch: pytest.MonkeyPatch, payload: object
+) -> None:
+    calls = _scripted(monkeypatch, [_Resp(200, payload), _Resp(200, payload)])  # type: ignore[arg-type]
+
+    with pytest.raises(ValueError, match="no usable chain"):
+        options_expiry.fetch_cboe_chain_raw("spy")
+    assert len(calls) == 2  # both candidates tried, no retry of a bad shape
+
+
+def test_a_bug_in_the_cboe_fetch_propagates(monkeypatch: pytest.MonkeyPatch) -> None:
+    def buggy(*_a: object, **_k: object) -> object:
+        raise KeyError("a bug")
+
+    monkeypatch.setattr(options_expiry.requests, "get", buggy)
+
+    with pytest.raises(KeyError):
+        options_expiry.fetch_cboe_chain_raw("spy")

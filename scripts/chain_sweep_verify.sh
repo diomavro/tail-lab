@@ -92,7 +92,14 @@ import os
 import sys
 
 from tail_lab.config import get_lake_store
-from tail_lab.contracts.option_chain import DEFAULT_SNAPSHOT_SYMBOLS
+import requests
+
+from tail_lab.contracts.option_chain import (
+    DEFAULT_SNAPSHOT_SYMBOLS,
+    WHOLE_SESSION,
+    missing_sessions,
+)
+from tail_lab.ingestion.ohlcv import fetch_nasdaq_raw, nasdaq_trading_days
 from tail_lab.ingestion.option_chain import DATASET, fetch_chain_raw, parse_cboe_chain
 
 EXPECTED = {s.lower() for s in DEFAULT_SNAPSHOT_SYMBOLS}
@@ -201,6 +208,7 @@ if os.environ["CHAIN_VERIFY_FORWARD"] == "1":
 # public API, with no private attributes and no second Delta client.
 lookback = int(os.environ["CHAIN_VERIFY_LOOKBACK"])
 seen: set[dt.date] = set()
+sessions: set[dt.date] = set()
 probe = dt.date.today()
 newest_session: dt.date | None = None
 while len(seen) < lookback:
@@ -228,6 +236,7 @@ while len(seen) < lookback:
     seen.add(resolved)
     frame = store.read_bronze_as_of(DATASET, resolved)
     session = frame["quote_date"].max().date()
+    sessions.add(session)
     if newest_session is None:
         newest_session = session
 
@@ -247,6 +256,40 @@ while len(seen) < lookback:
     if unacked:
         failures.append(f"{session} is missing: {', '.join(unacked)}")
     probe = resolved - dt.timedelta(days=1)
+
+# ---- C. whole sessions: is any trading day missing a partition entirely? --
+# B only inspects partitions that EXIST, so a session with none was invisible:
+# it reported "every checked session is complete" while 2026-09-23 had no
+# partition at all. The list of trading days comes from Nasdaq (holiday-proof,
+# no calendar to maintain); if Nasdaq cannot be read, say so and do not fail --
+# not being able to look is not evidence of a gap.
+try:
+    # Dates only, never through the OHLCV parser: that drops a bar whose
+    # volume reads "N/A", and the day it drops is then invisible to C.
+    trading_days = nasdaq_trading_days(fetch_nasdaq_raw("SPY", years=1, timeout=10.0, attempts=3))
+except (requests.exceptions.RequestException, ValueError) as exc:
+    print(f"NOTE: trading days unavailable ({exc.__class__.__name__}); whole-session check skipped.")
+    trading_days = None
+if trading_days is not None and not trading_days:
+    # Nasdaq answered but no date parsed (e.g. a date-format change). An
+    # unreachable Nasdaq is noted in the except above instead. Either way C
+    # cannot look, and silence would switch the check off invisibly.
+    print("NOTE: no usable trading days; whole-session check skipped.")
+whole_ack: set[dt.date] = set()
+for day, symbol in ACKNOWLEDGED:
+    if symbol != WHOLE_SESSION:
+        continue
+    try:
+        whole_ack.add(dt.date.fromisoformat(day))
+    except ValueError:
+        # Same degrade-don't-die rule as _acknowledged(): over-report, never crash.
+        print(f"NOTE: ignoring malformed .chain-known-gaps session {day!r}")
+for day in missing_sessions(sessions, trading_days or set(), acknowledged=whole_ack):
+    print(f"  GAP {day}: no partition at all")
+    failures.append(
+        f"{day} has NO partition -- the whole session was lost. If it can never be "
+        f"recovered, acknowledge it with a line '{day}<TAB>*' in .chain-known-gaps"
+    )
 
 if failures:
     print()

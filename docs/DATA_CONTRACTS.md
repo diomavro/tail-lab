@@ -261,9 +261,11 @@ loses its rows. As two writers, FOMC and earnings failed this way every day
 (measured 2026-09-21). Since 2026-09-24 `ingestion/event_calendar.py` is the
 only writer: `fomc.py` and `earnings.py` only fetch and parse, and every
 source lands in ONE snapshot (`make ingest-event-calendar`, in the daily
-refresh). It refuses to write when the FOMC page yields no valid meetings or
-more than half the earnings dates fail, since a half-calendar partition would
-shadow the last complete one. The next source (BLS CPI) joins that write; it
+refresh). It refuses to write when the FOMC page yields no valid meetings,
+when more than half the earnings dates fail, or when either source's valid
+rows fall below half of what the previous partition held for it (a source
+answering only PARTIALLY), since a half-calendar partition would shadow the
+last complete one. The next source (BLS CPI) joins that write; it
 does not get its own.
 
 **Cadence.** Scheduled: daily, in the local refresh (the earnings window

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import datetime as dt
+
 import pandas as pd
 import pytest
 from pandera.errors import SchemaErrors
@@ -9,6 +11,7 @@ from tail_lab.contracts.option_chain import (
     MONEYNESS_MAX,
     MONEYNESS_MIN,
     OptionChainSnapshotSchema,
+    missing_sessions,
 )
 from tail_lab.contracts.option_quotes import OptionQuoteSchema
 
@@ -88,3 +91,63 @@ def test_the_slice_bands_bracket_spot() -> None:
     at-the-money or the dataset would hold no reference point for skew."""
     assert MONEYNESS_MIN < 1.0 < MONEYNESS_MAX
     assert 0 < MAX_TENOR_DAYS <= 365
+
+
+# ---- whole missing sessions --------------------------------------------------
+
+_D = dt.date
+
+
+def test_a_trading_day_with_no_partition_is_reported() -> None:
+    """The case the verifier missed: 2026-09-23 had no partition at all, and
+    walking only the partitions that exist can never see that."""
+    captured = [_D(2026, 9, 21), _D(2026, 9, 22), _D(2026, 9, 24)]
+    trading = [_D(2026, 9, 21), _D(2026, 9, 22), _D(2026, 9, 23), _D(2026, 9, 24), _D(2026, 9, 25)]
+
+    assert missing_sessions(captured, trading) == [_D(2026, 9, 23)]
+
+
+def test_an_acknowledged_lost_session_is_not_reported() -> None:
+    captured = [_D(2026, 9, 22), _D(2026, 9, 24)]
+    trading = [_D(2026, 9, 22), _D(2026, 9, 23), _D(2026, 9, 24), _D(2026, 9, 25)]
+
+    assert missing_sessions(captured, trading, acknowledged={_D(2026, 9, 23)}) == []
+
+
+def test_the_newest_completed_session_is_left_to_the_forward_check() -> None:
+    """It may still be captured tonight (or by the morning catch-up), so
+    flagging it here would alarm on a healthy evening."""
+    captured = [_D(2026, 9, 23), _D(2026, 9, 24)]
+    trading = [_D(2026, 9, 23), _D(2026, 9, 24), _D(2026, 9, 25)]
+
+    assert missing_sessions(captured, trading) == []
+
+
+def test_holidays_and_days_before_the_window_are_not_gaps() -> None:
+    """A holiday is not in Nasdaq's trading days, so it cannot be missing; days
+    older than the oldest captured partition are outside what was inspected."""
+    captured = [_D(2026, 9, 4), _D(2026, 9, 8)]
+    trading = [_D(2026, 9, 1), _D(2026, 9, 4), _D(2026, 9, 8), _D(2026, 9, 9)]  # 09-07 Labor Day
+
+    assert missing_sessions(captured, trading) == []
+
+
+def test_nothing_to_compare_reports_nothing() -> None:
+    assert missing_sessions([], [_D(2026, 9, 23)]) == []
+    assert missing_sessions([_D(2026, 9, 23)], []) == []
+
+
+def test_an_unreadable_trading_day_is_ignored_not_a_crash() -> None:
+    """Nasdaq's parser keeps an unreadable date as NaT; reaching ``max`` with
+    it crashed the verifier into a false chain alert (fix-batch review)."""
+    captured = [_D(2026, 9, 22), _D(2026, 9, 24)]
+    trading = [_D(2026, 9, 22), _D(2026, 9, 23), pd.NaT, _D(2026, 9, 24), _D(2026, 9, 25)]
+
+    assert missing_sessions(captured, trading) == [_D(2026, 9, 23)]  # type: ignore[arg-type]
+
+
+def test_a_null_captured_session_is_ignored_not_a_crash() -> None:
+    captured = [pd.NaT, _D(2026, 9, 22), _D(2026, 9, 24)]
+    trading = [_D(2026, 9, 22), _D(2026, 9, 23), _D(2026, 9, 24), _D(2026, 9, 25)]
+
+    assert missing_sessions(captured, trading) == [_D(2026, 9, 23)]  # type: ignore[arg-type]

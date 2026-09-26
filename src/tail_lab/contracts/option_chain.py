@@ -35,7 +35,7 @@ from __future__ import annotations
 
 import datetime as dt
 import math
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Collection, Iterable, Sequence
 from dataclasses import dataclass
 from typing import ClassVar
 from zoneinfo import ZoneInfo
@@ -603,4 +603,42 @@ def plan_session_write(
         symbols_ok=ok,
         symbols_failed=failed,
         symbols_off_session=off_session,
+    )
+
+
+#: The symbol column value in ``.chain-known-gaps`` that acknowledges a WHOLE
+#: lost session rather than one symbol's gap.
+WHOLE_SESSION = "*"
+
+
+def missing_sessions(
+    captured: Iterable[dt.date],
+    trading_days: Iterable[dt.date],
+    *,
+    acknowledged: Collection[dt.date] = (),
+) -> list[dt.date]:
+    """Trading days that have NO partition, inside the captured window.
+
+    ``captured`` are the sessions a verifier found in the lake; ``trading_days``
+    are completed sessions from a source that is not Cboe (Nasdaq's SPY
+    history, which is holiday-proof by construction). A day counts as missing
+    when it lies strictly after the oldest captured session and strictly
+    BEFORE the newest completed trading day -- the newest may still be
+    captured tonight, and is the forward check's to judge -- and is neither
+    captured nor acknowledged as a permanent loss.
+
+    Exists because the verifier's backward walk only inspected partitions that
+    EXIST: it reported "every checked session is complete" while 2026-09-23 had
+    no partition at all (whole-session review, 2026-09-26).
+    """
+    # Only real dates on both sides: Nasdaq's parser keeps an unreadable date as
+    # NaT (and a malformed partition could carry one), which would make
+    # min/max raise and crash the verifier into a false chain alert.
+    have = {day for day in captured if isinstance(day, dt.date) and not pd.isna(day)}
+    days = {day for day in trading_days if isinstance(day, dt.date) and not pd.isna(day)}
+    if not have or not days:
+        return []
+    oldest, newest = min(have), max(days)
+    return sorted(
+        day for day in days if oldest < day < newest and day not in have and day not in acknowledged
     )

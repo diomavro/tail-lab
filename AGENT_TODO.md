@@ -313,8 +313,9 @@ a large one strictly in order.
       an 8 -> 2 FOMC drop refuses (the redesign this item describes), a
       29 -> 20 earnings drop does not (ordinary rolling-window variation),
       and a previous count of 1 is never compared. Threshold is a starting
-      guess, not a measurement -- no live earnings history exists yet to
-      confirm 50% doesn't misfire on its naturally lumpier day-to-day counts;
+      guess, not a measurement -- live earnings history is still a few days
+      long (the first combined partition, 2026-09-25, held 509 earnings rows),
+      too short to confirm 50% doesn't misfire on its lumpier day-to-day counts;
       the module docstring says so and to widen, not remove, if it does.
 
 - [ ] **Measure when Nasdaq posts the day's SPY bar vs Cboe's index CSVs.**
@@ -1920,6 +1921,17 @@ new module near-complete, with a pinned synthetic case with a known answer
           `m`), plus two deeper at fixed offsets, `m + 2` and `m + 4`
           percentage points — each the listed strike nearest
           `spot * (1 - moneyness / 100)`. No new control (P5 forbids one).
+          **Anchors must be DISTINCT strikes**: on coarse grids the three
+          picks collide (measured: spot 100 on a $5 grid gives 95, 95, 90),
+          and two fits on one strike give identical alphas — a dispersion of
+          exactly 0, the value that marks a true power law. Deduplicate; if
+          fewer than two distinct anchors remain, report that as the reason.
+        - **An anchor quote that is not a price is REFUSED, not a 500.**
+          `Anchor(...)` raises `ValueError` for a zero bid (measured: 32 of
+          400 realistic picks, mostly 7-day tenors and deep `m`); catch that
+          one `ValueError` when constructing the anchor and list it as a
+          refused fit with its message — or choose anchors only among quotes
+          that pass P2's hygiene predicate. Say which in the PR.
         - **Dispersion** = max − min of the ACCEPTED fits' alphas; `null` with
           the reason "fewer than two anchors accepted" when fewer than two
           fit. Refused fits are still listed, with their refusal.
@@ -1942,7 +1954,10 @@ new module near-complete, with a pinned synthetic case with a known answer
 
       **Tests:** hermetic — seed a `DeltaLakeStore(tmp_path)` with a
       synthetic chain generated from a known `ParetanTail` (at spot 1000, for
-      the quote-hygiene reason given in P2), assert dispersion ≈ 0 (< 1e-6) on
+      the quote-hygiene reason given in P2, and **at `moneyness_pct = 7`**:
+      with `karamata_l = 0.05` the default m = 5 anchor is 950, exactly
+      `(1 - l) * spot`, where the fit correctly refuses on the bracket edge),
+      assert dispersion ≈ 0 (< 1e-6) on
       it and > 0.5 on a flat-vol Black-Scholes chain at 90 days / 35 % vol
       (P2's measured case), assert the
       response recovers that alpha; a refusing case renders with

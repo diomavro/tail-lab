@@ -46,7 +46,7 @@ from tail_lab.contracts.option_chain import (
     plan_session_write,
     split_valid_and_quarantined,
 )
-from tail_lab.lake.store import LakeStore
+from tail_lab.lake.store import LAKE_WRITE_ERRORS, LakeStore
 from tail_lab.observability import log_event
 
 router = APIRouter()
@@ -148,10 +148,12 @@ def ingest_option_chain_snapshot(
     if not plan.quarantined.empty:
         # Diagnostic only, and the session is already committed above: a
         # failed quarantine write must not turn a correct capture into a 500
-        # the script then retries into a no-op. Same rule as the local path.
+        # the script then retries into a no-op. Same rule as the local path:
+        # lake-write failures (`LAKE_WRITE_ERRORS`) are survived, anything else
+        # is a bug and surfaces.
         try:
             store.write_bronze(QUARANTINE_DATASET, plan.ingest_date, plan.quarantined)
-        except Exception:
+        except LAKE_WRITE_ERRORS:
             _LOGGER.exception(
                 "event=api.ingest.option_chain.quarantine_write_failed ingest_date=%s rows=%d",
                 plan.ingest_date.isoformat(),

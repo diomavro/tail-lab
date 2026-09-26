@@ -38,7 +38,7 @@ import duckdb
 import pandas as pd
 import pyarrow as pa
 from deltalake import DeltaTable, write_deltalake
-from deltalake.exceptions import TableNotFoundError
+from deltalake.exceptions import DeltaError, TableNotFoundError
 
 #: The three medallion layers, in read/write order.
 Layer = str  # "bronze" | "silver" | "gold"
@@ -46,6 +46,18 @@ Layer = str  # "bronze" | "silver" | "gold"
 #: The bronze partition column. Not a data column of any dataset — added on
 #: write, stripped on read — so callers never see it in a returned frame.
 _INGEST_DATE_COL = "ingest_date"
+
+
+#: What a bronze write can raise, measured 2026-09-26 against deltalake 1.6 /
+#: pyarrow 25 on a scratch store: ``DeltaError`` (its subclasses
+#: ``SchemaMismatchError``, ``CommitFailedError``, ``DeltaProtocolError`` --
+#: e.g. a stale column, a type change, an unwritable path), ``ArrowException``
+#: (``ArrowInvalid`` for an object column that will not convert) and ``OSError``
+#: (filesystem / object-storage I/O). Callers that must survive a failed
+#: DIAGNOSTIC write (a quarantine table) catch exactly this tuple, so every
+#: other failure still fails loud, and no layer above ``lake`` imports
+#: deltalake to name them.
+LAKE_WRITE_ERRORS: tuple[type[Exception], ...] = (DeltaError, pa.ArrowException, OSError)
 
 
 class LakeStore(ABC):

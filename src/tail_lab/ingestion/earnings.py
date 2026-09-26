@@ -110,7 +110,7 @@ def fetch_earnings_calendar_raw(event_date: dt.date, *, timeout: float = 15.0) -
     return payload
 
 
-def parse_earnings_calendar_json(raw: Any, event_date: dt.date) -> pd.DataFrame:
+def parse_earnings_calendar_json(raw: object, event_date: dt.date) -> pd.DataFrame:
     """Parse one date's Nasdaq earnings JSON into a typed event frame.
 
     Pure function -- no network, no filesystem, no wall clock (``announced_at``
@@ -124,7 +124,7 @@ def parse_earnings_calendar_json(raw: Any, event_date: dt.date) -> pd.DataFrame:
     holiday) comes back from Nasdaq with ``rows: null``, which parses to a
     correctly-typed empty frame, not an error.
     """
-    rows = ((raw or {}).get("data") or {}).get("rows") or []
+    rows = _earnings_rows(raw)
     if not rows:
         return empty_event_frame()
 
@@ -134,6 +134,26 @@ def parse_earnings_calendar_json(raw: Any, event_date: dt.date) -> pd.DataFrame:
         .drop_duplicates(subset="event_id", keep="first")
         .reset_index(drop=True)
     )
+
+
+def _earnings_rows(raw: object) -> list[dict[str, Any]]:
+    """The row list out of Nasdaq's envelope, or [] for a day with none.
+
+    Raises ``ValueError`` for an envelope of the wrong SHAPE, so a malformed
+    page is one named failure a caller can count, never a stray
+    ``AttributeError`` out of ``.get`` on a string or a ``None`` row.
+    """
+    if raw is None:
+        return []
+    if not isinstance(raw, dict):
+        raise ValueError(f"earnings payload is {type(raw).__name__}, not a JSON object")
+    data = raw.get("data") or {}
+    if not isinstance(data, dict):
+        raise ValueError("earnings payload 'data' is not an object")
+    rows = data.get("rows") or []
+    if not isinstance(rows, list) or not all(isinstance(row, dict) for row in rows):
+        raise ValueError("earnings payload 'rows' is not a list of objects")
+    return rows
 
 
 def _parse_row(row: dict[str, Any], event_date: dt.date, idx: int) -> dict[str, object]:
@@ -159,14 +179,17 @@ def _parse_row(row: dict[str, Any], event_date: dt.date, idx: int) -> dict[str, 
     }
 
 
-def _raise_on_api_error(raw: Any) -> None:
+def _raise_on_api_error(raw: object) -> None:
     """Nasdaq reports request errors INSIDE an HTTP 200: measured 2026-09-24,
     a bad date returns ``{"data": null, "status": {"rCode": 400, ...}}``, which
     parses exactly like a day with no earnings. A genuinely empty day carries
     ``rCode`` 200, so anything else is a failed date, not an empty one."""
     if not isinstance(raw, dict):
         raise ValueError(f"earnings payload is {type(raw).__name__}, not a JSON object")
-    code = (raw.get("status") or {}).get("rCode", 200)
+    status = raw.get("status") or {}
+    if not isinstance(status, dict):
+        raise ValueError(f"earnings payload 'status' is {type(status).__name__}, not an object")
+    code = status.get("rCode", 200)
     if code != 200:
         raise ValueError(f"Nasdaq earnings API answered rCode={code}")
 
@@ -177,7 +200,7 @@ def earnings_window(ingest_date: dt.date, lookahead_days: int) -> list[dt.date]:
 
 
 def collect_earnings_window(
-    window: Sequence[dt.date], fetch: Callable[[dt.date], Any] | None = None
+    window: Sequence[dt.date], fetch: Callable[[dt.date], object] | None = None
 ) -> tuple[pd.DataFrame, int]:
     """Fetch and parse every date in ``window``; return ``(events, failed_dates)``.
 
@@ -196,8 +219,15 @@ def collect_earnings_window(
             raw = fetch(event_date)
             _raise_on_api_error(raw)
             frames.append(parse_earnings_calendar_json(raw, event_date))
-        except Exception:
+        except (requests.exceptions.RequestException, ValueError) as exc:
+            # The fetch failed, Nasdaq answered an error inside a 200, or the
+            # page had the wrong shape -- one date lost, logged WITH its reason.
             failed += 1
-            _LOGGER.warning("earnings calendar fetch failed for %s", event_date.isoformat())
+            _LOGGER.warning(
+                "earnings calendar fetch failed for %s: %s: %s",
+                event_date.isoformat(),
+                type(exc).__name__,
+                exc,
+            )
     events = pd.concat(frames, ignore_index=True) if frames else empty_event_frame()
     return events, failed

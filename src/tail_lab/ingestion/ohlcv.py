@@ -54,6 +54,7 @@ from __future__ import annotations
 
 import datetime as dt
 import logging
+import math
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from functools import partial
@@ -139,7 +140,7 @@ class IngestResult:
 
 def fetch_nasdaq_raw(
     symbol: str, *, years: int = 10, timeout: float = 30.0, attempts: int = 1
-) -> Any:
+) -> dict[str, object]:
     """Fetch raw Nasdaq historical JSON for ``symbol``. Network — not used by tests.
 
     Tries each asset class until one answers with rows: Nasdaq 400s on the
@@ -157,7 +158,7 @@ def fetch_nasdaq_raw(
     last_error: Exception | None = None
     for asset_class in _NASDAQ_ASSET_CLASSES:
         try:
-            payload: Any = retry_transient(
+            payload = retry_transient(
                 partial(_get_nasdaq_json, symbol, {**params, "assetclass": asset_class}, timeout),
                 attempts=attempts,
                 backoff_s=_FETCH_BACKOFF_S,
@@ -165,15 +166,20 @@ def fetch_nasdaq_raw(
                 symbol=symbol.upper(),
                 assetclass=asset_class,
             )
+            if not isinstance(payload, dict):
+                raise ValueError(f"Nasdaq answered a {type(payload).__name__}, not a JSON object")
             if _nasdaq_rows(payload):
                 return payload
             last_error = ValueError(f"no rows for assetclass={asset_class}")
-        except Exception as exc:
+        except (requests.exceptions.RequestException, ValueError) as exc:
+            # A request that failed after its retries, or a payload of the
+            # wrong shape: either way this asset class has no data -- try the
+            # next. Anything else is a bug and propagates.
             last_error = exc
     raise ValueError(f"Nasdaq returned no usable data for {symbol!r}: {last_error}")
 
 
-def _get_nasdaq_json(symbol: str, params: dict[str, str], timeout: float) -> Any:
+def _get_nasdaq_json(symbol: str, params: dict[str, str], timeout: float) -> object:
     """One unretried GET against Nasdaq's historical endpoint. Split out of
     :func:`fetch_nasdaq_raw` so the real ``requests.exceptions.RequestException``
     reaches ``retry_transient`` before the caller folds it into a ``ValueError``.
@@ -185,7 +191,7 @@ def _get_nasdaq_json(symbol: str, params: dict[str, str], timeout: float) -> Any
         timeout=timeout,
     )
     resp.raise_for_status()
-    payload: Any = resp.json()
+    payload: object = resp.json()
     return payload
 
 
@@ -210,12 +216,41 @@ def fetch_ohlcv_raw(
     return payload
 
 
-def _nasdaq_rows(raw: dict[str, Any]) -> list[dict[str, Any]]:
-    """The row list out of Nasdaq's nested envelope, or [] if absent."""
+def _nasdaq_rows(raw: Mapping[str, object]) -> list[dict[str, Any]]:
+    """The row list out of Nasdaq's nested envelope, or [] if absent.
+
+    Raises ``ValueError`` for an envelope of the wrong SHAPE (a string where
+    an object belongs), so callers can catch one named failure instead of
+    whatever attribute error a malformed page happens to produce.
+    """
     data = raw.get("data") or {}
+    if not isinstance(data, Mapping):
+        raise ValueError("Nasdaq payload 'data' is not an object")
     table = data.get("tradesTable") or {}
+    if not isinstance(table, Mapping):
+        raise ValueError("Nasdaq payload 'tradesTable' is not an object")
     rows = table.get("rows") or []
-    return list(rows)
+    if not isinstance(rows, list) or not all(isinstance(row, dict) for row in rows):
+        raise ValueError("Nasdaq payload 'rows' is not a list of objects")
+    return rows
+
+
+def nasdaq_trading_days(raw: Mapping[str, object]) -> set[dt.date]:
+    """Every date Nasdaq lists a bar for, whether or not its prices parse.
+
+    A session that traded is a trading day even when its volume reads "N/A"
+    (Nasdaq's live SPY page served one on 2026-09-26: 04/20/2026, volume
+    "N/A", all four prices equal and unprefixed). Going through
+    ``parse_nasdaq_historical`` instead drops that bar, and a whole-session
+    check built on it went blind to exactly that day (review, 2026-09-26).
+    Raises ``ValueError`` on a malformed envelope, like ``_nasdaq_rows``.
+    """
+    dates = pd.to_datetime(
+        pd.Series([str(row.get("date") or "") for row in _nasdaq_rows(raw)], dtype="object"),
+        format=_NASDAQ_DATE_FORMAT,
+        errors="coerce",
+    )
+    return set(dates.dropna().dt.date)
 
 
 def _nasdaq_number(value: Any) -> float | None:
@@ -230,9 +265,13 @@ def _nasdaq_number(value: Any) -> float | None:
     if not text or text in {"--", "N/A"}:
         return None
     try:
-        return float(text)
+        number = float(text)
     except ValueError:
         return None
+    # "Infinity" / "1e400" / "nan" parse as floats but are not a price or a
+    # volume, and int(inf) downstream raised OverflowError out of every
+    # caller (fix-batch review, 2026-09-26). Non-finite is unparseable.
+    return number if math.isfinite(number) else None
 
 
 def parse_nasdaq_historical(symbol: str, raw: dict[str, Any]) -> pd.DataFrame:
@@ -241,9 +280,11 @@ def parse_nasdaq_historical(symbol: str, raw: dict[str, Any]) -> pd.DataFrame:
     Pure function — no network, no filesystem. ``adj_close`` is set equal to
     ``close``: Nasdaq's prices are split-adjusted but carry no dividend
     adjustment and no separate adjusted series, so claiming otherwise would
-    be a lie in the data (see the module docstring). A bar missing any of
-    open/high/low/close/volume is dropped as "not a row"; a bar present but
-    unparseable survives as NaN for the contract to quarantine.
+    be a lie in the data (see the module docstring). A bar with any of
+    open/high/low/close/volume missing OR unparseable ("N/A", "--", a
+    non-finite number) is dropped as "not a row"; only an unparseable DATE
+    survives, as NaT, for the contract to quarantine. To ask which days
+    traded, use ``nasdaq_trading_days``, which keeps the dropped bars.
     """
     rows = _nasdaq_rows(raw)
     if not rows:
@@ -494,7 +535,7 @@ _WITNESS_TIMEOUT_S = 10.0
 
 
 def latest_market_session(
-    fetch: Callable[[], Mapping[str, Any]] | None = None,
+    fetch: Callable[[], Mapping[str, object]] | None = None,
 ) -> dt.date | None:
     """The newest completed US equity session, from a source that is not Cboe.
 
@@ -521,7 +562,13 @@ def latest_market_session(
         )
         bars = parse_nasdaq_historical(_MARKET_REFERENCE_SYMBOL, dict(raw))
         newest = pd.to_datetime(bars["trade_date"]).max()
-    except Exception:
+    except (requests.exceptions.RequestException, ValueError, TypeError, OverflowError):
+        # RequestException: an injected fetch's network fault. ValueError:
+        # fetch_nasdaq_raw's "no usable data", a malformed envelope
+        # (_nasdaq_rows), or a date that will not parse. TypeError: a fetch
+        # that returned something dict() cannot take. OverflowError: a bar
+        # whose volume is "Infinity" (int(inf) in the parser). A failed cross-check
+        # must not cost the sweep it guards; anything else is a bug.
         _LOGGER.exception("event=ingest.market_session_unavailable")
         return None
     if pd.isna(newest):
