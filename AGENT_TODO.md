@@ -1630,7 +1630,25 @@ new module near-complete, with a pinned synthetic case with a known answer
 
 ### P2 — `research/surface/implied_alpha.py`: fit alpha from quoted puts, able to refuse
 
-- [ ] **Goal.** For one `(underlying, quote_date, expiration)`, choose an anchor,
+- [x] **Done 2026-09-26** — `ImpliedAlphaFit`, `fit_implied_alpha`: golden
+      section to 1e-8, bracket cut to the anchor's valid domain, one hygiene
+      predicate from public `marks` constants, VIX refused. Thresholds fixed
+      before any real chain was fitted (module constants, each with its
+      reason): fit window 15 % of spot, deepest strike ≥ 10 %, ≥ 4 strikes,
+      RMS log miss ≤ 0.20, anchor ≥ $0.25, tick $0.05.
+      **Finding (synthetic, spot 1000): the RMSE ceiling does NOT screen out
+      thin tails on its own.** Flat-vol Black-Scholes is refused at 30 days /
+      35 % vol (RMS miss ~0.40) but ACCEPTED at 90 days / 35 % vol, alpha ~2.9
+      — the paper's headline — because what matters is sigma·sqrt(T). What
+      exposes it is anchor dispersion: the accepted alpha climbs with anchor
+      depth (1.99 → 3.38 across 940..880), where a true power law is fixed to
+      1e-6. So a single `fit_implied_alpha` result is never evidence of a
+      power law; PX1's anchor dispersion and null comparison are required
+      before any implied alpha is read as a tail index.
+      **The optional lake loader was NOT shipped**, so the intra-panel
+      point-in-time test below is still owed by whichever item first reads
+      the optionsDX panel (PX1). Next: P3.
+      **Goal.** For one `(underlying, quote_date, expiration)`, choose an anchor,
       fit the single `alpha` that best explains the deeper quoted puts, and
       **refuse** when the data cannot support a fit. This is the first number
       the Surface can actually show, because it does not depend on the
@@ -1893,7 +1911,19 @@ new module near-complete, with a pinned synthetic case with a known answer
         not `true`. (At a 30-day tenor it passes for any sigma
         up to ~1.75, so expect `true` almost always.)
       - the implied fits (`ImpliedAlphaFit`, refusals included — never drop a
-        refused fit from the payload);
+        refused fit from the payload), **at three anchors, with their
+        dispersion**. A single implied alpha is never evidence of a power law:
+        P2 measured flat-vol Black-Scholes accepted at alpha ~2.9 (90 days,
+        35 % vol), betrayed by alpha climbing with anchor depth (and, in PX1,
+        by the null comparison). Concretely:
+        - **Which anchors:** the one the existing OOM control picks (moneyness
+          `m`), plus two deeper at fixed offsets, `m + 2` and `m + 4`
+          percentage points — each the listed strike nearest
+          `spot * (1 - moneyness / 100)`. No new control (P5 forbids one).
+        - **Dispersion** = max − min of the ACCEPTED fits' alphas; `null` with
+          the reason "fewer than two anchors accepted" when fewer than two
+          fit. Refused fits are still listed, with their refusal.
+        - Show the dispersion beside the number, always;
       - the ladder (≤ 8 rungs, P5's cap), each rung with its `bid`/`ask`
         (P5's error bar — `LadderRung` has no such fields, so join them from
         the quotes in the route) and the rung's Black-Scholes price at
@@ -1912,7 +1942,9 @@ new module near-complete, with a pinned synthetic case with a known answer
 
       **Tests:** hermetic — seed a `DeltaLakeStore(tmp_path)` with a
       synthetic chain generated from a known `ParetanTail` (at spot 1000, for
-      the quote-hygiene reason given in P2), assert the
+      the quote-hygiene reason given in P2), assert dispersion ≈ 0 (< 1e-6) on
+      it and > 0.5 on a flat-vol Black-Scholes chain at 90 days / 35 % vol
+      (P2's measured case), assert the
       response recovers that alpha; a refusing case renders with
       `alpha: null` and a `refusal` string; every test passes `as_of`
       explicitly (the default reads the wall clock); a test asserts the route
@@ -1946,7 +1978,9 @@ new module near-complete, with a pinned synthetic case with a known answer
         at 8 rungs**.
       - A one-line `AlphaStrip` plus a collapsed `SurfaceCaveat` carrying the
         `sigma*sqrt(t)` guard, the anchor-relative sentence, `n_beyond`, the
-        `stable: false` branch and the bid/ask error bar. Per the README the
+        `stable: false` branch, the bid/ask error bar, and the implied fit's
+        anchor dispersion with the sentence "a single implied alpha is not
+        evidence of a power law" (P2's finding). Per the README the
         caveat ships in the **same** increment as the number.
       - Desk vocabulary (`docs/adr/0021`): the tab is "Surface". Not
         "dashboard", "panel" or "leaderboard".

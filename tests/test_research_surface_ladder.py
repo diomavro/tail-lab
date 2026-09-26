@@ -188,7 +188,7 @@ def test_the_anchor_refuses_malformed_fields(field: str, value: object, match: s
     }
     kwargs[field] = value
     with pytest.raises(ValueError, match=match):
-        Anchor(**kwargs)  # type: ignore[arg-type]
+        Anchor(**kwargs)  # type: ignore[arg-type]  # deliberately ill-typed: this tests runtime validation
 
 
 @pytest.mark.parametrize("mid", [0.0, -1.0, math.inf, math.nan, True])
