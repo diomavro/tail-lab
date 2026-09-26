@@ -4,6 +4,7 @@ import logging
 
 import pandas as pd
 import pytest
+import requests
 
 from tail_lab.ingestion.sources import AllSourcesFailed, Source, find_header_line, first_available
 
@@ -15,7 +16,9 @@ def _rows(n: int = 2) -> pd.DataFrame:
 
 
 def _boom() -> pd.DataFrame:
-    raise RuntimeError("endpoint returned 429")
+    response = requests.Response()
+    response.status_code = 429
+    raise requests.exceptions.HTTPError("endpoint returned 429", response=response)
 
 
 def test_first_source_wins_when_healthy() -> None:
@@ -152,3 +155,51 @@ def test_find_header_line_with_a_custom_prefix() -> None:
 
 def test_find_header_line_defaults_to_zero_when_absent() -> None:
     assert find_header_line("no header here\njust data\n") == 0
+
+
+def _junk_payload() -> pd.DataFrame:
+    raise ValueError("chart.result is not a JSON array (got NoneType)")
+
+
+def test_a_junk_payload_falls_through_like_a_dead_host() -> None:
+    """HTTP 200 with a body of the wrong shape is a failed source, not a
+    crash: the parsers name it ``ValueError`` so the chain can move on."""
+    result, source_id = first_available(
+        [Source("primary", _junk_payload), Source("backup", lambda: _rows(4))],
+        dataset="d",
+        logger=_LOGGER,
+    )
+    assert (source_id, len(result)) == ("backup", 4)
+
+
+def test_a_connection_fault_falls_through() -> None:
+    def refused() -> pd.DataFrame:
+        raise requests.exceptions.ConnectionError("Name or service not known")
+
+    _, source_id = first_available(
+        [Source("primary", refused), Source("backup", lambda: _rows())],
+        dataset="d",
+        logger=_LOGGER,
+    )
+    assert source_id == "backup"
+
+
+@pytest.mark.parametrize(
+    "bug", [KeyError("close"), TypeError("unsupported operand"), AttributeError("x")]
+)
+def test_a_bug_in_a_source_propagates_instead_of_hiding_behind_the_fallback(
+    bug: Exception,
+) -> None:
+    """Under ``except Exception`` a bug in the primary adapter was demoted to
+    "source failed", the backup served the data, and nothing ever went red --
+    the bug lived on behind the fallback indefinitely."""
+
+    def buggy() -> pd.DataFrame:
+        raise bug
+
+    with pytest.raises(type(bug)):
+        first_available(
+            [Source("primary", buggy), Source("backup", lambda: _rows())],
+            dataset="d",
+            logger=_LOGGER,
+        )

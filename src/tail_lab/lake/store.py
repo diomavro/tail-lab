@@ -59,6 +59,13 @@ _INGEST_DATE_COL = "ingest_date"
 #: deltalake to name them.
 LAKE_WRITE_ERRORS: tuple[type[Exception], ...] = (DeltaError, pa.ArrowException, OSError)
 
+#: What a failed lake READ raises: the same three families. Measured
+#: 2026-09-26 against ``read_bronze_column_as_of`` on a scratch store -- a
+#: corrupt parquet file gives ``ArrowInvalid``, a corrupt Delta log
+#: ``DeltaError``, an unreadable log directory ``OSError``. A missing dataset
+#: or column is not a fault but an absence (``LookupError``/``KeyError``).
+LAKE_READ_ERRORS: tuple[type[Exception], ...] = LAKE_WRITE_ERRORS
+
 
 class LakeStore(ABC):
     """Abstract medallion lakehouse: immutable bronze, derived silver/gold.

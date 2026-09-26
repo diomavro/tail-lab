@@ -32,8 +32,8 @@ import json
 import sys
 import urllib.error
 import urllib.request
+from collections.abc import Mapping
 from pathlib import Path
-from typing import Any
 
 DEFAULT_BASE = "https://tail-lab.fly.dev"
 SHARES_PER_CONTRACT = 100
@@ -46,23 +46,38 @@ _REFUSAL = {
 }
 
 
-def _fetch(base: str, params: str, timeout: int) -> dict[str, Any]:
+def _fetch(base: str, params: str, timeout: int) -> dict[str, object]:
+    """The marked schedule, checked to be an object with a list of object legs.
+    Stdlib only on purpose (run as plain ``python``), so the shape is checked
+    here rather than by importing the API's ``MarkedSchedule`` model."""
     url = f"{base.rstrip('/')}/api/putlab/roll-schedule/marked{params}"
     with urllib.request.urlopen(url, timeout=timeout) as response:
-        payload: dict[str, Any] = json.loads(response.read())
+        payload: object = json.loads(response.read())
+    if not isinstance(payload, dict):
+        raise ValueError(f"the schedule is a {type(payload).__name__}, not a JSON object")
+    legs = payload.get("legs", [])
+    if not isinstance(legs, list) or not all(isinstance(leg, dict) for leg in legs):
+        raise ValueError("the schedule's 'legs' is not a list of objects")
     return payload
 
 
-def _describe(leg: dict[str, Any]) -> str:
+def _number(leg: Mapping[str, object], key: str) -> float:
+    value = leg[key]
+    if not isinstance(value, int | float):
+        raise ValueError(f"leg field {key!r} is {value!r}, not a number")
+    return float(value)
+
+
+def _describe(leg: Mapping[str, object]) -> str:
     """One placeable leg, in the words an order entry screen wants."""
-    contracts = leg["market_contracts"]
-    ask = leg["market_ask"]
+    contracts = int(_number(leg, "market_contracts"))
+    ask = _number(leg, "market_ask")
     spend = contracts * ask * SHARES_PER_CONTRACT
     expiry = str(leg["listed_expiry"])
     return (
-        f"  BUY {contracts:>3} x {leg['asset'].upper():<5} "
-        f"{leg['listed_strike']:g}P {expiry}  "
-        f"@ {ask:.2f} limit   ${spend:,.0f} of ${leg['premium_budget']:,.0f}"
+        f"  BUY {contracts:>3} x {str(leg['asset']).upper():<5} "
+        f"{_number(leg, 'listed_strike'):g}P {expiry}  "
+        f"@ {ask:.2f} limit   ${spend:,.0f} of ${_number(leg, 'premium_budget'):,.0f}"
     )
 
 
@@ -87,7 +102,9 @@ def main(argv: list[str] | None = None) -> int:
         print(f"could not reach {args.base}: {exc}", file=sys.stderr)
         return 1
 
-    legs = schedule.get("legs", [])
+    raw_legs = schedule.get("legs", [])
+    # _fetch already refused anything but a list of objects; this narrows it.
+    legs = [leg for leg in raw_legs if isinstance(leg, dict)] if isinstance(raw_legs, list) else []
     placeable = [leg for leg in legs if leg.get("quote_status") == "quoted"]
 
     print(f"schedule {schedule['schedule_id']}  screen as-of {schedule['as_of']}")
@@ -99,7 +116,7 @@ def main(argv: list[str] | None = None) -> int:
         for leg in placeable:
             print(_describe(leg))
             ratio = leg.get("market_to_model_ratio")
-            if ratio and ratio > 2:
+            if isinstance(ratio, int | float) and ratio > 2:
                 print(
                     f"        ! the market charges {ratio:,.0f}x the model's premium, so this"
                     f" leg's expected return ({leg.get('expected_roi_on_premium')}) is"
@@ -115,8 +132,9 @@ def main(argv: list[str] | None = None) -> int:
     if refused:
         print("\nNOT PLACEABLE:")
         for leg in refused:
-            why = _REFUSAL.get(leg.get("quote_status", ""), leg.get("quote_status", "?"))
-            print(f"  {leg['rank']:>2}. {leg['asset'].upper():<6} {why}")
+            status = str(leg.get("quote_status", "?"))
+            why = _REFUSAL.get(status, status)
+            print(f"  {leg['rank']:>2}. {str(leg['asset']).upper():<6} {why}")
 
     if args.json_path:
         path = Path(args.json_path)

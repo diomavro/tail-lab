@@ -37,3 +37,17 @@ def test_write_overwrites_existing_key(tmp_path: Path) -> None:
     store.write_json("ops/feedback/abc.json", {"id": "abc", "status": "open"})
     store.write_json("ops/feedback/abc.json", {"id": "abc", "status": "resolved"})
     assert store.read_json("ops/feedback/abc.json")["status"] == "resolved"
+
+
+def test_a_blob_that_is_not_an_object_is_a_named_failure(tmp_path: Path) -> None:
+    """Every blob is written from a mapping, so a list or scalar is corruption.
+    Callers validate the result with ``Model.model_validate``; handing them a
+    list would fail far from the cause, so the store names it here."""
+    store = BlobStore(tmp_path)
+    (tmp_path / "feedback").mkdir()
+    (tmp_path / "feedback" / "bad.json").write_text("[1, 2]")
+
+    with pytest.raises(ValueError, match="not a JSON object"):
+        store.read_json("feedback/bad.json")
+    with pytest.raises(ValueError, match="not a JSON object"):
+        store.list_json("feedback")

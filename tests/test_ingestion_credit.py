@@ -189,3 +189,9 @@ def test_ingest_logs_the_full_run_surface(tmp_path: Any, caplog: pytest.LogCaptu
     assert "quarantined_rows=0" in line
     assert "first_obs_date=2026-01-02" in line
     assert "last_obs_date=2026-01-05" in line
+
+
+@pytest.mark.parametrize("junk", [None, [1], {"observations": "a string"}])
+def test_a_fred_payload_of_the_wrong_shape_is_a_named_failure(junk: object) -> None:
+    with pytest.raises(ValueError, match=r"FRED payload|observations"):
+        parse_fred_observations("BAMLH0A0HYM2", junk)

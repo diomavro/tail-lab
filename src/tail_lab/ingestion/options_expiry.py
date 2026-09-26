@@ -39,15 +39,23 @@ from __future__ import annotations
 import datetime as dt
 import logging
 import re
+from collections.abc import Mapping
 from dataclasses import dataclass
 from functools import partial
-from typing import Any, TypeGuard
+from typing import TypeGuard
 
 import pandas as pd
 import requests
 from pandera.errors import SchemaErrors
 
 from tail_lab.contracts.options_expiry import OptionsExpirySchema, dataset_id
+from tail_lab.ingestion.json_payload import (
+    first_object,
+    json_list,
+    json_object,
+    to_int,
+    utc_from_epoch,
+)
 from tail_lab.ingestion.sources import Source, first_available, retry_transient
 from tail_lab.lake.store import LakeStore
 from tail_lab.observability import log_event
@@ -151,7 +159,7 @@ def _has_options(payload: object) -> TypeGuard[dict[str, object]]:
     return isinstance(data, dict) and bool(data.get("options"))
 
 
-def parse_cboe_options_expiry(symbol: str, raw: dict[str, Any]) -> pd.DataFrame:
+def parse_cboe_options_expiry(symbol: str, raw: Mapping[str, object]) -> pd.DataFrame:
     """Derive the (symbol, expiration_date) set from a Cboe chain payload.
 
     Pure function -- no network, no filesystem. Each contract's expiration
@@ -161,12 +169,14 @@ def parse_cboe_options_expiry(symbol: str, raw: dict[str, Any]) -> pd.DataFrame:
     is skipped rather than guessed at: an unparseable symbol tells us
     nothing about a date, and inventing one would put a fabricated
     expiration into a dataset whose whole purpose is knowing when options
-    actually list.
+    actually list. A payload of the wrong shape raises ``ValueError``.
     """
-    options = ((raw.get("data") or {}).get("options")) or []
+    data = json_object(raw.get("data") or {}, "Cboe payload 'data'")
+    options = json_list(data.get("options") or [], "Cboe payload 'options'")
     dates: set[dt.date] = set()
     for contract in options:
-        match = _OCC_SYMBOL.match(str(contract.get("option", "")))
+        entry = json_object(contract, "Cboe option contract")
+        match = _OCC_SYMBOL.match(str(entry.get("option", "")))
         if match is None:
             continue
         try:
@@ -186,7 +196,7 @@ def parse_cboe_options_expiry(symbol: str, raw: dict[str, Any]) -> pd.DataFrame:
     return df.reset_index(drop=True)
 
 
-def fetch_options_expiry_raw(symbol: str, *, timeout: float = 15.0) -> Any:
+def fetch_options_expiry_raw(symbol: str, *, timeout: float = 15.0) -> object:
     """Fetch raw Yahoo options-chain JSON for ``symbol``. Network calls --
     not used by tests. See the module docstring for the cookie+crumb flow
     this now requires."""
@@ -204,22 +214,26 @@ def fetch_options_expiry_raw(symbol: str, *, timeout: float = 15.0) -> Any:
         timeout=timeout,
     )
     resp.raise_for_status()
-    payload: Any = resp.json()
+    payload: object = resp.json()
     return payload
 
 
-def parse_yahoo_options_expiry(symbol: str, raw: dict[str, Any]) -> pd.DataFrame:
+def parse_yahoo_options_expiry(symbol: str, raw: object) -> pd.DataFrame:
     """Parse Yahoo's options-chain JSON payload into a typed
     (symbol, expiration_date) DataFrame -- one row per listed expiration.
 
     Pure function -- no network, no filesystem. Expiration timestamps are
     UTC midnight already (Yahoo lists them as whole trading dates, not
     intraday), so no local/UTC conversion is needed here, unlike the
-    chart-quote adapters which convert an exchange-local timestamp.
+    chart-quote adapters which convert an exchange-local timestamp. A
+    payload of the wrong shape raises ``ValueError`` naming the field.
     """
-    result = raw["optionChain"]["result"][0]
-    timestamps: list[int] = result["expirationDates"]
-    dates = [dt.datetime.fromtimestamp(ts, tz=dt.UTC).date() for ts in timestamps]
+    chain = json_object(json_object(raw, "Yahoo payload").get("optionChain"), "optionChain")
+    result = first_object(chain.get("result"), "optionChain.result")
+    timestamps = json_list(result.get("expirationDates"), "expirationDates")
+    dates = [
+        utc_from_epoch(to_int(ts, "expirationDates"), "expirationDates").date() for ts in timestamps
+    ]
 
     df = pd.DataFrame({"symbol": symbol.upper(), "expiration_date": pd.to_datetime(dates)})
     return (
@@ -252,8 +266,8 @@ def ingest_options_expiry(
     symbol: str,
     *,
     ingest_date: dt.date | None = None,
-    raw: dict[str, Any] | None = None,
-    cboe_raw: dict[str, Any] | None = None,
+    raw: object | None = None,
+    cboe_raw: Mapping[str, object] | None = None,
 ) -> IngestResult:
     """Resolve a source, validate, and commit to bronze.
 
@@ -311,7 +325,7 @@ def ingest_options_expiry(
 
 
 def _build_sources(
-    symbol: str, *, cboe_raw: dict[str, Any] | None, raw: dict[str, Any] | None
+    symbol: str, *, cboe_raw: Mapping[str, object] | None, raw: object | None
 ) -> list[Source]:
     """The ordered source chain: Cboe first, Yahoo second.
 

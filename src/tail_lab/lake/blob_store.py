@@ -18,7 +18,6 @@ from __future__ import annotations
 import json
 from collections.abc import Mapping
 from pathlib import Path
-from typing import Any
 
 import pyarrow.fs as pafs
 
@@ -66,7 +65,7 @@ class BlobStore:
     def _full_path(self, key: str) -> str:
         return f"{self._base_path}/{key}"
 
-    def write_json(self, key: str, obj: Mapping[str, Any]) -> None:
+    def write_json(self, key: str, obj: Mapping[str, object]) -> None:
         """Write ``obj`` as the JSON blob at ``key``, overwriting any
         existing blob at that key. Creates any missing parent "directory"."""
         path = self._full_path(key)
@@ -76,28 +75,37 @@ class BlobStore:
         with self._fs.open_output_stream(path) as f:
             f.write(data)
 
-    def read_json(self, key: str) -> dict[str, Any]:
+    def read_json(self, key: str) -> dict[str, object]:
         """Read and parse the JSON blob at ``key``. Raises ``LookupError``
-        if no blob exists at that key."""
+        if no blob exists at that key, ``ValueError`` if it is not a JSON
+        object."""
         path = self._full_path(key)
         try:
             with self._fs.open_input_stream(path) as f:
                 data = f.read()
         except FileNotFoundError as exc:
             raise LookupError(f"no blob at {key!r}") from exc
-        result: dict[str, Any] = json.loads(data)
-        return result
+        return _json_object(json.loads(data), key)
 
-    def list_json(self, prefix: str) -> list[dict[str, Any]]:
+    def list_json(self, prefix: str) -> list[dict[str, object]]:
         """Parse and return every ``.json`` blob under ``prefix``. Returns
         an empty list if the prefix doesn't exist yet."""
         base = self._full_path(prefix.rstrip("/"))
         selector = pafs.FileSelector(base, recursive=True, allow_not_found=True)
         infos = self._fs.get_file_info(selector)
-        records: list[dict[str, Any]] = []
+        records: list[dict[str, object]] = []
         for info in infos:
             if info.type != pafs.FileType.File or not info.path.endswith(".json"):
                 continue
             with self._fs.open_input_stream(info.path) as f:
-                records.append(json.loads(f.read()))
+                records.append(_json_object(json.loads(f.read()), info.path))
         return records
+
+
+def _json_object(parsed: object, where: str) -> dict[str, object]:
+    """Every blob here is written by ``write_json`` from a mapping, so one
+    that parses to anything else is corrupt -- say so by name rather than
+    let a caller's ``Model(**blob)`` fail with an unrelated TypeError."""
+    if not isinstance(parsed, dict):
+        raise ValueError(f"blob {where!r} is not a JSON object")
+    return parsed

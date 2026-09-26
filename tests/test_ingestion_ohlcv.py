@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import datetime as dt
+from pathlib import Path
 from typing import Any
 
 import pandas as pd
@@ -76,6 +77,40 @@ def test_parse_yahoo_chart_ohlcv_against_fixture(ohlcv_yahoo_sample: dict[str, A
     assert df["close"].notna().all()
     assert df["trade_date"].is_monotonic_increasing
     assert df["trade_date"].is_unique
+
+
+@pytest.mark.parametrize(
+    ("field", "cell"),
+    [
+        ("timestamp", [1]),
+        ("volume", [1]),
+        ("close", [1]),
+        # fromtimestamp(10**18) raises OSError; pandas raises OverflowError on
+        # an int past int64. Neither is caught by first_available.
+        ("timestamp", 10**18),
+        ("volume", 10**400),
+    ],
+)
+def test_a_structured_yahoo_cell_is_the_named_failure(field: str, cell: object) -> None:
+    """A list where a number belongs raised TypeError out of ``int()`` /
+    ``float()`` / ``fromtimestamp``, which ``first_available`` no longer
+    catches: the Yahoo fallback would crash the ingest instead of failing."""
+    raw = _synthetic_raw(
+        opens=[100.0],
+        highs=[105.0],
+        lows=[99.0],
+        closes=[104.0],
+        volumes=[1_000],
+        adjcloses=[104.0],
+    )
+    result = raw["chart"]["result"][0]
+    if field == "timestamp":
+        result["timestamp"][0] = cell
+    else:
+        result["indicators"]["quote"][0][field][0] = cell
+
+    with pytest.raises(ValueError, match=field):
+        parse_yahoo_chart_ohlcv("aapl", raw)
 
 
 def test_parse_yahoo_chart_ohlcv_drops_null_bars() -> None:
@@ -659,3 +694,45 @@ def test_trading_days_drop_an_unreadable_date_and_refuse_a_bad_envelope() -> Non
     assert ohlcv_module.nasdaq_trading_days(payload) == {dt.date(2026, 9, 24)}
     with pytest.raises(ValueError, match="tradesTable"):
         ohlcv_module.nasdaq_trading_days({"data": {"tradesTable": "a string"}})
+
+
+def test_a_junk_nasdaq_payload_falls_through_to_yahoo(tmp_path: Path) -> None:
+    yahoo_raw = {
+        "chart": {
+            "result": [
+                {
+                    "meta": {"gmtoffset": 0},
+                    "timestamp": [1767312000],
+                    "indicators": {
+                        "quote": [
+                            {
+                                "open": [99.0],
+                                "high": [101.0],
+                                "low": [98.0],
+                                "close": [100.0],
+                                "volume": [5],
+                            }
+                        ],
+                        "adjclose": [{"adjclose": [100.0]}],
+                    },
+                }
+            ]
+        }
+    }
+    result = ingest_ohlcv(
+        DeltaLakeStore(tmp_path),
+        "SPY",
+        ingest_date=dt.date(2026, 1, 6),
+        nasdaq_raw={"data": "a string"},
+        raw=yahoo_raw,
+    )
+    assert result.source_id == "yahoo"
+
+
+@pytest.mark.parametrize(
+    "junk",
+    [{"chart": {"result": [None]}}, {"chart": {"result": [{"indicators": {}}]}}, 42],
+)
+def test_a_junk_yahoo_ohlcv_payload_is_a_named_failure(junk: object) -> None:
+    with pytest.raises(ValueError):
+        parse_yahoo_chart_ohlcv("SPY", junk)

@@ -55,7 +55,6 @@ from __future__ import annotations
 import datetime as dt
 import logging
 from collections.abc import Callable, Sequence
-from typing import Any
 
 import pandas as pd
 import requests
@@ -97,7 +96,7 @@ _TIME_SUFFIXES: dict[str, str] = {
 }
 
 
-def fetch_earnings_calendar_raw(event_date: dt.date, *, timeout: float = 15.0) -> Any:
+def fetch_earnings_calendar_raw(event_date: dt.date, *, timeout: float = 15.0) -> object:
     """Fetch one date's earnings-calendar JSON. Network call -- not used by tests."""
     resp = requests.get(
         EARNINGS_CALENDAR_URL,
@@ -106,7 +105,7 @@ def fetch_earnings_calendar_raw(event_date: dt.date, *, timeout: float = 15.0) -
         timeout=timeout,
     )
     resp.raise_for_status()
-    payload: Any = resp.json()
+    payload: object = resp.json()
     return payload
 
 
@@ -136,7 +135,7 @@ def parse_earnings_calendar_json(raw: object, event_date: dt.date) -> pd.DataFra
     )
 
 
-def _earnings_rows(raw: object) -> list[dict[str, Any]]:
+def _earnings_rows(raw: object) -> list[dict[str, object]]:
     """The row list out of Nasdaq's envelope, or [] for a day with none.
 
     Raises ``ValueError`` for an envelope of the wrong SHAPE, so a malformed
@@ -156,7 +155,7 @@ def _earnings_rows(raw: object) -> list[dict[str, Any]]:
     return rows
 
 
-def _parse_row(row: dict[str, Any], event_date: dt.date, idx: int) -> dict[str, object]:
+def _parse_row(row: dict[str, object], event_date: dt.date, idx: int) -> dict[str, object]:
     symbol = str(row.get("symbol") or "").strip() or None
     if symbol is None:
         return {

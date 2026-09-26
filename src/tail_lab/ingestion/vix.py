@@ -38,13 +38,20 @@ import datetime as dt
 import io
 import logging
 from dataclasses import dataclass
-from typing import Any
 
 import pandas as pd
 import requests
 from pandera.errors import SchemaErrors
 
 from tail_lab.contracts.vix import VixSchema
+from tail_lab.ingestion.json_payload import (
+    first_object,
+    json_list,
+    json_object,
+    to_float,
+    to_int,
+    utc_from_epoch,
+)
 from tail_lab.ingestion.sources import Source, find_header_line, first_available, require_current
 from tail_lab.lake.store import LakeStore
 from tail_lab.observability import log_event
@@ -99,7 +106,7 @@ def fetch_cboe_vix_raw(*, timeout: float = 30.0) -> str:
     return resp.text
 
 
-def fetch_vix_raw(*, range_: str = "6mo", interval: str = "1d", timeout: float = 15.0) -> Any:
+def fetch_vix_raw(*, range_: str = "6mo", interval: str = "1d", timeout: float = 15.0) -> object:
     """Fetch raw Yahoo chart JSON for ^VIX. Network call — not used by tests."""
     resp = requests.get(
         YAHOO_CHART_URL,
@@ -108,7 +115,7 @@ def fetch_vix_raw(*, range_: str = "6mo", interval: str = "1d", timeout: float =
         timeout=timeout,
     )
     resp.raise_for_status()
-    payload: Any = resp.json()
+    payload: object = resp.json()
     return payload
 
 
@@ -156,28 +163,31 @@ def _empty_frame() -> pd.DataFrame:
     )
 
 
-def parse_yahoo_chart(raw: dict[str, Any]) -> pd.DataFrame:
+def parse_yahoo_chart(raw: object) -> pd.DataFrame:
     """Parse Yahoo's chart JSON payload into a typed (date, close) DataFrame.
 
     Pure function — no network, no filesystem. Rows with a null close (Yahoo
     emits these for non-trading timestamps in the requested range) are
     dropped here as "not a row" rather than "an invalid row"; contract
     validation in :func:`validate_and_quarantine` still runs downstream to
-    catch anything else in range.
+    catch anything else in range. A payload of the wrong shape raises
+    ``ValueError`` naming the field (``json_payload``).
     """
-    result = raw["chart"]["result"][0]
-    timestamps: list[int] = result["timestamp"]
-    closes: list[float | None] = result["indicators"]["quote"][0]["close"]
-    gmtoffset = int(result["meta"].get("gmtoffset", 0))
+    chart = json_object(json_object(raw, "Yahoo payload").get("chart"), "chart")
+    result = first_object(chart.get("result"), "chart.result")
+    timestamps = json_list(result.get("timestamp"), "timestamp")
+    indicators = json_object(result.get("indicators"), "indicators")
+    closes = json_list(first_object(indicators.get("quote"), "quote").get("close"), "close")
+    gmtoffset = to_int(json_object(result.get("meta"), "meta").get("gmtoffset", 0), "gmtoffset")
 
     dates: list[dt.date] = []
     kept_closes: list[float] = []
     for ts, close in zip(timestamps, closes, strict=True):
         if close is None:
             continue
-        local_dt = dt.datetime.fromtimestamp(ts + gmtoffset, tz=dt.UTC)
+        local_dt = utc_from_epoch(to_int(ts, "timestamp") + gmtoffset, "timestamp")
         dates.append(local_dt.date())
-        kept_closes.append(float(close))
+        kept_closes.append(to_float(close, "close"))
 
     df = pd.DataFrame({"date": pd.to_datetime(dates), "close": kept_closes})
     return df.sort_values("date").drop_duplicates(subset="date", keep="last").reset_index(drop=True)
@@ -200,7 +210,7 @@ def validate_and_quarantine(df: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFram
         return valid, quarantined
 
 
-def _build_sources(*, cboe_csv: str | None, raw: dict[str, Any] | None) -> list[Source]:
+def _build_sources(*, cboe_csv: str | None, raw: object | None) -> list[Source]:
     """The ordered source chain: Cboe first, Yahoo second.
 
     **Injection is hermetic.** If any payload is supplied, the chain is
@@ -229,7 +239,7 @@ def ingest_vix(
     store: LakeStore,
     *,
     ingest_date: dt.date | None = None,
-    raw: dict[str, Any] | None = None,
+    raw: object | None = None,
     cboe_csv: str | None = None,
     market_session: dt.date | None = None,
 ) -> IngestResult:
