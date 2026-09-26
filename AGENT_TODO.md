@@ -1535,7 +1535,10 @@ new module near-complete, with a pinned synthetic case with a known answer
 
 ### P1 — `research/surface/ladder.py`: the anchor and the strike ladder
 
-- [ ] **Goal.** Given one real put quote (the anchor) and a tail index, price
+- [x] **Done 2026-09-26** — `Anchor`, `LadderRung`, `build_ladder` as specified;
+      100 % line and branch coverage, every listed test plus refusal tests for
+      malformed anchors, non-price mids and unreachable IVs. Next: P2.
+      **Goal.** Given one real put quote (the anchor) and a tail index, price
       the deeper puts on the same expiry the Paretan way, and put each beside
       the market's own quote and both implied vols. This is the object every
       later item consumes.
