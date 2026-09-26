@@ -151,7 +151,8 @@ def fit_implied_alpha(
     hi = _valid_upper_bound(anchor, alpha_lo=alpha_lo, alpha_hi=alpha_hi)
     if hi is None or hi - alpha_lo < MIN_BRACKET_WIDTH:
         return refuse(
-            "the anchor lies inside its own calibrated tail for almost every alpha in "
+            "the anchor lies outside its own calibrated tail (inside the Karamata point) "
+            "for almost every alpha in "
             f"[{alpha_lo}, {alpha_hi}] (valid up to {hi}); no range left to search"
         )
 

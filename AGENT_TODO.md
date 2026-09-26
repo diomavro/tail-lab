@@ -1779,9 +1779,57 @@ new module near-complete, with a pinned synthetic case with a known answer
       **Real-data run:** not possible for the agent — add a `HUMAN_TODO.md`
       line only if you ship a `make` target; otherwise P4 exposes it.
 
-### P3 — `research/surface/alpha_bound.py`: the paper's no-arbitrage floor on alpha
+### P3 — `research/surface/alpha_bound.py`: the no-arbitrage CEILING on alpha
 
-- [ ] **Goal.** The paper derives a lower bound on alpha from the requirement
+- [x] **Done 2026-09-26** — `alpha_upper_bound(anchor, *, smile_slope, r, q)`
+      returning `AlphaCeiling(alpha | None, market_slope, refusal)`; 100 % line
+      and branch coverage; mutation-tested (per-vol-point vega, dropped
+      discount, flipped bisection, reporting the bracket edge — each goes red).
+      **Three corrections to the spec below, each measured:**
+      1. **It is an UPPER bound, not a floor.** The paper's "lower bound"
+         holds only for a FIXED `l`. With `l` calibrated from the anchor at
+         each trial alpha (which this spec rightly demands), the Paretan slope
+         at the anchor RISES with alpha, so convexity caps alpha from above.
+         Proof by butterfly across the splice (Paretan lower wing, market
+         smile upper wing): spot 100 / anchor 90 / 30d / 25 % vol / smile
+         slope -0.01 per $ gives a ceiling of 2.7472; with wings 0.009 wide
+         (1e-4 K), alpha 2.697 prices the butterfly at +0.0010 per unit width,
+         alpha 2.797 at **-0.0009** (arbitrage; ±0.00094 in the limit of zero
+         width). Same sign flip at 600/540 (30d, 22 %, slope -0.002) and
+         100/80 (90d, 30 %, slope -0.008), and at three setups including
+         r, q > 0 in
+         `test_the_splice_is_convex_below_the_ceiling_and_arbitrage_above_it`.
+         Separately, the paper's call-spread limit
+         `dBSC/dK >= dC/dK` runs opposite to its own convexity inequality
+         `C(K1+dK) + BSC(K1-dK) >= 2 C(K1)`, which gives `dC/dK >= dBSC/dK`.
+      2. **No free `strike`.** The inequality lives at the splice, i.e. the
+         anchor; elsewhere it mixes an `l` from one strike with a slope from
+         another. The collapse-strike `None` below therefore has no strike to
+         occur at; the no-sign-change rule is kept for the bracket instead.
+      3. **`smile_slope` (dσ/dK per $) replaces `sigma`.** Sigma is the anchor
+         price's own IV, so it cannot disagree with the anchor; the smile's
+         slope is the one input the anchor cannot supply, and without it the
+         vega term — and the 100× trap — vanish. The caller measures it from
+         neighbouring quotes (P4 says how). The spec's "monotone in K" test
+         went with the free strike; its replacement pins monotonicity in the
+         smile slope (steeper skew → strictly lower ceiling).
+      **Anchor hygiene is the caller's.** `alpha_upper_bound` applies none of
+      P2's (`MIN_ANCHOR_PRICE`, the VIX refusal): a 3.6e-11 anchor still gets
+      a number. P4 must pass only anchors P2 would accept.
+      **Finding:** with `l` calibrated, `lambda l^a = u = P(a-1)/shape(a)`
+      exactly, so the "exponential sensitivity to `l`" disappears once the
+      calibration is used. A market that IS Paretan below the anchor sits
+      exactly on its own ceiling (alpha 3 recovered to 1e-5 from one price and
+      one slope). It is NOT a bound on P2: on a thin-tailed Black-Scholes
+      smile P2's accepted fit lands ABOVE the ceiling (1000/900/30d/25 %/slope
+      -0.001: P2 3.34 vs ceiling 2.75; 850/30d/40 %/-0.0005: 5.06 vs 3.67;
+      900/60d/25 %/-0.0005: 3.38 vs 2.45; above it in all 80 BS-smile cases an
+      adversarial reviewer ran). So `P2 alpha - ceiling > 0` says P2's own
+      ladder is non-convex against the smile at the anchor — a power-law
+      diagnostic for PX1 beside anchor dispersion, not a sanity rail. The
+      "exactly on" assumes the paper's truncated tail; a censored one (mass at
+      zero) puts the true alpha ABOVE the ceiling. Next: P4.
+      **Goal (original spec, superseded where it conflicts with the above).** The paper derives a lower bound on alpha from the requirement
       that the implied density stays non-negative. Report, per ladder, the
       smallest alpha the market's own quotes allow — a sanity rail for P2.
 
@@ -1795,6 +1843,8 @@ new module near-complete, with a pinned synthetic case with a known answer
         `anchor_l_put` inside the root search). Passing a `KaramataFit.karamata_l`
         from another estimator on other data returns a confident wrong answer
         — measured: **`alpha >= 1.08` vs `5.65`** on that argument alone.
+        (Unreproducible — no inputs were recorded — and it compared a
+        fixed-`l` floor with a calibrated-`l` ceiling; see the Done note.)
       - The `vega` in `dBSP/dK` is `dP/dsigma` **per unit sigma**, *not*
         `PutGreeks.vega`, which carries `VEGA_PER_VOL_POINT = 0.01`
         (`research/option_pricer.py`) — a **100×** error if wired to the
@@ -1911,6 +1961,46 @@ new module near-complete, with a pinned synthetic case with a known answer
         t_years=anchor.t_years)`; if `anchor_iv` is `None`, report `null`,
         not `true`. (At a 30-day tenor it passes for any sigma
         up to ~1.75, so expect `true` almost always.)
+      - **the P3 ceiling at each implied-fit anchor** (`AlphaCeiling`,
+        refusals included), shown BESIDE the fit, never as a limit on it — a
+        fit above its ceiling is the expected thin-tail signature, not an
+        error (P3 Done note). `alpha_upper_bound` needs `smile_slope`, dσ/dK
+        per $ at the anchor, which nothing computes yet. **Do NOT difference
+        the two nearest strikes**: that divides quote noise by the smallest
+        gap there is. Measured (SPY-like: spot 660, anchor 594, 30 days, 25 %
+        vol, true ceiling 2.747): a half-tick ($0.005) error on each
+        neighbour's mid moves the ceiling by about ±0.27 at $1 spacing
+        (±0.055 at $5) — against 1.8 for the whole flat-vs-skewed
+        difference. **Nor fit one side only**: a line over strikes above the
+        anchor measures the slope half a window away, and on a normal convex
+        skew that biases the ceiling UP by 0.05–0.52 (and turned correct
+        refusals into numbers) — the direction that hides "P2 above its
+        ceiling". The smile is smooth at the anchor, so the two-sided slope
+        is the right one. **Build:** take the anchor strike plus the 8 listed
+        strikes nearest it on the same expiry, filled by distance but with at
+        least 3 strictly below and 3 strictly above (measured on a SPY grid:
+        at the 594 anchor that is 580, 585, 590, 594..599). Drop rows whose
+        Cboe `iv` is null (the adapter maps Cboe's zero-fill to null), fit
+        `iv` on `(K - anchor)` by least squares with a QUADRATIC term, and use
+        the linear coefficient — the slope AT the anchor. A strike count, not
+        a %-of-spot window, so $1-spaced $30–60 names (FXI, EEM, SLV, GDX,
+        XLF) get a slope too. Report the coefficient's standard error. Fewer
+        than 7 usable rows, or fewer than 3 on either side ⇒ no slope: at the
+        5-row / 2-a-side minimum the ceiling's noise (sd 0.29–0.34 at a $1
+        grid, 561 anchor) is worse than the nearest-neighbour method this
+        replaces. Measured with 9 rows: slope error ≤ 0.24 %, ceiling error
+        ≤ 0.006, noise sd 0.025–0.033 on the SPY grid; a plain LINEAR fit on
+        the same rows biases by -0.05 to -0.17, so keep the quadratic term.
+        Near a true refusal, noise can still flip it (13 % of runs at one
+        boundary case), which only the standard error reveals — show it. **No
+        slope ⇒ no `AlphaCeiling`:** do not construct one (its contract says
+        `market_slope` is `None` only for a missing IV) and never substitute
+        0.0 (a flat smile, which moves the 900-anchor ceiling from 2.75 to
+        4.55). Carry `ceiling: null` plus a `ceiling_reason` string instead.
+        Put `smile_slope`, its standard error and the strikes used in the
+        payload. When the ceiling is refused as "outside its own calibrated
+        tail", its `market_slope` may be an impossible value (e.g. -10.8):
+        never display it as a probability.
       - the implied fits (`ImpliedAlphaFit`, refusals included — never drop a
         refused fit from the payload), **at three anchors, with their
         dispersion**. A single implied alpha is never evidence of a power law:
@@ -2177,7 +2267,9 @@ with the evidence — never the implementation.
 - [ ] **PG2 — Measured priced depth replacing `MODEL_PRICED_MAX_MONEYNESS_PCT`**
       (supersedes 0018). Closes `docs/PRIOR_ART.md` §7 with a per-name measured
       scalar — beyond the Karamata onset *and* where the implied density stays
-      non-negative (P3) — instead of one hardcoded 10.0. **Reopens only if**
+      non-negative — which P3 does NOT compute (P3 is one ceiling at the anchor,
+      not a per-strike density check; this needs its own convexity scan of
+      market quotes) — instead of one hardcoded 10.0. **Reopens only if**
       PX1 confirms and PX3 shows the onset stable per name. Carries a hard
       anti-circularity rule: measured from **market quotes only**, never from
       a Paretan extrapolation of model prices, or the model certifies its own
