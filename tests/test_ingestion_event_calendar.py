@@ -254,6 +254,62 @@ def test_a_page_whose_every_meeting_fails_to_parse_writes_nothing(
     assert not store.bronze_partition_exists("event_calendar", _INGEST)
 
 
+# ---- refusing a PARTIAL calendar against the previous snapshot -------------
+
+
+def test_a_source_far_below_its_previous_count_is_refused(
+    tmp_path: Any, fomc_calendar_sample: str, nasdaq_earnings_sample: dict[str, Any]
+) -> None:
+    """A page redesign that leaves one year panel parseable yields a
+    non-empty, plausible-looking parse -- not the outright failure the other
+    guards catch. 8 -> 2 FOMC meetings must refuse, even though earnings is
+    unchanged and 2 valid FOMC rows alone would otherwise pass."""
+    store = DeltaLakeStore(tmp_path)
+    _ingest(store, fomc_calendar_sample, nasdaq_earnings_sample)
+    redesigned = _YEAR_PANEL.format(
+        year=2026, rows=_meeting("January", "27-28") + _meeting("March", "18-19")
+    )
+    next_day = _INGEST + dt.timedelta(days=1)
+
+    with pytest.raises(IncompleteCalendarError, match="fed_calendar"):
+        _ingest(store, redesigned, nasdaq_earnings_sample, ingest_date=next_day)
+    assert not store.bronze_partition_exists("event_calendar", next_day)
+
+
+def test_a_modest_day_to_day_change_is_not_refused(
+    tmp_path: Any, fomc_calendar_sample: str, nasdaq_earnings_sample: dict[str, Any]
+) -> None:
+    """29 -> 20 earnings rows is real day-to-day variation (the rolling
+    window shifts by one day each run), not a broken source -- it must not
+    trip the guard that catches an 8 -> 2 FOMC collapse."""
+    store = DeltaLakeStore(tmp_path)
+    _ingest(store, fomc_calendar_sample, nasdaq_earnings_sample)
+    fewer_earnings = dict(nasdaq_earnings_sample)
+    fewer_earnings["data"] = dict(nasdaq_earnings_sample["data"])
+    fewer_earnings["data"]["rows"] = nasdaq_earnings_sample["data"]["rows"][:20]
+    next_day = _INGEST + dt.timedelta(days=1)
+
+    result = _ingest(store, fomc_calendar_sample, fewer_earnings, ingest_date=next_day)
+
+    assert dict(result.rows_by_source) == {"fed_calendar": 8, "nasdaq_earnings": 20}
+
+
+def test_a_small_previous_count_is_not_compared(
+    tmp_path: Any, nasdaq_earnings_empty_sample: dict[str, Any]
+) -> None:
+    """A previous FOMC count below the noise floor (e.g. a lone meeting date
+    left after the year rolls over) must not make an equally small next
+    count look like a collapse."""
+    store = DeltaLakeStore(tmp_path)
+    one_meeting = _YEAR_PANEL.format(year=2026, rows=_meeting("December", "17-18"))
+    _ingest(store, one_meeting, nasdaq_earnings_empty_sample)
+    next_day = _INGEST + dt.timedelta(days=1)
+
+    result = _ingest(store, one_meeting, nasdaq_earnings_empty_sample, ingest_date=next_day)
+
+    assert dict(result.rows_by_source) == {"fed_calendar": 1}
+
+
 def test_nasdaq_errors_served_as_http_200_count_as_failures(
     tmp_path: Any, fomc_calendar_sample: str
 ) -> None:
