@@ -58,13 +58,20 @@ import math
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from functools import partial
-from typing import Any
 
 import pandas as pd
 import requests
 from pandera.errors import SchemaErrors
 
 from tail_lab.contracts.ohlcv import OhlcvSchema, dataset_id
+from tail_lab.ingestion.json_payload import (
+    first_object,
+    json_list,
+    json_object,
+    to_float,
+    to_int,
+    utc_from_epoch,
+)
 from tail_lab.ingestion.sources import Source, first_available, retry_transient
 from tail_lab.lake.store import LakeStore
 from tail_lab.observability import log_event
@@ -197,7 +204,7 @@ def _get_nasdaq_json(symbol: str, params: dict[str, str], timeout: float) -> obj
 
 def fetch_ohlcv_raw(
     symbol: str, *, range_: str = "5y", interval: str = "1d", timeout: float = 15.0
-) -> Any:
+) -> object:
     """Fetch raw Yahoo chart JSON for ``symbol``. Network call — not used by tests.
 
     Defaults to a 5-year range: the backtester routinely runs 4-year windows, so
@@ -212,11 +219,11 @@ def fetch_ohlcv_raw(
         timeout=timeout,
     )
     resp.raise_for_status()
-    payload: Any = resp.json()
+    payload: object = resp.json()
     return payload
 
 
-def _nasdaq_rows(raw: Mapping[str, object]) -> list[dict[str, Any]]:
+def _nasdaq_rows(raw: Mapping[str, object]) -> list[dict[str, object]]:
     """The row list out of Nasdaq's nested envelope, or [] if absent.
 
     Raises ``ValueError`` for an envelope of the wrong SHAPE (a string where
@@ -253,7 +260,7 @@ def nasdaq_trading_days(raw: Mapping[str, object]) -> set[dt.date]:
     return set(dates.dropna().dt.date)
 
 
-def _nasdaq_number(value: Any) -> float | None:
+def _nasdaq_number(value: object) -> float | None:
     """Nasdaq renders prices as ``$345.13`` and volume as ``30,766,360``.
 
     Returns ``None`` for anything unparseable rather than raising, so one
@@ -274,7 +281,7 @@ def _nasdaq_number(value: Any) -> float | None:
     return number if math.isfinite(number) else None
 
 
-def parse_nasdaq_historical(symbol: str, raw: dict[str, Any]) -> pd.DataFrame:
+def parse_nasdaq_historical(symbol: str, raw: Mapping[str, object]) -> pd.DataFrame:
     """Parse Nasdaq's historical JSON into a typed OHLCV DataFrame.
 
     Pure function — no network, no filesystem. ``adj_close`` is set equal to
@@ -290,7 +297,7 @@ def parse_nasdaq_historical(symbol: str, raw: dict[str, Any]) -> pd.DataFrame:
     if not rows:
         return _empty_frame()
 
-    records: list[dict[str, Any]] = []
+    records: list[dict[str, object]] = []
     for row in rows:
         close = _nasdaq_number(row.get("close"))
         open_ = _nasdaq_number(row.get("open"))
@@ -345,25 +352,31 @@ def _empty_frame() -> pd.DataFrame:
     )
 
 
-def parse_yahoo_chart_ohlcv(symbol: str, raw: dict[str, Any]) -> pd.DataFrame:
+def parse_yahoo_chart_ohlcv(symbol: str, raw: object) -> pd.DataFrame:
     """Parse Yahoo's chart JSON payload into a typed OHLCV DataFrame.
 
     Pure function — no network, no filesystem. A bar is dropped (not
     quarantined) when any of open/high/low/close is null — Yahoo emits
     these for non-trading timestamps in the requested range, so a null bar
     is "not a row," not an invalid one; contract validation downstream
-    still catches anything else wrong with a bar that did trade.
+    still catches anything else wrong with a bar that did trade. A payload
+    of the wrong shape raises ``ValueError`` naming the field
+    (``json_payload``).
     """
-    result = raw["chart"]["result"][0]
-    timestamps: list[int] = result["timestamp"]
-    quote = result["indicators"]["quote"][0]
-    opens: list[float | None] = quote["open"]
-    highs: list[float | None] = quote["high"]
-    lows: list[float | None] = quote["low"]
-    closes: list[float | None] = quote["close"]
-    volumes: list[int | None] = quote["volume"]
-    adjcloses: list[float | None] = result["indicators"]["adjclose"][0]["adjclose"]
-    gmtoffset = int(result["meta"].get("gmtoffset", 0))
+    chart = json_object(json_object(raw, "Yahoo payload").get("chart"), "chart")
+    result = first_object(chart.get("result"), "chart.result")
+    timestamps = json_list(result.get("timestamp"), "timestamp")
+    indicators = json_object(result.get("indicators"), "indicators")
+    quote = first_object(indicators.get("quote"), "quote")
+    opens = json_list(quote.get("open"), "open")
+    highs = json_list(quote.get("high"), "high")
+    lows = json_list(quote.get("low"), "low")
+    closes = json_list(quote.get("close"), "close")
+    volumes = json_list(quote.get("volume"), "volume")
+    adjcloses = json_list(
+        first_object(indicators.get("adjclose"), "adjclose").get("adjclose"), "adjclose"
+    )
+    gmtoffset = to_int(json_object(result.get("meta"), "meta").get("gmtoffset", 0), "gmtoffset")
 
     dates: list[dt.date] = []
     kept_open: list[float] = []
@@ -377,14 +390,14 @@ def parse_yahoo_chart_ohlcv(symbol: str, raw: dict[str, Any]) -> pd.DataFrame:
     ):
         if o is None or h is None or low_ is None or c is None or v is None or adj is None:
             continue
-        local_dt = dt.datetime.fromtimestamp(ts + gmtoffset, tz=dt.UTC)
+        local_dt = utc_from_epoch(to_int(ts, "timestamp") + gmtoffset, "timestamp")
         dates.append(local_dt.date())
-        kept_open.append(float(o))
-        kept_high.append(float(h))
-        kept_low.append(float(low_))
-        kept_close.append(float(c))
-        kept_volume.append(int(v))
-        kept_adjclose.append(float(adj))
+        kept_open.append(to_float(o, "open"))
+        kept_high.append(to_float(h, "high"))
+        kept_low.append(to_float(low_, "low"))
+        kept_close.append(to_float(c, "close"))
+        kept_volume.append(to_int(v, "volume"))
+        kept_adjclose.append(to_float(adj, "adjclose"))
 
     df = pd.DataFrame(
         {
@@ -423,7 +436,7 @@ def validate_and_quarantine(df: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFram
 
 
 def _build_sources(
-    symbol: str, *, nasdaq_raw: dict[str, Any] | None, raw: dict[str, Any] | None
+    symbol: str, *, nasdaq_raw: Mapping[str, object] | None, raw: object | None
 ) -> list[Source]:
     """The ordered source chain: Nasdaq first, Yahoo second.
 
@@ -454,8 +467,8 @@ def ingest_ohlcv(
     symbol: str,
     *,
     ingest_date: dt.date | None = None,
-    raw: dict[str, Any] | None = None,
-    nasdaq_raw: dict[str, Any] | None = None,
+    raw: object | None = None,
+    nasdaq_raw: Mapping[str, object] | None = None,
 ) -> IngestResult:
     """Resolve a source, validate, and commit to bronze.
 

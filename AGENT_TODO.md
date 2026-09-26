@@ -2335,6 +2335,25 @@ lost a second time.
 
 ## Operational (2026-09-01)
 
+- [ ] **One unparseable `iv` drops a whole symbol from the chain sweep**
+      (found 2026-09-26 by adversarial review; pre-existing, not a
+      regression). `ingestion/option_chain.parse_cboe_chain` runs `float()`
+      over each contract's `iv`, so a single put with `"iv": "N/A"` raises
+      `ValueError` for the whole payload; the per-symbol catch in the sweep
+      then records that symbol as failed and the session commits without
+      it. Repro: take `tests/fixtures/cboe_chain_sample.json`, set one kept
+      put's `iv` to `"N/A"`, call `parse_cboe_chain` — `ValueError: could
+      not convert string to float: 'N/A'` (all 5 kept rows lost for 1 bad
+      cell). Cboe zero-fills today rather than sending text, so it is
+      latent — but this is the one dataset where a lost symbol-session is
+      unrecoverable (`docs/adr/0020`). **Build:** an unparseable `iv` (or
+      greek) becomes null for THAT row, exactly like the zero-fill mapping,
+      and is counted in the sweep's log; a bad strike/expiry/OSI symbol
+      still drops only its own row. **Test:** the repro above yields 5 rows
+      with one null `iv`, and a payload where EVERY `iv` is text still
+      writes its rows (nulls) rather than failing the symbol. Keep the
+      per-symbol catch as the backstop.
+
 - [ ] **Surface `agent/*` PRs blocked by design review for more than a day.**
       A BLOCK leaves the PR red, and the agent that wrote it is a one-shot
       daily run that never comes back — so absent a human it rots (five PRs,

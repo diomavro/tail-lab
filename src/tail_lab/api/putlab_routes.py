@@ -22,7 +22,6 @@ import logging
 import time
 from collections.abc import Mapping, Sequence
 from functools import lru_cache
-from typing import Any
 
 import pandas as pd
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -133,8 +132,8 @@ def _log_run(
     *,
     asset: str,
     as_of: dt.date,
-    params: Mapping[str, Any],
-    outputs: Mapping[str, Any],
+    params: Mapping[str, object],
+    outputs: Mapping[str, object],
     extra_snapshots: Sequence[tuple[str, str]] = (),
 ) -> None:
     """Emit the §f structured run line for a backtest/mart build: identity

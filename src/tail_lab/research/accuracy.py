@@ -36,7 +36,7 @@ from tail_lab.contracts.cboe_strategy import STRATEGY_INDEX_CATALOGUE
 from tail_lab.contracts.optionsdx import DATASET as OPTIONSDX_DATASET
 from tail_lab.contracts.optionsdx import month_coverage, months_in_span
 from tail_lab.contracts.regime import REGIME_LABELS, RegimeLabel
-from tail_lab.lake.store import LakeStore
+from tail_lab.lake.store import LAKE_READ_ERRORS, LakeStore
 from tail_lab.research.backtest.index_replication import (
     IndexReplicationResult,
     compute_index_replication,
@@ -51,6 +51,24 @@ from tail_lab.research.data_quality import assess_asset_quality
 from tail_lab.research.regimes.timeline import compute_regime_timeline
 
 logger = logging.getLogger("tail_lab.research.accuracy")
+
+
+class UnreadableQuoteDates(ValueError):
+    """The quote panel's ``quote_date`` column holds values that do not parse
+    as dates. The contract requires timestamps, so this means a partition got
+    past it; what the panel covers is then unknown, not absent."""
+
+
+#: What reading the quote panel can fail with, beyond the absence
+#: ``quote_coverage`` already answers: a lake I/O fault, memory on the
+#: 1 GB machine, or dates that do not parse. Deliberately NOT plain
+#: ``ValueError``: a bug raising one must fail the request, not read as
+#: "could not determine". See the handler in :func:`compute_accuracy_report`.
+_COVERAGE_READ_FAULTS: tuple[type[BaseException], ...] = (
+    *LAKE_READ_ERRORS,
+    MemoryError,
+    UnreadableQuoteDates,
+)
 
 #: The published programs whose replication residuals serve as the model's
 #: error bar, and the (moneyness %, tenor weeks) each one measures the model at.
@@ -473,7 +491,14 @@ def quote_coverage(
     # Deduplicate to distinct DAYS in pandas first. Building a date object per
     # row would be millions of allocations to answer a question with at most a
     # few hundred distinct answers.
-    unique_days = pd.to_datetime(pd.Series(column).dropna().unique())
+    # Not errors="coerce": an unparseable date is UNKNOWN coverage, not a gap,
+    # and coercing turned it into a confident "no real quotes" (or dropped
+    # real dates in a second format) with nothing logged. Name it instead, so
+    # the caller reports "could not determine" and logs it.
+    try:
+        unique_days = pd.to_datetime(pd.Series(column).dropna().unique())
+    except ValueError as exc:
+        raise UnreadableQuoteDates(f"{dataset}.quote_date does not parse as dates") from exc
     present_all, _ = month_coverage([ts.date() for ts in unique_days])
     if not present_all:
         return QuoteCoverage(
@@ -576,16 +601,18 @@ def compute_accuracy_report(
     except LookupError:
         flags, note = None, "no price snapshot to scan"
 
-    # Broad except, deliberately. The sibling blocks above catch LookupError
-    # because that is the only way their inputs go missing; this one reads a
-    # multi-million-row vendor panel over S3, so it can also fail on memory, a
-    # transport error, or a schema drift in a dataset no test fixture covers.
-    # Whatever goes wrong, the panel must still render saying the result is
-    # model-priced -- an accuracy panel that 500s is the one outcome worse than
-    # an incomplete one, because the surface then shows nothing at all.
+    # The sibling blocks above catch LookupError because that is the only way
+    # their inputs go missing, and quote_coverage already turns a missing panel
+    # or column into a "model-priced" answer itself. What is left is a READ
+    # that fails part-way over S3 on a 1 GB machine: a lake I/O fault
+    # (``LAKE_READ_ERRORS``, measured) or memory. Those still degrade to a
+    # panel saying the result is model-priced -- an accuracy panel that 500s
+    # shows nothing at all. This used to be ``except Exception``, which also
+    # turned any bug in quote_coverage into a permanent, silent "could not
+    # determine"; a bug now fails the request instead (Rule 14).
     try:
         coverage = quote_coverage(store, asset=asset, window_start=window_start, as_of=as_of)
-    except Exception:
+    except _COVERAGE_READ_FAULTS:
         logger.exception("accuracy.quote_coverage_failed", extra={"asset": asset})
         coverage = QuoteCoverage(
             priced_from="model",

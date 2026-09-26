@@ -35,7 +35,7 @@ import sys
 import time
 import urllib.error
 import urllib.request
-from typing import Any
+from collections.abc import Mapping
 
 from pydantic import ValidationError
 
@@ -85,7 +85,7 @@ POST_ATTEMPTS = 4
 POST_BACKOFF_S = (5, 20, 60)
 
 
-def _post_once(base_url: str, token: str, payload: dict[str, Any], timeout: int) -> dict[str, Any]:
+def _post_once(base_url: str, token: str, payload: Mapping[str, object], timeout: int) -> object:
     request = urllib.request.Request(
         url=f"{base_url.rstrip('/')}/api/ingest/option-chain",
         data=json.dumps(payload).encode(),
@@ -93,7 +93,7 @@ def _post_once(base_url: str, token: str, payload: dict[str, Any], timeout: int)
         method="POST",
     )
     with urllib.request.urlopen(request, timeout=timeout) as response:
-        result: dict[str, Any] = json.loads(response.read())
+        result: object = json.loads(response.read())
     return result
 
 
@@ -111,7 +111,7 @@ def _retryable(exc: Exception) -> bool:
     return isinstance(exc, urllib.error.URLError | TimeoutError)
 
 
-def _post(base_url: str, token: str, payload: dict[str, Any], timeout: int) -> dict[str, Any]:
+def _post(base_url: str, token: str, payload: Mapping[str, object], timeout: int) -> object:
     """POST the sweep, retrying only faults that a retry could fix."""
     for attempt in range(1, POST_ATTEMPTS + 1):
         try:

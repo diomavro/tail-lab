@@ -35,13 +35,13 @@ import datetime as dt
 import logging
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
-from typing import Any
 
 import pandas as pd
 import requests
 from pandera.errors import SchemaErrors
 
 from tail_lab.contracts.credit import DATASET, DEFAULT_SERIES_IDS, CreditSchema
+from tail_lab.ingestion.json_payload import json_list, json_object
 from tail_lab.lake.store import LakeStore
 from tail_lab.observability import log_event
 
@@ -83,9 +83,7 @@ class IngestResult:
     series_ids: tuple[str, ...]
 
 
-def fetch_series_observations_raw(
-    series_id: str, api_key: str, *, timeout: float = 30.0
-) -> dict[str, Any]:
+def fetch_series_observations_raw(series_id: str, api_key: str, *, timeout: float = 30.0) -> object:
     """Fetch one series' full vintage history. Network call -- not used by tests."""
     resp = requests.get(
         FRED_OBSERVATIONS_URL,
@@ -99,11 +97,11 @@ def fetch_series_observations_raw(
         timeout=timeout,
     )
     resp.raise_for_status()
-    payload: dict[str, Any] = resp.json()
+    payload: object = resp.json()
     return payload
 
 
-def parse_fred_observations(series_id: str, raw: Mapping[str, Any]) -> pd.DataFrame:
+def parse_fred_observations(series_id: str, raw: object) -> pd.DataFrame:
     """Parse one series' FRED JSON payload into a typed
     ``(series_id, obs_date, value, vintage_date)`` frame.
 
@@ -112,9 +110,17 @@ def parse_fred_observations(series_id: str, raw: Mapping[str, Any]) -> pd.DataFr
     (a holiday/no-print is a legitimate absence, not a zero); anything else
     malformed -- an unparseable date, a non-numeric value -- survives as
     NaT/NaN so :func:`validate_and_quarantine` can catch it, rather than
-    being silently discarded.
+    being silently discarded. An envelope of the wrong shape raises
+    ``ValueError`` naming the field. One observation missing ``date`` or
+    ``value`` surfaces as NaT/NaN for quarantine like any bad cell. Worse
+    shapes still raise, and not uniformly: a key absent from EVERY
+    observation (``KeyError``), an observation that is not an object
+    (``TypeError`` or ``ValueError``), a value past float range
+    (``OverflowError``). FRED is not behind ``first_available``, so nothing
+    catches by class here; the ``make`` target fails loudly either way.
     """
-    observations = raw.get("observations", [])
+    payload = json_object(raw, f"FRED payload for {series_id}")
+    observations = json_list(payload.get("observations") or [], "observations")
     if not observations:
         return _empty_frame()
 
@@ -171,7 +177,7 @@ def ingest_credit(
     series_ids: Sequence[str] | None = None,
     *,
     ingest_date: dt.date | None = None,
-    raw: Mapping[str, Mapping[str, Any]] | None = None,
+    raw: Mapping[str, object] | None = None,
     api_key: str | None = None,
 ) -> IngestResult:
     """Fetch (or use supplied) FRED observations, validate, and commit one
@@ -195,7 +201,7 @@ def ingest_credit(
     parsed = []
     for series_id in resolved:
         if raw is not None and series_id in raw:
-            payload: Mapping[str, Any] = raw[series_id]
+            payload: object = raw[series_id]
         else:
             if not api_key:
                 raise ValueError(

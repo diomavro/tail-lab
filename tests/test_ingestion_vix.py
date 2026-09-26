@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import datetime as dt
+from pathlib import Path
 from typing import Any
 
 import pandas as pd
@@ -319,3 +320,86 @@ def test_a_current_history_or_no_witness_writes_normally(
         store, ingest_date=dt.date(2026, 9, 23), cboe_csv=_THROUGH_SEP_22, market_session=witness
     )
     assert result.valid_rows == 2
+
+
+@pytest.mark.parametrize(
+    "junk",
+    [
+        {"chart": {"result": []}},
+        {"chart": None},
+        {"chart": {"result": [{"timestamp": [1], "indicators": {"quote": [{"close": [None]}]}}]}},
+        {
+            "chart": {
+                "result": [
+                    {
+                        "meta": {"gmtoffset": 0},
+                        "timestamp": [1],
+                        "indicators": {"quote": [{"close": [[1]]}]},
+                    }
+                ]
+            }
+        },
+        {
+            "chart": {
+                "result": [
+                    {
+                        "meta": {"gmtoffset": 0},
+                        "timestamp": [[1]],
+                        "indicators": {"quote": [{"close": [15.0]}]},
+                    }
+                ]
+            }
+        },
+        {
+            "chart": {
+                "result": [
+                    {
+                        "meta": {"gmtoffset": 0},
+                        "timestamp": [1],
+                        "indicators": {"quote": [{"close": [10**400]}]},
+                    }
+                ]
+            }
+        },
+        "<html>429 Too Many Requests</html>",
+    ],
+)
+def test_a_junk_yahoo_payload_is_a_failed_source_not_a_crash(tmp_path: Path, junk: object) -> None:
+    """Each of these raised IndexError/TypeError/KeyError out of the untyped
+    parser; ``first_available`` now catches only ``requests`` faults and
+    ``ValueError``, so the parser must name the bad shape as ``ValueError``
+    or a junk payload would crash the ingest instead of failing the chain."""
+    with pytest.raises(AllSourcesFailed) as excinfo:
+        ingest_vix(
+            DeltaLakeStore(tmp_path),
+            ingest_date=dt.date(2026, 1, 6),
+            cboe_csv="DATE,OPEN,HIGH,LOW,CLOSE\n",
+            raw=junk,
+        )
+    assert excinfo.value.errors["yahoo"].startswith("ValueError")
+
+
+def test_a_timestamp_past_the_platform_clock_fails_the_source_not_the_ingest(
+    tmp_path: Path,
+) -> None:
+    """``fromtimestamp(10**18)`` raises OSError (EOVERFLOW); read raw it would
+    escape ``first_available`` and crash the ingest."""
+    junk = {
+        "chart": {
+            "result": [
+                {
+                    "meta": {"gmtoffset": 0},
+                    "timestamp": [10**18],
+                    "indicators": {"quote": [{"close": [15.0]}]},
+                }
+            ]
+        }
+    }
+    with pytest.raises(AllSourcesFailed) as excinfo:
+        ingest_vix(
+            DeltaLakeStore(tmp_path),
+            ingest_date=dt.date(2026, 1, 6),
+            cboe_csv="DATE,OPEN,HIGH,LOW,CLOSE\n",
+            raw=junk,
+        )
+    assert excinfo.value.errors["yahoo"].startswith("ValueError")

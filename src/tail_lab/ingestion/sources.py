@@ -44,6 +44,7 @@ import requests
 from tail_lab.observability import log_event
 
 __all__ = [
+    "SOURCE_FAILURES",
     "AllSourcesFailed",
     "Source",
     "SourceBehindMarket",
@@ -82,10 +83,25 @@ class Source:
     ``fetch`` must return a parsed DataFrame in the dataset's contract
     shape, or raise. Returning an empty frame counts as a failure — a
     source that has no data for us is not a source we should stop at.
+
+    A source that FAILS raises one of :data:`SOURCE_FAILURES`: a ``requests``
+    fault, or ``ValueError`` for a payload it cannot use (every parser narrows
+    its JSON through ``json_payload``, which names a wrong shape that way).
+    Anything else is a bug in the adapter and propagates.
     """
 
     source_id: str
     fetch: Callable[[], pd.DataFrame]
+
+
+#: What a source raises when it has no usable data: the network or host
+#: failed (``RequestException``; its ``JSONDecodeError`` covers a truncated or
+#: HTML 200), or the payload could not be used (``ValueError``, which also
+#: covers pandas' ``ParserError``/``EmptyDataError`` on a junk CSV and
+#: ``OutOfBoundsDatetime``). Until 2026-09-26 this was ``except Exception``,
+#: which also demoted a plain bug to "source failed" and hid it behind the
+#: fallback -- the fallback then served the data, so nothing ever went red.
+SOURCE_FAILURES: tuple[type[Exception], ...] = (requests.exceptions.RequestException, ValueError)
 
 
 class AllSourcesFailed(RuntimeError):
@@ -126,7 +142,7 @@ def first_available(
     for index, source in enumerate(sources):
         try:
             rows = source.fetch()
-        except Exception as exc:
+        except SOURCE_FAILURES as exc:
             errors[source.source_id] = f"{type(exc).__name__}: {exc}"
             log_event(
                 logger,

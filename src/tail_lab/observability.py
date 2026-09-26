@@ -12,7 +12,6 @@ success path.
 from __future__ import annotations
 
 import logging
-from typing import Any
 
 #: Guard so repeated composition-root imports don't stack handlers.
 _CONFIGURED = False
@@ -35,7 +34,7 @@ def configure_logging(level: int = logging.INFO) -> None:
     _CONFIGURED = True
 
 
-def _fmt(value: Any) -> str:
+def _fmt(value: object) -> str:
     """Render one field value: compact floats, and quote anything with spaces
     so ``key=value`` stays unambiguously parseable."""
     if isinstance(value, bool):
@@ -47,7 +46,7 @@ def _fmt(value: Any) -> str:
     return f'"{rendered}"' if (" " in rendered or "=" in rendered) else rendered
 
 
-def log_event(logger: logging.Logger, event: str, **fields: Any) -> None:
+def log_event(logger: logging.Logger, event: str, **fields: object) -> None:
     """Emit one structured line: ``event=<event> k=v k=v ...`` at INFO.
 
     Field order is preserved (call with the most identifying fields first).

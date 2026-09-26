@@ -75,7 +75,7 @@ class FeedbackStore:
 
     def list_open(self) -> list[FeedbackRecord]:
         """Every open record, both kinds, oldest first."""
-        records = [FeedbackRecord(**raw) for raw in self._blobs.list_json(_PREFIX)]
+        records = [FeedbackRecord.model_validate(raw) for raw in self._blobs.list_json(_PREFIX)]
         open_records = [r for r in records if r.status == "open"]
         return sorted(open_records, key=lambda r: r.created_at)
 
@@ -83,7 +83,7 @@ class FeedbackStore:
         """Mark a record resolved. Raises ``LookupError`` if ``record_id``
         is unknown. A ``big_picture`` record is only ever resolved by this
         explicit call — no code path here resolves one automatically."""
-        record = FeedbackRecord(**self._blobs.read_json(self._key(record_id)))
+        record = FeedbackRecord.model_validate(self._blobs.read_json(self._key(record_id)))
         if record.status == "resolved":
             return record
         resolved = record.model_copy(

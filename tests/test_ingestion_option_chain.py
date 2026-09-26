@@ -189,6 +189,19 @@ def test_zero_iv_is_read_as_absence_and_takes_its_greeks_with_it() -> None:
     assert live["delta"] == pytest.approx(-0.19)
 
 
+@pytest.mark.parametrize("cell", [None, [1], {"a": 1}])
+def test_a_null_or_structured_greek_is_absent_for_that_row_not_the_symbol(cell: object) -> None:
+    """``float(None)`` raises TypeError, which the narrowed ``except ValueError``
+    in ``_greek`` would no longer catch: one bad greek beside a LIVE iv would
+    then fail the whole symbol's chain in the sweep, whose sessions cannot be
+    recaptured (docs/adr/0020). It must cost only that cell."""
+    frame, _ = parse_cboe_chain(_payload(_put(95.0, delta=cell), _put(96.0)))
+    bad = frame[frame["strike"] == 95.0].iloc[0]
+    assert len(frame) == 2
+    assert pd.isna(bad["delta"])
+    assert bad["iv"] == pytest.approx(0.2415)
+
+
 def test_parse_counts_unparseable_contracts_without_dropping_the_rest() -> None:
     frame, unparsed = parse_cboe_chain(_payload(_contract("!!broken!!"), _put(95.0)))
     assert unparsed == 1
@@ -1244,3 +1257,45 @@ def test_a_bug_in_the_quarantine_write_is_not_swallowed(tmp_path: Path) -> None:
 
     with pytest.raises(KeyError):
         ingest_option_chain(_QuarantineHasABug(tmp_path), live, fetch=_fetcher(**payloads))
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [{"data": "a string"}, {"data": {"options": {"not": "a list"}}}],
+)
+def test_a_chain_envelope_of_the_wrong_shape_is_a_named_failure(payload: dict[str, object]) -> None:
+    with pytest.raises(ValueError, match="Cboe chain"):
+        parse_cboe_chain(payload)
+
+
+def test_a_non_object_contract_is_a_named_failure() -> None:
+    payload = _payload(_put(95.0), symbol="SPY")
+    payload["data"]["options"].append(None)  # type: ignore[index]
+    with pytest.raises(ValueError, match="Cboe chain contract"):
+        parse_cboe_chain(payload)
+
+
+def test_a_bug_in_one_symbol_costs_that_symbol_not_the_session(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    """The per-symbol handler is DELIBERATELY broad -- Rule 14's process
+    boundary. This loop is the only capture of a session nobody sells back
+    (docs/adr/0020): a bug that fires on one symbol's payload must cost that
+    symbol, logged with its traceback, never the other symbols' quotes. A
+    narrowed handler would let the KeyError end the sweep before the write."""
+
+    def fetch(symbol: str) -> dict[str, object]:
+        if symbol.upper() == "QQQ":
+            raise KeyError("a bug that only QQQ's payload trips")
+        return _payload(_put(95.0), symbol=symbol.upper())
+
+    symbols = [f"S{i}" for i in range(20)] + ["QQQ"]
+    with caplog.at_level("ERROR"):
+        result = ingest_option_chain(store := DeltaLakeStore(tmp_path), symbols, fetch=fetch)
+
+    assert result.committed
+    assert tuple(result.symbols_failed) == ("QQQ",)
+    assert len(result.symbols_ok) == 20
+    assert store.bronze_partition_exists(DATASET, result.quote_date)
+    failure = next(r for r in caplog.records if "symbol_failed" in r.getMessage())
+    assert failure.exc_info is not None and failure.exc_info[0] is KeyError

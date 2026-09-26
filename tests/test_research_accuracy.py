@@ -12,7 +12,9 @@ from pathlib import Path
 
 import numpy as np
 import pandas as pd
+import pyarrow as pa
 import pytest
+from deltalake.exceptions import DeltaError
 
 from tail_lab.lake.store import DeltaLakeStore
 from tail_lab.research.accuracy import (
@@ -604,6 +606,54 @@ def test_quote_coverage_is_scoped_to_the_window_not_the_whole_panel(tmp_path: Pa
     assert "entirely outside this window" in cov.note
 
 
+@pytest.mark.parametrize(
+    "dates",
+    [
+        ["junk", "n/a"],
+        # Real dates in two formats: coercion kept the first format and
+        # silently dropped Feb and Mar 2023 as "missing" months.
+        ["2023-01-03", "02/01/2023", "03/01/2023"],
+    ],
+)
+def test_unreadable_quote_dates_are_unknown_coverage_not_a_gap(
+    tmp_path: Path, dates: list[str], caplog: pytest.LogCaptureFixture
+) -> None:
+    """Dates that do not parse say nothing about which months are covered.
+    Reporting them as missing (or as "no real quotes") would be a confident
+    false statement; the panel must say it could not determine, and log why.
+    The contract requires timestamps, so this is a partition that got past it."""
+    from tail_lab.contracts.optionsdx import DATASET as OPTIONSDX_DATASET
+    from tail_lab.research.accuracy import (
+        UnreadableQuoteDates,
+        compute_accuracy_report,
+        quote_coverage,
+    )
+
+    store = DeltaLakeStore(tmp_path)
+    store.write_bronze(
+        f"{OPTIONSDX_DATASET}_spy",
+        dt.date(2026, 9, 3),
+        pd.DataFrame({"quote_date": dates, "strike": [1.0] * len(dates)}),
+    )
+    with pytest.raises(UnreadableQuoteDates):
+        quote_coverage(
+            store, asset="spy", window_start=dt.date(2023, 1, 1), as_of=dt.date(2026, 9, 3)
+        )
+
+    report = compute_accuracy_report(
+        store,
+        asset="spy",
+        as_of=dt.date(2026, 9, 3),
+        years=4.0,
+        moneyness_pct=5.0,
+        tenor_weeks=4.0,
+        replications=[],
+    )
+
+    assert "Could not determine" in report.quote_coverage.note
+    assert any(r.message == "accuracy.quote_coverage_failed" for r in caplog.records)
+
+
 def test_quote_coverage_never_takes_the_whole_panel_down_with_it(tmp_path: Path) -> None:
     """An accuracy panel that 500s is worse than an incomplete one: the reader
     sees nothing at all, and nothing reads as "no concerns". A quote panel whose
@@ -635,3 +685,56 @@ def test_quote_coverage_never_takes_the_whole_panel_down_with_it(tmp_path: Path)
         replications=[],
     )
     assert report.quote_coverage.priced_from == "model"
+
+
+def _report_with_failing_coverage(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, exc: BaseException
+) -> AccuracyReport:
+    import tail_lab.research.accuracy as accuracy
+
+    def failing(*_a: object, **_k: object) -> object:
+        raise exc
+
+    monkeypatch.setattr(accuracy, "quote_coverage", failing)
+    return accuracy.compute_accuracy_report(
+        DeltaLakeStore(tmp_path),
+        asset="spy",
+        as_of=dt.date(2026, 9, 3),
+        years=4.0,
+        moneyness_pct=5.0,
+        tenor_weeks=4.0,
+        replications=[],
+    )
+
+
+@pytest.mark.parametrize(
+    "exc",
+    [
+        pa.ArrowInvalid("Could not open Parquet input source"),  # corrupt parquet, measured
+        DeltaError("Kernel error: Json error"),  # corrupt Delta log, measured
+        OSError("Generic LocalFileSystem error"),  # unreadable log dir, measured
+        MemoryError(),  # the 1 GB machine
+    ],
+)
+def test_a_lake_read_fault_in_coverage_still_degrades_to_a_report(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, exc: BaseException
+) -> None:
+    """The faults a part-way S3 read really raises must still leave a panel
+    that says "model-priced" rather than a 500."""
+    report = _report_with_failing_coverage(tmp_path, monkeypatch, exc)
+    assert report.quote_coverage.priced_from == "model"
+    assert report.quote_coverage.real_quotes_available is False
+
+
+@pytest.mark.parametrize("bug", [TypeError, ValueError])
+def test_a_bug_in_coverage_is_not_disguised_as_missing_data(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, bug: type[Exception]
+) -> None:
+    """Under ``except Exception`` a TypeError in quote_coverage rendered as a
+    permanent "could not determine what real quote data is held" -- a bug
+    reading as a data gap forever. It must fail the request instead. A plain
+    ValueError too: only the NAMED UnreadableQuoteDates means "could not
+    determine", so widening the catch to ValueError would bring the disguise
+    back."""
+    with pytest.raises(bug):
+        _report_with_failing_coverage(tmp_path, monkeypatch, bug("a bug"))

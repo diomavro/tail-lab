@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import datetime as dt
+from pathlib import Path
 from typing import Any
 
 import pandas as pd
@@ -324,3 +325,30 @@ def test_a_bug_in_the_cboe_fetch_propagates(monkeypatch: pytest.MonkeyPatch) -> 
 
     with pytest.raises(KeyError):
         options_expiry.fetch_cboe_chain_raw("spy")
+
+
+def test_a_junk_cboe_contract_falls_through_to_yahoo(tmp_path: Path) -> None:
+    """A non-object contract was an AttributeError the old catch-all absorbed;
+    it is a named ``ValueError`` now, which the narrowed chain still survives."""
+    result = ingest_options_expiry(
+        DeltaLakeStore(tmp_path),
+        "SPY",
+        ingest_date=dt.date(2026, 1, 6),
+        cboe_raw={"data": {"options": [None]}},
+        raw={"optionChain": {"result": [{"expirationDates": [1767312000]}]}},
+    )
+    assert result.source_id == "yahoo"
+
+
+def test_a_junk_yahoo_expiry_payload_is_a_named_failure() -> None:
+    with pytest.raises(ValueError, match=r"optionChain.result"):
+        parse_yahoo_options_expiry("SPY", {"optionChain": {"result": None}})
+
+
+def test_an_expiry_epoch_past_the_platform_clock_is_the_named_failure() -> None:
+    """``fromtimestamp(10**18)`` raises OSError (EOVERFLOW), which
+    ``first_available`` does not catch; through ``utc_from_epoch`` it is the
+    ValueError every junk cell is."""
+    raw = {"optionChain": {"result": [{"expirationDates": [10**18]}]}}
+    with pytest.raises(ValueError, match="expirationDates"):
+        parse_yahoo_options_expiry("SPY", raw)

@@ -107,12 +107,12 @@ class HypothesisMemory:
             raw = self._blobs.read_json(self._key(rule_hash, regime))
         except LookupError:
             return None
-        return RegimeOutcome(**raw)
+        return RegimeOutcome.model_validate(raw)
 
     def all_outcomes(self) -> list[RegimeOutcome]:
         """Every recorded node — negative results included; nothing is ever
         pruned from the retrieval path (``docs/adr/0015``)."""
-        return [RegimeOutcome(**raw) for raw in self._blobs.list_json(_PREFIX)]
+        return [RegimeOutcome.model_validate(raw) for raw in self._blobs.list_json(_PREFIX)]
 
     def outcomes_for_rule(self, rule_hash: str) -> list[RegimeOutcome]:
         """This rule's outcomes across every regime it has been tried in."""
