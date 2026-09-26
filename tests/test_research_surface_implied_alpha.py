@@ -285,6 +285,8 @@ def test_refuses_when_the_anchor_is_inside_its_tail_for_almost_every_alpha() -> 
 
     assert fit.alpha is None
     assert fit.refusal is not None and "no range left to search" in fit.refusal
+    # The anchor FAILED its domain check: it is outside its tail, not inside.
+    assert "outside its own calibrated tail" in fit.refusal
 
 
 def test_refuses_an_anchor_that_fails_hygiene_itself() -> None:
