@@ -17,10 +17,18 @@ yields no valid meetings, or more than half the earnings dates fail, nothing
 is written: as-of reads take the LATEST partition, so a half-calendar
 partition would shadow yesterday's complete one -- the silent-truncation
 failure ``ingestion/sources.py`` describes. A few failed earnings dates are
-still tolerated ("retry tomorrow"). What it does NOT catch is a source that
-answers with a PARTIAL set -- e.g. a page redesign that leaves one year panel
-parseable -- because nothing here compares against the previous partition
-(queued in ``AGENT_TODO.md``).
+still tolerated ("retry tomorrow").
+
+**It also refuses a source that answers PARTIALLY** -- e.g. a page redesign
+that leaves one year panel parseable, which yields a non-empty, non-suspicious
+looking parse rather than an outright failure. Each source's valid row count
+is compared against its own count in the previous complete partition
+(``docs/adr/0009``'s as-of resolution, stepping back from ``ingest_date``);
+a source that falls below half its previous count refuses the whole write,
+same "shadow a complete partition with a broken one" hazard as above. Found by
+adversarial review 2026-09-24 (a hypothetical 56 -> 8 FOMC drop). No live
+history exists yet to confirm the threshold holds for earnings' naturally
+lumpier day-to-day window -- if it proves noisy there, widen it, don't drop it.
 """
 
 from __future__ import annotations
@@ -52,9 +60,47 @@ QUARANTINE_DATASET = f"{DATASET}__quarantine"
 
 
 class IncompleteCalendarError(RuntimeError):
-    """A whole source failed, so the snapshot would be half a calendar.
-    Raised INSTEAD of writing; a re-run once the source answers can still
-    claim the day."""
+    """A whole source failed, or answered with far fewer valid rows than its
+    previous snapshot, so the snapshot would be half a calendar. Raised
+    INSTEAD of writing; a re-run once the source answers can still claim the
+    day."""
+
+
+#: A source's valid row count must not fall below this fraction of its own
+#: count in the previous complete partition. "Half" matches the existing
+#: earnings-fetch-failure threshold below (`failed * 2 > len(window)`); FOMC's
+#: listed calendar changes rarely, so a drop this sharp is the redesign
+#: signature the adversarial review found. Not yet checked against live
+#: earnings history (only fixtures) -- its rolling 30-day window is naturally
+#: lumpier and may need a wider band once real data exists.
+_MIN_SOURCE_ROW_FRACTION = 0.5
+
+#: Below this many rows, a previous count is too small to make "half of it"
+#: a meaningful signal -- skip the comparison rather than refuse over noise.
+_MIN_PREVIOUS_ROWS_FOR_COMPARISON = 5
+
+
+def _refuse_if_far_below_previous_partition(
+    store: LakeStore, ingest_date: dt.date, rows_by_source: Mapping[str, int]
+) -> None:
+    """Compare each source's valid row count against its own count in the
+    last complete partition before ``ingest_date``. Steps back through as-of
+    resolution (not a literal ``ingest_date - 1`` read) so a weekend or a
+    holiday still compares against the last real snapshot."""
+    try:
+        previous = store.read_bronze_as_of(DATASET, ingest_date - dt.timedelta(days=1))
+    except LookupError:
+        return  # first-ever snapshot; nothing to compare against
+    previous_counts = previous["source_id"].value_counts()
+    for source_id, previous_count in previous_counts.items():
+        if previous_count < _MIN_PREVIOUS_ROWS_FOR_COMPARISON:
+            continue
+        current_count = rows_by_source.get(str(source_id), 0)
+        if current_count < previous_count * _MIN_SOURCE_ROW_FRACTION:
+            raise IncompleteCalendarError(
+                f"{source_id} yielded {current_count} valid rows, down from {previous_count} in "
+                "the previous snapshot -- refusing to write a partial calendar over a complete one"
+            )
 
 
 @dataclass(frozen=True)
@@ -121,6 +167,8 @@ def ingest_event_calendar(
             "the FOMC page yielded no valid meetings -- its layout has likely changed; "
             "refusing to write an earnings-only calendar over the last complete one"
         )
+    rows_by_source = {str(k): int(v) for k, v in valid["source_id"].value_counts().items()}
+    _refuse_if_far_below_previous_partition(store, ingest_date, rows_by_source)
     committed = not store.bronze_partition_exists(DATASET, ingest_date)
     bronze_path = store.write_bronze(DATASET, ingest_date, valid)
 
@@ -146,7 +194,7 @@ def ingest_event_calendar(
         committed=committed,
         earnings_dates_fetched=len(window) - failed,
         earnings_dates_failed=failed,
-        rows_by_source={str(k): int(v) for k, v in valid["source_id"].value_counts().items()},
+        rows_by_source=rows_by_source,
     )
     _log_run(result, ingest_date, valid)
     return result

@@ -299,14 +299,23 @@ a large one strictly in order.
       Nasdaq witness (`ingestion.option_chain.latest_market_session`) and
       warn -- or refuse -- when the source is behind the market.
 
-- [ ] **Compare each `event_calendar` snapshot against the previous one.**
-      `ingestion/event_calendar.py` refuses a source that fails outright,
-      but not one that answers PARTIALLY -- a Fed page redesign that leaves
-      one year panel parseable writes 8 meetings where the last snapshot held
-      56, and as-of reads then see only those 8. Found by adversarial review
-      2026-09-24. Refuse (or at least fail loud) when a source's valid row
-      count falls far below the previous partition's for the same
-      `source_id`; decide the threshold from the history, which is short.
+- [x] **Compare each `event_calendar` snapshot against the previous one.**
+      **Done 2026-09-26**: `ingestion/event_calendar.py` gained
+      `_refuse_if_far_below_previous_partition`, called after validation and
+      before the write. It steps back from `ingest_date` through
+      `read_bronze_as_of` (so a weekend/holiday still compares against the
+      last real snapshot, not a literal `ingest_date - 1` miss) and, per
+      `source_id`, refuses (raises the existing `IncompleteCalendarError`)
+      when the current valid count falls below half the previous partition's
+      count for that source -- the same "half" idiom the earnings-fetch-
+      failure guard already used. A previous count below 5 rows is skipped
+      as too small for "half of it" to mean anything. Pinned by three cases:
+      an 8 -> 2 FOMC drop refuses (the redesign this item describes), a
+      29 -> 20 earnings drop does not (ordinary rolling-window variation),
+      and a previous count of 1 is never compared. Threshold is a starting
+      guess, not a measurement -- no live earnings history exists yet to
+      confirm 50% doesn't misfire on its naturally lumpier day-to-day counts;
+      the module docstring says so and to widen, not remove, if it does.
 
 - [ ] **Measure when Nasdaq posts the day's SPY bar vs Cboe's index CSVs.**
       `sources.require_current` (vix, vix_complex, cboe_strategy) refuses when
