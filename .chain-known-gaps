@@ -18,3 +18,7 @@
 # Watch xbi: if it never advances it is delisted or dropped by Cboe, and
 # belongs out of DEFAULT_SNAPSHOT_SYMBOLS rather than lagging forever.
 2026-09-22	xbi
+# Whole session lost: Cboe's old cdn.cboe.com host froze 2026-09-23 03:55 UTC
+# while still answering 200, and every sweep no-opped on 2026-09-22 (docs:
+# CLAUDE.md, "Cboe can also freeze wholesale"). "*" = the whole session.
+2026-09-23	*

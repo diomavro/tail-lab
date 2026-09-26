@@ -9,6 +9,7 @@ from zoneinfo import ZoneInfo
 import pandas as pd
 import pytest
 import requests
+from deltalake.exceptions import SchemaMismatchError
 
 from tail_lab.contracts.option_chain import (
     DATASET,
@@ -909,7 +910,9 @@ def test_a_failed_quarantine_write_does_not_fail_the_sweep(tmp_path: Path) -> No
     class _QuarantineIsBroken(DeltaLakeStore):
         def write_bronze(self, dataset: str, ingest_date: dt.date, df: pd.DataFrame) -> str:
             if dataset.endswith("__quarantine"):
-                raise RuntimeError("SchemaMismatchError: number of fields does not match: 13 vs 14")
+                raise SchemaMismatchError(
+                    "SchemaMismatchError: number of fields does not match: 13 vs 14"
+                )
             return super().write_bronze(dataset, ingest_date, df)
 
     result = ingest_option_chain(_QuarantineIsBroken(tmp_path), live, fetch=_fetcher(**payloads))
@@ -1225,3 +1228,19 @@ def test_a_witness_naming_this_session_never_vouches_even_if_its_partition_exist
             now=dt.datetime(2026, 9, 24, 20, 15, tzinfo=_UTC),  # 16:15 EDT
         )
     assert not isinstance(err.value, SessionInProgress)
+
+
+def test_a_bug_in_the_quarantine_write_is_not_swallowed(tmp_path: Path) -> None:
+    """Rule 14: the survivable failures are lake-write errors only."""
+    live = [f"SYM{i:02d}" for i in range(24)]
+    payloads = {n: _payload(_put(95.0), symbol=n) for n in live}
+    payloads[live[0]] = _payload(_put(95.0), symbol=live[0], day="2026-08-25")
+
+    class _QuarantineHasABug(DeltaLakeStore):
+        def write_bronze(self, dataset: str, ingest_date: dt.date, df: pd.DataFrame) -> str:
+            if dataset.endswith("__quarantine"):
+                raise KeyError("a bug, not a lake failure")
+            return super().write_bronze(dataset, ingest_date, df)
+
+    with pytest.raises(KeyError):
+        ingest_option_chain(_QuarantineHasABug(tmp_path), live, fetch=_fetcher(**payloads))

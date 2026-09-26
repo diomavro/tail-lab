@@ -37,7 +37,7 @@ from tail_lab.research.surface.ladder import Anchor
 from tail_lab.research.surface.paretan import anchor_l_put, put_ratio
 
 #: Golden-section stops when the alpha bracket is narrower than this. Tighter
-#: than every tolerance a test or consumer asserts (the loosest is 1e-6).
+#: than every tolerance a test or consumer asserts (the tightest is 1e-6).
 ALPHA_TOLERANCE: Final = 1e-8
 
 #: The fit window: strikes from the anchor down to ``FIT_SPAN * spot`` below it.
@@ -186,7 +186,9 @@ def _require_caller_contract(
             raise ValueError(
                 f"quotes carry {column} {sorted(dates)} but the anchor's is {expected}"
             )
-    if quotes["strike"].duplicated().any():
+    # NaN strikes are a data problem (dropped by hygiene below), not a caller
+    # bug -- two of them must not read as "duplicate strikes".
+    if quotes["strike"].dropna().duplicated().any():
         raise ValueError("quotes carry duplicate strikes for one session and expiry")
 
 
@@ -222,7 +224,9 @@ def _usable_strikes(anchor: Anchor, quotes: pd.DataFrame) -> tuple[list[float], 
     strikes: list[float] = []
     mids: list[float] = []
     for i, strike in enumerate(strike_col):
-        if not floor <= strike < anchor.strike:
+        # `strike > 0`: for an anchor within FIT_SPAN of zero the window reaches
+        # below zero, and put_ratio cannot price a non-positive strike.
+        if not (floor <= strike < anchor.strike and strike > 0.0):
             continue
         if oi_col is not None and not oi_col[i] >= MIN_OPEN_INTEREST:
             continue

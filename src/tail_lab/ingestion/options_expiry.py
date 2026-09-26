@@ -41,7 +41,7 @@ import logging
 import re
 from dataclasses import dataclass
 from functools import partial
-from typing import Any
+from typing import Any, TypeGuard
 
 import pandas as pd
 import requests
@@ -99,13 +99,14 @@ _FETCH_ATTEMPTS = 3
 _FETCH_BACKOFF_S = 3.0
 
 
-def _get_json(url: str, timeout: float) -> Any:
+def _get_json(url: str, timeout: float) -> object:
     resp = requests.get(url, headers={"User-Agent": _USER_AGENT}, timeout=timeout)
     resp.raise_for_status()
-    return resp.json()
+    payload: object = resp.json()
+    return payload
 
 
-def fetch_cboe_chain_raw(symbol: str, *, timeout: float = 15.0) -> Any:
+def fetch_cboe_chain_raw(symbol: str, *, timeout: float = 15.0) -> dict[str, object]:
     """Fetch Cboe's delayed-quote chain JSON for ``symbol``. Network; tests
     drive it only through a patched ``requests.get``.
 
@@ -124,19 +125,30 @@ def fetch_cboe_chain_raw(symbol: str, *, timeout: float = 15.0) -> Any:
             # Retried per REQUEST, not around the whole candidate loop: the
             # loop turns every failure into a ValueError, which no retry
             # policy can tell apart from "this root does not exist".
-            payload: Any = retry_transient(
+            payload = retry_transient(
                 partial(_get_json, CBOE_CHAIN_URL_TEMPLATE.format(symbol=candidate), timeout),
                 attempts=_FETCH_ATTEMPTS,
                 backoff_s=_FETCH_BACKOFF_S,
                 event="ingestion.options_expiry.cboe_retry",
                 symbol=candidate,
             )
-            if (payload.get("data") or {}).get("options"):
-                return payload
+            if _has_options(payload):
+                return payload  # _has_options narrowed it to a dict
             last_error = ValueError(f"no options in chain for {candidate!r}")
-        except Exception as exc:
+        except requests.exceptions.RequestException as exc:
+            # Failed after its retries (or a refusal): try the next candidate.
             last_error = exc
     raise ValueError(f"Cboe returned no usable chain for {symbol!r}: {last_error}")
+
+
+def _has_options(payload: object) -> TypeGuard[dict[str, object]]:
+    """Whether ``payload`` is a chain envelope carrying a non-empty options
+    list. A payload of the wrong shape (a string, a list, ``data`` not an
+    object) is simply not a usable chain -- no exception to catch."""
+    if not isinstance(payload, dict):
+        return False
+    data = payload.get("data")
+    return isinstance(data, dict) and bool(data.get("options"))
 
 
 def parse_cboe_options_expiry(symbol: str, raw: dict[str, Any]) -> pd.DataFrame:

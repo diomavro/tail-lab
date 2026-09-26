@@ -26,9 +26,9 @@ data/
 .claude/worktrees/
 
 # Operational logs from the local systemd stand-ins for the chain sweep.
-# (.chain-sweep-manual.log predates this and is already tracked; gitignore
-# does not untrack it. Removing it from the index is a separate decision --
-# every green main auto-deploys here, so committed logs ship.)
+# (.chain-sweep-manual.log predated this and was tracked until 2026-09-26,
+# when it was removed from the index: it showed as modified forever in a
+# public repo, and every green main auto-deploys, so committed logs ship.)
 .chain-sweep-*.log
 .chain-sweep-FAILED
 .chain-sweep-FAILED.tmp.*

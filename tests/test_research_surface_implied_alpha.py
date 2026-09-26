@@ -445,3 +445,34 @@ def test_a_missing_quote_date_is_a_caller_bug() -> None:
 
     with pytest.raises(ValueError, match="missing quote_date"):
         fit_implied_alpha(_anchor(price_of, 900.0), quotes)
+
+
+def test_nan_strikes_are_dropped_not_reported_as_duplicates() -> None:
+    """Two NaN strikes are a data problem (hygiene drops them), not the
+    caller-bug 'duplicate strikes' ValueError."""
+    price_of = _power_law(2.75)
+    quotes = _chain(price_of, [k for k in _STRIKES if k != 900.0])
+    quotes.loc[0, "strike"] = math.nan
+    quotes.loc[1, "strike"] = math.nan
+
+    fit = fit_implied_alpha(_anchor(price_of, 900.0), quotes)
+
+    assert fit.alpha == pytest.approx(2.75, abs=1e-3)
+
+
+def test_a_window_reaching_below_zero_ignores_non_positive_strikes() -> None:
+    """An anchor within FIT_SPAN of zero (here spot 1000, anchor 100) opens a
+    window below zero; a zero or negative strike there must be skipped, not
+    priced (put_ratio raises on it) nor scored as an infinite miss."""
+    anchor = Anchor("SPY", _QUOTE, _EXPIRY, _SPOT, 100.0, 1.0, 0.98, 1.02)
+    quotes = pd.DataFrame(
+        [
+            {"strike": k, "bid": 0.5, "ask": 0.52, "quote_date": _QUOTE, "expiration": _EXPIRY}
+            for k in (-1.0, 0.0, 50.0)
+        ]
+    )
+
+    fit = fit_implied_alpha(anchor, quotes)
+
+    assert fit.n_strikes == 1  # only 50 survives
+    assert fit.refusal is not None and "usable strikes" in fit.refusal

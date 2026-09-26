@@ -124,8 +124,9 @@ class OptionChainSnapshotRequest(BaseModel):
     (``IngestDateMismatch``, 400), not honoured: the whole reason the
     partition is derived from the quotes rather than the wall clock is that
     a caller-supplied date can silently misfile a batch under the wrong key.
-    ``quote_date`` on each row is the session the quotes belong to, and the
-    two differ whenever a sweep runs after midnight UTC."""
+    ``quote_date`` on each row is the session the quotes belong to; an
+    ``ingest_date`` that disagrees with the session the quotes elect is
+    rejected with a 400 rather than filed under the wrong key."""
 
     rows: list[OptionChainSnapshotRow]
     ingest_date: dt.date | None = None

@@ -56,7 +56,7 @@ from tail_lab.contracts.option_chain import (
 )
 from tail_lab.ingestion.ohlcv import latest_market_session
 from tail_lab.ingestion.sources import retry_transient
-from tail_lab.lake.store import LakeStore
+from tail_lab.lake.store import LAKE_WRITE_ERRORS, LakeStore
 from tail_lab.observability import log_event
 
 __all__ = [
@@ -369,7 +369,7 @@ def ingest_option_chain(
     bronze_path = store.write_bronze(DATASET, ingest_date, valid)
     quarantine_path: str | None = None
     if not quarantined.empty:
-        # A failed QUARANTINE write must never fail the sweep. Quarantine is
+        # A failed QUARANTINE write must not fail the sweep. Quarantine is
         # diagnostic; the session itself is already committed on the line
         # above, and bronze is immutable so it cannot be un-written. Raising
         # here turns a correct capture into a non-zero exit, which fires the
@@ -383,11 +383,13 @@ def ingest_option_chain(
         # "SchemaMismatchError: number of fields does not match: 13 vs 14".
         # The quarantine table carried a stale `__index_level_0__` column
         # from before write_bronze's reset_index fix, so a clean frame no
-        # longer matched it (repaired 2026-09-24). Diagnostic writes must never
-        # hold the sweep hostage, whatever breaks them next.
+        # longer matched it (repaired 2026-09-24). What is survived is a LAKE
+        # write failure (`LAKE_WRITE_ERRORS`: Delta, Arrow, I/O). Anything else
+        # is a bug and fails loud -- the Rule 14 trade-off, accepted
+        # explicitly: an unforeseen class raises here rather than hiding.
         try:
             quarantine_path = store.write_bronze(QUARANTINE_DATASET, ingest_date, quarantined)
-        except Exception:
+        except LAKE_WRITE_ERRORS:
             _LOGGER.exception(
                 "event=ingestion.option_chain.quarantine_write_failed dataset=%s ingest_date=%s "
                 "rows=%d -- the session itself committed fine; these rows are not persisted",

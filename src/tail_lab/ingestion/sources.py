@@ -37,7 +37,6 @@ import logging
 import time
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
-from typing import Any
 
 import pandas as pd
 import requests
@@ -200,7 +199,7 @@ def retry_transient[T](
     attempts: int,
     backoff_s: float,
     event: str,
-    **fields: Any,
+    **fields: str,
 ) -> T:
     """Run ``call``, retrying only faults :func:`is_transient_fetch_error`
     accepts, sleeping ``backoff_s`` between attempts.
@@ -214,7 +213,9 @@ def retry_transient[T](
     for attempt in range(1, attempts + 1):
         try:
             return call()
-        except Exception as exc:
+        except requests.exceptions.RequestException as exc:
+            # Only requests faults can be transient; anything else propagates
+            # untouched without passing through here.
             if not is_transient_fetch_error(exc) or attempt == attempts:
                 raise
             detail = " ".join(f"{k}={v}" for k, v in fields.items())

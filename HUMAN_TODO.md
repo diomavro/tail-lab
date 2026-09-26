@@ -19,7 +19,8 @@ acts on, removes, or reorders anything in this file.**
 
       Original item:
 
-- [ ] **Put `FRED_API_KEY` in `.env`** so `rates` and `credit` refresh
+- [x] (**Superseded 2026-09-23** by the done item above: the key is in `.env`.)
+      **Put `FRED_API_KEY` in `.env`** so `rates` and `credit` refresh
       locally while GitHub Actions is blocked on billing. The key already
       exists — it is a GitHub repo secret (done 2026-08-17), so this is a
       copy, not a signup; FRED is free and keyed. Until it is there,
@@ -510,8 +511,11 @@ do.
       then. Every weekday the outage continues past that costs one session
       permanently. The 05:00 UTC catch-up cron does not help -- same runner pool.
 
-      **Covered locally, so this is no longer the urgent half of the item.** A
-      cron entry now runs `scripts/local_chain_sweep.sh` at 21:35 UTC weekdays
+      **Covered locally, so this is no longer the urgent half of the item.** (As
+      of 2026-09-26 the local sweep runs from the systemd timer
+      `tail-lab-chain.timer`, not cron -- `crontab -l` holds only the verdict
+      sweep; the text below describes the original cron setup.) A
+      cron entry then ran `scripts/local_chain_sweep.sh` at 21:35 UTC weekdays
       (`CRON_TZ=UTC`, so it does not drift with Budapest DST), which is the
       same instant the workflow used. `crontab -l` shows it. It writes straight
       to the lake with the credentials already in `.env`, so it needs neither

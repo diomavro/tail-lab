@@ -21,6 +21,8 @@ from typing import Any
 
 import pytest
 
+from tail_lab.api.schemas import OptionChainSnapshotResponse
+
 _SPEC = importlib.util.spec_from_file_location(
     "chain_snapshot", Path(__file__).resolve().parents[1] / "scripts" / "chain_snapshot.py"
 )
@@ -152,6 +154,8 @@ def test_the_post_carries_the_floor_and_the_witness(monkeypatch: pytest.MonkeyPa
     def fake(_url: str, _token: str, payload: dict[str, Any], _timeout: int) -> dict[str, Any]:
         sent.append(payload)
         return {
+            "dataset": "option_chain_snapshot",
+            "ingest_date": "2026-09-22",
             "rows": 1,
             "symbols": 1,
             "quote_date": "2026-09-22",
@@ -172,13 +176,15 @@ def test_the_post_carries_the_floor_and_the_witness(monkeypatch: pytest.MonkeyPa
 
 def test_a_no_op_is_reported_as_one(capsys: pytest.CaptureFixture[str]) -> None:
     rc = chain_snapshot._report_post(
-        {
-            "rows": 20078,
-            "symbols": 24,
-            "quote_date": "2026-09-22",
-            "bronze_path": "p",
-            "committed": False,
-        }
+        OptionChainSnapshotResponse(
+            dataset="option_chain_snapshot",
+            ingest_date=dt.date(2026, 9, 22),
+            rows=20078,
+            symbols=24,
+            quote_date=dt.date(2026, 9, 22),
+            bronze_path="p",
+            committed=False,
+        )
     )
     out = capsys.readouterr().out
     assert rc == 0
@@ -213,3 +219,17 @@ def test_an_unreadable_witness_is_announced_not_silent(
 
     assert chain_snapshot._market_session() is None
     assert "frozen Cboe feed would go undetected" in capsys.readouterr().out
+
+
+def test_a_malformed_app_response_is_a_failure_not_a_guess(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A 2xx whose body is not a snapshot result: the sweep may or may not have
+    landed, so the run must go red rather than print a success it cannot back."""
+    monkeypatch.setattr(chain_snapshot, "_post_once", lambda *_a, **_k: {"rows": 1})
+    monkeypatch.setattr(
+        chain_snapshot, "sweep_to_records", lambda _s: [{"underlying": "SPY"}] * 20_000
+    )
+
+    assert chain_snapshot.main(["--post", "http://x", "--token", "t", "--symbols", "spy"]) == 1
+    assert "not a snapshot result" in capsys.readouterr().err

@@ -5,7 +5,10 @@ import re
 from typing import Any
 
 import pandas as pd
+import pyarrow as pa
 import pytest
+import requests
+from deltalake.exceptions import SchemaMismatchError
 
 from tail_lab.ingestion.earnings import DEFAULT_LOOKAHEAD_DAYS
 from tail_lab.ingestion.event_calendar import IncompleteCalendarError, ingest_event_calendar
@@ -92,7 +95,7 @@ def test_every_earnings_date_failing_writes_nothing(
     store = DeltaLakeStore(tmp_path)
 
     def down(_d: dt.date) -> dict[str, Any]:
-        raise ConnectionError("nasdaq down")
+        raise requests.exceptions.ConnectionError("nasdaq down")
 
     with pytest.raises(IncompleteCalendarError, match="earnings"):
         _ingest(store, fomc_calendar_sample, {}, fetch=down, earnings_dates=[_EVENT_DATE, _INGEST])
@@ -106,7 +109,7 @@ def test_one_bad_earnings_date_still_costs_only_itself(
 
     def flaky(event_date: dt.date) -> dict[str, Any]:
         if event_date == bad:
-            raise ConnectionError("simulated Nasdaq blip")
+            raise requests.exceptions.ConnectionError("simulated Nasdaq blip")
         return nasdaq_earnings_sample
 
     result = _ingest(
@@ -193,7 +196,7 @@ def test_a_failed_quarantine_write_does_not_fail_the_snapshot(
 
     def write(dataset: str, day: dt.date, frame: Any) -> str:
         if dataset.endswith("__quarantine"):
-            raise RuntimeError("SchemaMismatchError")
+            raise SchemaMismatchError("stale quarantine schema")
         return real(dataset, day, frame)
 
     monkeypatch.setattr(store, "write_bronze", write)
@@ -333,7 +336,7 @@ def test_most_earnings_dates_failing_writes_nothing(
 
     def mostly_down(event_date: dt.date) -> dict[str, Any]:
         if event_date != _EVENT_DATE:
-            raise ConnectionError("nasdaq down")
+            raise requests.exceptions.ConnectionError("nasdaq down")
         return nasdaq_earnings_sample
 
     with pytest.raises(IncompleteCalendarError, match="29 of 30"):
@@ -410,3 +413,119 @@ def test_a_page_the_parser_chokes_on_costs_only_its_own_date(
     )
 
     assert result.earnings_dates_failed == 1
+
+
+def test_a_failed_earnings_date_is_logged_with_its_reason(
+    tmp_path: Any,
+    caplog: pytest.LogCaptureFixture,
+    fomc_calendar_sample: str,
+    nasdaq_earnings_sample: dict[str, Any],
+) -> None:
+    """Rule 14: the old catch-all logged only WHICH date failed, never why."""
+    bad = dt.date(2026, 9, 9)
+
+    def flaky(event_date: dt.date) -> dict[str, Any]:
+        if event_date == bad:
+            raise requests.exceptions.ConnectionError("simulated Nasdaq blip")
+        return nasdaq_earnings_sample
+
+    with caplog.at_level("WARNING", logger="tail_lab.ingestion.earnings"):
+        _ingest(
+            DeltaLakeStore(tmp_path),
+            fomc_calendar_sample,
+            {},
+            fetch=flaky,
+            earnings_dates=[_EVENT_DATE, bad, dt.date(2026, 9, 10)],
+        )
+
+    assert "ConnectionError: simulated Nasdaq blip" in caplog.text
+
+
+def test_a_bug_in_the_quarantine_write_is_not_swallowed(
+    tmp_path: Any, nasdaq_earnings_sample: dict[str, Any], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Only lake-write failures are survivable there; anything else is a bug
+    and must fail loud (Rule 14), not vanish into a log line."""
+    store = DeltaLakeStore(tmp_path)
+    real = store.write_bronze
+
+    def write(dataset: str, day: dt.date, frame: Any) -> str:
+        if dataset.endswith("__quarantine"):
+            raise KeyError("a bug, not a lake failure")
+        return real(dataset, day, frame)
+
+    monkeypatch.setattr(store, "write_bronze", write)
+    html = _YEAR_PANEL.format(
+        year=2026, rows=_meeting("January", "27-28") + _meeting("Xyzember", "1-2")
+    )
+
+    with pytest.raises(KeyError):
+        _ingest(store, html, nasdaq_earnings_sample)
+
+
+def test_a_bug_in_an_earnings_fetch_propagates(tmp_path: Any, fomc_calendar_sample: str) -> None:
+    """Network, API and shape failures cost one date; a bug costs the run."""
+
+    def buggy(_d: dt.date) -> dict[str, Any]:
+        raise KeyError("a bug")
+
+    with pytest.raises(KeyError):
+        _ingest(DeltaLakeStore(tmp_path), fomc_calendar_sample, {}, fetch=buggy)
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        {"data": "a string", "status": {"rCode": 200}},
+        {"data": None, "status": "error"},
+    ],
+)
+def test_a_malformed_earnings_envelope_costs_only_its_date(
+    tmp_path: Any,
+    fomc_calendar_sample: str,
+    nasdaq_earnings_sample: dict[str, Any],
+    payload: dict[str, Any],
+) -> None:
+    bad = dt.date(2026, 9, 9)
+
+    def fetch(event_date: dt.date) -> dict[str, Any]:
+        return payload if event_date == bad else nasdaq_earnings_sample
+
+    result = _ingest(
+        DeltaLakeStore(tmp_path),
+        fomc_calendar_sample,
+        {},
+        fetch=fetch,
+        earnings_dates=[_EVENT_DATE, bad, dt.date(2026, 9, 10)],
+    )
+
+    assert result.earnings_dates_failed == 1
+
+
+@pytest.mark.parametrize(
+    "error",
+    [pa.lib.ArrowInvalid("unconvertible column"), OSError("object storage unreachable")],
+)
+def test_every_lake_write_failure_class_is_survived(
+    tmp_path: Any,
+    nasdaq_earnings_sample: dict[str, Any],
+    monkeypatch: pytest.MonkeyPatch,
+    error: Exception,
+) -> None:
+    """``LAKE_WRITE_ERRORS`` is Delta, Arrow AND I/O; each must be survived."""
+    store = DeltaLakeStore(tmp_path)
+    real = store.write_bronze
+
+    def write(dataset: str, day: dt.date, frame: Any) -> str:
+        if dataset.endswith("__quarantine"):
+            raise error
+        return real(dataset, day, frame)
+
+    monkeypatch.setattr(store, "write_bronze", write)
+    html = _YEAR_PANEL.format(
+        year=2026, rows=_meeting("January", "27-28") + _meeting("Xyzember", "1-2")
+    )
+
+    result = _ingest(store, html, nasdaq_earnings_sample)
+
+    assert result.committed is True and result.quarantine_path is None

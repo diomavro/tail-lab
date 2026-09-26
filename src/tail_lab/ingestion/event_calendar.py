@@ -37,7 +37,6 @@ import datetime as dt
 import logging
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
-from typing import Any
 
 import pandas as pd
 
@@ -49,7 +48,7 @@ from tail_lab.ingestion.earnings import (
 )
 from tail_lab.ingestion.fomc import SOURCE_ID as FOMC_SOURCE_ID
 from tail_lab.ingestion.fomc import fetch_fomc_calendar_raw, parse_fomc_calendar_html
-from tail_lab.lake.store import LakeStore
+from tail_lab.lake.store import LAKE_WRITE_ERRORS, LakeStore
 from tail_lab.observability import log_event
 
 __all__ = ["IncompleteCalendarError", "IngestResult", "ingest_event_calendar"]
@@ -125,7 +124,7 @@ def ingest_event_calendar(
     fomc_html: str | None = None,
     earnings_dates: Sequence[dt.date] | None = None,
     lookahead_days: int = DEFAULT_LOOKAHEAD_DAYS,
-    earnings_fetch: Callable[[dt.date], Any] | None = None,
+    earnings_fetch: Callable[[dt.date], object] | None = None,
 ) -> IngestResult:
     """Fetch both halves (or use the injected ones), validate, commit ONE snapshot.
 
@@ -177,9 +176,10 @@ def ingest_event_calendar(
         # Diagnostic only, and the snapshot is already committed above -- a
         # failed quarantine write must not fail the run (same rule as the
         # chain sweep, whose quarantine table once broke on a stale column).
+        # Only lake-write failures (`LAKE_WRITE_ERRORS`) are survived.
         try:
             quarantine_path = store.write_bronze(QUARANTINE_DATASET, ingest_date, quarantined)
-        except Exception:
+        except LAKE_WRITE_ERRORS:
             _LOGGER.exception(
                 "event=ingest.event_calendar.quarantine_write_failed ingest_date=%s rows=%d",
                 ingest_date.isoformat(),

@@ -37,6 +37,9 @@ import urllib.error
 import urllib.request
 from typing import Any
 
+from pydantic import ValidationError
+
+from tail_lab.api.schemas import OptionChainSnapshotResponse
 from tail_lab.contracts.option_chain import DEFAULT_SNAPSHOT_SYMBOLS
 from tail_lab.ingestion.option_chain import latest_market_session, sweep_to_records
 from tail_lab.observability import configure_logging
@@ -292,38 +295,44 @@ def main(argv: list[str] | None = None) -> int:
         )
         return 1
 
-    return _report_post(result_json)
+    try:
+        response = OptionChainSnapshotResponse.model_validate(result_json)
+    except ValidationError as exc:
+        # The app answered 2xx with a body this script cannot read: the sweep
+        # may or may not have landed, so this is a failure, never a guess.
+        print(f"::error::the app's response is not a snapshot result: {exc}", file=sys.stderr)
+        return 1
+    return _report_post(response)
 
 
-def _report_post(result_json: dict[str, Any]) -> int:
+def _report_post(response: OptionChainSnapshotResponse) -> int:
     """Say which of the two things the app did -- commit or no-op.
 
     The endpoint used to echo ``rows`` either way, so this printed
     "committed 20078 rows" on 2026-09-23 and again on 2026-09-24 for a session
     the lake already held, while 2026-09-23 was being lost unmentioned.
     """
-    if result_json.get("committed", True):
+    if response.committed:
         print(
-            f"committed {result_json['rows']} rows for {result_json['symbols']} symbols "
-            f"(session {result_json['quote_date']}) -> {result_json['bronze_path']}"
+            f"committed {response.rows} rows for {response.symbols} symbols "
+            f"(session {response.quote_date}) -> {response.bronze_path}"
         )
     else:
         print(
-            f"NO-OP: session {result_json['quote_date']} was already captured, wrote "
-            f"nothing -> {result_json['bronze_path']}"
+            f"NO-OP: session {response.quote_date} was already captured, wrote "
+            f"nothing -> {response.bronze_path}"
         )
-    if result_json.get("symbols_failed"):
-        print(f"::warning::no quotes landed for {', '.join(result_json['symbols_failed'])}")
-    if result_json.get("symbols_off_session"):
+    if response.symbols_failed:
+        print(f"::warning::no quotes landed for {', '.join(response.symbols_failed)}")
+    if response.symbols_off_session:
         print(
-            f"::warning::off-session quotes for {', '.join(result_json['symbols_off_session'])}"
-            f"; their rows were quarantined, so they have NO {result_json['quote_date']} quotes"
+            f"::warning::off-session quotes for {', '.join(response.symbols_off_session)}"
+            f"; their rows were quarantined, so they have NO {response.quote_date} quotes"
         )
-    quarantined = result_json.get("quarantined", 0)
-    if quarantined:
+    if response.quarantined:
         # Expected in small numbers -- far-OTM strikes with no resting offer.
         # Worth surfacing, never worth failing the sweep over.
-        print(f"::warning::{quarantined} rows quarantined (no two-sided quote)")
+        print(f"::warning::{response.quarantined} rows quarantined (no two-sided quote)")
     return 0
 
 

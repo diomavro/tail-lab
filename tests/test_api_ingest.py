@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+from deltalake.exceptions import SchemaMismatchError
 from fastapi.testclient import TestClient
 
 from tail_lab.api.ingest_routes import get_lake_store
@@ -378,7 +379,7 @@ def test_a_failed_quarantine_write_does_not_fail_a_committed_session(
 
     def write(dataset: str, day: dt.date, frame: Any) -> str:
         if dataset.endswith("__quarantine"):
-            raise RuntimeError("SchemaMismatchError: 13 vs 14")
+            raise SchemaMismatchError("SchemaMismatchError: 13 vs 14")
         return real_write(dataset, day, frame)
 
     monkeypatch.setattr(store, "write_bronze", write)
@@ -443,3 +444,22 @@ def test_a_mid_session_post_is_too_early_not_a_refusal(
 
     assert resp.status_code == 425
     assert not store.bronze_partition_exists(DATASET, dt.date(2026, 8, 27))
+
+
+def test_a_bug_in_the_quarantine_write_is_not_swallowed(
+    client: TestClient, store: DeltaLakeStore, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Only lake-write failures are survivable after the session commits
+    (Rule 14); a bug must surface, not be logged away."""
+    _set_token(monkeypatch, TOKEN)
+    real_write = store.write_bronze
+
+    def write(dataset: str, day: dt.date, frame: Any) -> str:
+        if dataset.endswith("__quarantine"):
+            raise KeyError("a bug, not a lake failure")
+        return real_write(dataset, day, frame)
+
+    monkeypatch.setattr(store, "write_bronze", write)
+
+    with pytest.raises(KeyError):
+        _post(client, _body(_row(strike=700.0, ask=0.0), _row(strike=710.0)))
