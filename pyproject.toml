@@ -93,12 +93,12 @@ ignore = [
 "tests/**" = ["ARG001", "ARG002", "ARG005"]
 
 [tool.ruff.lint.mccabe]
-max-complexity = 10 # ingestion.optionsdx.ingest_optionsdx, portfolio.run_portfolio
+max-complexity = 10 # ingestion.optionsdx.ingest_optionsdx
 
 [tool.ruff.lint.pylint]
 max-args = 13 # put_roll.run_put_roll — keyword-only, which is why it is survivable
 max-positional-args = 8
-max-statements = 75 # put_roll.run_put_roll
+max-statements = 48 # put_roll.run_put_roll
 
 [tool.ruff.format]
 quote-style = "double"
