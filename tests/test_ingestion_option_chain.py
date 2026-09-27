@@ -208,6 +208,35 @@ def test_parse_counts_unparseable_contracts_without_dropping_the_rest() -> None:
     assert len(frame) == 1
 
 
+def test_an_unparseable_iv_nulls_that_rows_greek_block_without_dropping_it() -> None:
+    """Cboe is expected to zero-fill a greek block it cannot compute, not
+    send text -- but ``to_float("N/A", "iv")`` raising used to propagate
+    uncaught out of ``parse_cboe_chain``, so the caller's per-symbol
+    ``except Exception`` counted the WHOLE symbol as failed for one bad
+    cell, costing it a session nobody sells back (docs/adr/0020). Found by
+    adversarial review 2026-09-26."""
+    frame, unparsed = parse_cboe_chain(_payload(_put(95.0, iv="N/A"), _put(96.0)))
+    assert unparsed == 1
+    assert len(frame) == 2
+    dead = frame[frame["strike"] == 95.0].iloc[0]
+    live = frame[frame["strike"] == 96.0].iloc[0]
+    assert pd.isna(dead["iv"]) and pd.isna(dead["delta"]) and pd.isna(dead["theo"])
+    assert live["iv"] == pytest.approx(0.2415)
+    assert live["delta"] == pytest.approx(-0.19)
+
+
+def test_a_chain_where_every_iv_is_text_still_writes_every_row() -> None:
+    """The failure this guards against is total: every contract on the chain
+    carrying a bad ``iv`` must still leave the symbol's quotes on the table,
+    just with a null greek block throughout -- not an empty frame that reads
+    as a dead chain."""
+    frame, unparsed = parse_cboe_chain(_payload(_put(95.0, iv="N/A"), _put(96.0, iv="N/A")))
+    assert unparsed == 2
+    assert len(frame) == 2
+    assert frame["iv"].isna().all()
+    assert frame["delta"].isna().all()
+
+
 def test_parse_returns_empty_for_a_payload_missing_its_spot() -> None:
     """No spot means no moneyness, so every filter is undefined. Better an
     honest empty frame the sweep counts as a failure than rows sliced
@@ -368,6 +397,24 @@ def test_ingest_commits_one_partition_for_the_whole_universe(tmp_path: Path) -> 
     assert result.quote_date == dt.date.fromisoformat(QUOTE_DAY)
     stored = store.read_bronze_as_of(DATASET, dt.date(2026, 8, 26))
     assert sorted(stored["underlying"].unique()) == ["QQQ", "SPY"]
+
+
+def test_a_symbol_with_one_unparseable_iv_still_lands_in_symbols_ok(tmp_path: Path) -> None:
+    """Before the fix, this exact repro fell into ``ingest_option_chain``'s
+    per-symbol ``except Exception`` clause: one bad ``iv`` cell raised out of
+    ``parse_cboe_chain`` and cost SPY its entire session, indistinguishable
+    from a genuinely dead chain."""
+    store = DeltaLakeStore(tmp_path)
+    result = ingest_option_chain(
+        store,
+        ["SPY"],
+        ingest_date=dt.date(2026, 8, 26),
+        fetch=_fetcher(SPY=_payload(_put(95.0, iv="N/A"), _put(96.0), symbol="SPY")),
+    )
+    assert result.symbols_ok == ("SPY",)
+    assert result.symbols_failed == ()
+    assert result.valid_rows == 2
+    assert result.unparsed_contracts == 1
 
 
 def test_one_dead_chain_does_not_cost_the_others_their_snapshot(tmp_path: Path) -> None:

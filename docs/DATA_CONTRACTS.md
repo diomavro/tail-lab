@@ -362,6 +362,12 @@ vendor parquet. The adapter maps it to `None` on the way in, and because
 Cboe computes the block together, a zero IV nulls delta and theo on the same
 row. **Never read a 0.0 in these columns as a measurement.**
 
+A malformed (non-numeric) `iv` cell is folded into this same sentinel path
+rather than raised: it becomes `None`, and delta/theo on that row null with
+it, the same as a real zero-fill. That row is still kept — only its greek
+block is absent — so one bad cell costs nothing else on this unrecoverable
+dataset (`docs/adr/0020`; found by adversarial review 2026-09-26).
+
 **Bronze partition key.** `ingest_date=<YYYY-MM-DD>/` — ONE partition per
 day for the whole set, not one per symbol. Bronze is immutable and
 re-ingesting an `ingest_date` is a no-op (`lake/store.py`), so a per-symbol

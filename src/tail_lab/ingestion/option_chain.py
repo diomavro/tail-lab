@@ -238,7 +238,17 @@ def parse_cboe_chain(payload: Mapping[str, object]) -> tuple[pd.DataFrame, int]:
             continue
         if not MONEYNESS_MIN <= strike / spot_price <= MONEYNESS_MAX:
             continue
-        iv = to_float(contract.get("iv") or 0.0, "iv")
+        try:
+            iv = to_float(contract.get("iv") or 0.0, "iv")
+        except ValueError:
+            # Cboe is expected to zero-fill an uncomputable greek block, not
+            # send text -- but an unparseable `iv` cell must cost only this
+            # row, not the whole symbol's session (docs/adr/0020: nobody
+            # sells a retroactive chain). Folding it into the same sentinel
+            # `_greek` already treats as absent nulls delta/theo alongside
+            # it too, exactly like a real zero-fill.
+            unparsed += 1
+            iv = _GREEK_SENTINEL
         rows.append(
             {
                 "underlying": underlying,
