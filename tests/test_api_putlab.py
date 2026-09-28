@@ -312,6 +312,12 @@ def test_leaderboard_ranks_seeded_universe(client: TestClient) -> None:
     row = body["ranked"][0]
     assert row["spot"] > 0
     assert set(row) >= {"asset", "name", "spot", "roi_on_premium", "verdict", "hit_rate"}
+    # docs/STANDARDS.md: a result without its snapshot id(s) and code SHA is
+    # not trustworthy and should not be surfaced -- the screen (Dio's
+    # standing north-star directive) now carries both in the payload, not
+    # only the run log.
+    assert body["code_sha"] == "unknown"  # honest local default, never None
+    assert body["snapshot_ids"]  # VIX + spy's own OHLCV snapshot
 
 
 def test_metric_screen_returns_bakeoff(client: TestClient) -> None:

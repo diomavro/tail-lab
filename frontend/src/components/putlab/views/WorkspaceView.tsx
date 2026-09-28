@@ -74,6 +74,8 @@ export function WorkspaceView({
           ranked={ranking.data.ranked}
           currentAsset={controls.asset}
           onSelect={onSelectAsset}
+          snapshotIds={ranking.data.snapshot_ids}
+          codeSha={ranking.data.code_sha}
         />
       )}
 

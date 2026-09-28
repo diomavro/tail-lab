@@ -676,6 +676,12 @@ def putlab_leaderboard(
         years=years,
         resolved=resolved,
     )
+    # `code_sha` is a deploy identity, not a screen result, so it is stamped
+    # onto the (cached) ranking here rather than threaded into `rank_universe`
+    # -- `research/` may not import `config` and the cache key must stay the
+    # backtest params, not the running binary's SHA.
+    code_sha = get_settings().code_sha
+    ranking = ranking.model_copy(update={"code_sha": code_sha})
     log_event(
         logger,
         "putlab.leaderboard",
@@ -683,7 +689,7 @@ def putlab_leaderboard(
         moneyness_pct=moneyness_pct,
         tenor_weeks=tenor_weeks,
         years=years,
-        code_sha=get_settings().code_sha,
+        code_sha=code_sha,
         n_ranked=len(ranking.ranked),
     )
     return ranking

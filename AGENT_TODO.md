@@ -2278,7 +2278,7 @@ with the evidence — never the implementation.
 
 ## Results are surfaced without their provenance (found 2026-09-19)
 
-- [ ] **`code_sha` and `snapshot_id` reach the logs but not the payload.**
+- [~] **`code_sha` and `snapshot_id` reach the logs but not the payload.**
       `docs/STANDARDS.md` is explicit: "Every result the cockpit displays ...
       carries the bronze snapshot id(s) it read and the code SHA that computed
       it. A result without both is not trustworthy and should not be surfaced."
@@ -2290,12 +2290,34 @@ with the evidence — never the implementation.
       fields — the audit trail exists server-side, the *result* does not carry
       it. A reader of the Screen cannot tell which code or which snapshot
       produced the ranking they are looking at.
-      *Success*: `UniverseRanking` and the other surfaced result models carry
-      both fields, populated from `get_settings().code_sha` and the store's
-      `bronze_snapshot_id`, and the cockpit shows them where the result is
-      shown (README: "accuracy is surfaced, not filed"). Note `code_sha`
-      defaults to the string `"unknown"` locally, which is the honest value —
-      do not make it `None`.
+      **Done for the Screen 2026-09-28** (Dio's standing north-star directive:
+      "prioritize the sensitivity leaderboard"): `UniverseRanking`
+      (`research/backtest/ranking.py`) gained `snapshot_ids: list[str]`
+      (VIX + each ranked name's own OHLCV snapshot, deduplicated, mirroring
+      `PortfolioResult.snapshot_ids`) and `code_sha: str = "unknown"`.
+      `snapshot_ids` is computed inside `rank_universe` itself (the research
+      layer already holds the store); `code_sha` is stamped on at
+      `putlab_leaderboard` via `ranking.model_copy(update=...)`, since
+      `research/` may not import `config` and the field is a deploy identity,
+      not a screen result — threading it into `rank_universe` as a parameter
+      would also be exactly the kind of "function gains a parameter" accretion
+      the design reviewer flags. The frontend's `RankingStrip` now prints a
+      small `N bronze snapshots · <short sha>` caption under the expanded
+      table. Pinned by
+      `test_rank_universe_snapshot_ids_cover_vix_and_every_ranked_name`
+      (`tests/test_research_backtest_ranking.py`) and an assertion added to
+      `test_leaderboard_ranks_seeded_universe` (`tests/test_api_putlab.py`).
+      **Not done**: `/api/putlab/backtest`, `/api/putlab/accuracy`,
+      `/api/putlab/sweep`, `/api/putlab/metric-screen`,
+      `/api/putlab/regime-verdict` and `/api/putlab/roll-schedule` still carry
+      neither field in their payload (only in the log line), and
+      `PortfolioResult` carries `snapshot_ids` but still no `code_sha`. Same
+      shape each time: add the fields to the result model, populate
+      `snapshot_ids` in the research-layer function that already holds the
+      store (or thread it up from what it already returns, per
+      `PortfolioResult`'s precedent) and stamp `code_sha` on at the route via
+      `model_copy`. Left as follow-ups rather than one large PR across six
+      endpoints and their frontend surfaces.
 
 ## Design-review advisories not yet acted on (found 2026-09-07)
 

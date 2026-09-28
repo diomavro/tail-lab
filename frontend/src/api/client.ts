@@ -418,6 +418,11 @@ export interface PutLabLeaderboardResponse {
   lookback_years: number
   notional: number
   ranked: RankedAsset[]
+  /** The bronze snapshots this screen actually read (VIX + one per ranked
+   *  name) and the code that computed it -- docs/STANDARDS.md: "a result
+   *  without both is not trustworthy and should not be surfaced." */
+  snapshot_ids: string[]
+  code_sha: string
 }
 
 export interface PutLabLeaderboardParams {
