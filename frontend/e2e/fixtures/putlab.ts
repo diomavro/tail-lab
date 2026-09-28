@@ -307,6 +307,8 @@ export const LEADERBOARD: PutLabLeaderboardResponse = {
       best_verdict: verdict as RegimeVerdictResponse['verdict'],
     }
   }),
+  snapshot_ids: ['vix@2026-08-21', 'ohlcv_tsla@2026-08-21', 'ohlcv_iwm@2026-08-21'],
+  code_sha: 'e2e0000',
 }
 
 const screenEntry = (

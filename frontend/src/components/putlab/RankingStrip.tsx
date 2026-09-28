@@ -24,6 +24,11 @@ interface Props {
   ranked: RankedAsset[]
   currentAsset: string
   onSelect: (asset: string, best?: { moneyness_pct: number; tenor_weeks: number }) => void
+  /** Provenance for this screen: the bronze snapshots it read and the code
+   *  that computed it (docs/STANDARDS.md: "a result without both is not
+   *  trustworthy and should not be surfaced"). */
+  snapshotIds: string[]
+  codeSha: string
 }
 
 const VERDICT_TAG: Record<Verdict, string> = {
@@ -53,7 +58,7 @@ const at = (r: RankedAsset) =>
     ? '—'
     : `${r.best_moneyness_pct}% · ${r.best_tenor_weeks}w`
 
-export function RankingStrip({ ranked, currentAsset, onSelect }: Props) {
+export function RankingStrip({ ranked, currentAsset, onSelect, snapshotIds, codeSha }: Props) {
   const [open, setOpen] = useState(false)
 
   const pick = (r: RankedAsset) =>
@@ -152,6 +157,10 @@ export function RankingStrip({ ranked, currentAsset, onSelect }: Props) {
               ))}
             </tbody>
           </table>
+          <p className="pl-micro" style={{ padding: '4px 2px 0' }}>
+            {snapshotIds.length} bronze snapshot{snapshotIds.length === 1 ? '' : 's'} ·{' '}
+            {codeSha === 'unknown' ? 'code sha unknown' : codeSha.slice(0, 7)}
+          </p>
         </div>
       )}
     </>

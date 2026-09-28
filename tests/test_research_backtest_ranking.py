@@ -99,6 +99,38 @@ def test_rank_universe_sorts_by_fragility_and_skips_missing(tmp_path: Path) -> N
         assert r.annualized_return == pytest.approx(nominal, rel=0.2)
 
 
+def test_rank_universe_snapshot_ids_cover_vix_and_every_ranked_name(tmp_path: Path) -> None:
+    """`docs/STANDARDS.md`: a result without its bronze snapshot id(s) is not
+    trustworthy and should not be surfaced. `missing` never lands in `ranked`
+    (no data), so its snapshot must not appear either -- the list traces what
+    was actually READ into the screen, not what was asked for."""
+    store = DeltaLakeStore(tmp_path)
+    ingest = dt.date(2026, 3, 2)
+    _seed_vix(store, ingest)
+    _seed_symbol(store, "spy", ingest, drift=0.1, vol=1.0)
+    _seed_symbol(store, "calm", ingest, drift=0.4, vol=0.8)
+    _seed_symbol(store, "wild", ingest, drift=-0.1, vol=4.0)
+
+    ranking = rank_universe(
+        store,
+        symbols=("calm", "wild", "missing"),
+        as_of=ingest,
+        moneyness_pct=5.0,
+        tenor_weeks=4.0,
+        years=1.0,
+    )
+
+    expected = {store.bronze_snapshot_id("vix", ingest)}
+    expected |= {store.bronze_snapshot_id(dataset_id(r.asset), ingest) for r in ranking.ranked}
+    assert set(ranking.snapshot_ids) == expected
+    assert len(ranking.snapshot_ids) == len(set(ranking.snapshot_ids))  # no duplicates
+    assert dataset_id("missing") not in "".join(ranking.snapshot_ids)
+    # `code_sha` is a deploy identity `research/` cannot read (it may not
+    # import `config`) -- the API route stamps it on; here it is the honest
+    # local default, never `None`.
+    assert ranking.code_sha == "unknown"
+
+
 def test_rank_universe_sizing_mode_overrides_notional(tmp_path: Path) -> None:
     """``sizing_mode`` resolves the per-name budget and ``notional`` is
     ignored; it resolves with ``n_legs=len(symbols)`` since every screened

@@ -31,9 +31,10 @@ from functools import partial
 from typing import Literal
 
 import pandas as pd
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from tail_lab.contracts.hypothesis import Verdict
+from tail_lab.contracts.ohlcv import dataset_id
 from tail_lab.contracts.options_calendar import cadence_for
 from tail_lab.lake.store import LakeStore
 from tail_lab.research.backtest.put_roll import (
@@ -53,7 +54,7 @@ from tail_lab.research.metrics.downside_beta import downside_beta
 from tail_lab.research.metrics.downside_capture import downside_capture
 from tail_lab.research.metrics.tail_beta import tail_beta
 from tail_lab.research.metrics.vol_beta import vol_beta
-from tail_lab.research.regimes.timeline import compute_regime_timeline, load_vix_close
+from tail_lab.research.regimes.timeline import VIX_DATASET, compute_regime_timeline, load_vix_close
 
 #: The market benchmark the fragility metrics are measured against.
 BENCHMARK = "spy"
@@ -155,6 +156,16 @@ class UniverseRanking(BaseModel):
     lookback_years: float
     notional: float
     ranked: list[RankedAsset]
+    #: The bronze snapshots this screen actually read (VIX + one per ranked
+    #: name), and the code that computed it. `docs/STANDARDS.md`: "a result
+    #: without both is not trustworthy and should not be surfaced" -- this is
+    #: the standing-directive screen (Dio's north star), so it is the first
+    #: surface to carry them in the payload, not only the run log.
+    #: `code_sha` defaults to "unknown" (the honest local value, never `None`)
+    #: and is filled in by the API route from `Settings`, which `research/`
+    #: may not import.
+    snapshot_ids: list[str] = Field(default_factory=list)
+    code_sha: str = "unknown"
 
 
 def _returns(prices: pd.Series) -> pd.Series:
@@ -410,6 +421,14 @@ def rank_universe(
     # COMPOSITE_METRICS). Most fragile first; names with no fragility estimate
     # sort last.
     rows = _score_and_sort(rows)
+    # Mirrors `portfolio.py`'s `snapshot_ids`: VIX first (every row's regime
+    # verdict depends on it, whether or not any name made it into `rows`),
+    # then each ranked name's own OHLCV snapshot, deduplicated.
+    snapshot_ids = [store.bronze_snapshot_id(VIX_DATASET, as_of)]
+    for row in rows:
+        snap = store.bronze_snapshot_id(dataset_id(row.asset), as_of)
+        if snap not in snapshot_ids:
+            snapshot_ids.append(snap)
     return UniverseRanking(
         as_of=as_of,
         moneyness_pct=moneyness_pct,
@@ -417,4 +436,5 @@ def rank_universe(
         lookback_years=years,
         notional=budget,
         ranked=rows,
+        snapshot_ids=snapshot_ids,
     )
