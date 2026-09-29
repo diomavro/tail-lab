@@ -18,6 +18,18 @@ a large one strictly in order.
 
 ## Next increments
 
+- [ ] **PINNED BY DIO, 2026-09-29 — ship the Paretan Surface before any
+      other item here: P4, then P5.** The specs are in the "Paretan tail
+      pricing" section below (`### P4 — GET /api/putlab/surface` and
+      `### P5 — The Surface tab`); follow them there, they are not restated
+      here. P1–P3 merged 2026-09-18 → 09-26 (#108, #121, #122, #124), but
+      none of it reaches the API or UI, so two weeks of Taleb-pricing work is
+      still invisible on the deployed app. This overrides the "smaller,
+      sharper item out of order" latitude above; the one exception is
+      `AGENT_MISSION.md`'s collection-health check, which still comes first.
+      Check this item off only when P5 is merged and the Surface tab renders
+      on tail-lab.fly.dev; until then, do not remove or re-order it.
+
 - [ ] **Fix `rates.py` by paging FRED vintages — recipe verified, and the
       obvious fix fabricates revisions.** `docs/PRIOR_ART.md` §19.
       No FRED client pages vintages (`fredapi`'s issue #28 is this exact bug,
