@@ -26,7 +26,9 @@ from __future__ import annotations
 
 import datetime as dt
 from collections.abc import Sequence
+from dataclasses import dataclass
 
+import pandas as pd
 from pydantic import BaseModel
 
 from tail_lab.contracts.hypothesis import Verdict
@@ -137,6 +139,98 @@ def _scaled(cycle: PutRollCycle, s: float) -> PutRollCycle:
     )
 
 
+@dataclass
+class _LegOutcome:
+    """What one leg contributes to the pool, once it has scored successfully."""
+
+    unit: PutBacktestResult
+    scaled_cycles: list[PutRollCycle]
+    leg_result: LegResult
+    curve: list[tuple[dt.date, float]]
+    ohlcv_snapshot_id: str
+
+
+def _run_leg(
+    store: LakeStore,
+    leg: PortfolioLeg,
+    *,
+    share: float,
+    budget: float,
+    as_of: dt.date,
+    years: float,
+    timeline: pd.Series,
+) -> _LegOutcome | None:
+    """Backtest, scale, and score one leg -- or ``None`` if it lacks data / too
+    short a window to roll at all (the caller skips such a leg, not fatal)."""
+    try:
+        prices, realized_vol_proxy = load_asof_series(store, leg.asset, as_of)
+        unit = run_put_roll(
+            prices,
+            realized_vol_proxy,
+            asset=leg.asset,
+            as_of=as_of,
+            notional=1.0,
+            moneyness_pct=leg.moneyness_pct,
+            tenor_weeks=leg.tenor_weeks,
+            lookback_years=years,
+        )
+    except LookupError:
+        return None
+
+    leg_budget = share * budget
+    s = leg_budget / unit.n_cycles  # per-roll budget
+    scaled = [_scaled(c, s) for c in unit.cycles]
+
+    leg_net = sum(c.net for c in scaled)  # net of brokerage
+    _, leg_verdict = regime_breakdown(scaled, timeline)
+
+    cum = 0.0
+    curve: list[tuple[dt.date, float]] = []
+    for c in sorted(scaled, key=lambda x: x.expiry_date):
+        cum += c.net
+        curve.append((c.expiry_date, cum))
+
+    leg_result = LegResult(
+        asset=leg.asset,
+        name=cadence_for(leg.asset).name,
+        weight=share,
+        total_premium=leg_budget,
+        net_pnl=leg_net,
+        roi_on_premium=leg_net / leg_budget,
+        # unit was rolled at the same `years` and roi_on_premium is
+        # notional-scale-invariant, so unit's annualized figure already matches
+        # this leg's (leg_net/leg_budget == unit.roi_on_premium).
+        annualized_return=unit.annualized_return,
+        verdict=leg_verdict,
+        n_cycles=unit.n_cycles,
+    )
+    return _LegOutcome(
+        unit=unit,
+        scaled_cycles=scaled,
+        leg_result=leg_result,
+        curve=curve,
+        ohlcv_snapshot_id=store.bronze_snapshot_id(f"ohlcv_{leg.asset.lower()}", as_of),
+    )
+
+
+def _combined_curve(
+    per_leg_cum: list[list[tuple[dt.date, float]]],
+) -> tuple[list[EquityPoint], list[float]]:
+    """Combined cumulative PnL on the union of expiry dates: forward-fill each
+    leg's realized cum (0 before its first expiry) and sum."""
+    union_dates = sorted({d for curve in per_leg_cum for d, _ in curve})
+    combined_curve: list[EquityPoint] = []
+    combined_cum_values: list[float] = []
+    for d in union_dates:
+        total = 0.0
+        for curve in per_leg_cum:
+            realized = [c for dd, c in curve if dd <= d]
+            total += realized[-1] if realized else 0.0
+        combined_curve.append(EquityPoint(date=d, cum_pnl=total))
+        combined_cum_values.append(total)
+    return combined_curve, combined_cum_values
+
+
 def run_portfolio(
     store: LakeStore,
     *,
@@ -175,74 +269,29 @@ def run_portfolio(
     snapshot_ids: list[str] = [store.bronze_snapshot_id(VIX_DATASET, as_of)]
 
     for leg in legs:
-        share = leg.weight / total_weight
-        try:
-            prices, realized_vol_proxy = load_asof_series(store, leg.asset, as_of)
-            unit = run_put_roll(
-                prices,
-                realized_vol_proxy,
-                asset=leg.asset,
-                as_of=as_of,
-                notional=1.0,
-                moneyness_pct=leg.moneyness_pct,
-                tenor_weeks=leg.tenor_weeks,
-                lookback_years=years,
-            )
-        except LookupError:
+        outcome = _run_leg(
+            store,
+            leg,
+            share=leg.weight / total_weight,
+            budget=budget,
+            as_of=as_of,
+            years=years,
+            timeline=timeline,
+        )
+        if outcome is None:
             continue  # skip a leg with no data / too short a window
 
-        leg_budget = share * budget
-        s = leg_budget / unit.n_cycles  # per-roll budget
-        scaled = [_scaled(c, s) for c in unit.cycles]
-        pooled_cycles.extend(scaled)
-
-        leg_net = sum(c.net for c in scaled)  # net of brokerage
-        _, leg_verdict = regime_breakdown(scaled, timeline)
-
-        cum = 0.0
-        curve: list[tuple[dt.date, float]] = []
-        for c in sorted(scaled, key=lambda x: x.expiry_date):
-            cum += c.net
-            curve.append((c.expiry_date, cum))
-        per_leg_cum.append(curve)
-
-        snap = store.bronze_snapshot_id(f"ohlcv_{leg.asset.lower()}", as_of)
-        if snap not in snapshot_ids:
-            snapshot_ids.append(snap)
-
-        units.append(unit)
-        leg_results.append(
-            LegResult(
-                asset=leg.asset,
-                name=cadence_for(leg.asset).name,
-                weight=share,
-                total_premium=leg_budget,
-                net_pnl=leg_net,
-                roi_on_premium=leg_net / leg_budget,
-                # unit was rolled at the same `years` and roi_on_premium is
-                # notional-scale-invariant, so unit's annualized figure already
-                # matches this leg's (leg_net/leg_budget == unit.roi_on_premium).
-                annualized_return=unit.annualized_return,
-                verdict=leg_verdict,
-                n_cycles=unit.n_cycles,
-            )
-        )
+        pooled_cycles.extend(outcome.scaled_cycles)
+        per_leg_cum.append(outcome.curve)
+        if outcome.ohlcv_snapshot_id not in snapshot_ids:
+            snapshot_ids.append(outcome.ohlcv_snapshot_id)
+        units.append(outcome.unit)
+        leg_results.append(outcome.leg_result)
 
     if not leg_results:
         raise LookupError(f"no portfolio leg could be scored as of {as_of.isoformat()}")
 
-    # Combined cumulative PnL on the union of expiry dates: forward-fill each
-    # leg's realized cum (0 before its first expiry) and sum.
-    union_dates = sorted({d for curve in per_leg_cum for d, _ in curve})
-    combined_curve: list[EquityPoint] = []
-    combined_cum_values: list[float] = []
-    for d in union_dates:
-        total = 0.0
-        for curve in per_leg_cum:
-            realized = [c for dd, c in curve if dd <= d]
-            total += realized[-1] if realized else 0.0
-        combined_curve.append(EquityPoint(date=d, cum_pnl=total))
-        combined_cum_values.append(total)
+    combined_curve, combined_cum_values = _combined_curve(per_leg_cum)
 
     total_premium = sum(r.total_premium for r in leg_results)
     total_payoff = sum(c.payoff for c in pooled_cycles)
