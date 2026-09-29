@@ -224,7 +224,11 @@ a large one strictly in order.
       schema — it is diagnostic, so recreating it loses nothing of record —
       and check the other `*__quarantine` tables for the same artifact.
 
-- [ ] **Give `scripts/chain_sweep_verify.sh` an automated test.**
+- [x] **Give `scripts/chain_sweep_verify.sh` an automated test.**
+      **Done 2026-09-29**: `tests/test_scripts_chain_sweep_verify.py` runs the real
+      script against a sandboxed `TAIL_LAB_REPO` (the script gained that override,
+      like its siblings), with Cboe/Nasdaq fetches forced to raise: an empty lake
+      exits 0, and a lake with an incomplete partition still exits 1 with the GAP.
       Its network-degradation path is currently verified only by hand fault
       injection, and that path has already produced the worst failure this
       monitor can have. On 2026-09-22, its first scheduled run, a DNS failure
