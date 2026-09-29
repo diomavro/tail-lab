@@ -39,7 +39,7 @@
 # the prior session, which is exactly the right answer.
 set -uo pipefail
 
-REPO=/home/dio/Documents/apps/tail-lab
+REPO="${TAIL_LAB_REPO:-/home/dio/Documents/apps/tail-lab}"
 LOG="$REPO/.chain-sweep-verify.log"
 #: How many recent partitions check B inspects.
 LOOKBACK="${CHAIN_VERIFY_LOOKBACK:-10}"
