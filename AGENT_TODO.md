@@ -1880,7 +1880,20 @@ new module near-complete, with a pinned synthetic case with a known answer
 
 ### P4 — `GET /api/putlab/surface` + `SurfaceResponse`
 
-- [ ] **Goal.** Expose P1–P3 plus the realised side read-only, so the tab
+- [ ] **Step 1 of 2 done 2026-09-30 (the extraction the spec allows as its own
+      PR):** `research/surface/realised.py` — `gated_realised_alpha(prices, *,
+      horizon_days=1) -> RealisedAlpha` (`horizon_days` in CALENDAR days,
+      stepped to `round(T*252/365)` rows) plus `step_prices`; 100 % covered,
+      and `scripts/tail_alpha.py` prints from it. Two deliberate deltas: a
+      non-converged onset is now REFUSED (the script only labelled it), and
+      the script's ungated diagnostic plateau stays in the script. Measured
+      while testing: `karamata_onset(alpha=None)` starts from the k=30 Hill
+      estimate (3.17 on an exact Pareto(3) top) so the default 5 % tolerance
+      refuses even textbook samples (flatness 0.206) — the positive-path tests
+      loosen the tolerance. **Remaining: the route, schemas, smile-slope fit,
+      three-anchor fits and tests (everything below); P5 still follows.**
+
+      **Goal.** Expose P1–P3 plus the realised side read-only, so the tab
       (and you, via `curl` on the deployed app) can see real results.
 
       **Files:** `src/tail_lab/api/putlab_routes.py` (flat — no `routes/`
