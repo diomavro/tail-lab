@@ -16,7 +16,7 @@ import sys
 from tail_lab.config import get_lake_store
 from tail_lab.research.backtest.put_roll import load_asof_series
 from tail_lab.research.surface.hill import hill_plot, stable_k
-from tail_lab.research.surface.karamata import karamata_onset
+from tail_lab.research.surface.realised import gated_realised_alpha
 from tail_lab.research.surface.returns import compare_return_bases, loss_magnitudes
 
 
@@ -37,14 +37,10 @@ def main(symbol: str) -> int:
     losses = [float(x) for x in loss_magnitudes(prices)]
     print(f"{symbol.upper()}: {len(prices)} closes, {len(losses)} down-moves")
 
-    try:
-        fit = karamata_onset(losses, alpha=None)
-    except ValueError as exc:
-        # The alpha/onset fixed point re-fits at a new alpha on every iteration,
-        # so a refusal can surface on a later pass than the first. That refusal
-        # is legitimate -- but a `make` target reporting it as a stack trace is
-        # not, which is the same reasoning as the missing-symbol branch above.
-        print(f"  Karamata onset : REFUSED -- {exc}")
+    realised = gated_realised_alpha(prices)
+    fit = realised.fit
+    if fit is None:
+        print(f"  Karamata onset : REFUSED -- {realised.refusal}")
         print("  realised alpha : REFUSED -- no Karamata region to gate on")
         return 1
 
@@ -61,40 +57,34 @@ def main(symbol: str) -> int:
             "There is no measured point where the strong Pareto law takes over."
         )
 
-    plot = hill_plot(losses)
-    if not fit.is_flat:
-        # No onset means no evidence that any part of this sample is Paretan.
-        # Turning the gate OFF here would be backwards: it would hand back the
-        # body plateau precisely when there is least reason to trust it.
-        ungated = stable_k(plot)
-        found = (
-            f"alpha {ungated.alpha:.2f} at a {ungated.threshold * 100:.2f}% move"
-            if ungated
-            else "none"
+    gated = realised.plateau
+    if gated is not None:
+        print(
+            f"  realised alpha : {gated.alpha:.3f} +/- {gated.standard_error:.3f} "
+            f"(k={gated.k}, threshold {gated.threshold * 100:.2f}%)"
         )
         print(
-            f"  realised alpha : REFUSED -- no Karamata region to gate on (plateau found: {found})"
+            "                   the SE is Hill's iid formula and understates under "
+            "volatility clustering"
         )
     else:
-        gated = stable_k(plot, min_threshold=fit.onset)
-        if gated is None:
-            ungated = stable_k(plot)
-            if ungated is None:
-                print("  realised alpha : NO PLATEAU -- this data supports no tail index")
-            else:
-                print(
-                    f"  realised alpha : REFUSED -- the first plateau (alpha "
-                    f"{ungated.alpha:.2f}) sits at a {ungated.threshold * 100:.2f}% move, "
-                    "inside the body"
-                )
+        # The ungated plateau is diagnosis only -- it is what the gate refused,
+        # and is printed here rather than carried on the shared result.
+        ungated = stable_k(hill_plot(losses))
+        if not fit.is_flat or not fit.converged:
+            found = (
+                f"alpha {ungated.alpha:.2f} at a {ungated.threshold * 100:.2f}% move"
+                if ungated
+                else "none"
+            )
+            print(f"  realised alpha : REFUSED -- {realised.refusal} (plateau found: {found})")
+        elif ungated is None:
+            print("  realised alpha : NO PLATEAU -- this data supports no tail index")
         else:
             print(
-                f"  realised alpha : {gated.alpha:.3f} +/- {gated.standard_error:.3f} "
-                f"(k={gated.k}, threshold {gated.threshold * 100:.2f}%)"
-            )
-            print(
-                "                   the SE is Hill's iid formula and understates under "
-                "volatility clustering"
+                f"  realised alpha : REFUSED -- the first plateau (alpha "
+                f"{ungated.alpha:.2f}) sits at a {ungated.threshold * 100:.2f}% move, "
+                "inside the body"
             )
 
     bases = compare_return_bases(prices, k=min(100, len(losses) // 4))
