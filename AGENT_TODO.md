@@ -1890,8 +1890,17 @@ new module near-complete, with a pinned synthetic case with a known answer
       while testing: `karamata_onset(alpha=None)` starts from the k=30 Hill
       estimate (3.17 on an exact Pareto(3) top) so the default 5 % tolerance
       refuses even textbook samples (flatness 0.206) — the positive-path tests
-      loosen the tolerance. **Remaining: the route, schemas, smile-slope fit,
-      three-anchor fits and tests (everything below); P5 still follows.**
+      loosen the tolerance. **Step 2a done 2026-10-01:** `research/surface/smile.py` --
+      `smile_slope(strikes, ivs, anchor) -> SmileSlope` (quadratic LSQ over the
+      anchor + 8 nearest strikes, >=3 strictly each side, >=7 rows, linear
+      coefficient and its standard error, refusal as a value, never 0.0).
+      Null/zero ivs are dropped BEFORE choosing neighbours (spec said after;
+      this keeps 8 neighbours when a nearby strike is zero-filled).
+      **Remaining: the route, schemas, three-anchor fits and tests
+      (everything below); P5 still follows.** Advisory notes from #131 still
+      open: `RealisedAlpha.n_beyond` duplicates `fit.n_beyond`; the unconverged
+      test should use `monkeypatch.setattr`; the script re-derives the refusal
+      cause `realised.refusal` encodes.
 
       **Goal.** Expose P1–P3 plus the realised side read-only, so the tab
       (and you, via `curl` on the deployed app) can see real results.
