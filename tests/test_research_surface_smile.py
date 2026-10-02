@@ -5,7 +5,7 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from tail_lab.research.surface.smile import select_strikes, smile_slope
+from tail_lab.research.surface.smile import _select_strikes, smile_slope
 
 SPY_GRID = [570.0, 575.0, 580.0, 585.0, 590.0, 594.0, 595.0, 596.0, 597.0, 598.0, 599.0, 600.0]
 
@@ -25,7 +25,7 @@ def test_recovers_the_exact_slope_of_a_quadratic_smile() -> None:
 def test_selection_matches_the_spec_example_on_a_spy_grid() -> None:
     # 3 strictly below and 3 strictly above the anchor are guaranteed, the rest
     # filled by distance: 580, 585, 590, 594, 595..599.
-    assert select_strikes(SPY_GRID, 594.0) == [
+    assert _select_strikes(SPY_GRID, 594.0) == [
         580.0,
         585.0,
         590.0,
@@ -39,7 +39,7 @@ def test_selection_matches_the_spec_example_on_a_spy_grid() -> None:
 
 
 def test_each_side_keeps_its_minimum_even_when_one_side_is_nearer() -> None:
-    chosen = select_strikes(
+    chosen = _select_strikes(
         [100.0, 101.0, 102.0, 103.0, 104.0, 105.0, 106.0, 90.0, 80.0, 70.0], 100.0
     )
     assert chosen is not None

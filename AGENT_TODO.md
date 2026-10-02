@@ -1896,8 +1896,16 @@ new module near-complete, with a pinned synthetic case with a known answer
       coefficient and its standard error, refusal as a value, never 0.0).
       Null/zero ivs are dropped BEFORE choosing neighbours (spec said after;
       this keeps 8 neighbours when a nearby strike is zero-filled).
-      **Remaining: the route, schemas, three-anchor fits and tests
-      (everything below); P5 still follows.** Advisory notes from #131 still
+      **Step 2b done 2026-10-02:** `research/surface/anchors.py` --
+      `read_anchors(quotes, underlying, spot, moneyness_pct, r, q)` fits the
+      three distinct anchors (m, m+2, m+4; coincident picks collapse), pairs
+      each with its smile slope and P3 ceiling (no slope -> `ceiling None` +
+      reason, never 0.0), and reports the accepted alphas' dispersion or why
+      there is none. A zero-bid anchor is a refused reading, not an exception;
+      `select_strikes` is now private (#132 advisory).
+      **Remaining: the route, schemas, realised side/survival curves, ladder
+      with bid/ask, provenance and route tests (everything below); P5 still
+      follows.** Advisory notes from #131 still
       open: `RealisedAlpha.n_beyond` duplicates `fit.n_beyond`; the unconverged
       test should use `monkeypatch.setattr`; the script re-derives the refusal
       cause `realised.refusal` encodes.
