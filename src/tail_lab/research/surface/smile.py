@@ -46,7 +46,7 @@ def _refused(reason: str) -> SmileSlope:
     return SmileSlope(slope=None, std_error=None, strikes=(), refusal=reason)
 
 
-def select_strikes(strikes: Sequence[float], anchor: float) -> list[float] | None:
+def _select_strikes(strikes: Sequence[float], anchor: float) -> list[float] | None:
     """The anchor (if listed) plus its ``NEIGHBOUR_STRIKES`` nearest listed
     strikes, filled by distance but with at least ``MIN_PER_SIDE`` strictly
     below and strictly above. ``None`` when a side has too few."""
@@ -73,7 +73,7 @@ def smile_slope(strikes: Sequence[float], ivs: Sequence[float | None], anchor: f
         for k, v in zip(strikes, ivs, strict=True)
         if v is not None and math.isfinite(v) and v > 0.0
     }
-    chosen = select_strikes(list(usable), anchor)
+    chosen = _select_strikes(list(usable), anchor)
     if chosen is None:
         return _refused(
             f"fewer than {MIN_PER_SIDE} strikes with an iv strictly on each side of {anchor:g}"
