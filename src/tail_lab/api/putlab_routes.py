@@ -26,7 +26,7 @@ from functools import lru_cache
 import pandas as pd
 from fastapi import APIRouter, Depends, HTTPException, Query
 
-from tail_lab.api.schemas import PortfolioRequest, SweepResponse
+from tail_lab.api.schemas import PortfolioRequest, SurfaceResponse, SweepResponse
 from tail_lab.config import get_lake_store as _get_configured_lake_store
 from tail_lab.config import get_settings
 from tail_lab.contracts.ohlcv import dataset_id
@@ -44,6 +44,7 @@ from tail_lab.research.accuracy import (
     compute_accuracy_report,
 )
 from tail_lab.research.backtest.index_replication import (
+    DEFAULT_DIVIDEND_YIELD,
     IndexReplicationResult,
     compute_index_replication,
 )
@@ -54,6 +55,7 @@ from tail_lab.research.backtest.metric_screen import (
 )
 from tail_lab.research.backtest.portfolio import PortfolioResult, run_portfolio
 from tail_lab.research.backtest.put_roll import (
+    DEFAULT_RATE,
     PutBacktestResult,
     annualized_return,
     compute_put_backtest,
@@ -66,6 +68,7 @@ from tail_lab.research.backtest.sweep import MODEL_PRICED_MAX_MONEYNESS_PCT, run
 from tail_lab.research.cadence import resolve_cadence
 from tail_lab.research.data_quality import DataQualityReport, assess_asset_quality
 from tail_lab.research.regimes.timeline import RegimeTimelineView, compute_regime_view
+from tail_lab.research.surface.reading import read_surface
 
 router = APIRouter()
 logger = logging.getLogger("tail_lab.api.putlab")
@@ -105,6 +108,11 @@ _REPLICATION_CACHE: dict[str, tuple[float, list[IndexReplicationResult]]] = {}
 _REPLICATION_TTL_S = 900.0
 _ACCURACY_CACHE: dict[tuple[str, float, float, float, str], tuple[float, AccuracyReport]] = {}
 _ACCURACY_TTL_S = 120.0
+
+#: The Surface reads one ~20k-row chain session plus one OHLCV series; bronze
+#: is immutable for a given as_of, so memoize on (asset, m, tenor, as_of).
+_SURFACE_CACHE: dict[tuple[str, float, float, str], tuple[float, SurfaceResponse]] = {}
+_SURFACE_TTL_S = 120.0
 
 
 @lru_cache(maxsize=1)
@@ -741,3 +749,75 @@ def putlab_metric_screen(
         winning_metric=winner,
     )
     return comparison
+
+
+@router.get("/api/putlab/surface")
+def putlab_surface(
+    asset: str = Query(description="Underlying ticker, e.g. spy."),
+    moneyness_pct: float = Query(default=5.0, gt=0, lt=100),
+    tenor_days: float = Query(default=30.0, gt=0, le=180),
+    as_of: dt.date | None = Query(default=None),
+    store: LakeStore = Depends(get_lake_store),
+) -> SurfaceResponse:
+    """The Paretan Surface: the implied tail index at three anchors beside the
+    realised one, the ladder, and the survival curves behind them.
+
+    Reads ONLY ``option_chain_snapshot`` (one session) and ``ohlcv_<asset>``;
+    never the optionsDX panel, whose load would exhaust the 1 GB VM. Anchors are
+    picked by fixed moneyness (the payload says so); every refusal is a value.
+    """
+    resolved = _resolve_as_of(as_of)
+    cache_key = (asset.lower(), moneyness_pct, tenor_days, resolved.isoformat())
+    hit = _SURFACE_CACHE.get(cache_key)
+    if hit is not None and hit[0] > time.monotonic():
+        return hit[1]
+    try:
+        chain = store.read_bronze_as_of(OPTION_CHAIN_DATASET, resolved)
+    except LookupError as exc:
+        raise HTTPException(
+            status_code=404, detail="no option chain known as of that date"
+        ) from exc
+    try:
+        prices: pd.Series | None = load_asof_series(store, asset, resolved)[0]
+    except LookupError:
+        prices = None
+    reading = read_surface(
+        chain,
+        prices,
+        underlying=asset,
+        moneyness_pct=moneyness_pct,
+        tenor_days=tenor_days,
+        r=DEFAULT_RATE,
+        q=DEFAULT_DIVIDEND_YIELD,
+    )
+    if reading is None:
+        raise HTTPException(status_code=404, detail=f"no listed expiry for {asset} in the chain")
+    code_sha = get_settings().code_sha
+    chain_snapshot = _snapshot(store, OPTION_CHAIN_DATASET, resolved)
+    ohlcv_snapshot = _snapshot(store, dataset_id(asset), resolved)
+    log_event(
+        logger,
+        "api.putlab.surface",
+        asset=asset,
+        as_of=resolved,
+        moneyness_pct=moneyness_pct,
+        tenor_days=tenor_days,
+        expiration=reading.expiration,
+        chain_snapshot=chain_snapshot,
+        ohlcv_snapshot=ohlcv_snapshot,
+        code_sha=code_sha,
+        anchors=len(reading.anchors.readings),
+        dispersion=reading.anchors.dispersion,
+        realised_alpha=reading.realised.alpha if reading.realised else None,
+        alpha_gap=reading.alpha_gap,
+    )
+    response = SurfaceResponse(
+        asset=asset,
+        as_of=resolved,
+        chain_snapshot=chain_snapshot,
+        ohlcv_snapshot=ohlcv_snapshot,
+        code_sha=code_sha,
+        surface=reading,
+    )
+    _SURFACE_CACHE[cache_key] = (time.monotonic() + _SURFACE_TTL_S, response)
+    return response

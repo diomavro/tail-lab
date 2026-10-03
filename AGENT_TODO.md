@@ -1903,9 +1903,21 @@ new module near-complete, with a pinned synthetic case with a known answer
       reason, never 0.0), and reports the accepted alphas' dispersion or why
       there is none. A zero-bid anchor is a refused reading, not an exception;
       `select_strikes` is now private (#132 advisory).
-      **Remaining: the route, schemas, realised side/survival curves, ladder
-      with bid/ask, provenance and route tests (everything below); P5 still
-      follows.** Advisory notes from #131 still
+      **Step 3 done 2026-10-03 — P4 is shipped:** `GET /api/putlab/surface`
+      (`api/putlab_routes.py`, `SurfaceResponse` in `schemas.py`) over
+      `research/surface/reading.py` (`read_surface`: three anchors + dispersion,
+      anchor IV, lambda guard, ladder <=8 rungs with bid/ask + Black-Scholes
+      price, horizon-matched realised side, undismissed-but-labelled log basis,
+      200-point survival curves for gross `S` and loss `r`, `alpha_gap`).
+      Reads only `option_chain_snapshot` + `ohlcv_<sym>`; carries both snapshot
+      ids and the code SHA. Choices: the ladder is priced from the FIRST
+      (shallowest) anchor's fitted alpha, and `alpha_gap` is that alpha minus the
+      realised plateau. **Remaining: P5 (the Surface tab).** Advisory notes from
+      #133 still open: the two dispersion-reason branches in `read_anchors`
+      could be one check on accepted alphas; `_read_anchor` re-extracts the `iv`
+      column per anchor (hoist into `read_anchors`); the route now builds
+      `mid=(bid+ask)/2` in `reading._rungs` as well as `anchors._read_anchor`.
+      Advisory notes from #131 still
       open: `RealisedAlpha.n_beyond` duplicates `fit.n_beyond`; the unconverged
       test should use `monkeypatch.setattr`; the script re-derives the refusal
       cause `realised.refusal` encodes.

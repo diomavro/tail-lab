@@ -60,6 +60,7 @@ def client(tmp_path: Path) -> Iterator[TestClient]:
     putlab_routes._REGIME_VERDICT_CACHE.clear()
     putlab_routes._ACCURACY_CACHE.clear()
     putlab_routes._REPLICATION_CACHE.clear()
+    putlab_routes._SURFACE_CACHE.clear()
     app.dependency_overrides[putlab_get_lake_store] = lambda: store
     try:
         yield TestClient(app)
@@ -644,3 +645,75 @@ def test_roll_schedule_is_stable_for_the_same_screen(client: TestClient) -> None
 
     bigger = client.get("/api/putlab/roll-schedule", params={**params, "notional": 5000}).json()
     assert bigger["schedule_id"] != first["schedule_id"]
+
+
+def _seed_chain(store: DeltaLakeStore, ingest_date: dt.date) -> None:
+    from tail_lab.contracts.option_chain import DATASET
+    from tail_lab.research.surface.paretan import ParetanTail
+
+    tail = ParetanTail(alpha=3.0, karamata_l=0.05, basis="returns")
+    rows = []
+    for k in range(945, 600, -5):
+        p = tail.put_price(strike=float(k), spot=1000.0)
+        rows.append(
+            {
+                "underlying": "SPY",
+                "quote_date": pd.Timestamp(ingest_date),
+                "expiration": pd.Timestamp(ingest_date + dt.timedelta(days=30)),
+                "strike": float(k),
+                "bid": p * 0.98,
+                "ask": p * 1.02,
+                "volume": 1,
+                "open_interest": 500,
+                "spot": 1000.0,
+                "iv": 0.25,
+                "delta": None,
+                "theo": None,
+            }
+        )
+    store.write_bronze(DATASET, ingest_date, pd.DataFrame(rows))
+
+
+def test_surface_serves_implied_side_with_refused_realised_and_provenance(
+    client: TestClient,
+) -> None:
+    store = app.dependency_overrides[putlab_get_lake_store]()
+    today = dt.datetime.now(dt.UTC).date()
+    _seed_chain(store, today)
+    resp = client.get(
+        "/api/putlab/surface",
+        params={"asset": "spy", "moneyness_pct": 7, "as_of": today.isoformat()},
+    )
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["chain_snapshot"] and body["ohlcv_snapshot"] and body["code_sha"]
+    surface = body["surface"]
+    assert "fixed moneyness" in surface["parameterisation"]
+    assert surface["r"] == 0.04 and surface["q"] == 0.019
+    assert surface["anchors"]["dispersion"] < 1e-6
+    assert surface["anchors"]["readings"][0]["fit"]["alpha"] == pytest.approx(3.0, abs=1e-3)
+    assert surface["realised"]["alpha"] is None and surface["realised"]["refusal"]
+    assert surface["alpha_gap"] is None and surface["alpha_gap_reason"]
+    assert 0 < len(surface["ladder"]) <= 8
+
+
+def test_surface_404s_without_a_chain_or_a_listed_name(client: TestClient) -> None:
+    store = app.dependency_overrides[putlab_get_lake_store]()
+    today = dt.datetime.now(dt.UTC).date()
+    params = {"asset": "spy", "as_of": today.isoformat()}
+    assert client.get("/api/putlab/surface", params=params).status_code == 404
+    _seed_chain(store, today)
+    putlab_routes._SURFACE_CACHE.clear()
+    assert client.get("/api/putlab/surface", params={**params, "asset": "qqq"}).status_code == 404
+
+
+def test_surface_never_reads_the_optionsdx_panel(client: TestClient) -> None:
+    store = app.dependency_overrides[putlab_get_lake_store]()
+    today = dt.datetime.now(dt.UTC).date()
+    _seed_chain(store, today)
+    seen: list[str] = []
+    real = store.read_bronze_as_of
+    store.read_bronze_as_of = lambda d, a: (seen.append(d), real(d, a))[1]  # type: ignore[method-assign]
+    resp = client.get("/api/putlab/surface", params={"asset": "spy", "as_of": today.isoformat()})
+    assert resp.status_code == 200
+    assert seen and not any(d.startswith("optionsdx") for d in seen)
