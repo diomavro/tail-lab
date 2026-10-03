@@ -10,6 +10,7 @@ from tail_lab.feedback.store import FeedbackKind, FeedbackRecord
 from tail_lab.memory.store import RegimeOutcome
 from tail_lab.research.backtest.portfolio import PortfolioLeg
 from tail_lab.research.backtest.sweep import SweepPoint
+from tail_lab.research.surface.reading import SurfaceReading
 
 
 class HealthResponse(BaseModel):
@@ -180,3 +181,17 @@ class OptionChainSnapshotStatus(BaseModel):
     symbols: int
     stale_days: int | None
     missing_symbols: tuple[str, ...] = ()
+
+
+class SurfaceResponse(BaseModel):
+    """One name's Surface with its provenance (results are never shown without it).
+
+    ``chain_snapshot`` / ``ohlcv_snapshot`` are the bronze snapshot ids read
+    (``None`` when that dataset was not known as of ``as_of``)."""
+
+    asset: str
+    as_of: dt.date
+    chain_snapshot: str | None
+    ohlcv_snapshot: str | None
+    code_sha: str
+    surface: SurfaceReading
