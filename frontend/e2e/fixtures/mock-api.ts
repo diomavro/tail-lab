@@ -73,6 +73,9 @@ export async function mockPutLabApi(page: Page, opts: MockOptions = {}): Promise
           route,
           url.searchParams.get('top_k') === '3' ? fx.METRIC_SCREEN_NO_WINNER : fx.METRIC_SCREEN_WINNER,
         )
+      case '/api/putlab/surface':
+        // TSLA is the all-refused payload; every other name is the fitted one.
+        return json(route, url.searchParams.get('asset') === 'tsla' ? fx.SURFACE_REFUSED : fx.SURFACE_FITTED)
       case '/api/feedback':
         return json(route, { id: 'fb1', text: 'ok', kind: 'issue', created_at: '2026-08-21T00:00:00Z', status: 'open', resolved_at: null })
       default:
