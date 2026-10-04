@@ -1025,3 +1025,26 @@
 @media (prefers-reduced-motion: reduce) {
   .putlab-root * { transition: none !important; animation: none !important; }
 }
+
+/* ---- Surface ------------------------------------------------------------ */
+.pl-refused { color: var(--mag-2); font-weight: 600; font-size: 12.5px; }
+.pl-surface-strip {
+  display: flex; flex-wrap: wrap; gap: 6px 24px; padding: 10px 0;
+  border-top: 1px solid var(--rule); border-bottom: 1px solid var(--rule);
+  margin-bottom: 18px; font-size: 14px;
+}
+.pl-surface-anchor { margin-right: 12px; white-space: nowrap; }
+.pl-surface-panes { display: grid; grid-template-columns: 1fr 1fr; gap: 24px; align-items: start; }
+.pl-surface-pane { min-width: 0; height: 330px; overflow: hidden; }
+.pl-surface-plot { margin: 8px 0 0; }
+.pl-surface-plot svg { display: block; width: 100%; height: 260px; border: 1px solid var(--rule); }
+.pl-surface-plot polyline { stroke-width: 1.5; vector-effect: non-scaling-stroke; }
+.pl-surface-s { stroke: var(--cyan-2); background: var(--cyan-2); }
+.pl-surface-r { stroke: var(--mag-2); background: var(--mag-2); }
+.pl-surface-bs { stroke: var(--ink-45); background: var(--ink-45); }
+.pl-surface-swatch { display: inline-block; width: 14px; height: 3px; margin-right: 4px; vertical-align: middle; }
+.pl-surface-key { margin-right: 14px; }
+.pl-surface-onset { stroke: var(--ink); stroke-dasharray: 4 3; stroke-width: 1; }
+.pl-surface-caveat { margin: 16px 0; color: var(--ink-70); max-width: 78ch; }
+.pl-surface-caveat summary { cursor: pointer; font-weight: 600; }
+@media (max-width: 900px) { .pl-surface-panes { grid-template-columns: 1fr; } }

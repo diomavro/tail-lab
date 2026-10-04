@@ -619,3 +619,138 @@ export async function fetchRegimes(signal?: AbortSignal): Promise<RegimeTimeline
   }
   return (await resp.json()) as RegimeTimelineView
 }
+
+// ---- Surface (GET /api/putlab/surface) -- mirrors api/schemas.SurfaceResponse.
+// Every fit and ceiling that can refuse carries a `refusal` string beside a null
+// number; the view renders that as the word REFUSED, never as a blank or a zero.
+
+export interface SurfaceAnchorQuote {
+  underlying: string
+  quote_date: string
+  expiration: string
+  spot: number
+  strike: number
+  price: number
+  bid: number
+  ask: number
+}
+
+export interface SurfaceImpliedFit {
+  anchor: SurfaceAnchorQuote
+  alpha: number | null
+  rmse_log_price: number | null
+  n_strikes: number
+  strike_span: number
+  refusal: string | null
+}
+
+export interface SurfaceSmile {
+  slope: number | null
+  std_error: number | null
+  strikes: number[]
+  refusal: string | null
+}
+
+export interface SurfaceCeiling {
+  anchor: SurfaceAnchorQuote
+  alpha: number | null
+  market_slope: number | null
+  refusal: string | null
+}
+
+export interface SurfaceAnchorReading {
+  strike: number
+  fit: SurfaceImpliedFit | null
+  refusal: string | null
+  smile: SurfaceSmile | null
+  ceiling: SurfaceCeiling | null
+  ceiling_reason: string | null
+}
+
+export interface SurfaceRung {
+  strike: number
+  bid: number | null
+  ask: number | null
+  paretan_price: number
+  market_price: number | null
+  black_scholes_price: number | null
+  paretan_iv: number | null
+  market_iv: number | null
+  iv_ratio: number | null
+}
+
+export interface SurfaceSurvivalCurve {
+  points: [number, number][]
+}
+
+export interface SurfaceLogBasis {
+  alpha: number | null
+  k: number | null
+  refusal: string | null
+  note: string
+}
+
+export interface SurfaceRealised {
+  horizon_days: number
+  alpha: number | null
+  standard_error: number | null
+  plateau_k: number | null
+  onset: number | null
+  n_beyond: number
+  is_flat: boolean | null
+  refusal: string | null
+  log_basis: SurfaceLogBasis
+  survival_gross: SurfaceSurvivalCurve | null
+  survival_loss: SurfaceSurvivalCurve | null
+}
+
+export interface SurfaceReading {
+  underlying: string
+  quote_date: string
+  expiration: string
+  t_days: number
+  spot: number
+  moneyness_pct: number
+  parameterisation: string
+  r: number
+  q: number
+  rate_note: string
+  anchor_iv: number | null
+  lambda_guard_ok: boolean | null
+  anchors: {
+    readings: SurfaceAnchorReading[]
+    dispersion: number | null
+    dispersion_reason: string | null
+  }
+  ladder: SurfaceRung[]
+  ladder_reason: string | null
+  realised: SurfaceRealised | null
+  realised_reason: string | null
+  alpha_gap: number | null
+  alpha_gap_reason: string | null
+}
+
+export interface SurfaceResponse {
+  asset: string
+  as_of: string
+  chain_snapshot: string | null
+  ohlcv_snapshot: string | null
+  code_sha: string
+  surface: SurfaceReading
+}
+
+export async function fetchSurface(
+  params: { asset: string; moneyness_pct: number; tenor_days: number },
+  signal?: AbortSignal,
+): Promise<SurfaceResponse> {
+  const qs = new URLSearchParams({
+    asset: params.asset,
+    moneyness_pct: String(params.moneyness_pct),
+    tenor_days: String(params.tenor_days),
+  })
+  const resp = await fetch(`/api/putlab/surface?${qs}`, { signal })
+  if (!resp.ok) {
+    throw new ApiError(`GET /api/putlab/surface failed: ${resp.status}`, resp.status)
+  }
+  return (await resp.json()) as SurfaceResponse
+}

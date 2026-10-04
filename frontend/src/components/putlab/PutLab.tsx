@@ -8,6 +8,7 @@ import {
   fetchPutLabLeaderboard,
   fetchRegimes,
   fetchRegimeVerdict,
+  fetchSurface,
   fetchSweep,
   fetchUniverse,
   fetchVixStretch,
@@ -18,6 +19,7 @@ import {
   type PutLabLeaderboardResponse,
   type RegimeTimelineView,
   type RegimeVerdictResponse,
+  type SurfaceResponse,
   type SweepResponse,
   type UniverseMember,
   type VixStretchResponse,
@@ -33,6 +35,7 @@ import { GlossaryView } from './views/GlossaryView'
 import { PortfolioView } from './views/PortfolioView'
 import { RecommendationsView } from './views/RecommendationsView'
 import { RegimeView } from './views/RegimeView'
+import { SurfaceView } from './views/SurfaceView'
 import { WorkspaceView } from './views/WorkspaceView'
 
 /* The workspace shell.
@@ -60,6 +63,7 @@ export type TabId =
   | 'portfolio'
   | 'bakeoff'
   | 'regime'
+  | 'surface'
   | 'glossary'
 
 /** Paper is the light sheet, plate the negative. Persisted, never inferred from
@@ -94,6 +98,7 @@ const DATA_QUALITY_CACHE = new Map<string, DataQualityResponse>()
 const REGIME_VERDICT_CACHE = new Map<string, RegimeVerdictResponse>()
 const ACCURACY_CACHE = new Map<string, AccuracyResponse>()
 const RANKING_CACHE = new Map<string, PutLabLeaderboardResponse>()
+const SURFACE_CACHE = new Map<string, SurfaceResponse>()
 
 function cachePut<T>(cache: Map<string, T>, key: string, value: T): void {
   // Bounded LRU-ish: evict the oldest inserted key past the cap.
@@ -260,6 +265,11 @@ export function PutLab() {
     ? JSON.stringify([controls.moneyness_pct, controls.tenor_weeks, controls.years])
     : null
 
+  // The Surface reads one chain session, so it keys on the name and the anchor
+  // only (the OOM control IS the anchor); the tenor is the rail's weeks in days.
+  const surfaceKey =
+    tab === 'surface' ? JSON.stringify([controls.asset, controls.moneyness_pct, controls.tenor_weeks]) : null
+
   const btParams = {
     asset: controls.asset,
     notional: controls.notional,
@@ -309,6 +319,17 @@ export function PutLab() {
     (s) =>
       fetchPutLabLeaderboard(
         { moneyness_pct: controls.moneyness_pct, tenor_weeks: controls.tenor_weeks, years: controls.years },
+        s,
+      ),
+    DEBOUNCE_MS,
+  )
+
+  const surface = useCachedResource(
+    SURFACE_CACHE,
+    surfaceKey,
+    (s) =>
+      fetchSurface(
+        { asset: controls.asset, moneyness_pct: controls.moneyness_pct, tenor_days: controls.tenor_weeks * 7 },
         s,
       ),
     DEBOUNCE_MS,
@@ -452,6 +473,7 @@ export function PutLab() {
             {tab === 'portfolio' && <PortfolioView universe={universe} controls={controls} />}
             {tab === 'bakeoff' && <BakeOffView controls={controls} />}
             {tab === 'regime' && <RegimeView regimes={regimes} vix={vix} accuracy={accuracy} />}
+            {tab === 'surface' && <SurfaceView surface={surface} controls={controls} />}
             {tab === 'glossary' && <GlossaryView />}
           </main>
         </div>

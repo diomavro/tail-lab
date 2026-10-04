@@ -25,6 +25,7 @@ import type {
   PutLabLeaderboardResponse,
   RegimeTimelineView,
   RegimeVerdictResponse,
+  SurfaceResponse,
   SweepResponse,
   UniverseMember,
   VixStretchResponse,
@@ -433,4 +434,1209 @@ export const PORTFOLIO: PortfolioResponse = {
   ],
   equity_curve: MTM_CURVE.filter((_, i) => i % 4 === 0),
   snapshot_ids: ['snap_9f21', 'snap_9f22'],
+}
+
+// ---- Surface: a fitted payload (SPY) and a payload where every fit refuses (TSLA).
+export const SURFACE_FITTED: SurfaceResponse = {
+  "asset": "spy",
+  "as_of": "2026-10-02",
+  "chain_snapshot": "v7",
+  "ohlcv_snapshot": "v12",
+  "code_sha": "abc1234",
+  "surface": {
+    "underlying": "SPY",
+    "quote_date": "2026-10-02",
+    "expiration": "2026-11-01",
+    "t_days": 30,
+    "spot": 1000.0,
+    "moneyness_pct": 7.0,
+    "parameterisation": "fixed moneyness: each anchor is the listed strike nearest spot*(1 - m/100); this confounds regime comparisons (docs/PRIOR_ART.md \u00a71)",
+    "r": 0.04,
+    "q": 0.019,
+    "rate_note": "q is an index-like dividend yield and is WRONG for income names (HYG, TLT); anchor_iv, lambda_guard_ok and the Black-Scholes overlay depend on it",
+    "anchor_iv": 0.346693,
+    "lambda_guard_ok": true,
+    "anchors": {
+      "readings": [
+        {
+          "strike": 930.0,
+          "fit": {
+            "anchor": {
+              "underlying": "SPY",
+              "quote_date": "2026-10-02",
+              "expiration": "2026-11-01",
+              "spot": 1000.0,
+              "strike": 930.0,
+              "price": 12.5779,
+              "bid": 12.3264,
+              "ask": 12.8295
+            },
+            "alpha": 3.0,
+            "rmse_log_price": 1.42671e-10,
+            "n_strikes": 30,
+            "strike_span": 0.15,
+            "refusal": null
+          },
+          "refusal": null,
+          "smile": {
+            "slope": 1.78736e-20,
+            "std_error": 8.89909e-18,
+            "strikes": [
+              905.0,
+              910.0,
+              915.0
+            ],
+            "refusal": null
+          },
+          "ceiling": {
+            "anchor": {
+              "underlying": "SPY",
+              "quote_date": "2026-10-02",
+              "expiration": "2026-11-01",
+              "spot": 1000.0,
+              "strike": 930.0,
+              "price": 12.5779,
+              "bid": 12.3264,
+              "ask": 12.8295
+            },
+            "alpha": 2.24212,
+            "market_slope": 0.241774,
+            "refusal": null
+          },
+          "ceiling_reason": null
+        },
+        {
+          "strike": 910.0,
+          "fit": {
+            "anchor": {
+              "underlying": "SPY",
+              "quote_date": "2026-10-02",
+              "expiration": "2026-11-01",
+              "spot": 1000.0,
+              "strike": 910.0,
+              "price": 7.54074,
+              "bid": 7.38993,
+              "ask": 7.69156
+            },
+            "alpha": 3.0,
+            "rmse_log_price": 9.01716e-11,
+            "n_strikes": 30,
+            "strike_span": 0.15,
+            "refusal": null
+          },
+          "refusal": null,
+          "smile": {
+            "slope": 0.0,
+            "std_error": 7.74066e-19,
+            "strikes": [
+              890.0,
+              895.0,
+              900.0
+            ],
+            "refusal": null
+          },
+          "ceiling": {
+            "anchor": {
+              "underlying": "SPY",
+              "quote_date": "2026-10-02",
+              "expiration": "2026-11-01",
+              "spot": 1000.0,
+              "strike": 910.0,
+              "price": 7.54074,
+              "bid": 7.38993,
+              "ask": 7.69156
+            },
+            "alpha": 2.97177,
+            "market_slope": 0.169177,
+            "refusal": null
+          },
+          "ceiling_reason": null
+        },
+        {
+          "strike": 890.0,
+          "fit": {
+            "anchor": {
+              "underlying": "SPY",
+              "quote_date": "2026-10-02",
+              "expiration": "2026-11-01",
+              "spot": 1000.0,
+              "strike": 890.0,
+              "price": 4.99216,
+              "bid": 4.89232,
+              "ask": 5.09201
+            },
+            "alpha": 3.0,
+            "rmse_log_price": 7.59845e-11,
+            "n_strikes": 30,
+            "strike_span": 0.15,
+            "refusal": null
+          },
+          "refusal": null,
+          "smile": {
+            "slope": 0.0,
+            "std_error": 7.74066e-19,
+            "strikes": [
+              870.0,
+              875.0,
+              880.0
+            ],
+            "refusal": null
+          },
+          "ceiling": {
+            "anchor": {
+              "underlying": "SPY",
+              "quote_date": "2026-10-02",
+              "expiration": "2026-11-01",
+              "spot": 1000.0,
+              "strike": 890.0,
+              "price": 4.99216,
+              "bid": 4.89232,
+              "ask": 5.09201
+            },
+            "alpha": 3.653,
+            "market_slope": 0.121533,
+            "refusal": null
+          },
+          "ceiling_reason": null
+        }
+      ],
+      "dispersion": 3.67597e-10,
+      "dispersion_reason": null
+    },
+    "ladder": [
+      {
+        "strike": 925.0,
+        "bid": 10.7157,
+        "ask": 11.153,
+        "paretan_price": 10.9344,
+        "market_price": 10.9344,
+        "black_scholes_price": 11.4108,
+        "paretan_iv": 0.340662,
+        "market_iv": 0.340662,
+        "iv_ratio": 1.0
+      },
+      {
+        "strike": 920.0,
+        "bid": 9.39754,
+        "ask": 9.78111,
+        "paretan_price": 9.58932,
+        "market_price": 9.58932,
+        "black_scholes_price": 10.3251,
+        "paretan_iv": 0.336872,
+        "market_iv": 0.336872,
+        "iv_ratio": 1.0
+      },
+      {
+        "strike": 915.0,
+        "bid": 8.30521,
+        "ask": 8.6442,
+        "paretan_price": 8.4747,
+        "market_price": 8.4747,
+        "black_scholes_price": 9.31791,
+        "paretan_iv": 0.334798,
+        "market_iv": 0.334798,
+        "iv_ratio": 1.0
+      },
+      {
+        "strike": 910.0,
+        "bid": 7.38993,
+        "ask": 7.69156,
+        "paretan_price": 7.54074,
+        "market_price": 7.54074,
+        "black_scholes_price": 8.38617,
+        "paretan_iv": 0.334062,
+        "market_iv": 0.334062,
+        "iv_ratio": 1.0
+      },
+      {
+        "strike": 905.0,
+        "bid": 6.61542,
+        "ask": 6.88544,
+        "paretan_price": 6.75043,
+        "market_price": 6.75043,
+        "black_scholes_price": 7.52664,
+        "paretan_iv": 0.334386,
+        "market_iv": 0.334386,
+        "iv_ratio": 1.0
+      },
+      {
+        "strike": 900.0,
+        "bid": 5.95424,
+        "ask": 6.19727,
+        "paretan_price": 6.07576,
+        "market_price": 6.07576,
+        "black_scholes_price": 6.73601,
+        "paretan_iv": 0.335562,
+        "market_iv": 0.335562,
+        "iv_ratio": 1.0
+      },
+      {
+        "strike": 895.0,
+        "bid": 5.38534,
+        "ask": 5.60515,
+        "paretan_price": 5.49525,
+        "market_price": 5.49525,
+        "black_scholes_price": 6.01091,
+        "paretan_iv": 0.337433,
+        "market_iv": 0.337433,
+        "iv_ratio": 1.0
+      },
+      {
+        "strike": 890.0,
+        "bid": 4.89232,
+        "ask": 5.09201,
+        "paretan_price": 4.99216,
+        "market_price": 4.99216,
+        "black_scholes_price": 5.34792,
+        "paretan_iv": 0.339876,
+        "market_iv": 0.339876,
+        "iv_ratio": 1.0
+      }
+    ],
+    "ladder_reason": null,
+    "realised": {
+      "horizon_days": 30,
+      "alpha": 2.4,
+      "standard_error": 0.3,
+      "plateau_k": 40,
+      "onset": 0.02,
+      "n_beyond": 64,
+      "is_flat": true,
+      "refusal": null,
+      "log_basis": {
+        "alpha": null,
+        "k": null,
+        "refusal": "too few losses (25) for a Hill fit",
+        "note": "dismissed -- docs/adr/0026 \u00a75: log returns are not in RV_alpha"
+      },
+      "survival_gross": {
+        "points": [
+          [
+            0.814326,
+            0.983051
+          ],
+          [
+            0.815747,
+            0.966102
+          ],
+          [
+            0.824098,
+            0.949153
+          ],
+          [
+            0.858428,
+            0.932203
+          ],
+          [
+            0.878183,
+            0.915254
+          ],
+          [
+            0.882233,
+            0.898305
+          ],
+          [
+            0.892698,
+            0.881356
+          ],
+          [
+            0.896073,
+            0.864407
+          ],
+          [
+            0.902138,
+            0.847458
+          ],
+          [
+            0.929206,
+            0.830508
+          ],
+          [
+            0.943169,
+            0.813559
+          ],
+          [
+            0.950684,
+            0.79661
+          ],
+          [
+            0.952778,
+            0.779661
+          ],
+          [
+            0.953948,
+            0.762712
+          ],
+          [
+            0.954414,
+            0.745763
+          ],
+          [
+            0.957781,
+            0.728814
+          ],
+          [
+            0.962612,
+            0.711864
+          ],
+          [
+            0.974036,
+            0.694915
+          ],
+          [
+            0.977578,
+            0.677966
+          ],
+          [
+            0.980763,
+            0.661017
+          ],
+          [
+            0.984403,
+            0.644068
+          ],
+          [
+            0.984588,
+            0.627119
+          ],
+          [
+            0.99277,
+            0.610169
+          ],
+          [
+            0.996612,
+            0.59322
+          ],
+          [
+            0.998845,
+            0.576271
+          ],
+          [
+            1.00411,
+            0.559322
+          ],
+          [
+            1.00663,
+            0.542373
+          ],
+          [
+            1.00816,
+            0.525424
+          ],
+          [
+            1.01235,
+            0.508475
+          ],
+          [
+            1.02192,
+            0.491525
+          ],
+          [
+            1.02303,
+            0.474576
+          ],
+          [
+            1.02962,
+            0.457627
+          ],
+          [
+            1.03106,
+            0.440678
+          ],
+          [
+            1.03514,
+            0.423729
+          ],
+          [
+            1.04324,
+            0.40678
+          ],
+          [
+            1.04452,
+            0.389831
+          ],
+          [
+            1.04604,
+            0.372881
+          ],
+          [
+            1.04835,
+            0.355932
+          ],
+          [
+            1.04844,
+            0.338983
+          ],
+          [
+            1.05455,
+            0.322034
+          ],
+          [
+            1.05927,
+            0.305085
+          ],
+          [
+            1.05941,
+            0.288136
+          ],
+          [
+            1.06025,
+            0.271186
+          ],
+          [
+            1.062,
+            0.254237
+          ],
+          [
+            1.07329,
+            0.237288
+          ],
+          [
+            1.0776,
+            0.220339
+          ],
+          [
+            1.07935,
+            0.20339
+          ],
+          [
+            1.09025,
+            0.186441
+          ],
+          [
+            1.09466,
+            0.169492
+          ],
+          [
+            1.09553,
+            0.152542
+          ],
+          [
+            1.09685,
+            0.135593
+          ],
+          [
+            1.10741,
+            0.118644
+          ],
+          [
+            1.11735,
+            0.101695
+          ],
+          [
+            1.12058,
+            0.0847458
+          ],
+          [
+            1.12158,
+            0.0677966
+          ],
+          [
+            1.13351,
+            0.0508475
+          ],
+          [
+            1.16194,
+            0.0338983
+          ],
+          [
+            1.20497,
+            0.0169492
+          ],
+          [
+            1.25342,
+            0.0
+          ]
+        ]
+      },
+      "survival_loss": {
+        "points": [
+          [
+            0.001,
+            0.96
+          ],
+          [
+            0.00125,
+            0.768
+          ],
+          [
+            0.0015625,
+            0.6144
+          ],
+          [
+            0.001953125,
+            0.49152
+          ],
+          [
+            0.00244140625,
+            0.393216
+          ],
+          [
+            0.0030517578125,
+            0.31457280000000004
+          ],
+          [
+            0.003814697265625,
+            0.25165824
+          ],
+          [
+            0.00476837158203125,
+            0.20132659199999997
+          ],
+          [
+            0.0059604644775390625,
+            0.1610612736
+          ],
+          [
+            0.007450580596923828,
+            0.12884901888
+          ],
+          [
+            0.009313225746154785,
+            0.103079215104
+          ],
+          [
+            0.011641532182693481,
+            0.0824633720832
+          ],
+          [
+            0.014551915228366852,
+            0.06597069766656
+          ],
+          [
+            0.018189894035458565,
+            0.052776558133248
+          ],
+          [
+            0.022737367544323206,
+            0.0422212465065984
+          ],
+          [
+            0.028421709430404007,
+            0.03377699720527872
+          ],
+          [
+            0.03552713678800501,
+            0.027021597764222974
+          ],
+          [
+            0.04440892098500626,
+            0.02161727821137838
+          ],
+          [
+            0.05551115123125783,
+            0.017293822569102706
+          ],
+          [
+            0.06938893903907228,
+            0.013835058055282163
+          ],
+          [
+            0.08673617379884035,
+            0.01106804644422573
+          ],
+          [
+            0.10842021724855044,
+            0.008854437155380583
+          ],
+          [
+            0.13552527156068805,
+            0.007083549724304468
+          ],
+          [
+            0.1694065894508601,
+            0.005666839779443574
+          ],
+          [
+            0.21175823681357508,
+            0.004533471823554859
+          ]
+        ]
+      }
+    },
+    "realised_reason": null,
+    "alpha_gap": 0.6,
+    "alpha_gap_reason": null
+  }
+}
+
+export const SURFACE_REFUSED: SurfaceResponse = {
+  "asset": "tsla",
+  "as_of": "2026-10-02",
+  "chain_snapshot": "v7",
+  "ohlcv_snapshot": "v12",
+  "code_sha": "abc1234",
+  "surface": {
+    "underlying": "SPY",
+    "quote_date": "2026-10-02",
+    "expiration": "2026-11-01",
+    "t_days": 30,
+    "spot": 1000.0,
+    "moneyness_pct": 7.0,
+    "parameterisation": "fixed moneyness: each anchor is the listed strike nearest spot*(1 - m/100); this confounds regime comparisons (docs/PRIOR_ART.md \u00a71)",
+    "r": 0.04,
+    "q": 0.019,
+    "rate_note": "q is an index-like dividend yield and is WRONG for income names (HYG, TLT); anchor_iv, lambda_guard_ok and the Black-Scholes overlay depend on it",
+    "anchor_iv": null,
+    "lambda_guard_ok": null,
+    "anchors": {
+      "readings": [
+        {
+          "strike": 930.0,
+          "fit": {
+            "anchor": {
+              "underlying": "SPY",
+              "quote_date": "2026-10-02",
+              "expiration": "2026-11-01",
+              "spot": 1000.0,
+              "strike": 930.0,
+              "price": 12.5779,
+              "bid": 12.3264,
+              "ask": 12.8295
+            },
+            "alpha": null,
+            "rmse_log_price": null,
+            "n_strikes": 30,
+            "strike_span": 0.15,
+            "refusal": "fewer than 6 hygienic strikes below the anchor"
+          },
+          "refusal": null,
+          "smile": {
+            "slope": 1.78736e-20,
+            "std_error": 8.89909e-18,
+            "strikes": [
+              905.0,
+              910.0,
+              915.0
+            ],
+            "refusal": null
+          },
+          "ceiling": null,
+          "ceiling_reason": "no smile slope: fewer than 7 usable rows"
+        },
+        {
+          "strike": 910.0,
+          "fit": {
+            "anchor": {
+              "underlying": "SPY",
+              "quote_date": "2026-10-02",
+              "expiration": "2026-11-01",
+              "spot": 1000.0,
+              "strike": 910.0,
+              "price": 7.54074,
+              "bid": 7.38993,
+              "ask": 7.69156
+            },
+            "alpha": null,
+            "rmse_log_price": null,
+            "n_strikes": 30,
+            "strike_span": 0.15,
+            "refusal": "fewer than 6 hygienic strikes below the anchor"
+          },
+          "refusal": null,
+          "smile": {
+            "slope": 0.0,
+            "std_error": 7.74066e-19,
+            "strikes": [
+              890.0,
+              895.0,
+              900.0
+            ],
+            "refusal": null
+          },
+          "ceiling": null,
+          "ceiling_reason": "no smile slope: fewer than 7 usable rows"
+        },
+        {
+          "strike": 890.0,
+          "fit": {
+            "anchor": {
+              "underlying": "SPY",
+              "quote_date": "2026-10-02",
+              "expiration": "2026-11-01",
+              "spot": 1000.0,
+              "strike": 890.0,
+              "price": 4.99216,
+              "bid": 4.89232,
+              "ask": 5.09201
+            },
+            "alpha": null,
+            "rmse_log_price": null,
+            "n_strikes": 30,
+            "strike_span": 0.15,
+            "refusal": "fewer than 6 hygienic strikes below the anchor"
+          },
+          "refusal": null,
+          "smile": {
+            "slope": 0.0,
+            "std_error": 7.74066e-19,
+            "strikes": [
+              870.0,
+              875.0,
+              880.0
+            ],
+            "refusal": null
+          },
+          "ceiling": null,
+          "ceiling_reason": "no smile slope: fewer than 7 usable rows"
+        }
+      ],
+      "dispersion": null,
+      "dispersion_reason": "fewer than two anchors accepted"
+    },
+    "ladder": [
+      {
+        "strike": 925.0,
+        "bid": 10.7157,
+        "ask": 11.153,
+        "paretan_price": 10.9344,
+        "market_price": 10.9344,
+        "black_scholes_price": 11.4108,
+        "paretan_iv": 0.340662,
+        "market_iv": 0.340662,
+        "iv_ratio": 1.0
+      },
+      {
+        "strike": 920.0,
+        "bid": 9.39754,
+        "ask": 9.78111,
+        "paretan_price": 9.58932,
+        "market_price": 9.58932,
+        "black_scholes_price": 10.3251,
+        "paretan_iv": 0.336872,
+        "market_iv": 0.336872,
+        "iv_ratio": 1.0
+      },
+      {
+        "strike": 915.0,
+        "bid": 8.30521,
+        "ask": 8.6442,
+        "paretan_price": 8.4747,
+        "market_price": 8.4747,
+        "black_scholes_price": 9.31791,
+        "paretan_iv": 0.334798,
+        "market_iv": 0.334798,
+        "iv_ratio": 1.0
+      },
+      {
+        "strike": 910.0,
+        "bid": 7.38993,
+        "ask": 7.69156,
+        "paretan_price": 7.54074,
+        "market_price": 7.54074,
+        "black_scholes_price": 8.38617,
+        "paretan_iv": 0.334062,
+        "market_iv": 0.334062,
+        "iv_ratio": 1.0
+      },
+      {
+        "strike": 905.0,
+        "bid": 6.61542,
+        "ask": 6.88544,
+        "paretan_price": 6.75043,
+        "market_price": 6.75043,
+        "black_scholes_price": 7.52664,
+        "paretan_iv": 0.334386,
+        "market_iv": 0.334386,
+        "iv_ratio": 1.0
+      },
+      {
+        "strike": 900.0,
+        "bid": 5.95424,
+        "ask": 6.19727,
+        "paretan_price": 6.07576,
+        "market_price": 6.07576,
+        "black_scholes_price": 6.73601,
+        "paretan_iv": 0.335562,
+        "market_iv": 0.335562,
+        "iv_ratio": 1.0
+      },
+      {
+        "strike": 895.0,
+        "bid": 5.38534,
+        "ask": 5.60515,
+        "paretan_price": 5.49525,
+        "market_price": 5.49525,
+        "black_scholes_price": 6.01091,
+        "paretan_iv": 0.337433,
+        "market_iv": 0.337433,
+        "iv_ratio": 1.0
+      },
+      {
+        "strike": 890.0,
+        "bid": 4.89232,
+        "ask": 5.09201,
+        "paretan_price": 4.99216,
+        "market_price": 4.99216,
+        "black_scholes_price": 5.34792,
+        "paretan_iv": 0.339876,
+        "market_iv": 0.339876,
+        "iv_ratio": 1.0
+      }
+    ],
+    "ladder_reason": null,
+    "realised": {
+      "horizon_days": 30,
+      "alpha": null,
+      "standard_error": null,
+      "plateau_k": null,
+      "onset": null,
+      "n_beyond": 0,
+      "is_flat": null,
+      "refusal": "no Karamata region to gate on: need at least 31 observations to claim an onset supported by 30, got 25",
+      "log_basis": {
+        "alpha": null,
+        "k": null,
+        "refusal": "too few losses (25) for a Hill fit",
+        "note": "dismissed -- docs/adr/0026 \u00a75: log returns are not in RV_alpha"
+      },
+      "survival_gross": {
+        "points": [
+          [
+            0.814326,
+            0.983051
+          ],
+          [
+            0.815747,
+            0.966102
+          ],
+          [
+            0.824098,
+            0.949153
+          ],
+          [
+            0.858428,
+            0.932203
+          ],
+          [
+            0.878183,
+            0.915254
+          ],
+          [
+            0.882233,
+            0.898305
+          ],
+          [
+            0.892698,
+            0.881356
+          ],
+          [
+            0.896073,
+            0.864407
+          ],
+          [
+            0.902138,
+            0.847458
+          ],
+          [
+            0.929206,
+            0.830508
+          ],
+          [
+            0.943169,
+            0.813559
+          ],
+          [
+            0.950684,
+            0.79661
+          ],
+          [
+            0.952778,
+            0.779661
+          ],
+          [
+            0.953948,
+            0.762712
+          ],
+          [
+            0.954414,
+            0.745763
+          ],
+          [
+            0.957781,
+            0.728814
+          ],
+          [
+            0.962612,
+            0.711864
+          ],
+          [
+            0.974036,
+            0.694915
+          ],
+          [
+            0.977578,
+            0.677966
+          ],
+          [
+            0.980763,
+            0.661017
+          ],
+          [
+            0.984403,
+            0.644068
+          ],
+          [
+            0.984588,
+            0.627119
+          ],
+          [
+            0.99277,
+            0.610169
+          ],
+          [
+            0.996612,
+            0.59322
+          ],
+          [
+            0.998845,
+            0.576271
+          ],
+          [
+            1.00411,
+            0.559322
+          ],
+          [
+            1.00663,
+            0.542373
+          ],
+          [
+            1.00816,
+            0.525424
+          ],
+          [
+            1.01235,
+            0.508475
+          ],
+          [
+            1.02192,
+            0.491525
+          ],
+          [
+            1.02303,
+            0.474576
+          ],
+          [
+            1.02962,
+            0.457627
+          ],
+          [
+            1.03106,
+            0.440678
+          ],
+          [
+            1.03514,
+            0.423729
+          ],
+          [
+            1.04324,
+            0.40678
+          ],
+          [
+            1.04452,
+            0.389831
+          ],
+          [
+            1.04604,
+            0.372881
+          ],
+          [
+            1.04835,
+            0.355932
+          ],
+          [
+            1.04844,
+            0.338983
+          ],
+          [
+            1.05455,
+            0.322034
+          ],
+          [
+            1.05927,
+            0.305085
+          ],
+          [
+            1.05941,
+            0.288136
+          ],
+          [
+            1.06025,
+            0.271186
+          ],
+          [
+            1.062,
+            0.254237
+          ],
+          [
+            1.07329,
+            0.237288
+          ],
+          [
+            1.0776,
+            0.220339
+          ],
+          [
+            1.07935,
+            0.20339
+          ],
+          [
+            1.09025,
+            0.186441
+          ],
+          [
+            1.09466,
+            0.169492
+          ],
+          [
+            1.09553,
+            0.152542
+          ],
+          [
+            1.09685,
+            0.135593
+          ],
+          [
+            1.10741,
+            0.118644
+          ],
+          [
+            1.11735,
+            0.101695
+          ],
+          [
+            1.12058,
+            0.0847458
+          ],
+          [
+            1.12158,
+            0.0677966
+          ],
+          [
+            1.13351,
+            0.0508475
+          ],
+          [
+            1.16194,
+            0.0338983
+          ],
+          [
+            1.20497,
+            0.0169492
+          ],
+          [
+            1.25342,
+            0.0
+          ]
+        ]
+      },
+      "survival_loss": {
+        "points": [
+          [
+            0.00115542,
+            0.96
+          ],
+          [
+            0.0033882,
+            0.92
+          ],
+          [
+            0.00722962,
+            0.88
+          ],
+          [
+            0.015412,
+            0.84
+          ],
+          [
+            0.0155968,
+            0.8
+          ],
+          [
+            0.0192367,
+            0.76
+          ],
+          [
+            0.0224224,
+            0.72
+          ],
+          [
+            0.0259639,
+            0.68
+          ],
+          [
+            0.0373883,
+            0.64
+          ],
+          [
+            0.0422187,
+            0.6
+          ],
+          [
+            0.045586,
+            0.56
+          ],
+          [
+            0.0460522,
+            0.52
+          ],
+          [
+            0.0472217,
+            0.48
+          ],
+          [
+            0.0493158,
+            0.44
+          ],
+          [
+            0.0568309,
+            0.4
+          ],
+          [
+            0.0707939,
+            0.36
+          ],
+          [
+            0.097862,
+            0.32
+          ],
+          [
+            0.103927,
+            0.28
+          ],
+          [
+            0.107302,
+            0.24
+          ],
+          [
+            0.117767,
+            0.2
+          ],
+          [
+            0.121817,
+            0.16
+          ],
+          [
+            0.141572,
+            0.12
+          ],
+          [
+            0.175902,
+            0.08
+          ],
+          [
+            0.184253,
+            0.04
+          ],
+          [
+            0.185674,
+            0.0
+          ]
+        ]
+      }
+    },
+    "realised_reason": null,
+    "alpha_gap": null,
+    "alpha_gap_reason": "no realised alpha: no Karamata region to gate on: need at least 31 observations to claim an onset supported by 30, got 25"
+  }
 }

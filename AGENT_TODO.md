@@ -29,6 +29,8 @@ a large one strictly in order.
       `AGENT_MISSION.md`'s collection-health check, which still comes first.
       Check this item off only when P5 is merged and the Surface tab renders
       on tail-lab.fly.dev; until then, do not remove or re-order it.
+      **Status 2026-10-04: P5 code is in (PR `agent/surface-tab`); tick this
+      once the deployed tab is confirmed rendering.**
 
 - [ ] **Fix `rates.py` by paging FRED vintages — recipe verified, and the
       obvious fix fabricates revisions.** `docs/PRIOR_ART.md` §19.
@@ -2116,6 +2118,16 @@ new module near-complete, with a pinned synthetic case with a known answer
 
 ### P5 — The Surface tab
 
+- [x] **Built 2026-10-04** (`views/SurfaceView.tsx`, `SURFACE_CACHE` in
+      `PutLab.tsx`, `fetchSurface`, `e2e/surface.spec.ts` with a fitted and an
+      all-refused fixture). Tenor sent as `tenor_weeks * 7` days. Deviations:
+      Zipf plot and ladder live in one file with `AlphaStrip`/`SurfaceCaveat`
+      rather than one file each; the price-vs-strike toggle plots the <=8 ladder
+      rungs, not the full chain. Not yet confirmed on tail-lab.fly.dev.
+      New advisories from #134, still open: `reading.survival_curve` scans ties
+      with a nested loop (`bisect.bisect_right` does it in one line); `_rungs`
+      takes five parameters (bundle `anchor_iv`, `r`, `q` if it grows);
+      `SurfaceResponse` is cached whole, so keep the TTL short if it grows.
 - [ ] **Goal.** One screen, no new control, that shows the ladder and the
       two alphas honestly — including when they refuse.
 
