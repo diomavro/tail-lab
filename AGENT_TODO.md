@@ -29,6 +29,9 @@ a large one strictly in order.
       `AGENT_MISSION.md`'s collection-health check, which still comes first.
       Check this item off only when P5 is merged and the Surface tab renders
       on tail-lab.fly.dev; until then, do not remove or re-order it.
+      **2026-10-05:** advisory notes on #134/#136 partly applied (bisect in
+      `survival_curve`, fragment in `RealisedCaveat`); still open: slice `ladder`
+      once in `SurfaceView`, trim the e2e ladder fixture to ~9 rungs.
       **Status 2026-10-04: P5 code is in (PR `agent/surface-tab`); tick this
       once the deployed tab is confirmed rendering.**
 
