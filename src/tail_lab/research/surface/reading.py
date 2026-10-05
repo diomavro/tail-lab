@@ -12,6 +12,7 @@ Anchors are picked by FIXED moneyness, which carries the regime confound of
 
 from __future__ import annotations
 
+import bisect
 import datetime as dt
 import math
 from dataclasses import dataclass
@@ -121,13 +122,8 @@ def survival_curve(values: list[float], *, max_points: int = SURVIVAL_POINTS) ->
     """
     ordered = sorted(values)
     n = len(ordered)
-    # Index of the first strictly greater value gives the exact tie-aware share.
-    points: list[tuple[float, float]] = []
-    for i, x in enumerate(ordered):
-        j = i
-        while j < n and ordered[j] <= x:
-            j += 1
-        points.append((x, (n - j) / n))
+    # bisect_right gives the first strictly greater value: the exact tie-aware share.
+    points = [(x, (n - bisect.bisect_right(ordered, x)) / n) for x in ordered]
     if len(points) > max_points:
         step = (len(points) - 1) / (max_points - 1)
         points = [points[round(i * step)] for i in range(max_points)]

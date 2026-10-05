@@ -240,17 +240,15 @@ function AlphaStrip({ surface }: { surface: SurfaceReading }) {
 function RealisedCaveat({ realised }: { realised: SurfaceRealised | null }) {
   if (!realised) return null
   return (
-    <>
-      <p>
-        Realised side: {realised.n_beyond} observations beyond the onset
-        {realised.is_flat === false && ' — the stable plateau is NOT flat (stable: false), so no onset is claimed'}
-        . Horizon {realised.horizon_days} calendar days. Log-basis α{' '}
-        {realised.log_basis.alpha == null
-          ? `refused (${realised.log_basis.refusal ?? 'no reason given'})`
-          : fmtFixed(realised.log_basis.alpha, 2)}{' '}
-        — {realised.log_basis.note}.
-      </p>
-    </>
+    <p>
+      Realised side: {realised.n_beyond} observations beyond the onset
+      {realised.is_flat === false && ' — the stable plateau is NOT flat (stable: false), so no onset is claimed'}
+      . Horizon {realised.horizon_days} calendar days. Log-basis α{' '}
+      {realised.log_basis.alpha == null
+        ? `refused (${realised.log_basis.refusal ?? 'no reason given'})`
+        : fmtFixed(realised.log_basis.alpha, 2)}{' '}
+      — {realised.log_basis.note}.
+    </p>
   )
 }
 
