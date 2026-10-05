@@ -1,0 +1,12 @@
+# GitHub Actions only (HUMAN_TODO, 2026-10-05). Every action is pinned to a
+# commit SHA; this keeps those pins current. Its PRs edit .github/, a guarded
+# path, so automerge.yml leaves them for a human by construction.
+# npm stays off until automerge.yml gains an author check: an npm bump would
+# otherwise auto-merge and auto-deploy unattended. pip PRs would touch the
+# guarded pyproject.toml.
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
