@@ -476,8 +476,9 @@ do.
 ## Operational — found 2026-09-19
 
 - [ ] **Partly superseded 2026-10-05: the local `tail-lab-refresh.timer`
-      (systemd, daily 08:30 Budapest, `scripts/local_daily_refresh.sh`)
-      now refreshes OHLCV, VIX and the rest every day** -- live VIX was current
+      (systemd, `OnCalendar=Mon-Fri 06:30 UTC`, `scripts/local_daily_refresh.sh`)
+      now refreshes OHLCV, VIX and the rest every weekday**, writing to the
+      production (tigris) lake -- live VIX was current
       on 2026-10-05. What is left is only whether to move it into Actions
       (free now the repo is public) so it stops depending on this laptop
       being on. Original item: **Decide the cadence for a scheduled OHLCV/VIX
