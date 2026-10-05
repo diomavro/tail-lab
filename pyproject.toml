@@ -42,6 +42,14 @@ dev = [
     "types-requests>=2.32.0",
     "scipy-stubs>=1.13.0",
     "pre-commit>=3.7.0",
+    # Approved 2026-10-05 (HUMAN_TODO). Offline research only, never on Fly.
+    # arch: StationaryBootstrap + optimal_block_length for the Hill CI, and
+    # MCS/SPA for the Bake-off's multiple testing (docs/PRIOR_ART.md §13).
+    "arch>=8.0.0",
+    # NOT Riskfolio-Lib (rejected 2026-10-05): it hard-requires vectorbt,
+    # licensed Apache 2.0 *with the Commons Clause*, and this platform is meant
+    # to trade eventually. Exact-Kelly sizing goes on cvxpy (Apache-2.0)
+    # directly when that work starts.
 ]
 
 [build-system]
