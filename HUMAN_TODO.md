@@ -71,9 +71,10 @@ acts on, removes, or reorders anything in this file.**
       different products. Whichever you pick, it belongs on the Screen and in
       the README.
 
-- [x] **Done 2026-10-05 (Dio): approved as `[dev]` dependencies** -- both
-      serve offline `research/` work, so neither ships to Fly. Separate
-      human-merged PR adds them to `pyproject.toml`.
+- [x] **Decided 2026-10-05 (Dio): `arch` approved for `[dev]`; Riskfolio-Lib
+      rejected.** Riskfolio hard-requires `vectorbt` (Apache 2.0 + Commons
+      Clause), and the platform is meant to trade eventually; exact-Kelly
+      sizing will use `cvxpy` directly. Separate human-merged PR adds `arch`.
       Original item: **Approve two dependencies (`pyproject.toml` is a guarded
       path, so this needs a human-merged PR).**
       Both are permissive and both unblock queued agent work:
