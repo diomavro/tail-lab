@@ -12,7 +12,7 @@ test.beforeEach(async ({ page }) => {
   await mockPutLabApi(page)
 })
 
-test('opens on Workspace with all seven views reachable', async ({ page }) => {
+test('opens on Workspace with all eight views reachable', async ({ page }) => {
   await page.goto('/')
 
   const tabs = page.getByRole('tab')
@@ -20,6 +20,7 @@ test('opens on Workspace with all seven views reachable', async ({ page }) => {
     'Workspace',
     'Recommendations',
     'Portfolio',
+    'Book',
     'Bake-off',
     'Regime',
     'Surface',

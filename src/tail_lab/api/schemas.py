@@ -8,6 +8,7 @@ from pydantic import BaseModel, Field
 
 from tail_lab.feedback.store import FeedbackKind, FeedbackRecord
 from tail_lab.memory.store import RegimeOutcome
+from tail_lab.research.backtest.hedge_overlay import HedgeOverlayResult
 from tail_lab.research.backtest.portfolio import PortfolioLeg
 from tail_lab.research.backtest.sweep import SweepPoint
 from tail_lab.research.surface.reading import SurfaceReading
@@ -195,3 +196,12 @@ class SurfaceResponse(BaseModel):
     ohlcv_snapshot: str | None
     code_sha: str
     surface: SurfaceReading
+
+
+class HedgeOverlayResponse(BaseModel):
+    """The Book's hedge-ratio test with its provenance: the one Cboe strategy snapshot
+    every program and the S&P 500 leg were read from."""
+
+    cboe_snapshot: str | None
+    code_sha: str
+    overlay: HedgeOverlayResult

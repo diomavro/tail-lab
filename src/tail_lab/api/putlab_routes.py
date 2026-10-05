@@ -26,9 +26,15 @@ from functools import lru_cache
 import pandas as pd
 from fastapi import APIRouter, Depends, HTTPException, Query
 
-from tail_lab.api.schemas import PortfolioRequest, SurfaceResponse, SweepResponse
+from tail_lab.api.schemas import (
+    HedgeOverlayResponse,
+    PortfolioRequest,
+    SurfaceResponse,
+    SweepResponse,
+)
 from tail_lab.config import get_lake_store as _get_configured_lake_store
 from tail_lab.config import get_settings
+from tail_lab.contracts.cboe_strategy import DATASET as CBOE_STRATEGY_DATASET
 from tail_lab.contracts.ohlcv import dataset_id
 from tail_lab.contracts.option_chain import DATASET as OPTION_CHAIN_DATASET
 from tail_lab.contracts.options_calendar import (
@@ -43,6 +49,7 @@ from tail_lab.research.accuracy import (
     AccuracyReport,
     compute_accuracy_report,
 )
+from tail_lab.research.backtest.hedge_overlay import OverlayDataMissing, compute_hedge_overlay
 from tail_lab.research.backtest.index_replication import (
     DEFAULT_DIVIDEND_YIELD,
     IndexReplicationResult,
@@ -113,6 +120,11 @@ _ACCURACY_TTL_S = 120.0
 #: is immutable for a given as_of, so memoize on (asset, m, tenor, as_of).
 _SURFACE_CACHE: dict[tuple[str, float, float, str], tuple[float, SurfaceResponse]] = {}
 _SURFACE_TTL_S = 120.0
+
+#: The Book blends three programs at eleven hedge ratios over two windows
+#: and three dividend yields -- a few seconds of pandas that depends only on
+#: the as-of date, so it shares the replication cache's TTL.
+_OVERLAY_CACHE: dict[str, tuple[float, HedgeOverlayResponse]] = {}
 
 
 @lru_cache(maxsize=1)
@@ -820,4 +832,78 @@ def putlab_surface(
         surface=reading,
     )
     _SURFACE_CACHE[cache_key] = (time.monotonic() + _SURFACE_TTL_S, response)
+    return response
+
+
+@router.get("/api/putlab/hedge-overlay")
+def putlab_hedge_overlay(
+    as_of: dt.date | None = Query(default=None),
+    store: LakeStore = Depends(get_lake_store),
+) -> HedgeOverlayResponse:
+    """The Book: Rodman's Paradox, tested: S&P 500 total return blended with each hedged
+    Cboe program at every hedge ratio, and whether any mix out-grows both ends.
+
+    Reads ONLY the ``cboe_strategy`` snapshot. 404 when the lake has none.
+    """
+    resolved = _resolve_as_of(as_of)
+    key = resolved.isoformat()
+    hit = _OVERLAY_CACHE.get(key)
+    if hit is not None and hit[0] > time.monotonic():
+        return hit[1]
+    try:
+        overlay = compute_hedge_overlay(store, as_of=resolved)
+    except OverlayDataMissing as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    response = HedgeOverlayResponse(
+        cboe_snapshot=_snapshot(store, CBOE_STRATEGY_DATASET, resolved),
+        code_sha=get_settings().code_sha,
+        overlay=overlay,
+    )
+    log_event(
+        logger,
+        "api.putlab.hedge_overlay",
+        as_of=resolved,
+        cboe_snapshot=response.cboe_snapshot,
+        code_sha=response.code_sha,
+        dividend_yield=overlay.dividend_yield,
+        # Flat k=v fields, one set per program and window, so the log line
+        # stays greppable: ``PPUT_cole_outcome=fails``.
+        **{
+            f"{p.index_symbol}_{w.key}_{field}": value
+            for p in overlay.programs
+            for w in p.windows
+            for field, value in (
+                ("start", w.start),
+                ("end", w.end),
+                ("clipped", w.clipped),
+                ("requested", f"{w.requested_start}..{w.requested_end}"),
+                ("best_weight", w.best_weight),
+                ("margin", w.margin),
+                ("outcome", w.outcome),
+                # log_event drops None; "undefined" keeps the key on the line.
+                ("outcome_risk_adjusted", w.outcome_risk_adjusted or "undefined"),
+                (
+                    "best_weight_risk_adjusted",
+                    "undefined"
+                    if w.best_weight_risk_adjusted is None
+                    else w.best_weight_risk_adjusted,
+                ),
+                # The verdict at each assumed yield: "0.014:holds:0.000819,...".
+                (
+                    "sensitivity",
+                    ",".join(
+                        f"{r.dividend_yield}:{r.outcome}:{r.margin:.6f}" for r in w.sensitivity
+                    ),
+                ),
+            )
+        },
+        # A window the lake could not cover is a result too (refusals are values).
+        **{
+            f"{p.index_symbol}_{key}_unavailable": reason
+            for p in overlay.programs
+            for key, reason in p.unavailable.items()
+        },
+        **{f"{symbol}_missing": reason for symbol, reason in overlay.missing.items()},
+    )
+    _OVERLAY_CACHE[key] = (time.monotonic() + _REPLICATION_TTL_S, response)
     return response

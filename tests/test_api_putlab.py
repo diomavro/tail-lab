@@ -18,6 +18,7 @@ from tail_lab.api.putlab_routes import get_lake_store as putlab_get_lake_store
 from tail_lab.contracts.ohlcv import dataset_id
 from tail_lab.contracts.options_expiry import dataset_id as options_expiry_dataset_id
 from tail_lab.lake.store import DeltaLakeStore
+from tail_lab.research.backtest.hedge_overlay import HedgeOverlayResult
 
 
 def _seed_ohlcv(store: DeltaLakeStore, symbol: str, ingest_date: dt.date, n: int = 320) -> None:
@@ -61,6 +62,7 @@ def client(tmp_path: Path) -> Iterator[TestClient]:
     putlab_routes._ACCURACY_CACHE.clear()
     putlab_routes._REPLICATION_CACHE.clear()
     putlab_routes._SURFACE_CACHE.clear()
+    putlab_routes._OVERLAY_CACHE.clear()
     app.dependency_overrides[putlab_get_lake_store] = lambda: store
     try:
         yield TestClient(app)
@@ -717,3 +719,115 @@ def test_surface_never_reads_the_optionsdx_panel(client: TestClient) -> None:
     resp = client.get("/api/putlab/surface", params={"asset": "spy", "as_of": today.isoformat()})
     assert resp.status_code == 200
     assert seen and not any(d.startswith("optionsdx") for d in seen)
+
+
+# ---------------------------------------------------------------- Overlay
+
+
+def _seed_cboe(store: DeltaLakeStore, ingest_date: dt.date) -> None:
+    dates = pd.bdate_range(end=ingest_date, periods=400)
+    rng = np.random.default_rng(5)
+    level = 100 * np.cumprod(1 + rng.normal(0.0003, 0.01, len(dates)))
+    frames = [
+        pd.DataFrame({"index_symbol": s, "trade_date": dates, "close": level * k})
+        for s, k in (("SPX", 1.0), ("PPUT", 0.5))
+    ]
+    store.write_bronze("cboe_strategy", ingest_date, pd.concat(frames, ignore_index=True))
+
+
+def test_hedge_overlay_404s_without_a_cboe_snapshot(client: TestClient) -> None:
+    resp = client.get("/api/putlab/hedge-overlay")
+    assert resp.status_code == 404
+    assert "no Cboe strategy indices" in resp.json()["detail"]
+
+
+def test_hedge_overlay_carries_its_snapshot_and_logs_each_verdict(
+    client: TestClient, caplog: pytest.LogCaptureFixture
+) -> None:
+    store = app.dependency_overrides[putlab_get_lake_store]()
+    today = dt.datetime.now(dt.UTC).date()
+    _seed_cboe(store, today)
+
+    with caplog.at_level("INFO", logger="tail_lab"):
+        resp = client.get("/api/putlab/hedge-overlay")
+
+    assert resp.status_code == 200
+    body = resp.json()
+    # A result is never shown without the snapshot it was computed from.
+    assert body["cboe_snapshot"]
+    assert [p["index_symbol"] for p in body["overlay"]["programs"]] == ["PPUT"]
+    line = next(r.getMessage() for r in caplog.records if "hedge_overlay" in r.getMessage())
+    assert "cboe_snapshot=" in line
+    assert "PPUT_full_outcome=" in line and "PPUT_full_margin=" in line
+    assert "PPUT_full_clipped=false" in line
+    assert f"code_sha={body['code_sha']}" in line
+    for field in (
+        "start",
+        "end",
+        "requested",
+        "best_weight",
+        "best_weight_risk_adjusted",
+        "outcome_risk_adjusted",
+        "sensitivity",
+    ):
+        assert f" PPUT_full_{field}=" in line, field
+    # Each sensitivity entry carries yield, outcome and margin.
+    sens = line.split(" PPUT_full_sensitivity=")[1].split()[0].split(",")
+    assert [e.split(":")[0] for e in sens] == ["0.014", "0.019", "0.024"]
+    assert all(e.split(":")[1] in {"holds", "inconclusive", "fails"} for e in sens)
+    margins = [float(e.split(":")[2]) for e in sens]
+    assert margins == pytest.approx(
+        [r["margin"] for r in body["overlay"]["programs"][0]["windows"][-1]["sensitivity"]],
+        abs=1e-6,
+    )
+    # 400 days of history cannot cover 2005-2016: the refusal is logged too.
+    assert "PPUT_cole_unavailable=" in line
+    assert "VXTH_missing=" in line
+    assert "cole" in body["overlay"]["programs"][0]["unavailable"]
+    assert putlab_routes._OVERLAY_CACHE
+
+
+@pytest.mark.parametrize("error", [KeyError("store bug"), ValueError("corrupt parquet")])
+def test_hedge_overlay_lets_a_store_bug_fail_loudly(error: Exception) -> None:
+    """Only "the lake has no data" is a 404. A broken store is a 500, never
+    relabelled as an empty lake (KeyError is a LookupError, hence the test)."""
+
+    class BrokenStore:
+        def read_bronze_as_of(self, dataset: str, as_of: dt.date) -> pd.DataFrame:
+            raise error
+
+        def bronze_snapshot_id(self, dataset: str, as_of: dt.date) -> str:
+            raise LookupError(dataset)
+
+    putlab_routes._OVERLAY_CACHE.clear()
+    app.dependency_overrides[putlab_get_lake_store] = lambda: BrokenStore()
+    try:
+        resp = TestClient(app, raise_server_exceptions=False).get("/api/putlab/hedge-overlay")
+    finally:
+        app.dependency_overrides.pop(putlab_get_lake_store, None)
+    assert resp.status_code == 500
+
+
+def test_hedge_overlay_logs_an_undefined_ratio_as_undefined_not_absent(
+    client: TestClient, caplog: pytest.LogCaptureFixture, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """log_event drops None, so a missing risk-adjusted verdict would vanish
+    from the run record instead of reading as undefined (STANDARDS §f)."""
+    store = app.dependency_overrides[putlab_get_lake_store]()
+    _seed_cboe(store, dt.datetime.now(dt.UTC).date())
+    real = putlab_routes.compute_hedge_overlay
+
+    def undefined_ratio(*args: object, **kwargs: object) -> HedgeOverlayResult:
+        result = real(*args, **kwargs)  # type: ignore[arg-type]
+        for program in result.programs:
+            for w in program.windows:
+                w.best_weight_risk_adjusted = None
+                w.outcome_risk_adjusted = None
+        return result
+
+    monkeypatch.setattr(putlab_routes, "compute_hedge_overlay", undefined_ratio)
+    with caplog.at_level("INFO", logger="tail_lab"):
+        assert client.get("/api/putlab/hedge-overlay").status_code == 200
+    line = next(r.getMessage() for r in caplog.records if "hedge_overlay" in r.getMessage())
+    assert "PPUT_full_outcome_risk_adjusted=undefined" in line
+    assert "PPUT_full_best_weight_risk_adjusted=undefined" in line

@@ -4,6 +4,7 @@
 // keeps the specs asserting on rendered behaviour rather than on fetch calls.
 
 import type { Page, Route } from '@playwright/test'
+import { HEDGE_OVERLAY } from './hedge-overlay'
 import * as fx from './putlab'
 
 export interface MockOptions {
@@ -76,6 +77,8 @@ export async function mockPutLabApi(page: Page, opts: MockOptions = {}): Promise
       case '/api/putlab/surface':
         // TSLA is the all-refused payload; every other name is the fitted one.
         return json(route, url.searchParams.get('asset') === 'tsla' ? fx.SURFACE_REFUSED : fx.SURFACE_FITTED)
+      case '/api/putlab/hedge-overlay':
+        return json(route, HEDGE_OVERLAY)
       case '/api/feedback':
         return json(route, { id: 'fb1', text: 'ok', kind: 'issue', created_at: '2026-08-21T00:00:00Z', status: 'open', resolved_at: null })
       default:

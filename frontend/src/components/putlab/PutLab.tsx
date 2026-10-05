@@ -35,6 +35,7 @@ import { GlossaryView } from './views/GlossaryView'
 import { PortfolioView } from './views/PortfolioView'
 import { RecommendationsView } from './views/RecommendationsView'
 import { RegimeView } from './views/RegimeView'
+import { OverlayView } from './views/OverlayView'
 import { SurfaceView } from './views/SurfaceView'
 import { WorkspaceView } from './views/WorkspaceView'
 
@@ -61,6 +62,7 @@ export type TabId =
   | 'workspace'
   | 'recommendations'
   | 'portfolio'
+  | 'book'
   | 'bakeoff'
   | 'regime'
   | 'surface'
@@ -471,6 +473,7 @@ export function PutLab() {
               />
             )}
             {tab === 'portfolio' && <PortfolioView universe={universe} controls={controls} />}
+            {tab === 'book' && <OverlayView />}
             {tab === 'bakeoff' && <BakeOffView controls={controls} />}
             {tab === 'regime' && <RegimeView regimes={regimes} vix={vix} accuracy={accuracy} />}
             {tab === 'surface' && <SurfaceView surface={surface} controls={controls} />}

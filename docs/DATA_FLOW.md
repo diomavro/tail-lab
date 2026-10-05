@@ -43,7 +43,7 @@ flowchart LR
         ROUTES["/api/putlab/*"]
     end
     subgraph U["⑤ Pages"]
-        PAGES["Workspace · Portfolio · Bake-off<br/>Regime · Glossary"]
+        PAGES["Workspace · Portfolio · Book<br/>Bake-off · Regime · Glossary"]
     end
 
     CBOE --> BRONZE
@@ -86,6 +86,7 @@ Screen tab's deeper "is the screen any good?" question moved to its own
 | **Workspace** | Which name, and what would that hedge have done? | `/api/putlab/leaderboard` (the ranking strip), `/backtest`, `/sweep`, `/regime-verdict`, **`/accuracy`** | `ohlcv_*` (whole screening universe + `ohlcv_spy` as benchmark), `vix`, `cboe_strategy` |
 | **Recommendations** | Of every name's *best* strategy, which are the best? | `/api/putlab/leaderboard` (same read as the ranking strip — one strike x tenor sweep per name, bounded to the priced band per `docs/adr/0018`) | `ohlcv_*`, `vix` |
 | **Portfolio** | What does a blend of legs do? | `/api/putlab/portfolio`, `/api/putlab/leaderboard` | `ohlcv_*` |
+| **Book** | How much of the book should carry the hedge? (Rodman's Paradox: does any mix out-grow both 0% and 100% hedged?) | `/api/putlab/hedge-overlay` (one read per as-of date; 404 with no Cboe snapshot) | `cboe_strategy` only (`SPX` + `PPUT`, `PPUT3M`, `VXTH`) |
 | **Bake-off** | Which screen actually picks winners? | `/api/putlab/metric-screen` (explicit action — one backtest per screened name) | `ohlcv_*` |
 | **Regime** | What market are we in? | `/api/putlab/regimes`, `/api/vix/stretch`, `/accuracy` (the per-regime residual) | `vix`, `cboe_strategy`, `credit` (widening, §3.2 — falls back to VIX-only until ingested) |
 | **Glossary** | — (renders `content/concepts.ts`, no network) | none | none |

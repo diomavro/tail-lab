@@ -454,6 +454,15 @@ and `PUTY` (1986-06-30) when long history matters. Dates are `MM/DD/YYYY`
 and are parsed with an explicit format — an inferred parse would silently
 shift observations by months around a crash.
 
+**`LTV` is not a NAV (measured 2026-10-05).** Every other ticker in the
+family is either a NAV-style level a strategy actually earned or, for `SPX`,
+the price-return index those strategies are written on; `LTV` opens at
+**3.63** on 2006-01-03 and rose **~457%** from 2008-01-02 to 2009-03-09 while
+PPUT fell 36%. It is a quoted level — the price of left-tail protection —
+so a return computed from it is not an investable return. It shares the
+schema because it shares the file format; never blend or compound it (the
+Book tab excludes it for exactly this reason).
+
 ---
 
 ## 8. `option_quotes` — real historical put smile (optional, licence-limited)
