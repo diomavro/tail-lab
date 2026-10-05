@@ -42,12 +42,12 @@ jobs:
             echo "ready=true" >> "$GITHUB_OUTPUT"
           fi
 
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         if: steps.guard.outputs.ready == 'true'
         with:
           ref: main
 
-      - uses: superfly/flyctl-actions/setup-flyctl@master
+      - uses: superfly/flyctl-actions/setup-flyctl@ed8efb33836e8b2096c7fd3ba1c8afe303ebbff1 # master as of 2026-10-05; latest release 1.5 is from 2024
         if: steps.guard.outputs.ready == 'true'
 
       # --verbose: the deploy log is part of the audit trail (docs/adr/0016

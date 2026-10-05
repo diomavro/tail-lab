@@ -71,8 +71,11 @@ acts on, removes, or reorders anything in this file.**
       different products. Whichever you pick, it belongs on the Screen and in
       the README.
 
-- [ ] **Approve two dependencies (`pyproject.toml` is a guarded path, so this
-      needs a human-merged PR).**
+- [x] **Done 2026-10-05 (Dio): approved as `[dev]` dependencies** -- both
+      serve offline `research/` work, so neither ships to Fly. Separate
+      human-merged PR adds them to `pyproject.toml`.
+      Original item: **Approve two dependencies (`pyproject.toml` is a guarded
+      path, so this needs a human-merged PR).**
       Both are permissive and both unblock queued agent work:
       * **`arch`** (NCSA, permissive) — `StationaryBootstrap` +
         `optimal_block_length` for the Hill CI, and `MCS`/`SPA` for the
@@ -84,7 +87,14 @@ acts on, removes, or reorders anything in this file.**
       offline paths; decide whether they go in `[dev]` or the main
       dependencies before the agent opens the PR.
 
-- [ ] **Public-repo decisions now that Actions is restored (2026-09-23).**
+- [x] **Done 2026-10-05 (Dio):** branch protection on `main` requires
+      `backend` + `e2e` (admins exempt, so a direct push still works);
+      `default_workflow_permissions=read` and
+      `can_approve_pull_request_reviews=false` (every job that writes already
+      declares it -- checked before flipping); Dependabot enabled for
+      `github-actions` only (`.github/dependabot.yml`). npm stays off until
+      `automerge.yml` gains an author check.
+      Original item: **Public-repo decisions now that Actions is restored (2026-09-23).**
       Secret scanning and push protection were enabled the same day. Three
       things left, each a judgement call rather than a fix:
       * **Dependabot is deliberately still OFF.** `automerge.yml` squash-merges
@@ -112,8 +122,10 @@ acts on, removes, or reorders anything in this file.**
       2026-09-23. `quizkit` and `tip_app` are still private and still share
       that same account-level quota.
 
-- [ ] **Pin `superfly/flyctl-actions/setup-flyctl@master` to a SHA, and
-      re-issue `FLY_API_TOKEN` scoped and expiring.**
+- [ ] **~~Pin `setup-flyctl@master` to a SHA~~ (done 2026-10-05: every
+      action in `.github/workflows/` is SHA-pinned, Dependabot keeps them
+      current). STILL OPEN: re-issue `FLY_API_TOKEN` scoped and expiring**,
+      and retire `AGENT_FIX_TOKEN`.
       `docs/PRIOR_ART.md` §24. A mutable `@master` ref on the one step that
       holds the deploy token is the single worst supply-chain line in the
       repo, and it matters more now the repo is public and forkable.
@@ -127,7 +139,14 @@ acts on, removes, or reorders anything in this file.**
       removes it — and `token-check.yml`'s own header says to delete it once
       the loop has been observed pushing, which it now has.
 
-- [ ] **Five repo settings, and one Dependabot correction.**
+- [ ] **Mostly done 2026-10-05.** Applied: `default_workflow_permissions=read`,
+      `can_approve_pull_request_reviews=false`, private vulnerability
+      reporting, Dependabot for `github-actions`. **Not available:**
+      `secret_scanning_validity_checks` and
+      `secret_scanning_non_provider_patterns` -- the API accepts the PATCH and
+      leaves both `disabled` (Advanced Security features, not offered on this
+      account). **Left:** turn on `sha_pinning_required` once the pinning PR
+      has merged. Original item: **Five repo settings, and one Dependabot correction.**
       `docs/PRIOR_ART.md` §24. Secret scanning and push protection were
       enabled 2026-09-23; these are what is left, all free on a public repo:
       `default_workflow_permissions=read` with
@@ -456,8 +475,13 @@ do.
 
 ## Operational — found 2026-09-19
 
-- [ ] **Decide the cadence for a scheduled OHLCV/VIX ingest, and merge the
-      workflow.** There is no cron for either. `daily-chain-snapshot`,
+- [ ] **Partly superseded 2026-10-05: the local `tail-lab-refresh.timer`
+      (systemd, daily 08:30 Budapest, `scripts/local_daily_refresh.sh`)
+      now refreshes OHLCV, VIX and the rest every day** -- live VIX was current
+      on 2026-10-05. What is left is only whether to move it into Actions
+      (free now the repo is public) so it stops depending on this laptop
+      being on. Original item: **Decide the cadence for a scheduled OHLCV/VIX
+      ingest, and merge the workflow.** There is no cron for either. `daily-chain-snapshot`,
       `daily-verdict-sweep`, `daily-agent` and `weekly-cleanup` are the only
       scheduled jobs, so price and volatility data drift until someone runs
       `make ingest-vix` / `make ingest-ohlcv` by hand.
@@ -492,8 +516,12 @@ do.
       Say the word and I will draft the workflow; I have not guessed at either
       number.
 
-- [ ] **⚠ EXPIRING — GitHub Actions is not allocating runners. Check the
-      Actions spending limit / billing.** Found 2026-09-19 ~06:17 UTC.
+- [x] **Resolved for tail-lab (checked 2026-10-05):** the repo is public,
+      CI and deploy ran green on PR #138, and the chain sweep is current
+      (last session 2026-10-02, 0 missing symbols). The account-level block
+      still applies to the PRIVATE repos (quizkit, tip_app) -- not a
+      tail-lab item. Original item: **⚠ EXPIRING — GitHub Actions is not
+      allocating runners. Check the Actions spending limit / billing.** Found 2026-09-19 ~06:17 UTC.
 
       **Symptom:** every job in every workflow run fails in 2-4 seconds with
       **`steps=0`** — they never start. Confirmed across `backend`, `frontend`,
