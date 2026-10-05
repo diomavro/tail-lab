@@ -439,6 +439,21 @@ do.
       **Nothing is blocked on you** — the free Cboe benchmark path (§9) works
       regardless; this only decides whether real 2008 chains join it.
 
+## Book tab — found 2026-10-05
+
+- [ ] **Optional: get the CBOE Eurekahedge Long Volatility Hedge Fund Index**
+      (monthly, from Dec 2004) if you want the Book tab to rerun Artemis
+      Capital's "Rodman's Paradox" letter (April 2016) on its own series.
+      It is licensed: Cboe's CDN does not serve it (probed 2026-10-05:
+      `EHFI451`-`EHFI454` and `EUREKAHEDGE` all HTTP 403), so it means a
+      Eurekahedge / With Intelligence account. Until then the Book tab tests
+      the claim on Cboe's free real-quote programs (PPUT, PPUT3M, VXTH), which
+      is arguably the better test anyway: those are tradeable rules, while the
+      fund index is self-reported and survivorship-prone (Artemis is a member).
+      **Trap:** the CDN's free `LONGVOL` file is *not* this index -- it starts
+      at 1,000,000 on 2005-12-20 and is at ~4.4 today, a decay shaped like a
+      rolling long-VIX-futures product. Do not ingest it as a stand-in.
+
 ## Operational — found 2026-09-19
 
 - [ ] **Decide the cadence for a scheduled OHLCV/VIX ingest, and merge the

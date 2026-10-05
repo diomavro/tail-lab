@@ -754,3 +754,77 @@ export async function fetchSurface(
   }
   return (await resp.json()) as SurfaceResponse
 }
+
+// ---- Book (GET /api/putlab/hedge-overlay) -- mirrors api/schemas.HedgeOverlayResponse.
+
+export interface OverlayWeightPoint {
+  weight: number
+  cagr: number
+  volatility: number
+  max_drawdown: number
+  cagr_per_vol: number | null
+}
+
+export interface OverlaySensitivityPoint {
+  dividend_yield: number
+  best_weight: number
+  margin: number
+  outcome: OverlayOutcome
+}
+
+/** holds / fails: the best interior mix beats / trails the better end by more
+ *  than 1bp/yr; inconclusive: within 1bp either way. */
+export type OverlayOutcome = 'holds' | 'inconclusive' | 'fails'
+
+export interface OverlayWindow {
+  key: string
+  label: string
+  requested_start: string
+  requested_end: string
+  start: string
+  end: string
+  clipped: boolean
+  years: number
+  points: OverlayWeightPoint[]
+  best_weight: number
+  margin: number
+  outcome: OverlayOutcome
+  best_weight_risk_adjusted: number | null
+  outcome_risk_adjusted: OverlayOutcome | null
+  sensitivity: OverlaySensitivityPoint[]
+}
+
+export interface ProgramOverlay {
+  index_symbol: string
+  description: string
+  first_date: string
+  windows: OverlayWindow[]
+  unavailable: Record<string, string>
+}
+
+export interface HedgeOverlayResponse {
+  cboe_snapshot: string | null
+  code_sha: string
+  overlay: {
+    as_of: string
+    dividend_yield: number
+    weights: number[]
+    programs: ProgramOverlay[]
+    missing: Record<string, string>
+  }
+}
+
+export async function fetchHedgeOverlay(signal?: AbortSignal): Promise<HedgeOverlayResponse> {
+  const resp = await fetch('/api/putlab/hedge-overlay', { signal })
+  if (!resp.ok) {
+    // A 404 carries the reason (no snapshot, or a snapshot without SPX); keep
+    // it, so the page never guesses which one it was.
+    const body: unknown = await resp.json().catch(() => null)
+    const detail =
+      body !== null && typeof body === 'object' && 'detail' in body && typeof body.detail === 'string'
+        ? body.detail
+        : `GET /api/putlab/hedge-overlay failed: ${resp.status}`
+    throw new ApiError(detail, resp.status)
+  }
+  return (await resp.json()) as HedgeOverlayResponse
+}

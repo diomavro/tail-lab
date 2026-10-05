@@ -11,6 +11,9 @@ const TABS: { id: TabId; label: string }[] = [
   // have seen one name's result -- "so which of these is actually best?"
   { id: 'recommendations', label: 'Recommendations' },
   { id: 'portfolio', label: 'Portfolio' },
+  // After Portfolio: it asks the portfolio question about the hedge itself --
+  // how much of the book should carry it, judged on the growth of the whole.
+  { id: 'book', label: 'Book' },
   { id: 'bakeoff', label: 'Bake-off' },
   { id: 'regime', label: 'Regime' },
   { id: 'surface', label: 'Surface' },

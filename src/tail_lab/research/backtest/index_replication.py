@@ -482,7 +482,7 @@ def run_index_replication(
     )
 
 
-def _series_from(bronze: pd.DataFrame, *, date_col: str, value_col: str) -> pd.Series:
+def series_from(bronze: pd.DataFrame, *, date_col: str, value_col: str) -> pd.Series:
     """Date-indexed float series from a bronze frame, sorted and de-duplicated.
 
     Later rows win on a duplicated date — the same ``keep="last"`` convention
@@ -536,12 +536,12 @@ def compute_index_replication(
         if frame.empty:
             raise LookupError(f"no {name} rows in the snapshot known as of {as_of.isoformat()}")
 
-    index_level = _series_from(levels, date_col="trade_date", value_col="close")
-    benchmark = _series_from(published, date_col="trade_date", value_col="close")
+    index_level = series_from(levels, date_col="trade_date", value_col="close")
+    benchmark = series_from(published, date_col="trade_date", value_col="close")
 
     regimes = compute_regime_timeline(store, as_of=as_of)
     # The VIX arrives in points (17.5); Black-Scholes wants a fraction (0.175).
-    sigma = _series_from(
+    sigma = series_from(
         store.read_bronze_as_of("vix", as_of), date_col="date", value_col="close"
     ).div(100.0)
 

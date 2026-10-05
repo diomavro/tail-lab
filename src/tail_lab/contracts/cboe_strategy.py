@@ -46,6 +46,11 @@ STRATEGY_INDEX_CATALOGUE: dict[str, str] = {
     "PPUT": "Cboe S&P 500 5% Put Protection Index (from 1986-06-30)",
     "PPUT3M": "Cboe S&P 500 Tail Risk Index (from 2004-03-19)",
     "VXTH": "Cboe VIX Tail Hedge Index (from 2006-03-31)",
+    # NOT a program NAV, despite sitting in this group: LTV opens at 3.63 and
+    # rose ~457% from 2008-01-02 to 2009-03-09 while every hedged program
+    # above fell. It is a quoted level (the price of left-tail protection),
+    # so its returns are not an investable return -- never blend or
+    # compound it (measured 2026-10-05, docs/DATA_CONTRACTS.md #7).
     "LTV": "Cboe S&P 500 Left Tail Volatility Index (from 2006-01-03)",
     # --- collars: long put financed by a short call, the cost-reduced cousin ---
     # CLL's CDN file starts 2008-08-26 even though the index itself is quoted
