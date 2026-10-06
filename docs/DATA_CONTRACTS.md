@@ -817,3 +817,164 @@ bury a provenance difference inside a number; the consumer converts and says so.
 `make ingest-optionsdx OPTIONSDX_SYMBOL=vix` → **168,351 quotes,
 2010-01-04..2023-12-29, 168/168 months, 0 duplicate keys, 0 garbage deltas,
 2,139 quarantined (1.3%)**, ~23 s.
+
+---
+
+## 13. Kaggle SPY 2014-2025 chain (OFFLINE CROSS-CHECK ONLY, licence-limited)
+
+**Status: adapter built 2026-10-05; 2023 verified on the real file (below).** Decided by the
+owner 2026-10-05: this corpus is an **offline cross-check only**. It never
+feeds a verdict, a recommendation, or anything the API or the live page
+serves. Its two jobs:
+
+1. **2023 vendor disagreement vs optionsDX SPY (#12)** on overlapping dates —
+   strike sets and put bid/ask — via `make kaggle-spy-vs-optionsdx`
+   (`scripts/kaggle_spy_vs_optionsdx.py`, prints only). Headline below.
+2. **Black-Scholes pricing residual over 2024-2025**, after optionsDX ends.
+   Not built yet. Needs a spot from elsewhere (below).
+
+**Source.** Kaggle `shankerabhigyan/s-and-p500-options-spy-implied-volatility-2019-24`
+("S&P500 Options (SPY) Implied Volatility (2014-25)", v3, last updated
+2026-07-26, 8,687,075,414 bytes). Twelve files, one per calendar year,
+`spy_options_data_14.json` .. `spy_options_data_25.json`, 346 MB (2014) to
+1,055 MB (2021). The human downloads one year at a time into
+`data/vendor/kaggle_spy/` (gitignored via `data/`, excluded from the image via
+`.dockerignore`); exact commands are in `HUMAN_TODO.md`. No network in the
+adapter.
+
+**Format** (confirmed 2026-10-05 by byte-range reads of all twelve files'
+first bytes, and of the 2014, 2023 and 2025 records; not assumed). Each file
+is a single line of JSON, in one of **two outer shapes**: 2019-2024 are an
+array of trading days, each an array of records (`[[{...}, ...], [{...}]]`);
+2014-2018 and 2025 are an object keyed by date with holidays as empty lists
+(`{"2014-01-01": [], "2014-01-02": [{...}, ...]}`). The adapter skips the
+outer structure, so both ingest identically (pinned by a test). Records are
+flat objects whose 20 keys and **string** values are character-for-character Alpha Vantage
+`HISTORICAL_OPTIONS`: `contractID, symbol, expiration, strike, type, last,
+mark, bid, bid_size, ask, ask_size, volume, open_interest, date,
+implied_volatility, delta, gamma, theta, vega, rho`. Calls and puts. **No
+underlying price** — a consumer joins spot from elsewhere and says which.
+~8,300 records per day in late 2023.
+
+**Licence posture.** Kaggle says CC0. The schema says Alpha Vantage, and an
+uploader cannot waive rights they do not hold, so **AV's terms are the real
+constraint** — the same unresolved posture as the lambdaclass file. Private
+offline research only: never redistributed, never served, never committed.
+
+### Never served — enforced, not promised
+
+- The output is **not in the lake**: one parquet per year at
+  `data/vendor/kaggle_spy/parquet/kaggle_spy_chain_puts_<YEAR>.parquet`. The
+  lake is what the API reads (Tigris on Fly), so keeping this out of it is the
+  structural guarantee.
+- import-linter contract *"The Kaggle SPY corpus is never served"* forbids
+  `tail_lab.api` and `tail_lab.research` from importing
+  `contracts.kaggle_spy` or `ingestion.kaggle_spy`.
+- `tests/test_ingestion_kaggle_spy.py` greps every module in `src/tail_lab`
+  (bar the contract and adapter) and `frontend/src` for any mention of the
+  corpus — a path string in `transforms/` would otherwise reach the API with
+  no import for the linter to see — and pins `data/` in both `.gitignore` and
+  `.dockerignore`. The `.dockerignore` line is the hard barrier: the corpus
+  cannot ship.
+
+### Ingest — `make ingest-kaggle-spy YEAR=2023`
+
+Year by year, **streamed**: the JSON is read in 16 MB text chunks and only
+complete `{...}` records are parsed, so a year is never held as text or as
+Python objects. A `.zip` (the kaggle CLI's delivery) is read as a stream,
+never extracted — 8.7 GB uncompressed against ~15 GB free. Kept: SPY **puts**
+with an ask (`ask > 0`), every strike and tenor (no moneyness slice: there is
+no spot to slice against). Only repeats identical after parsing count as
+duplicates; two *different* rows under one `(quote_date, contract_id)` are a
+conflict nobody can resolve by keeping the first, so the schema's unique key
+quarantines both. Every record read is kept or lands in exactly one named
+count in the run record (`event=ingestion.kaggle_spy.run`), and `valid_rows +
+not_spy_put_rows + unparsable_rows + no_ask_rows + duplicate_rows +
+quarantined_rows == records_read` holds by construction; what makes it mean
+something is that a lost record is counted wherever its `"contractID"` key
+appears outside a complete record, even when the JSON itself is broken.
+`unparsable_rows` covers a record that fails JSON parsing, a truncated final
+record (each `"contractID"` left open is one row), a record missing either
+brace, a blank date, expiry, strike or **bid** (a blank bid is not a $0.00
+bid), and each extra record in a span fused by a lost `}, {`.
+`voided_greek_rows` counts kept rows with no usable greeks.
+
+**A bad file cannot replace a good year — for the three kinds of bad file the
+adapter knows.** Re-running a year overwrites its parquet atomically (same
+input, same output; this is not immutable bronze), except that these are
+refused, raise, and write nothing: (1) a file with ANY readable put dated
+outside the year (checked on every parsed row, not only the validated ones, so a row that also fails the
+schema still refuses the file) — the wrong file, well-formed, which was once
+accepted and replaced the real 971,972-row 2023 with 22 rows; (2) one yielding
+zero valid puts (a login page, an empty download); (3) one that does not *end*
+like a complete year (`]]` or `]}`) — a cut-off download, refused even though
+the half it holds parses fine. A file that is the right year, complete, and
+well-formed but simply holds less (a vendor revision dropping days) is not
+detected; compare `trading_days` in the run record. Every refusal is logged
+(`event=ingestion.kaggle_spy.refused`, `reason=` plus every count); rows that
+failed the schema go to a separate `..._refused_quarantine.parquet`, named in
+the error, without touching the good year's own quarantine. A clean run
+deletes any older `__quarantine` or `__refused_quarantine` file, and a refusal
+with nothing quarantined deletes an older refusal's, so no quarantine file
+outlives the run it describes.
+
+**Verified on the real 2023 file** (2026-10-05, 803,334,917 bytes): 1,943,946
+records → **971,972 puts** over 250 trading days (2023-01-03..2023-12-29),
+971,973 calls/other, 1 no-ask, 0 unparsable, 0 duplicate, 0 quarantined (0
+crossed, 0 off-year), 21,260 voided greek blocks (all the pinned signature,
+below), `iv_distinct_ratio` 0.56. **34.1 MB parquet**; 1 m 50 s, 811 MB peak
+RSS.
+
+### Schema — `KaggleSpyPutSchema`
+
+`contract_id, quote_date, expiration, strike, last, mark, bid, ask, bid_size,
+ask_size, volume, open_interest, iv, delta, gamma, theta, vega, rho`. Key
+`(quote_date, contract_id)`; `expiration >= quote_date`; `ask > 0`,
+`bid >= 0`, `last >= 0`, and `bid <= ask` (a crossed quote is quarantined).
+Greek block nullable. `bid_size`, `ask_size`, `volume`,
+`open_interest` are nullable integers: blank, garbled or fractional is
+`<NA>`, never a fabricated 0. `theta` stored as published (magnitudes read
+as per *day*, unlike optionsDX's per-year; unverified, not converted).
+
+### The IV caveat — vendor greeks are decorative
+
+AV's IV is **not per-contract inverted**, and how badly varies by year.
+Measured from byte-range samples on 2026-10-05: 2014-01-02, 1,667 puts carry
+133 distinct IVs; 2025-01-02 (first 2 MB of the day only), 2,422 puts carry
+158 (one expiry: 57 distinct across 111 strikes); 2023-12-29, 4,143 puts carry
+2,244 — although within one expiry 222 of 224 are distinct, so 2023's
+repetition is across expiries. And deep-ITM long-dated put deltas plateau near
+-0.47 where the truth is near -1. So `option_pricer.PutGreeks` does the work
+and the vendor block is kept for provenance only, under **the house rule**
+(Cboe zero-fill, optionsDX blank `P_IV`): any greek blank or infinite, an IV
+that is zero or above 10, a put delta outside [-1, 0], a negative gamma/vega,
+or the **pinned** block — delta exactly -1 with gamma and vega exactly 0
+beside a positive IV, the same signature optionsDX's failed solver leaves
+(21,260 such 2023 puts, IVs 0.02-6.84; 18 more with delta -1.00000 but a
+non-zero gamma or vega are kept as rounding) — **voids the whole block to
+null**, never 0.0, and the quote on the row is kept. Each run records
+`iv_distinct_ratio` (median over days of distinct IVs / puts with an IV) so
+the smoothing is a number per year: ~0.07 on 2025-01-02, 0.56 for all of 2023.
+
+### 2023 vendor disagreement — the headline
+
+`make kaggle-spy-vs-optionsdx YEAR=2023`, 2026-10-05, on moneyness 0.6-1.02,
+**calendar DTE 1-119** on both sides, ask > 0:
+
+| | |
+|---|---|
+| dates compared | 250 (none one-sided) |
+| (expiry, strike) keys | 346,357 both · 62 only Kaggle · 114 only optionsDX |
+| per-day key overlap (Jaccard) | median 1.000; worst 2023-02-16 0.935, 2023-04-20 0.963 |
+| bid / ask diff (K − O) | median 0.00, median \|diff\| $0.01 both sides |
+| matched quotes > 2 cents apart on bid or ask | **32.4%** (integer cents) |
+
+The DTE band is one day inside each of optionsDX's ingest edges because
+optionsDX was sliced on its vendor DTE column, which disagrees with the
+calendar count *at* the edges: compared on 0-120, 755 of 817 Kaggle-only keys
+sat exactly on an edge (390 at 120 days, 365 at 0) and made 2023-08-17 and
+2023-08-31 the "worst days". The tolerance is compared in integer cents: in
+float, every exact two-cent gap counted as a disagreement (36.9% vs 31.2% on
+the 0-120 band).
+The 114 optionsDX-only keys sit on two dates (2023-02-16, 2023-04-20) — a real
+vendor difference worth a look, not an artefact.
