@@ -10,12 +10,11 @@ acts on, removes, or reorders anything in this file.**
       2026-09-21 — and `research/regimes/timeline.py` now escalates regime
       labels on credit stress instead of running VIX-only, which is what
       `docs/END_STATE.md` §1.3 asked for.
-      `rates` still does not ingest, and that is **not** a key problem: the
-      adapter requests FRED's full ALFRED vintage history, which Treasury
-      yields exceed (5,110 vintages, HTTP 400). Tracked in `AGENT_TODO.md`
-      with a warning against the obvious fix, since those revisions are real
-      and collapsing them would weaken point-in-time correctness. No
-      consumers today, so nothing is blocked.
+      `rates` now ingests too (**2026-10-06**, #150): the adapter pages FRED's
+      vintage history instead of asking for all 5,110 vintages at once (the
+      old HTTP 400), keeping every revision point-in-time. First production
+      run: 132,554 rows, 10 series, 0 quarantined, 4m47s. Its first consumer
+      is the Book tab's T-bill comparator, live from 2005-07-01.
 
       Original item:
 
