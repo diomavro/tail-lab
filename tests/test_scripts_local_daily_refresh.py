@@ -118,3 +118,15 @@ def test_it_never_invokes_the_option_chain_sweep(tmp_path: Path) -> None:
     rc, log = _run(repo, symbols="spy qqq", fred="NOKEY")
     assert "CHAIN_INVOKED" not in log
     assert rc == 0
+
+
+def test_with_a_key_both_fred_sources_are_attempted(tmp_path: Path) -> None:
+    """`rates` was skipped as known-broken until its adapter learned to page
+    FRED vintages (`ingestion/rates.py`); a failing ingest-rates must now go
+    red like any other source rather than be skipped."""
+    repo = _sandbox(tmp_path)
+    (repo / "Makefile").write_text("ingest-rates:\n\t@false\n" + _STUB_MAKEFILE)
+    rc, log = _run(repo, symbols="spy qqq", fred="KEY")
+    assert rc != 0
+    assert "rates" in log.split("FAILED SOURCES")[-1]
+    assert "skipped" not in log

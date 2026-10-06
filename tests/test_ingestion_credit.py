@@ -195,3 +195,30 @@ def test_ingest_logs_the_full_run_surface(tmp_path: Any, caplog: pytest.LogCaptu
 def test_a_fred_payload_of_the_wrong_shape_is_a_named_failure(junk: object) -> None:
     with pytest.raises(ValueError, match=r"FRED payload|observations"):
         parse_fred_observations("BAMLH0A0HYM2", junk)
+
+
+def test_a_fred_error_from_credit_never_carries_the_api_key(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """requests puts the full URL -- key included -- in an HTTPError, and the
+    daily refresh writes tracebacks to disk. Credit shares rates' redacting
+    getter, so the key must not survive into the raised error."""
+    import requests
+
+    from tail_lab.ingestion import credit, rates
+
+    key = "SECRETKEY123"
+
+    def fake_get(url: str, params: dict[str, str], timeout: float) -> requests.Response:
+        resp = requests.Response()
+        resp.status_code = 400
+        resp.url = f"{url}?api_key={params['api_key']}"
+        resp._content = b'{"error_message": "Bad Request"}'
+        return resp
+
+    monkeypatch.setattr(rates.requests, "get", fake_get)
+    with pytest.raises(requests.exceptions.HTTPError) as caught:
+        credit.fetch_series_observations_raw("BAMLH0A0HYM2", key)
+    text = str(caught.value)
+    assert key not in text and "<redacted>" in text
+    assert caught.value.__context__ is None and caught.value.response is None

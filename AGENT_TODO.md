@@ -44,8 +44,22 @@ a large one strictly in order.
       **Status 2026-10-04: P5 code is in (PR `agent/surface-tab`); tick this
       once the deployed tab is confirmed rendering.**
 
-- [ ] **Fix `rates.py` by paging FRED vintages — recipe verified, and the
+- [x] **Fix `rates.py` by paging FRED vintages — recipe verified, and the
       obvious fix fabricates revisions.** `docs/PRIOR_ART.md` §19.
+      **Done 2026-10-06**: `ingestion/rates.py` enumerates vintages, takes the
+      first vintage whole via `output_type=1`, batches the rest 400 at a time
+      into `output_type=3`, melts wide-to-long, then reconciles each
+      series against FRED's snapshot at its newest vintage, discovers the
+      vintages that revised dates in the disagreeing span and re-fetches those
+      (fails red if any remain). The live run needed that: DGS3MO's 1981
+      history and a 1999 revision arrived in the 2020-07-21 vintage, and
+      DFF's 1954-1973 observations were re-rounded, all outside any 400-day
+      window. Pinned by
+      `tests/test_ingestion_rates.py` against real captured fixtures. Known
+      blind spots (module docstring): a revision outside the window that was
+      later reverted, and a value withdrawn then restored. Next: prod-ingest
+      it (`make ingest-rates`) -- `contribution_plan.bill_levels` (#147)
+      already reads DGS3MO first vintages from it.
       No FRED client pages vintages (`fredapi`'s issue #28 is this exact bug,
       closed without a fix), so this is ours to write. **Do NOT chunk by
       realtime window**: that clips `realtime_start` to the chunk boundary, so
@@ -204,25 +218,10 @@ a large one strictly in order.
       bootstrap (`tea`, `evt0`, both GPL). **Python has none of this** — that
       gap is real and filling it is ours. Read arXiv:2205.07714 first.
 
-- [ ] **`ingestion/rates.py` cannot fetch a daily-revised series from FRED.**
-      Measured 2026-09-23, the first call made with a real key:
-      `HTTP 400 — "There are 5110 vintage dates in the specified real-time
-      period: 1776-07-04 to 9999-12-31. This exceeds the max"`.
-      The adapter asks for FRED's full ALFRED vintage history via
-      `_ALFRED_REALTIME_START`/`_ALFRED_REALTIME_END`. That is fine for the
-      credit OAS series, which are never revised (one vintage, committed
-      1,569 rows the same minute), and impossible for `DGS1MO`..`DGS30`,
-      which are revised daily.
-      Do NOT "fix" it by dropping the vintage parameters. Treasury yields
-      genuinely ARE revised — that is what the 5,110 vintages are — so
-      collapsing to latest-only would silently weaken the point-in-time
-      correctness `docs/adr/0009` calls the #1 invariant, on one of the few
-      datasets where revision actually happens. Chunk the realtime window
-      instead (FRED caps vintages per request, not per series), or page by
-      `realtime_start` and concatenate, keeping `vintage_date` intact.
-      Not urgent: `rates` bronze has ZERO consumers in `research/`, `api/`
-      or `transforms/` today. It is queued so the next person to want the
-      curve does not rediscover this from a 400.
+- [ ] ~~**`ingestion/rates.py` cannot fetch a daily-revised series from FRED.**~~
+      **Superseded 2026-10-06** by the paging item above (now done): its
+      "chunk the realtime window" advice is WRONG — it clips
+      `realtime_start` and fabricates revisions (`docs/PRIOR_ART.md` §19).
 
 - [x] **Repair the `option_chain_snapshot__quarantine` schema.**
       **Done 2026-09-24** (by hand, not in code): rewritten with

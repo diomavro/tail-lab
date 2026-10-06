@@ -157,12 +157,24 @@ regime-panel input (yield curve shape/level).
 **Source.** FRED (`fred.stlouisfed.org`) — Treasury curve
 (`DGS1MO`...`DGS30`), SOFR (`SOFR`), fed funds (`DFF`). Free, keyed; the
 `FRED_API_KEY` repo secret exists (`HUMAN_TODO.md`, done 2026-08-17).
-`ingestion/rates.py` + `make ingest-rates` ship the adapter, requesting
-FRED's ALFRED-style full vintage history so `vintage_date` below is real,
-not a latest-value stand-in (`docs/DATA_SOURCING.md` §2 confirms the
-vintage API works on the free key). **Not yet run against prod** — no
-`rates` bronze partition exists yet; that live run, and wiring a
-`research/` consumer, are follow-ups (`AGENT_TODO.md`).
+`ingestion/rates.py` + `make ingest-rates` ship the adapter. It fetches
+FRED's full vintage history so `vintage_date` below is real, not a
+latest-value stand-in. FRED caps one request at 2,000 vintage dates and the
+Treasury series have ~5,100, so the fetch pages them (`docs/PRIOR_ART.md`
+§19): enumerate `series/vintagedates`, take the first vintage whole from one
+single-vintage `output_type=1` request (exact: nothing precedes it), request
+the rest in batches of ≤400 via `vintage_dates=…&output_type=3` with a
+bounded observation window, and melt the wide (vintage-in-column-name)
+frame to long. It never STORES rows from a chunked realtime window, which
+clips `realtime_start` and fabricates revisions (it uses one only to find
+which vintages to re-ask).
+Each series is then reconciled against FRED's snapshot at its newest
+vintage; for dates that disagree (a backfill or revision outside a
+batch's window) the revising vintages are found and re-fetched, and
+anything still disagreeing fails the run rather than commit an incomplete
+history. **Not
+yet run against prod.** First consumer:
+`research/backtest/contribution_plan.bill_levels` (DGS3MO first vintages).
 
 **Cadence.** Daily (FRED updates most series once per business day).
 
@@ -180,8 +192,9 @@ vintage API works on the free key). **Not yet run against prod** — no
 **Bronze partition key.** `source_id=fred/series_id=<id>/obs_date=<YYYY-MM-DD>/`.
 
 **Point-in-time rule.** FRED series can be **revised after first
-publication**. The adapter must request FRED's vintage/ALFRED-style
-`realtime_start`/`realtime_end` parameters, not just the latest value, and
+publication**. The adapter must request FRED's vintage history (rates:
+`vintage_dates` batches, above; credit: the `realtime_start`/`realtime_end`
+window), not just the latest value, and
 `vintage_date` is a required, validated column precisely so `lake/asof.py`
 can filter on "the value as known on the simulation date," not "the value
 as it reads today." A rates adapter that only pulls the latest value
