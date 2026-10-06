@@ -30,7 +30,7 @@ Single test:
 env -u PYTHONPATH .venv/bin/python -m pytest tests/test_lake_store.py -k asof -x
 ```
 
-Frontend (from `frontend/`): `npm run typecheck`, `npm run lint` (oxlint), `npm run build`, `npm run e2e` (Playwright). CI gates on the frontend build **and** on `npm run e2e` — the browser suite is hermetic (it starts its own dev server and mocks every `/api/**` call from `frontend/e2e/fixtures/`), so it needs no lake and no network. A red e2e run blocks the deploy.
+Frontend (from `frontend/`): `npm run typecheck`, `npm run lint` (oxlint), `npm run build`, `npm run e2e` (Playwright). CI gates on the frontend build **and** on `npm run e2e` — the browser suite is hermetic (it starts its own dev server and mocks every `/api/**` call from `frontend/e2e/fixtures/`), so it needs no lake and no network. A red e2e run blocks the deploy. **Parallel worktrees share its dev-server port (5178, `reuseExistingServer`)**: with two suites running at once, one silently tests the other worktree's code — give each its own server (`npm run dev -- --port 51NN --strictPort`) and run with `PLAYWRIGHT_BASE_URL=http://localhost:51NN`.
 
 ## Prior art lives outside this repo
 
