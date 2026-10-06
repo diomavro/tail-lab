@@ -173,27 +173,37 @@ acts on, removes, or reorders anything in this file.**
       for `github-actions` only; add npm after `automerge.yml` gains an author
       check.
 
-- [ ] **Decide on the Kaggle SPY 2014-2025 chain corpus — it is the only
-      free thing that closes the 2024-2025 hole.**
-      `docs/PRIOR_ART.md` §18. optionsDX stops 2023-12. This runs to 2025 and
-      would take the OHLCV-chain overlap from the ~589 trading days
-      `CLAUDE.md` records to ~1,075, and make 2023 a free vendor-disagreement
-      check against optionsDX. Measured against your own
-      `spy_eod_2023q2` slice on one date: identical 176-strike set, put bid
-      median difference $0.02.
-      **Two reasons it needs you rather than the agent.** Its schema is
-      character-for-character Alpha Vantage `HISTORICAL_OPTIONS`, so despite
-      the CC0 label **Alpha Vantage's terms are the real constraint** — the
-      same unresolved posture as the lambdaclass call already in this file,
-      and you may simply want to apply the same answer. And it is **8.7 GB
-      uncompressed against 12 GB free** (root is at 95%, not the 87%
-      `CLAUDE.md` records — verified 2026-09-24), so it must be ingested
-      year-by-year straight to parquet, never unpacked whole.
-      One quality caveat to carry into the contract if you say yes: its IV is
-      **smoothed, not per-contract inverted** (383 strikes carrying 109
-      distinct IV values), so the vendor greeks are decorative and
-      `option_pricer.PutGreeks` must do the work — the same house rule as
-      Cboe's zero-fill and optionsDX's blank `P_IV`.
+- [x] **Kaggle SPY 2014-2025 chain corpus — Decided 2026-10-05: offline
+      cross-check only.** Never feeds a verdict, a recommendation, or anything
+      served; Alpha Vantage's terms (not the CC0 label) are the licence
+      constraint. Two jobs: the 2023 vendor-disagreement check against
+      optionsDX SPY, and the Black-Scholes pricing residual over 2024-2025.
+      Contract, adapter and guarantees: `docs/DATA_CONTRACTS.md` #13.
+- [ ] **Download and ingest it, ONE YEAR AT A TIME.** Dataset
+      `shankerabhigyan/s-and-p500-options-spy-implied-volatility-2019-24`,
+      twelve files `spy_options_data_14.json` .. `_25.json`, 0.35-1.06 GB
+      each, 8.7 GB in all. Never download the whole dataset at once (disk).
+      Start with 2023 (job 1), then 2024 and 2025 (job 2). For each year,
+      from the main checkout:
+
+      ```bash
+      mkdir -p data/vendor/kaggle_spy
+      # Either the kaggle CLI (needs ~/.kaggle/kaggle.json from your account):
+      kaggle datasets download -d shankerabhigyan/s-and-p500-options-spy-implied-volatility-2019-24 \
+          -f spy_options_data_23.json -p data/vendor/kaggle_spy
+      # ...or, verified 2026-10-05 to work WITHOUT a login:
+      curl -L -o data/vendor/kaggle_spy/spy_options_data_23.json \
+          https://www.kaggle.com/api/v1/datasets/download/shankerabhigyan/s-and-p500-options-spy-implied-volatility-2019-24/spy_options_data_23.json
+      make ingest-kaggle-spy YEAR=2023      # -> data/vendor/kaggle_spy/parquet/
+      rm data/vendor/kaggle_spy/spy_options_data_23.json   # keep only the parquet (~34 MB for 2023)
+      make kaggle-spy-vs-optionsdx YEAR=2023 # job 1's report (needs optionsDX SPY in the lake)
+      ```
+
+      If the CLI hands back `spy_options_data_23.json.zip`, leave it zipped:
+      the adapter streams the member out of any `.zip` in that directory.
+      Read the run line before deleting the JSON: every lost row is a named
+      count, and `iv_distinct_ratio` well below 1 is the smoothing the
+      contract warns about, not a bug.
 
 ## Setup needed for v1
 

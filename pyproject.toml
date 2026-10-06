@@ -193,3 +193,20 @@ source_modules = [
 forbidden_modules = [
     "tail_lab.ingestion",
 ]
+
+# The Kaggle SPY corpus is never served (docs/DATA_CONTRACTS.md #13; owner's
+# decision 2026-10-05). It is an offline cross-check whose licence posture is
+# Alpha Vantage's terms, so nothing that answers an HTTP request or produces a
+# verdict may read it -- not even its contract, which the layers contract
+# would otherwise let api/research import like any other leaf.
+[[tool.importlinter.contracts]]
+name = "The Kaggle SPY corpus is never served"
+type = "forbidden"
+source_modules = [
+    "tail_lab.api",
+    "tail_lab.research",
+]
+forbidden_modules = [
+    "tail_lab.contracts.kaggle_spy",
+    "tail_lab.ingestion.kaggle_spy",
+]
