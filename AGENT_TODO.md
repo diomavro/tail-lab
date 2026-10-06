@@ -18,7 +18,9 @@ a large one strictly in order.
 
 ## Next increments
 
-- [ ] **Fix the flaky `surface.spec.ts` TSLA click** (found 2026-10-05).
+- [x] **Fix the flaky `surface.spec.ts` TSLA click** (found 2026-10-05).
+      **Done 2026-10-06**: the click is now scoped to the `Fragility ranking`
+      group, as `ranking.spec.ts` already does; 3 consecutive runs green.
       `getByRole('button', { name: /TSLA/ })` matches both the universe row
       and the ranking-strip pick once the leaderboard has loaded, so the
       test passes alone (4/4) and fails under full-suite load when the strip
