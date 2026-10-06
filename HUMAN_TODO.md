@@ -57,13 +57,21 @@ acts on, removes, or reorders anything in this file.**
       off-session / `committed` protections until 2026-09-24; it now shares
       them with the local path (`contracts.option_chain.plan_session_write`).
 
-- [ ] **Decide whether hedge premium is externally funded or reduces the
+- [x] **Decided 2026-10-05 (Dio): debited — a hedge works only if the book
+      that pays its premium beats the book that does not** (`docs/adr/0027`,
+      README). Three accountings, each labelled where shown: self-financed (Book tab),
+      contribution-funded puts (Book tab, model source), standalone (Workspace
+      backtests); "someone else funds the carry" is never the claim. Placed on
+      the Book tab and in the README rather than the Screen. Original item:
+      **Decide whether hedge premium is externally funded or reduces the
       equity sleeve — it changes the platform's headline claim.**
       `docs/PRIOR_ART.md` §12. `lambdaclass/options_portfolio_backtester`
       reconstructs the Spitznagel-style strategy on 2008-2024 SPY and reports
-      +3.3%/yr excess — **with premium injected, not debited**. Under the AQR
-      framing where premium comes out of the equity allocation, excess falls
-      ~2.5pp/yr at every budget and **the strategy no longer beats SPY**.
+      +3.3%/yr excess [sic: 3.3%/yr is its premium BUDGET; the excess is
+      +6.05pp/yr -- `docs/adr/0027`] — **with premium injected, not debited**. Under the AQR
+      framing where premium comes out of the equity allocation, excess falls ~2.5pp/yr at every budget and **the strategy no longer beats SPY**
+      [the source's claim; its own table appears to disagree at the 3.3% budget --
+      `docs/adr/0027`].
       `research/backtest/sizing.py`'s `FixedPremium` / `WealthFraction` seam
       already takes a side on this, silently, and no surface says which. This
       is not an agent decision: it determines whether the North Star is "beats
@@ -140,14 +148,13 @@ acts on, removes, or reorders anything in this file.**
       removes it — and `token-check.yml`'s own header says to delete it once
       the loop has been observed pushing, which it now has.
 
-- [ ] **Mostly done 2026-10-05.** Applied: `default_workflow_permissions=read`,
+- [x] **Done 2026-10-05.** Applied: `default_workflow_permissions=read`,
       `can_approve_pull_request_reviews=false`, private vulnerability
       reporting, Dependabot for `github-actions`. **Not available:**
       `secret_scanning_validity_checks` and
       `secret_scanning_non_provider_patterns` -- the API accepts the PATCH and
       leaves both `disabled` (Advanced Security features, not offered on this
-      account). **Left:** turn on `sha_pinning_required` once the pinning PR
-      has merged. Original item: **Five repo settings, and one Dependabot correction.**
+      account). `sha_pinning_required` turned on once #139 (every action SHA-pinned) merged. Original item: **Five repo settings, and one Dependabot correction.**
       `docs/PRIOR_ART.md` §24. Secret scanning and push protection were
       enabled 2026-09-23; these are what is left, all free on a public repo:
       `default_workflow_permissions=read` with
@@ -356,7 +363,12 @@ Phase 2/3 — paid decisions (small):
       names to Dec 1998), point-in-time S&P 500 constituents, and gives a
       dependable bulk-CSV broad-universe feed in one. Verify at checkout
       the plan includes the SP500 constituents table.
-- [ ] Decide the real-quote historical options buy (`docs/adr/0004`,
+- [ ] **Trigger set 2026-10-05 (`docs/adr/0027` §5): buy ORATS when the first
+      trade-driving feature needs 2024+ real option prices, or before the
+      first live trade — whichever comes first.** Until then nothing consumes it: Cboe's programs cover the Book tab's
+      default test to today. (The 2026-08-21 "not needed now" block below
+      is about evaluation and still holds; this trigger is about trading.)
+      Original item: Decide the real-quote historical options buy (`docs/adr/0004`,
       supersedes the old "budget for ORATS/CBOE/OptionMetrics" item):
       recommended **ORATS Data API $99/mo for 2–3 months** (~$200–300,
       EOD chains 2007→present, full US universe) — first check their

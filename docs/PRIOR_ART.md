@@ -402,8 +402,9 @@ thumb: halve any in-sample excess for a forward estimate.
 
 **The caveat is the more important half.** Their 3.3%/yr premium is
 **externally funded** — injected, not debited from the equity sleeve. Under
-the AQR framing where premium reduces the sleeve, excess returns fall ~2.5pp/yr
-across every budget and **the strategy stops beating SPY**.
+the AQR framing where premium reduces the sleeve, excess returns fall ~2.5pp/yr across every budget and **the strategy stops beating SPY**
+(the source's claim; its own table appears to disagree at the 3.3% budget, if "-2.5pp" means a drop -- see
+`docs/adr/0027`, which also settles which framing this platform claims).
 `research/backtest/sizing.py`'s `FixedPremium` / `WealthFraction` seam takes a
 side on that question silently, and the surface does not say which.
 

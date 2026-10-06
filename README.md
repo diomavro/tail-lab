@@ -54,6 +54,17 @@ These are inviolable. Changing any requires a human-approved ADR.
   the geometric mean is far more sensitive to large drawdowns than the arithmetic
   mean. Any sizing result that does not evaluate the combined portfolio is
   answering a different question than the one that matters.
+- **A hedge works only if it pays its own premium.** The success criterion is
+  that **the hedged book beats the unhedged book with the premium paid from the
+  book** — on time-average growth for a lump sum, on money-weighted return for a
+  contributions plan — the only accounting a live account can reproduce.
+  Framings where someone else funds the carry (how `docs/PRIOR_ART.md` §12's
+  reconstruction beats SPY, on a 3.3%/yr premium budget injected from outside)
+  may appear only as labelled comparisons, never as the claim. Every hedge
+  result says which accounting produced it. The current evidence (the Book tab;
+  numbers in `docs/adr/0027`) fails this criterion for Cboe's put overlays and
+  is marginal for its VIX-call overlay; finding where it passes — which names,
+  strikes, tenors or regimes — is what the cockpit is for. (`docs/adr/0027`)
 - **Some work expires; that work goes first.** Almost everything here is
   recoverable — a metric not built today costs the same next week, and a FRED
   series not pulled today is one `make` invocation from being caught up. Forward
