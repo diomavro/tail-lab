@@ -1033,9 +1033,7 @@ def putlab_book_plan(
         by_yield=",".join(f"{y.dividend_yield}:{y.share_ahead:.4f}" for y in plan.by_yield)
         or "none",
     )
-    if len(_PLAN_CACHE) >= _PLAN_CACHE_MAX:
-        _PLAN_CACHE.clear()
-    _PLAN_CACHE[key] = (time.monotonic() + _REPLICATION_TTL_S, response)
+    _plan_cache_put(key, response)
     return response
 
 
