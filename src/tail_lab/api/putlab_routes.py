@@ -22,6 +22,7 @@ import logging
 import time
 from collections.abc import Mapping, Sequence
 from functools import lru_cache
+from typing import Any
 
 import pandas as pd
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -141,11 +142,39 @@ _OVERLAY_CACHE: dict[str, tuple[float, HedgeOverlayResponse]] = {}
 
 #: The contributions plan re-runs every rolling start at four yields (~2 s on
 #: PPUT's 40 years); it depends only on its parameters and the as-of date.
-_PLAN_CACHE: dict[tuple[object, ...], tuple[float, BookPlanResponse]] = {}
-_MODEL_PLAN_CACHE: dict[tuple[object, ...], tuple[float, ModelPlanResponse]] = {}
+#: Both plan endpoints share it; the key leads with the endpoint's name.
+_PLAN_CACHE: dict[tuple[object, ...], tuple[float, Any]] = {}
 #: Plan inputs are free-form numbers, so unlike the as-of-keyed caches these
 #: could grow per keystroke; past this many entries the cache starts over.
 _PLAN_CACHE_MAX = 256
+
+
+def _plan_cache_get(key: tuple[object, ...]) -> Any | None:
+    hit = _PLAN_CACHE.get(key)
+    return hit[1] if hit is not None and hit[0] > time.monotonic() else None
+
+
+def _plan_cache_put(key: tuple[object, ...], response: object) -> None:
+    if len(_PLAN_CACHE) >= _PLAN_CACHE_MAX:
+        _PLAN_CACHE.clear()
+    _PLAN_CACHE[key] = (time.monotonic() + _REPLICATION_TTL_S, response)
+
+
+def _plan_outcome_fields(plan: Any) -> dict[str, object]:
+    """The window and rolling fields both plan endpoints log."""
+    w, r = plan.window, plan.rolling
+    return {
+        "dividend_yield": plan.dividend_yield,
+        "refusal": plan.refusal or "none",
+        "window": f"{w.start}..{w.end}" if w else "none",
+        "hedged_irr": w.hedged.irr if w else "none",
+        "comparator_irr": w.comparator.irr if w else "none",
+        "rolling_starts": r.n_starts if r else "none",
+        "share_ahead": r.share_ahead if r else "none",
+        "median_gap": r.median_gap if r else "none",
+    }
+
+
 #: A plan amount past this is a typo or an overflow probe, not a plan; it is
 #: refused (422) before ``inf`` can reach the IRR solver.
 MAX_PLAN_AMOUNT = 1e9
@@ -958,10 +987,10 @@ def putlab_book_plan(
         raise HTTPException(status_code=422, detail="a plan needs E0 or a monthly amount")
     resolved = _resolve_as_of(as_of)
     request = PlanRequest(program, hedge_ratio, e0, monthly, comparator, horizon_years, start)
-    key = (request, resolved.isoformat())
-    hit = _PLAN_CACHE.get(key)
-    if hit is not None and hit[0] > time.monotonic():
-        return hit[1]
+    key = ("book", request, resolved.isoformat())
+    cached = _plan_cache_get(key)
+    if cached is not None:
+        return cached  # type: ignore[no-any-return]
     try:
         plan = compute_book_plan(store, request, as_of=resolved)
     except OverlayDataMissing as exc:
@@ -985,7 +1014,6 @@ def putlab_book_plan(
         code_sha=get_settings().code_sha,
         plan=plan,
     )
-    w, r = plan.window, plan.rolling
     log_event(
         logger,
         "api.putlab.book_plan",
@@ -1000,15 +1028,8 @@ def putlab_book_plan(
         comparator=comparator,
         horizon_years=horizon_years,
         start=start or "default",
-        dividend_yield=plan.dividend_yield,
-        refusal=plan.refusal or "none",
-        window=f"{w.start}..{w.end}" if w else "none",
-        hedged_irr=w.hedged.irr if w else "none",
-        comparator_irr=w.comparator.irr if w else "none",
-        window_outcome=w.outcome if w else "none",
-        rolling_starts=r.n_starts if r else "none",
-        share_ahead=r.share_ahead if r else "none",
-        median_gap=r.median_gap if r else "none",
+        **_plan_outcome_fields(plan),
+        window_outcome=plan.window.outcome if plan.window else "none",
         by_yield=",".join(f"{y.dividend_yield}:{y.share_ahead:.4f}" for y in plan.by_yield)
         or "none",
     )
@@ -1037,10 +1058,10 @@ def putlab_book_plan_model(
             status_code=422, detail=f"moneyness_pct must be one of {sorted(MEASURED_VOL_GAP)}"
         )
     resolved = _resolve_as_of(as_of)
-    key = (moneyness_pct, e0, monthly, put_share, horizon_years, resolved.isoformat())
-    hit = _MODEL_PLAN_CACHE.get(key)
-    if hit is not None and hit[0] > time.monotonic():
-        return hit[1]
+    key = ("model", moneyness_pct, e0, monthly, put_share, horizon_years, resolved.isoformat())
+    cached = _plan_cache_get(key)
+    if cached is not None:
+        return cached  # type: ignore[no-any-return]
     try:
         plan = compute_model_plan(
             store,
@@ -1070,7 +1091,6 @@ def putlab_book_plan_model(
         code_sha=get_settings().code_sha,
         plan=plan,
     )
-    w, r = plan.window, plan.rolling
     log_event(
         logger,
         "api.putlab.book_plan_model",
@@ -1084,16 +1104,7 @@ def putlab_book_plan_model(
         monthly=monthly,
         put_share=put_share,
         horizon_years=horizon_years,
-        dividend_yield=plan.dividend_yield,
-        refusal=plan.refusal or "none",
-        window=f"{w.start}..{w.end}" if w else "none",
-        hedged_irr=w.hedged.irr if w else "none",
-        comparator_irr=w.comparator.irr if w else "none",
-        rolling_starts=r.n_starts if r else "none",
-        share_ahead=r.share_ahead if r else "none",
-        median_gap=r.median_gap if r else "none",
+        **_plan_outcome_fields(plan),
     )
-    if len(_MODEL_PLAN_CACHE) >= _PLAN_CACHE_MAX:
-        _MODEL_PLAN_CACHE.clear()
-    _MODEL_PLAN_CACHE[key] = (time.monotonic() + _REPLICATION_TTL_S, response)
+    _plan_cache_put(key, response)
     return response

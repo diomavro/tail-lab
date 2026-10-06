@@ -64,7 +64,6 @@ def client(tmp_path: Path) -> Iterator[TestClient]:
     putlab_routes._SURFACE_CACHE.clear()
     putlab_routes._OVERLAY_CACHE.clear()
     putlab_routes._PLAN_CACHE.clear()
-    putlab_routes._MODEL_PLAN_CACHE.clear()
     app.dependency_overrides[putlab_get_lake_store] = lambda: store
     try:
         yield TestClient(app)
@@ -990,7 +989,7 @@ def test_book_plan_logs_its_start_and_its_404s(
 def test_the_plan_cache_starts_over_instead_of_growing_per_keystroke(client: TestClient) -> None:
     putlab_routes._PLAN_CACHE.clear()
     for i in range(putlab_routes._PLAN_CACHE_MAX + 5):
-        putlab_routes._PLAN_CACHE[(i,)] = (0.0, None)  # type: ignore[assignment]
+        putlab_routes._PLAN_CACHE[(i,)] = (0.0, None)
     store = app.dependency_overrides[putlab_get_lake_store]()
     _seed_cboe(store, dt.datetime.now(dt.UTC).date())
     client.get("/api/putlab/book-plan", params={"horizon_years": 1, "comparator": "cash"})
