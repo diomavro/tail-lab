@@ -4,7 +4,9 @@
 // keeps the specs asserting on rendered behaviour rather than on fetch calls.
 
 import type { Page, Route } from '@playwright/test'
+import { BOOK_PLAN, BOOK_PLAN_BILLS_REFUSED } from './book-plan'
 import { HEDGE_OVERLAY } from './hedge-overlay'
+import { MODEL_PLAN } from './model-plan'
 import * as fx from './putlab'
 
 export interface MockOptions {
@@ -79,6 +81,11 @@ export async function mockPutLabApi(page: Page, opts: MockOptions = {}): Promise
         return json(route, url.searchParams.get('asset') === 'tsla' ? fx.SURFACE_REFUSED : fx.SURFACE_FITTED)
       case '/api/putlab/hedge-overlay':
         return json(route, HEDGE_OVERLAY)
+      case '/api/putlab/book-plan/model':
+        return json(route, MODEL_PLAN)
+      case '/api/putlab/book-plan':
+        // T-bills is the one comparator this fixture lake cannot offer.
+        return json(route, url.searchParams.get('comparator') === 'bills' ? BOOK_PLAN_BILLS_REFUSED : BOOK_PLAN)
       case '/api/feedback':
         return json(route, { id: 'fb1', text: 'ok', kind: 'issue', created_at: '2026-08-21T00:00:00Z', status: 'open', resolved_at: null })
       default:

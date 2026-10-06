@@ -127,8 +127,8 @@ export function RegimeView({ regimes, vix, accuracy }: Props) {
           <h3>How the window split</h3>
         </div>
         <p className="pl-note" style={{ marginBottom: 14 }}>
-          The residual beside each band is how far the model&rsquo;s price missed the published Cboe
-          program in that regime. It <em>flips sign</em> in a crisis rather than ramping up from
+          The residual beside each band is how far the model&rsquo;s price &mdash; Black&ndash;Scholes at the
+          VIX, replicating Cboe&rsquo;s PPUT &mdash; missed the published program in that regime. It <em>flips sign</em> in a crisis rather than ramping up from
           calm &mdash; the model is too cheap in quiet markets and too dear in a dislocation.
         </p>
         <div className="pl-regime-cards">

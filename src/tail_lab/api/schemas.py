@@ -8,7 +8,9 @@ from pydantic import BaseModel, Field
 
 from tail_lab.feedback.store import FeedbackKind, FeedbackRecord
 from tail_lab.memory.store import RegimeOutcome
+from tail_lab.research.backtest.contribution_plan import BookPlanResult
 from tail_lab.research.backtest.hedge_overlay import HedgeOverlayResult
+from tail_lab.research.backtest.model_plan import ModelPlanResult
 from tail_lab.research.backtest.portfolio import PortfolioLeg
 from tail_lab.research.backtest.sweep import SweepPoint
 from tail_lab.research.surface.reading import SurfaceReading
@@ -205,3 +207,24 @@ class HedgeOverlayResponse(BaseModel):
     cboe_snapshot: str | None
     code_sha: str
     overlay: HedgeOverlayResult
+
+
+class BookPlanResponse(BaseModel):
+    """The Book's contributions plan with its provenance: the Cboe snapshot
+    every series was read from, and the rates snapshot (``None`` when there
+    is none, which only disables the T-bill comparator)."""
+
+    cboe_snapshot: str | None
+    rates_snapshot: str | None
+    code_sha: str
+    plan: BookPlanResult
+
+
+class ModelPlanResponse(BaseModel):
+    """The Book's model-priced plan with its provenance (SPX from the Cboe
+    snapshot, the VIX that priced every put)."""
+
+    cboe_snapshot: str | None
+    vix_snapshot: str | None
+    code_sha: str
+    plan: ModelPlanResult

@@ -16,6 +16,7 @@ import type { ResourceState } from '../PutLab'
 import { RankingStrip } from '../RankingStrip'
 import { StrategyTape } from '../StrategyTape'
 import { SweepGrid } from '../SweepGrid'
+import { StandaloneNote } from '../StandaloneNote'
 import type { PutLabControls } from '../types'
 
 /* Screen and Backtest, merged.
@@ -69,6 +70,7 @@ export function WorkspaceView({
 }: Props) {
   return (
     <div>
+      <StandaloneNote />
       {ranking.status === 'ready' && (
         <RankingStrip
           ranked={ranking.data.ranked}

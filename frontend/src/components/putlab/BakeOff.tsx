@@ -9,6 +9,7 @@ import {
 import { ConceptInfo } from './ConceptInfo'
 import { fmtDollar, fmtFixed, fmtPct } from './format'
 import type { PutLabControls } from './types'
+import { StandaloneNote } from './StandaloneNote'
 
 /* The metric bake-off — the panel the API already served and nothing called.
  *
@@ -111,6 +112,7 @@ export function BakeOff({ controls }: { controls: PutLabControls }) {
   return (
     <div>
       <h2 style={{ marginBottom: 4 }}>The bake-off</h2>
+      <StandaloneNote />
       <p className="pl-lede" style={{ marginBottom: 10 }}>
         The fragility ranking assumes these metrics are worth ranking on. This tests the prior
         question: which one actually sorted realized put payoffs over the lookback. Each screen

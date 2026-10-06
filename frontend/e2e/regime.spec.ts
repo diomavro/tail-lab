@@ -58,3 +58,10 @@ test('ranks the longest stretches', async ({ page }) => {
   await expect(rows).toHaveCount(5)
   await expect(rows.first()).toContainText('408')
 })
+
+test('the residual names the model it measures', async ({ page }) => {
+  await mockPutLabApi(page)
+  await page.goto('/')
+  await page.getByRole('tab', { name: 'Regime' }).click()
+  await expect(page.getByText(/Black–Scholes at the VIX, replicating Cboe’s PPUT/)).toBeVisible()
+})

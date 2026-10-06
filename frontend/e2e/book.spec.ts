@@ -60,7 +60,11 @@ test('real data: headings name the program, the window and the span actually cov
   await expect(region(page, /^VXTH The letter's window/).getByRole('heading', { level: 4 })).toHaveText(
     "The letter's window (2005 to Mar 2016): 2006-03-31 to 2016-03-31",
   )
-  await expect(page.locator('.pl-lede').first()).toContainText('by more than 1bp a year')
+  await expect(page.locator('.pl-lede').filter({ hasText: "Rodman's Paradox" })).toContainText('by more than 1bp a year')
+  // Every hedge result names its accounting (README; docs/adr/0027).
+  await expect(page.getByTestId('accounting')).toHaveText(
+    "Accounting: self-financed — the hedge's premium is paid from the book (docs/adr/0027).",
+  )
 })
 
 test('a window cut short at its end says so, with both end dates', async ({ page }) => {

@@ -66,3 +66,10 @@ test('surfaces a failed backtest rather than rendering an empty result', async (
   await expect(page.getByRole('alert')).toContainText(/failed: 500/)
   await expect(page.locator('.pl-hero-num')).toHaveCount(0)
 })
+
+test('names its accounting: a standalone put, not a hedge result', async ({ page }) => {
+  await mockPutLabApi(page)
+  await page.goto('/')
+  await expect(page.getByTestId('accounting')).toContainText('Accounting: standalone')
+  await expect(page.getByTestId('accounting')).toContainText('The Book tab judges hedges.')
+})

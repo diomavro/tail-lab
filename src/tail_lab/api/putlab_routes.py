@@ -22,12 +22,15 @@ import logging
 import time
 from collections.abc import Mapping, Sequence
 from functools import lru_cache
+from typing import Any
 
 import pandas as pd
 from fastapi import APIRouter, Depends, HTTPException, Query
 
 from tail_lab.api.schemas import (
+    BookPlanResponse,
     HedgeOverlayResponse,
+    ModelPlanResponse,
     PortfolioRequest,
     SurfaceResponse,
     SweepResponse,
@@ -42,6 +45,7 @@ from tail_lab.contracts.options_calendar import (
     screening_universe,
     universe_symbols,
 )
+from tail_lab.contracts.rates import DATASET as RATES_DATASET
 from tail_lab.lake.store import LakeStore
 from tail_lab.observability import log_event
 from tail_lab.research.accuracy import (
@@ -49,7 +53,16 @@ from tail_lab.research.accuracy import (
     AccuracyReport,
     compute_accuracy_report,
 )
-from tail_lab.research.backtest.hedge_overlay import OverlayDataMissing, compute_hedge_overlay
+from tail_lab.research.backtest.contribution_plan import (
+    COMPARATOR_KEYS,
+    PlanRequest,
+    compute_book_plan,
+)
+from tail_lab.research.backtest.hedge_overlay import (
+    OVERLAY_PROGRAMS,
+    OverlayDataMissing,
+    compute_hedge_overlay,
+)
 from tail_lab.research.backtest.index_replication import (
     DEFAULT_DIVIDEND_YIELD,
     IndexReplicationResult,
@@ -60,6 +73,7 @@ from tail_lab.research.backtest.metric_screen import (
     MetricScreenComparison,
     compare_metric_screens,
 )
+from tail_lab.research.backtest.model_plan import MEASURED_VOL_GAP, compute_model_plan
 from tail_lab.research.backtest.portfolio import PortfolioResult, run_portfolio
 from tail_lab.research.backtest.put_roll import (
     DEFAULT_RATE,
@@ -125,6 +139,45 @@ _SURFACE_TTL_S = 120.0
 #: and three dividend yields -- a few seconds of pandas that depends only on
 #: the as-of date, so it shares the replication cache's TTL.
 _OVERLAY_CACHE: dict[str, tuple[float, HedgeOverlayResponse]] = {}
+
+#: The contributions plan re-runs every rolling start at four yields (~2 s on
+#: PPUT's 40 years); it depends only on its parameters and the as-of date.
+#: Both plan endpoints share it; the key leads with the endpoint's name.
+_PLAN_CACHE: dict[tuple[object, ...], tuple[float, Any]] = {}
+#: Plan inputs are free-form numbers, so unlike the as-of-keyed caches these
+#: could grow per keystroke; past this many entries the cache starts over.
+_PLAN_CACHE_MAX = 256
+
+
+def _plan_cache_get(key: tuple[object, ...]) -> Any | None:
+    hit = _PLAN_CACHE.get(key)
+    return hit[1] if hit is not None and hit[0] > time.monotonic() else None
+
+
+def _plan_cache_put(key: tuple[object, ...], response: object) -> None:
+    if len(_PLAN_CACHE) >= _PLAN_CACHE_MAX:
+        _PLAN_CACHE.clear()
+    _PLAN_CACHE[key] = (time.monotonic() + _REPLICATION_TTL_S, response)
+
+
+def _plan_outcome_fields(plan: Any) -> dict[str, object]:
+    """The window and rolling fields both plan endpoints log."""
+    w, r = plan.window, plan.rolling
+    return {
+        "dividend_yield": plan.dividend_yield,
+        "refusal": plan.refusal or "none",
+        "window": f"{w.start}..{w.end}" if w else "none",
+        "hedged_irr": w.hedged.irr if w else "none",
+        "comparator_irr": w.comparator.irr if w else "none",
+        "rolling_starts": r.n_starts if r else "none",
+        "share_ahead": r.share_ahead if r else "none",
+        "median_gap": r.median_gap if r else "none",
+    }
+
+
+#: A plan amount past this is a typo or an overflow probe, not a plan; it is
+#: refused (422) before ``inf`` can reach the IRR solver.
+MAX_PLAN_AMOUNT = 1e9
 
 
 @lru_cache(maxsize=1)
@@ -906,4 +959,150 @@ def putlab_hedge_overlay(
         **{f"{symbol}_missing": reason for symbol, reason in overlay.missing.items()},
     )
     _OVERLAY_CACHE[key] = (time.monotonic() + _REPLICATION_TTL_S, response)
+    return response
+
+
+@router.get("/api/putlab/book-plan")
+def putlab_book_plan(
+    *,
+    program: str = Query(default="PPUT", description="PPUT, PPUT3M or VXTH."),
+    hedge_ratio: float = Query(default=0.5, ge=0, le=1),
+    e0: float = Query(default=10_000.0, ge=0, le=MAX_PLAN_AMOUNT, description="Starting book."),
+    monthly: float = Query(default=500.0, ge=0, le=MAX_PLAN_AMOUNT, description="Paid in monthly."),
+    comparator: str = Query(default="spx"),
+    horizon_years: int = Query(default=10, ge=1, le=30),
+    start: dt.date | None = Query(default=None, description="Illustrated window start."),
+    as_of: dt.date | None = Query(default=None),
+    store: LakeStore = Depends(get_lake_store),
+) -> BookPlanResponse:
+    """The Book in contributions mode (docs/adr/0027 §3): the same monthly
+    cash into a self-financed hedged book or a comparator, with the
+    rolling-start verdict. 404 only when the lake cannot answer at all; a
+    comparator it cannot offer is a refusal inside a 200."""
+    if program not in OVERLAY_PROGRAMS:
+        raise HTTPException(status_code=422, detail=f"program must be one of {OVERLAY_PROGRAMS}")
+    if comparator not in COMPARATOR_KEYS:
+        raise HTTPException(status_code=422, detail=f"comparator must be one of {COMPARATOR_KEYS}")
+    if e0 + monthly <= 0:
+        raise HTTPException(status_code=422, detail="a plan needs E0 or a monthly amount")
+    resolved = _resolve_as_of(as_of)
+    request = PlanRequest(program, hedge_ratio, e0, monthly, comparator, horizon_years, start)
+    key = ("book", request, resolved.isoformat())
+    cached = _plan_cache_get(key)
+    if cached is not None:
+        return cached  # type: ignore[no-any-return]
+    try:
+        plan = compute_book_plan(store, request, as_of=resolved)
+    except OverlayDataMissing as exc:
+        log_event(
+            logger,
+            "api.putlab.book_plan",
+            as_of=resolved,
+            program=program,
+            hedge_ratio=hedge_ratio,
+            e0=e0,
+            monthly=monthly,
+            comparator=comparator,
+            horizon_years=horizon_years,
+            start=start or "default",
+            refused_404=str(exc),
+        )
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    response = BookPlanResponse(
+        cboe_snapshot=_snapshot(store, CBOE_STRATEGY_DATASET, resolved),
+        rates_snapshot=_snapshot(store, RATES_DATASET, resolved),
+        code_sha=get_settings().code_sha,
+        plan=plan,
+    )
+    log_event(
+        logger,
+        "api.putlab.book_plan",
+        as_of=resolved,
+        cboe_snapshot=response.cboe_snapshot,
+        rates_snapshot=response.rates_snapshot or "none",
+        code_sha=response.code_sha,
+        program=program,
+        hedge_ratio=hedge_ratio,
+        e0=e0,
+        monthly=monthly,
+        comparator=comparator,
+        horizon_years=horizon_years,
+        start=start or "default",
+        **_plan_outcome_fields(plan),
+        window_outcome=plan.window.outcome if plan.window else "none",
+        by_yield=",".join(f"{y.dividend_yield}:{y.share_ahead:.4f}" for y in plan.by_yield)
+        or "none",
+    )
+    _plan_cache_put(key, response)
+    return response
+
+
+@router.get("/api/putlab/book-plan/model")
+def putlab_book_plan_model(
+    *,
+    moneyness_pct: float = Query(default=5.0, description="5 or 10: the measured depths."),
+    e0: float = Query(default=10_000.0, gt=0, le=MAX_PLAN_AMOUNT, description="Starting book."),
+    monthly: float = Query(default=500.0, gt=0, le=MAX_PLAN_AMOUNT, description="Paid in monthly."),
+    put_share: float = Query(default=1.0, gt=0, le=1, description="Share of X spent on puts."),
+    horizon_years: int = Query(default=10, ge=1, le=30),
+    as_of: dt.date | None = Query(default=None),
+    store: LakeStore = Depends(get_lake_store),
+) -> ModelPlanResponse:
+    """The Book's model-priced, contribution-funded plan (docs/adr/0027 §2-3):
+    a share of each month's X buys S&P 500 puts priced by Black-Scholes at the
+    VIX plus the measured skew gap. 404 when SPX or the VIX is absent."""
+    if moneyness_pct not in MEASURED_VOL_GAP:
+        raise HTTPException(
+            status_code=422, detail=f"moneyness_pct must be one of {sorted(MEASURED_VOL_GAP)}"
+        )
+    resolved = _resolve_as_of(as_of)
+    key = ("model", moneyness_pct, e0, monthly, put_share, horizon_years, resolved.isoformat())
+    cached = _plan_cache_get(key)
+    if cached is not None:
+        return cached  # type: ignore[no-any-return]
+    try:
+        plan = compute_model_plan(
+            store,
+            as_of=resolved,
+            moneyness_pct=moneyness_pct,
+            e0=e0,
+            monthly=monthly,
+            horizon_years=horizon_years,
+            put_share=put_share,
+        )
+    except OverlayDataMissing as exc:
+        log_event(
+            logger,
+            "api.putlab.book_plan_model",
+            as_of=resolved,
+            moneyness_pct=moneyness_pct,
+            e0=e0,
+            monthly=monthly,
+            put_share=put_share,
+            horizon_years=horizon_years,
+            refused_404=str(exc),
+        )
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    response = ModelPlanResponse(
+        cboe_snapshot=_snapshot(store, CBOE_STRATEGY_DATASET, resolved),
+        vix_snapshot=_snapshot(store, "vix", resolved),
+        code_sha=get_settings().code_sha,
+        plan=plan,
+    )
+    log_event(
+        logger,
+        "api.putlab.book_plan_model",
+        as_of=resolved,
+        cboe_snapshot=response.cboe_snapshot,
+        vix_snapshot=response.vix_snapshot,
+        code_sha=response.code_sha,
+        moneyness_pct=moneyness_pct,
+        vol_gap=plan.accuracy.vol_gap,
+        e0=e0,
+        monthly=monthly,
+        put_share=put_share,
+        horizon_years=horizon_years,
+        **_plan_outcome_fields(plan),
+    )
+    _plan_cache_put(key, response)
     return response

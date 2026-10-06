@@ -828,3 +828,154 @@ export async function fetchHedgeOverlay(signal?: AbortSignal): Promise<HedgeOver
   }
   return (await resp.json()) as HedgeOverlayResponse
 }
+
+/** FastAPI's error ``detail``: a string from an HTTPException, or a list of
+ *  ``{msg}`` objects from request validation (a 422) -- joined so the page
+ *  shows the reason, not a bare status code. */
+function detailOf(body: unknown): string | null {
+  if (body === null || typeof body !== 'object' || !('detail' in body)) return null
+  const d = body.detail
+  if (typeof d === 'string') return d
+  if (Array.isArray(d)) {
+    const msgs = d
+      .map((e: unknown) => {
+        if (e === null || typeof e !== 'object' || !('msg' in e) || typeof e.msg !== 'string') return null
+        // FastAPI's loc is e.g. ["query", "monthly"]: name the field.
+        const field = 'loc' in e && Array.isArray(e.loc) ? e.loc[e.loc.length - 1] : null
+        return typeof field === 'string' ? `${field}: ${e.msg}` : e.msg
+      })
+      .filter((m): m is string => m !== null)
+    return msgs.length ? msgs.join('; ') : null
+  }
+  return null
+}
+
+// ---- Book plan (GET /api/putlab/book-plan) -- mirrors api/schemas.BookPlanResponse.
+
+export interface PlanArm {
+  label: string
+  contributed: number
+  terminal_wealth: number
+  irr: number
+  max_drawdown: number
+}
+
+export interface PlanWindow {
+  start: string
+  end: string
+  years: number
+  hedged: PlanArm
+  comparator: PlanArm
+  irr_gap: number
+  outcome: OverlayOutcome
+}
+
+export interface RollingSummary {
+  horizon_years: number
+  n_starts: number
+  first_start: string
+  last_start: string
+  share_ahead: number
+  share_behind: number
+  share_inconclusive: number
+  median_gap: number
+  p10_gap: number
+  p90_gap: number
+  worst_gap: number
+  best_gap: number
+}
+
+export interface ComparatorOption {
+  key: string
+  label: string
+  available: boolean
+  reason: string | null
+}
+
+export interface BookPlanResponse {
+  cboe_snapshot: string | null
+  rates_snapshot: string | null
+  code_sha: string
+  plan: {
+    as_of: string
+    program: string
+    hedge_ratio: number
+    e0: number
+    monthly: number
+    horizon_years: number
+    dividend_yield: number
+    comparator: string
+    comparators: ComparatorOption[]
+    window: PlanWindow | null
+    rolling: RollingSummary | null
+    by_yield: { dividend_yield: number; share_ahead: number; median_gap: number }[]
+    refusal: string | null
+  }
+}
+
+export interface BookPlanParams {
+  program: string
+  hedge_ratio: number
+  e0: number
+  monthly: number
+  comparator: string
+  horizon_years: number
+}
+
+export async function fetchBookPlan(params: BookPlanParams, signal?: AbortSignal): Promise<BookPlanResponse> {
+  const qs = new URLSearchParams(Object.entries(params).map(([k, v]) => [k, String(v)]))
+  const resp = await fetch(`/api/putlab/book-plan?${qs}`, { signal })
+  if (!resp.ok) {
+    const body: unknown = await resp.json().catch(() => null)
+    const detail = detailOf(body) ?? `GET /api/putlab/book-plan failed: ${resp.status}`
+    throw new ApiError(detail, resp.status)
+  }
+  return (await resp.json()) as BookPlanResponse
+}
+
+// ---- Book model plan (GET /api/putlab/book-plan/model) -- mirrors api/schemas.ModelPlanResponse.
+
+export interface ModelPlanResponse {
+  cboe_snapshot: string | null
+  vix_snapshot: string | null
+  code_sha: string
+  plan: {
+    as_of: string
+    accounting: string
+    moneyness_pct: number
+    e0: number
+    monthly: number
+    put_share: number
+    horizon_years: number
+    dividend_yield: number
+    accuracy: {
+      moneyness_pct: number
+      vol_gap: number
+      calm_ratio: number
+      stress_ratio: number
+      statement: string
+    }
+    window: PlanWindow | null
+    rolling: RollingSummary | null
+    refusal: string | null
+  }
+}
+
+export interface ModelPlanParams {
+  moneyness_pct: number
+  e0: number
+  monthly: number
+  put_share: number
+  horizon_years: number
+}
+
+export async function fetchModelPlan(params: ModelPlanParams, signal?: AbortSignal): Promise<ModelPlanResponse> {
+  const qs = new URLSearchParams(Object.entries(params).map(([k, v]) => [k, String(v)]))
+  const resp = await fetch(`/api/putlab/book-plan/model?${qs}`, { signal })
+  if (!resp.ok) {
+    const body: unknown = await resp.json().catch(() => null)
+    const detail = detailOf(body) ?? `GET /api/putlab/book-plan/model failed: ${resp.status}`
+    throw new ApiError(detail, resp.status)
+  }
+  return (await resp.json()) as ModelPlanResponse
+}

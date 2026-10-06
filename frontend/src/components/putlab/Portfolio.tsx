@@ -12,6 +12,7 @@ import { ConceptInfo } from './ConceptInfo'
 import { EquityCurve } from './EquityCurve'
 import { fmtDollar, fmtPct } from './format'
 import { PUTLAB_ASSETS, PUTLAB_TENORS, type PutLabControls } from './types'
+import { StandaloneNote } from './StandaloneNote'
 
 // Mix a basket of OOM-put legs into one hedge and see the blended result --
 // combined P&L, the diversification effect (combined drawdown vs the legs'
@@ -135,6 +136,7 @@ export function Portfolio({
   return (
     <div>
       <h2 style={{ marginBottom: 4 }}>Mix a basket of puts</h2>
+      <StandaloneNote />
       <p className="pl-lede" style={{ marginBottom: 20 }}>
         Blend several OOM-put legs into one hedge and read the combined P&amp;L against the legs&rsquo;
         summed drawdown &mdash; that gap is diversification. Each leg&rsquo;s weight is its{' '}

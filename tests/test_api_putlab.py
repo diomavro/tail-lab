@@ -63,6 +63,7 @@ def client(tmp_path: Path) -> Iterator[TestClient]:
     putlab_routes._REPLICATION_CACHE.clear()
     putlab_routes._SURFACE_CACHE.clear()
     putlab_routes._OVERLAY_CACHE.clear()
+    putlab_routes._PLAN_CACHE.clear()
     app.dependency_overrides[putlab_get_lake_store] = lambda: store
     try:
         yield TestClient(app)
@@ -831,3 +832,206 @@ def test_hedge_overlay_logs_an_undefined_ratio_as_undefined_not_absent(
     line = next(r.getMessage() for r in caplog.records if "hedge_overlay" in r.getMessage())
     assert "PPUT_full_outcome_risk_adjusted=undefined" in line
     assert "PPUT_full_best_weight_risk_adjusted=undefined" in line
+
+
+# ---------------------------------------------------------------- Book plan
+
+
+def test_book_plan_404s_without_a_cboe_snapshot(client: TestClient) -> None:
+    resp = client.get("/api/putlab/book-plan")
+    assert resp.status_code == 404
+    assert "no Cboe strategy indices" in resp.json()["detail"]
+
+
+@pytest.mark.parametrize(
+    ("params", "detail"),
+    [
+        ({"program": "LTV"}, "program must be one of"),
+        ({"comparator": "QQQ"}, "comparator must be one of"),
+        ({"e0": 0, "monthly": 0}, "a plan needs"),
+    ],
+)
+def test_book_plan_rejects_a_bad_request(
+    client: TestClient, params: dict[str, object], detail: str
+) -> None:
+    resp = client.get("/api/putlab/book-plan", params=params)
+    assert resp.status_code == 422
+    assert detail in resp.json()["detail"]
+
+
+def test_book_plan_carries_provenance_and_logs_the_verdict(
+    client: TestClient, caplog: pytest.LogCaptureFixture
+) -> None:
+    store = app.dependency_overrides[putlab_get_lake_store]()
+    _seed_cboe(store, dt.datetime.now(dt.UTC).date())
+    with caplog.at_level("INFO", logger="tail_lab"):
+        resp = client.get(
+            "/api/putlab/book-plan", params={"horizon_years": 1, "monthly": 100, "e0": 1000}
+        )
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["cboe_snapshot"]
+    assert body["rates_snapshot"] is None
+    plan = body["plan"]
+    assert plan["refusal"] is None and plan["rolling"]["n_starts"] > 0
+    line = next(r.getMessage() for r in caplog.records if "book_plan" in r.getMessage())
+    for field in (
+        f"code_sha={body['code_sha']}",
+        "rates_snapshot=none",
+        "program=PPUT",
+        "comparator=spx",
+        "hedged_irr=",
+        "share_ahead=",
+        "by_yield=0.014:",
+    ):
+        assert field in line, field
+    assert putlab_routes._PLAN_CACHE
+
+
+def test_book_plan_refuses_t_bills_inside_a_200_until_rates_exist(client: TestClient) -> None:
+    """A comparator the lake cannot offer is a value the page shows, not an
+    error that blanks the whole tab."""
+    store = app.dependency_overrides[putlab_get_lake_store]()
+    _seed_cboe(store, dt.datetime.now(dt.UTC).date())
+    resp = client.get("/api/putlab/book-plan", params={"comparator": "bills", "horizon_years": 1})
+    assert resp.status_code == 200
+    plan = resp.json()["plan"]
+    assert plan["window"] is None
+    assert plan["refusal"] == "T-bills: no T-bill history in the lake yet (rates not ingested)"
+    bills = next(o for o in plan["comparators"] if o["key"] == "bills")
+    assert bills["available"] is False
+
+
+# ---------------------------------------------------------------- Book model plan
+
+
+def test_model_plan_offers_only_the_measured_depths(client: TestClient) -> None:
+    resp = client.get("/api/putlab/book-plan/model", params={"moneyness_pct": 20})
+    assert resp.status_code == 422
+    assert "must be one of [5.0, 10.0]" in resp.json()["detail"]
+
+
+def test_model_plan_404s_without_spx(client: TestClient) -> None:
+    resp = client.get("/api/putlab/book-plan/model")
+    assert resp.status_code == 404
+    assert "no cboe_strategy known" in resp.json()["detail"]
+
+
+def test_model_plan_carries_its_error_bar_and_logs_it(
+    client: TestClient, caplog: pytest.LogCaptureFixture
+) -> None:
+    store = app.dependency_overrides[putlab_get_lake_store]()
+    _seed_cboe(store, dt.datetime.now(dt.UTC).date())  # SPX; the fixture already has VIX
+    with caplog.at_level("INFO", logger="tail_lab"):
+        resp = client.get(
+            "/api/putlab/book-plan/model",
+            params={"moneyness_pct": 10, "horizon_years": 1, "monthly": 100, "put_share": 0.2},
+        )
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["vix_snapshot"] and body["cboe_snapshot"]
+    plan = body["plan"]
+    assert plan["accuracy"]["vol_gap"] == 0.072
+    assert plan["accounting"].startswith("contribution-funded")
+    line = next(r.getMessage() for r in caplog.records if "book_plan_model" in r.getMessage())
+    for field in (
+        "vol_gap=0.072",
+        "put_share=0.2",
+        f"code_sha={body['code_sha']}",
+        "vix_snapshot=",
+    ):
+        assert field in line, field
+
+
+@pytest.mark.parametrize("params", [{"e0": "inf"}, {"monthly": "inf"}, {"e0": 1e12}])
+def test_book_plan_refuses_absurd_amounts_before_the_solver(
+    client: TestClient, params: dict[str, object]
+) -> None:
+    assert client.get("/api/putlab/book-plan", params=params).status_code == 422
+    assert client.get("/api/putlab/book-plan/model", params=params).status_code == 422
+
+
+def test_a_window_of_days_is_a_refusal_inside_a_200_not_a_500(client: TestClient) -> None:
+    """A start one day before as_of used to meet the IRR bracket and crash."""
+    store = app.dependency_overrides[putlab_get_lake_store]()
+    today = dt.datetime.now(dt.UTC).date()
+    _seed_cboe(store, today)
+    first_of_month = today.replace(day=1)
+    resp = client.get(
+        "/api/putlab/book-plan",
+        params={"start": first_of_month.isoformat(), "horizon_years": 1, "comparator": "cash"},
+    )
+    assert resp.status_code == 200
+    plan = resp.json()["plan"]
+    assert plan["window"] is None
+    assert plan["refusal"] in {
+        "the window holds less than one full month",
+        f"no month start on or after {first_of_month}",
+    }
+
+
+def test_book_plan_logs_its_start_and_its_404s(
+    client: TestClient, caplog: pytest.LogCaptureFixture
+) -> None:
+    with caplog.at_level("INFO", logger="tail_lab"):
+        assert client.get("/api/putlab/book-plan").status_code == 404
+    refused = next(r.getMessage() for r in caplog.records if "refused_404=" in r.getMessage())
+    assert "program=PPUT" in refused and "start=default" in refused
+    store = app.dependency_overrides[putlab_get_lake_store]()
+    _seed_cboe(store, dt.datetime.now(dt.UTC).date())
+    caplog.clear()
+    with caplog.at_level("INFO", logger="tail_lab"):
+        client.get("/api/putlab/book-plan", params={"horizon_years": 1, "comparator": "cash"})
+    line = next(r.getMessage() for r in caplog.records if "book_plan" in r.getMessage())
+    assert "start=default" in line
+
+
+def test_the_plan_cache_starts_over_instead_of_growing_per_keystroke(client: TestClient) -> None:
+    putlab_routes._PLAN_CACHE.clear()
+    for i in range(putlab_routes._PLAN_CACHE_MAX + 5):
+        putlab_routes._PLAN_CACHE[(i,)] = (0.0, None)
+    store = app.dependency_overrides[putlab_get_lake_store]()
+    _seed_cboe(store, dt.datetime.now(dt.UTC).date())
+    client.get("/api/putlab/book-plan", params={"horizon_years": 1, "comparator": "cash"})
+    assert len(putlab_routes._PLAN_CACHE) == 1
+
+
+def test_model_plan_refuses_a_plan_with_no_starting_book(client: TestClient) -> None:
+    """With no book the puts arm is a standalone put (the Workspace's job),
+    and its time-weighted drawdown would read -100% for a sleeve that wins."""
+    assert client.get("/api/putlab/book-plan/model", params={"e0": 0}).status_code == 422
+
+
+def test_model_plan_cache_keys_on_every_input(client: TestClient) -> None:
+    store = app.dependency_overrides[putlab_get_lake_store]()
+    _seed_cboe(store, dt.datetime.now(dt.UTC).date())
+    base = {
+        "horizon_years": 1,
+        "put_share": 1.0,
+        "e0": 1000.0,
+        "monthly": 100.0,
+        "moneyness_pct": 5,
+    }
+    for field, other in (
+        ("put_share", 0.2),
+        ("horizon_years", 2),
+        ("e0", 2000.0),
+        ("monthly", 200.0),
+        ("moneyness_pct", 10),
+    ):
+        first = client.get("/api/putlab/book-plan/model", params=base).json()["plan"]
+        varied = client.get("/api/putlab/book-plan/model", params=base | {field: other}).json()[
+            "plan"
+        ]
+        assert varied[field] == other and first[field] == base[field], field
+
+
+def test_model_plan_logs_its_404s_with_inputs(
+    client: TestClient, caplog: pytest.LogCaptureFixture
+) -> None:
+    with caplog.at_level("INFO", logger="tail_lab"):
+        assert (
+            client.get("/api/putlab/book-plan/model", params={"put_share": 0.3}).status_code == 404
+        )
+    line = next(r.getMessage() for r in caplog.records if "refused_404=" in r.getMessage())
+    assert "book_plan_model" in line and "put_share=0.3" in line

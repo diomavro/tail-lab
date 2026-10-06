@@ -68,6 +68,10 @@ export type TabId =
   | 'surface'
   | 'glossary'
 
+/** Tabs whose results come from the trailing-RV Black-Scholes backtester --
+ *  the only ones the global "model-priced on trailing RV" notes describe. */
+const RV_PRICED_TABS: readonly TabId[] = ['workspace', 'recommendations', 'portfolio', 'bakeoff']
+
 /** Paper is the light sheet, plate the negative. Persisted, never inferred from
  *  the OS: which sheet a trading page prints on is the reader's call. */
 export type Sheet = 'paper' | 'plate'
@@ -434,7 +438,11 @@ export function PutLab() {
                 : `${dq.n_suspicious} flagged of ${dq.n_bars}`}
             </span>
           )}
-          <span className="pl-caveat pl-micro">Model-priced · Black&ndash;Scholes on trailing RV</span>
+          {/* Only the tabs that show trailing-RV backtest results carry this badge;
+              the others state their own pricing beside each result, or show none. */}
+          {RV_PRICED_TABS.includes(tab) && (
+            <span className="pl-caveat pl-micro">Model-priced · Black&ndash;Scholes on trailing RV</span>
+          )}
         </dl>
         <div className="pl-rule-hair" />
 
@@ -483,10 +491,16 @@ export function PutLab() {
 
         <footer className="pl-footer">
           <p>
-            <strong>Model-priced, not historical quotes.</strong> The underlying path is real daily OHLCV from
-            the lake; every option premium is a Black&ndash;Scholes model price with trailing realized
-            volatility standing in for implied (see adr/0004). tail-lab never trades &mdash; it hands you the
-            read, you place the trade by hand.
+            {RV_PRICED_TABS.includes(tab) ? (
+              <>
+                <strong>Model-priced, not historical quotes.</strong> The underlying path is real daily OHLCV
+                from the lake; every option premium is a Black&ndash;Scholes model price with trailing realized
+                volatility standing in for implied (see adr/0004).
+              </>
+            ) : tab === 'glossary' ? null : (
+              <>Each result on this tab states how it was priced, beside the result.</>
+            )}{' '}
+            tail-lab never trades &mdash; it hands you the read, you place the trade by hand.
           </p>
           <FeedbackPanel />
         </footer>

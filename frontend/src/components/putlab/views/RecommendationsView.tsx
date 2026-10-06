@@ -2,6 +2,7 @@ import type { PutLabLeaderboardResponse, RankedAsset, Verdict } from '../../../a
 import { fmtDollar, fmtPct } from '../format'
 import type { ResourceState } from '../PutLab'
 import type { PutLabControls } from '../types'
+import { StandaloneNote } from '../StandaloneNote'
 
 /* Every name's best strategy, ranked against each other.
  *
@@ -81,6 +82,7 @@ export function RecommendationsView({ ranking, controls, onSelectAsset }: Props)
   return (
     <div>
       <h2 style={{ marginBottom: 4 }}>Recommendations</h2>
+      <StandaloneNote />
       <p className="pl-lede" style={{ marginBottom: 10 }}>
         Each name&rsquo;s <strong>best</strong> put strategy over this window &mdash; the argmax of
         its own strike × tenor grid &mdash; ranked against every other name&rsquo;s. Every figure on

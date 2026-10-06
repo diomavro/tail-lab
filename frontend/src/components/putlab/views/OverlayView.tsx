@@ -7,6 +7,7 @@ import {
   type OverlayWindow,
 } from '../../../api/client'
 import { fmtFixed } from '../format'
+import { BookPlan } from './BookPlan'
 
 /* The Book: how much of the equity book should carry the hedge -- Rodman's
  * Paradox, tested on Cboe's real-quote programs. Named from docs/adr/0021's
@@ -133,7 +134,10 @@ function WindowTable({ w, symbol }: { w: OverlayWindow; symbol: string }) {
   )
 }
 
+type Plan = 'lump' | 'monthly'
+
 export function OverlayView() {
+  const [plan, setPlan] = useState<Plan>('lump')
   const [state, setState] = useState<State>({ status: 'loading' })
 
   useEffect(() => {
@@ -158,6 +162,25 @@ export function OverlayView() {
   return (
     <div>
       <h2 style={{ marginBottom: 4 }}>The Book</h2>
+      <div className="pl-seg" role="radiogroup" aria-label="Plan" style={{ marginBottom: 10 }}>
+        {(
+          [
+            ['lump', 'Lump sum'],
+            ['monthly', 'Monthly contributions'],
+          ] as const
+        ).map(([key, label]) => (
+          <label className="pl-seg-opt" key={key}>
+            <input type="radio" name="pl-book-plan" checked={plan === key} onChange={() => setPlan(key)} />
+            {label}
+          </label>
+        ))}
+      </div>
+      {plan === 'monthly' && <BookPlan />}
+      {plan === 'lump' && (
+        <>
+          <p className="pl-lede" data-testid="accounting">
+            Accounting: self-financed — the hedge's premium is paid from the book (docs/adr/0027).
+          </p>
       <p className="pl-lede" style={{ marginBottom: 10 }}>
         How much of the equity book should carry the hedge? Rodman's Paradox (Artemis Capital, 2016): an asset that
         loses money most years can still make the whole book grow faster, by paying off in the crash. The letter's long-vol fund index is licensed, so this blends each Cboe
@@ -198,6 +221,8 @@ export function OverlayView() {
             Cboe snapshot {state.data.cboe_snapshot ?? 'unknown'} · code {state.data.code_sha} · as of{' '}
             {state.data.overlay.as_of}
           </p>
+        </>
+      )}
         </>
       )}
     </div>
