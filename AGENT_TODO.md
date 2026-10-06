@@ -18,6 +18,13 @@ a large one strictly in order.
 
 ## Next increments
 
+- [ ] **Fix the flaky `surface.spec.ts` TSLA click** (found 2026-10-05).
+      `getByRole('button', { name: /TSLA/ })` matches both the universe row
+      and the ranking-strip pick once the leaderboard has loaded, so the
+      test passes alone (4/4) and fails under full-suite load when the strip
+      wins the race. Scope the locator to the universe list (or the strip).
+      Probably the unexplained one-off e2e failure noted on PR #138.
+
 - [ ] **PINNED BY DIO, 2026-09-29 — ship the Paretan Surface before any
       other item here: P4, then P5.** The specs are in the "Paretan tail
       pricing" section below (`### P4 — GET /api/putlab/surface` and
