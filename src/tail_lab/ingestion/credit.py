@@ -7,8 +7,10 @@ source, same ``FRED_API_KEY`` setting, and the same ALFRED-vintage
 point-in-time hazard as ``ingestion/rates.py`` (`docs/DATA_CONTRACTS.md`
 #3): a credit-spread series can be revised after first publication, so
 pulling only the latest value is a look-ahead bug, not a simplification.
-The adapter therefore always requests FRED's full vintage history rather
-than the single-vintage default, exactly as the rates adapter does.
+The adapter therefore requests FRED's full realtime window rather than the
+single-vintage default -- which works only while a series has under 2,000
+vintages (FRED's cap); ``ingestion/rates.py`` pages vintages because the
+Treasury series have ~5,100.
 
 Ingests HY OAS (``BAMLH0A0HYM2``) and IG OAS (``BAMLC0A0CM``).
 
@@ -22,7 +24,7 @@ touch the network:
   quarantine -> commit-to-bronze across the whole series family.
 
 Kept as its own module rather than sharing code with ``ingestion/rates.py``
--- the two adapters hit an identical endpoint shape, but every dataset in
+-- the two adapters hit the same FRED endpoint, but every dataset in
 this package already gets its own adapter module even when structurally
 close to a sibling (``vix.py`` / ``cboe_strategy.py`` are both Cboe CSV
 adapters and share no code), and each validates against its own schema
@@ -37,11 +39,11 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 
 import pandas as pd
-import requests
 from pandera.errors import SchemaErrors
 
 from tail_lab.contracts.credit import DATASET, DEFAULT_SERIES_IDS, CreditSchema
 from tail_lab.ingestion.json_payload import json_list, json_object
+from tail_lab.ingestion.rates import fred_getter
 from tail_lab.lake.store import LakeStore
 from tail_lab.observability import log_event
 
@@ -57,7 +59,6 @@ __all__ = [
 
 _LOGGER = logging.getLogger(__name__)
 
-FRED_OBSERVATIONS_URL = "https://api.stlouisfed.org/fred/series/observations"
 QUARANTINE_DATASET = f"{DATASET}__quarantine"
 
 #: FRED's own sentinel values meaning "every vintage on record" (ALFRED
@@ -84,21 +85,20 @@ class IngestResult:
 
 
 def fetch_series_observations_raw(series_id: str, api_key: str, *, timeout: float = 30.0) -> object:
-    """Fetch one series' full vintage history. Network call -- not used by tests."""
-    resp = requests.get(
-        FRED_OBSERVATIONS_URL,
-        params={
+    """Fetch one series' full vintage history. Network call -- not used by tests.
+
+    Goes through :func:`rates.fred_getter`, so a FRED error never carries the
+    API key (requests puts the full URL, key included, in its messages, and
+    the daily refresh logs tracebacks to disk)."""
+    get = fred_getter(api_key, timeout=timeout, retry_event="ingest.credit.retry")
+    return get(
+        "series/observations",
+        {
             "series_id": series_id,
-            "api_key": api_key,
-            "file_type": "json",
             "realtime_start": _ALFRED_REALTIME_START,
             "realtime_end": _ALFRED_REALTIME_END,
         },
-        timeout=timeout,
     )
-    resp.raise_for_status()
-    payload: object = resp.json()
-    return payload
 
 
 def parse_fred_observations(series_id: str, raw: object) -> pd.DataFrame:

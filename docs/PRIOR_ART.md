@@ -604,6 +604,24 @@ batches must stay <=600 dates or **Apache**, not FRED, returns an HTML 400;
 the observation window must be bounded or the request times out; 5,115
 vintages is 13 requests, well inside the 120/min limit.
 
+**Implemented 2026-10-06** (`ingestion/rates.py`), with corrections
+measured while building it: the cost is FRED's **cache**, not the window —
+an unbounded 400-vintage DGS3MO request took 35 s cold and 0.5 s warm
+(valid JSON both times), against a 60 s gateway timeout, so windows stay
+bounded for latency; `output_type=3` on a series' **first** vintage is FRED's slow path (~60 s
+uncached, a gateway **504** for DFF even over five years), so the first
+vintage is taken whole from one `output_type=1` request at
+`realtime_start = realtime_end =` that vintage — exact there, since no
+earlier vintage exists to clip to; `output_type=3`'s `count` counts every date in the window even when it
+returns zero rows, so it is **not** a truncation signal; and a 400-day
+window misses real history — FRED backfilled DGS3MO's 1981-09..12
+observations and revised 1999-10-01 (4.98 -> 4.88) in the 2020-07-21
+vintage, and re-rounded DFF's 1954-1973 observations to two decimals (the 1,639 first printed with more). The
+adapter reconciles each series against FRED's snapshot at its newest
+vintage, finds the vintages that touched the disagreeing dates with
+`output_type=1` (dates only: the clipping above makes its rows unusable as
+data), and re-fetches those via `output_type=3`.
+
 ## 20. Point-in-time: do not migrate. Steal the clock
 
 **The premise inverts.** `DeltaTable.history()` retains 30 days by default and
