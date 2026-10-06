@@ -34,7 +34,8 @@ test('draws the survival plot, toggles to price-vs-strike, and caps the ladder a
 })
 
 test('a refused payload says REFUSED with the reason, not a blank or a zero', async ({ page }) => {
-  await page.getByRole('button', { name: /TSLA/ }).click()
+  // Scoped: once the ranking loads, the universe row AND the strip pick both match /TSLA/.
+  await page.getByRole('group', { name: 'Fragility ranking' }).getByRole('button', { name: /TSLA/ }).click()
   await page.getByRole('tab', { name: 'Surface' }).click()
   const strip = page.getByRole('status', { name: 'Alpha strip' })
   await expect(strip).toContainText('REFUSED — fewer than 6 hygienic strikes below the anchor')
