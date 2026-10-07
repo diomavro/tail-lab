@@ -27,7 +27,7 @@ a large one strictly in order.
       wins the race. Scope the locator to the universe list (or the strip).
       Probably the unexplained one-off e2e failure noted on PR #138.
 
-- [ ] **PINNED BY DIO, 2026-09-29 — ship the Paretan Surface before any
+- [x] **PINNED BY DIO, 2026-09-29 — ship the Paretan Surface before any
       other item here: P4, then P5.** The specs are in the "Paretan tail
       pricing" section below (`### P4 — GET /api/putlab/surface` and
       `### P5 — The Surface tab`); follow them there, they are not restated
@@ -41,8 +41,10 @@ a large one strictly in order.
       **2026-10-05:** advisory notes on #134/#136 partly applied (bisect in
       `survival_curve`, fragment in `RealisedCaveat`); still open: slice `ladder`
       once in `SurfaceView`, trim the e2e ladder fixture to ~9 rungs.
-      **Status 2026-10-04: P5 code is in (PR `agent/surface-tab`); tick this
-      once the deployed tab is confirmed rendering.**
+      **Done 2026-10-07**: confirmed on tail-lab.fly.dev -- `GET /api/putlab/surface?asset=spy`
+      returns 200 with a live chain snapshot (2026-10-06), and the served JS bundle
+      contains the Surface tab. Leftover advisory nits (slice `ladder` once in
+      `SurfaceView`, trim the e2e ladder fixture) are low-value; unpinned.
 
 - [x] **Fix `rates.py` by paging FRED vintages — recipe verified, and the
       obvious fix fabricates revisions.** `docs/PRIOR_ART.md` §19.
