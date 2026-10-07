@@ -48,6 +48,10 @@ export function RegimeView({ regimes, vix, accuracy }: Props) {
   const last = regimes.segments[regimes.segments.length - 1]!.end
   const residuals =
     accuracy.status === 'ready' ? accuracy.data.model.residual_by_regime : ({} as Record<string, number>)
+  // The residuals are the replication of whichever published program sits
+  // nearest the strike and tenor last set on the Workspace -- PPUT at the
+  // defaults, PPUT3M deeper and longer -- so the copy names the one it used.
+  const reference = accuracy.status === 'ready' ? accuracy.data.model.reference : null
   const longest = [...regimes.segments].sort((a, b) => b.n_days - a.n_days).slice(0, 5)
 
   return (
@@ -128,7 +132,13 @@ export function RegimeView({ regimes, vix, accuracy }: Props) {
         </div>
         <p className="pl-note" style={{ marginBottom: 14 }}>
           The residual beside each band is how far the model&rsquo;s price &mdash; Black&ndash;Scholes at the
-          VIX, replicating Cboe&rsquo;s PPUT &mdash; missed the published program in that regime. It <em>flips sign</em> in a crisis rather than ramping up from
+          VIX, replicating Cboe&rsquo;s {reference ?? 'PPUT'} &mdash; missed the published program in that regime.
+          {reference && (
+            <>
+              {' '}
+              {reference} is the program nearest the strike and tenor set on the Workspace.
+            </>
+          )} It <em>flips sign</em> in a crisis rather than ramping up from
           calm &mdash; the model is too cheap in quiet markets and too dear in a dislocation.
         </p>
         <div className="pl-regime-cards">

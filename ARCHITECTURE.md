@@ -239,8 +239,9 @@ response shapes).
 The app is the **Put Lab workspace** and nothing else. `PutLab.tsx` owns the
 shared controls, the active tab, the sheet, and every cached read; the six tabs
 are thin views under `components/putlab/views/`. `ParamRail` is the *only*
-control surface and renders on every tab — do not add a second one (`docs/adr/
-0017`). Panels live flat in `components/putlab/` and take data as props; the
+control surface for the shared controls — do not add a second one (`docs/adr/
+0017`). It renders only the sections the open tab reads (`rail.ts`, `docs/adr/
+0028`); a tab that reads none has no rail. Panels live flat in `components/putlab/` and take data as props; the
 views compose them.
 
 Reads go through `useCachedResource` in `PutLab.tsx`: per-resource,

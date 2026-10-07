@@ -96,7 +96,8 @@ test('does not re-screen the universe from a tab that cannot show it', async ({ 
   await page.goto('/')
   await expect(page.locator('.pl-rank-strip button').first()).toBeVisible()
 
-  await page.getByRole('tab', { name: 'Glossary' }).click()
+  // Bake-off reads the strike (its rail has one) but does not show the ranking.
+  await page.getByRole('tab', { name: 'Bake-off' }).click()
   const before = apiRequests(page).filter((p) => p === '/api/putlab/leaderboard').length
 
   await page.getByRole('radiogroup', { name: 'Strike presets' }).getByText('15%').click()

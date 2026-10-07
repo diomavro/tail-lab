@@ -91,7 +91,7 @@ Screen tab's deeper "is the screen any good?" question moved to its own
 | **Regime** | What market are we in? | `/api/putlab/regimes`, `/api/vix/stretch`, `/accuracy` (the per-regime residual) | `vix`, `cboe_strategy`, `credit` (widening, §3.2 — falls back to VIX-only until ingested) |
 | **Glossary** | — (renders `content/concepts.ts`, no network) | none | none |
 | **Roll schedule** (export, not a tab) | What would I actually place? | `/api/putlab/roll-schedule` (the ranking's read, reused from cache) | `ohlcv_*`, `vix` |
-| **Control rail** (every tab) | What position am I asking about, and where did the data come from? | `/api/putlab/universe`, `/cadence`, `/data-quality` | `ohlcv_<asset>`, the options calendar |
+| **Control rail** (the tabs that read it: `rail.ts`, `docs/adr/0028`) | What position am I asking about, and where did the data come from? | `/api/putlab/universe`, `/cadence`, `/data-quality` | `ohlcv_<asset>`, the options calendar |
 
 **The accuracy panel is the densest node in the graph.** It renders under every
 backtest result and, alone in the app, reads *four* datasets at once — the

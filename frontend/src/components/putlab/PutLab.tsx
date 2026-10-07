@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import {
   ApiError,
   fetchAccuracy,
@@ -28,6 +28,8 @@ import { FeedbackPanel } from '../FeedbackPanel'
 import { fmtPrice } from './format'
 import { ParamRail } from './ParamRail'
 import './putlab.css'
+import { RAIL } from './rail'
+import { TAB_LABEL } from './tabs'
 import { TabNav } from './TabNav'
 import { PUTLAB_DEFAULT_CONTROLS, PUTLAB_OOM_PRESETS, PUTLAB_TENORS, type PutLabControls } from './types'
 import { BakeOffView } from './views/BakeOffView'
@@ -51,7 +53,8 @@ import { WorkspaceView } from './views/WorkspaceView'
  *  2. One control surface. The old QuestionBar (Screen/Portfolio) and
  *     ChartCockpit (Backtest) were two competing ways to set the same four
  *     params, so a user had to learn where the controls lived per tab.
- *     ParamRail is the only one, and it is present on every tab.
+ *     ParamRail is the only one. It shows only the controls the open tab
+ *     reads, and a tab that reads none gives its full width to the result.
  *
  * The page scrolls normally. The old fixed 100dvh shell with an inner scroller
  * pinned four bands above the result, which left the hero chart a few hundred
@@ -88,6 +91,10 @@ export type ResourceState<T> =
 // A slider/number drag fires many onChange events per second -- wait for the
 // controls to settle before hitting the network.
 const DEBOUNCE_MS = 250
+// Below this container width the rail collapses behind a toggle and the tab
+// row scrolls sideways. Measured on the page's own box, not the window, so an
+// embedded or split-screen sheet lays out by the room it actually has.
+const NARROW_PX = 760
 // After the primary read, warm the preset rails in the background so a rail
 // click is instant. Deferred so it never competes with the primary fetch.
 const PREFETCH_DELAY_MS = 350
@@ -210,6 +217,8 @@ export function PutLab() {
   const [regimes, setRegimes] = useState<RegimeTimelineView | null>(null)
   const [vix, setVix] = useState<VixStretchResponse | null>(null)
   const [sheet, setSheet] = useState<Sheet>(readSheet)
+  const [narrow, setNarrow] = useState(false)
+  const wrapRef = useRef<HTMLDivElement>(null)
 
   const update = (patch: Partial<PutLabControls>) => setControls((c) => ({ ...c, ...patch }))
 
@@ -220,6 +229,16 @@ export function PutLab() {
       // A sheet that cannot be remembered still has to render.
     }
   }, [sheet])
+
+  useEffect(() => {
+    const el = wrapRef.current
+    if (!el) return
+    const measure = () => setNarrow(el.clientWidth < NARROW_PX)
+    measure()
+    const ro = new ResizeObserver(measure)
+    ro.observe(el)
+    return () => ro.disconnect()
+  }, [])
 
   // Market-wide reads, fetched once: they key off nothing in `controls`.
   useEffect(() => {
@@ -384,11 +403,27 @@ export function PutLab() {
   const dq = dataQuality.status === 'ready' ? dataQuality.data : null
   const cad = cadence.status === 'ready' ? cadence.data : null
 
+  const sv = tab === 'surface' && surface.status === 'ready' ? surface.data.surface : null
+  // The Book reads the S&P 500 and Cboe's programs, never the rail's name.
+  const namesAsset = tab !== 'book'
+
   const dateline = useMemo(() => {
     const rows: { k: string; v: string }[] = []
     const member = universe.find((m) => m.symbol.toLowerCase() === controls.asset.toLowerCase())
-    rows.push({ k: 'Name', v: `${controls.asset.toUpperCase()} ${member?.name ?? ''}`.trim() })
-    if (bt) {
+    if (tab === 'book') {
+      rows.push({ k: 'Underlying', v: 'S&P 500 total return' })
+    } else {
+      rows.push({ k: 'Name', v: `${controls.asset.toUpperCase()} ${member?.name ?? ''}`.trim() })
+    }
+    if (tab === 'surface') {
+      // The Surface's own session, not the backtest's: its spot is the chain's.
+      if (sv) {
+        const anchor = sv.anchors.readings[0]
+        rows.push({ k: 'Spot', v: fmtPrice(sv.spot) })
+        if (anchor) rows.push({ k: 'Anchor', v: `K ${anchor.strike.toFixed(0)} · ${sv.moneyness_pct}% OOM` })
+        rows.push({ k: 'Expiry', v: `${sv.expiration} · ${sv.t_days} days` })
+      }
+    } else if (tab !== 'book' && bt) {
       rows.push({ k: 'Spot', v: fmtPrice(bt.spot) })
       rows.push({
         k: 'Strike',
@@ -399,11 +434,13 @@ export function PutLab() {
     if (regimes) rows.push({ k: 'Regime', v: regimes.current })
     if (vix) rows.push({ k: 'VIX', v: vix.close.toFixed(1) })
     return rows
-  }, [universe, controls.asset, controls.moneyness_pct, bt, regimes, vix])
+  }, [tab, universe, controls.asset, controls.moneyness_pct, bt, sv, regimes, vix])
+
+  const railSections = RAIL[tab]
 
   return (
     <div className="putlab-root" data-theme={sheet}>
-      <div className="pl-wrap">
+      <div className={`pl-wrap${narrow ? ' is-narrow' : ''}`} ref={wrapRef}>
         <div className="pl-rule-thick" />
         <header className="pl-masthead">
           <div className="pl-brand">
@@ -431,7 +468,7 @@ export function PutLab() {
               <dd>{r.v}</dd>
             </span>
           ))}
-          {dq && (
+          {namesAsset && dq && (
             <span className={`pl-tag ${dq.n_suspicious === 0 ? 'pl-tag-ok' : 'pl-tag-bad'}`}>
               {dq.n_suspicious === 0
                 ? `Data clean · ${dq.n_bars} bars`
@@ -446,18 +483,25 @@ export function PutLab() {
         </dl>
         <div className="pl-rule-hair" />
 
-        <TabNav activeTab={tab} onChange={setTab} />
-        <div className="pl-rule-hair" style={{ marginBottom: 24 }} />
+        <TabNav activeTab={tab} onChange={setTab} narrow={narrow} />
 
         <div className="pl-shell">
-          <ParamRail
-            controls={controls}
-            onChange={update}
-            universe={universe}
-            dataQuality={dq}
-            cadence={cad}
-            asOf={bt ? bt.as_of : null}
-          />
+          {railSections.length > 0 && (
+            <ParamRail
+              // Remount per tab: a narrow rail opened on one tab starts
+              // collapsed on the next, and the filter query does not leak.
+              key={tab}
+              tab={tab}
+              tabLabel={TAB_LABEL[tab]}
+              controls={controls}
+              onChange={update}
+              universe={universe}
+              dataQuality={dq}
+              cadence={cad}
+              asOf={bt ? bt.as_of : null}
+              narrow={narrow}
+            />
+          )}
 
           <main className="pl-main" role="tabpanel" id={`panel-${tab}`} aria-labelledby={`tab-${tab}`} tabIndex={0}>
             {tab === 'workspace' && (
