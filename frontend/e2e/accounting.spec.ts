@@ -28,6 +28,6 @@ test('the Book names self-financed in lump sum and contributions, contribution-f
   await expect(page.getByTestId('accounting')).toContainText('Accounting: self-financed')
   await page.getByRole('radiogroup', { name: 'Plan' }).getByText('Monthly contributions').click()
   await expect(page.getByTestId('accounting')).toContainText('Accounting: self-financed')
-  await page.getByRole('radiogroup', { name: 'Source' }).getByText('Our model').click()
+  await page.getByRole('radiogroup', { name: 'Priced from' }).getByText('Our model').click()
   await expect(page.getByTestId('accounting')).toContainText('Accounting: contribution-funded')
 })

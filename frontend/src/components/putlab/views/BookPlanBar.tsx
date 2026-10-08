@@ -62,7 +62,20 @@ function Seg<T extends string | number>({
   )
 }
 
-function Amount({ label, value, onChange, step }: { label: string; value: number; onChange: (v: number) => void; step: number }) {
+function Amount({
+  label,
+  value,
+  onChange,
+  step,
+  min,
+}: {
+  label: string
+  value: number
+  onChange: (v: number) => void
+  step: number
+  /** The spinner's floor: the model plan's API takes only positive amounts. */
+  min: number
+}) {
   const id = `pl-plan-${label.replace(/\W+/g, '-').toLowerCase()}`
   return (
     <div className="pl-field pl-planbar-field pl-planbar-amount">
@@ -71,10 +84,12 @@ function Amount({ label, value, onChange, step }: { label: string; value: number
         id={id}
         className="pl-input"
         type="number"
-        min={0}
+        min={min}
         max={MAX_AMOUNT}
         step={step}
         value={value}
+        // Clamped at 0, not at min: a typed 0 reaches the API, whose refusal
+        // names the field (detailOf), as before the plan bar.
         onChange={(e) => onChange(amount(e.target.value, 0))}
       />
     </div>
@@ -236,8 +251,14 @@ export function BookPlanBar({
                 />
               </>
             )}
-            <Amount label="Start with $" value={amounts.e0} step={1000} onChange={(e0) => setAmounts({ e0 })} />
-            <Amount label="Every month $" value={amounts.monthly} step={100} onChange={(monthly) => setAmounts({ monthly })} />
+            <Amount label="Start with $" value={amounts.e0} step={1000} min={source === 'real' ? 0 : 1} onChange={(e0) => setAmounts({ e0 })} />
+            <Amount
+              label="Every month $"
+              value={amounts.monthly}
+              step={100}
+              min={source === 'real' ? 0 : 1}
+              onChange={(monthly) => setAmounts({ monthly })}
+            />
             <Seg
               label="Horizon"
               name="pl-plan-horizon"
