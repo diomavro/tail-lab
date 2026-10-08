@@ -21,11 +21,12 @@ export const PUTLAB_ASSETS: { value: string; label: string }[] = [
 // prefetch (PutLab) and the rail buttons (ChartCockpit) can never drift apart.
 export const PUTLAB_OOM_PRESETS: number[] = [5, 10, 15, 20]
 
-export const PUTLAB_TENORS: { weeks: number; label: string }[] = [
-  { weeks: 1, label: '1 week' },
-  { weeks: 2, label: '2 wk' },
-  { weeks: 4, label: '1 month' },
-  { weeks: 12, label: '1 quarter' },
+// `short` is the collapsed rail's one-line summary on a narrow screen.
+export const PUTLAB_TENORS: { weeks: number; label: string; short: string }[] = [
+  { weeks: 1, label: '1 week', short: '1w' },
+  { weeks: 2, label: '2 wk', short: '2w' },
+  { weeks: 4, label: '1 month', short: '1m' },
+  { weeks: 12, label: '1 quarter', short: '1q' },
 ]
 
 // The lookback windows the rail offers. Shared so the rail and any caller that

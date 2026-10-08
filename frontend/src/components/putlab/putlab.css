@@ -157,7 +157,7 @@
   letter-spacing: -0.015em;
   margin: 0;
 }
-.putlab-root h1 { font-size: 38px; line-height: 1; letter-spacing: -0.02em; }
+.putlab-root h1 { font-size: clamp(34px, 7vw, 44px); line-height: 1; letter-spacing: -0.02em; }
 .putlab-root h2 { font-size: 26px; letter-spacing: -0.02em; }
 .putlab-root h3 { font-size: 22px; }
 .putlab-root h4 { font-size: 19px; }
@@ -185,9 +185,9 @@
 
 /* -------------------------------------------------------------- masthead --- */
 
-.pl-wrap { max-width: 1560px; margin: 0 auto; padding: 0 32px 80px; }
+.pl-wrap { max-width: 1560px; margin: 0 auto; padding: 0 clamp(16px, 4vw, 40px) 80px; }
 @media (max-width: 640px) {
-  .pl-wrap { padding: 0 16px 60px; }
+  .pl-wrap { padding-bottom: 60px; }
 }
 
 .pl-rule-thick { height: 6px; background: var(--ink); margin-top: 20px; }
@@ -225,46 +225,94 @@
 .pl-dateline dt { color: var(--ink-45); display: inline; }
 .pl-dateline dd { display: inline; margin: 0 0 0 5px; color: var(--ink); font-weight: 600; }
 
-.pl-tabs { display: flex; gap: 0; margin-top: 2px; flex-wrap: wrap; }
+/* Plain text tabs. The active one is ink over a cyan rule: cyan because a
+   tab is interactive, the one thing cyan means here. */
+.pl-tabs-wrap { position: relative; margin-bottom: var(--space-8); }
+.pl-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2) var(--space-6);
+  padding: var(--space-4) 0 2px;
+}
 .pl-tab {
   font: inherit;
-  font-size: 17px;
+  font-size: 16px;
   font-weight: 400;
-  letter-spacing: -0.01em;
-  color: var(--ink-45);
+  color: var(--ink-70);
   background: transparent;
   border: none;
   border-bottom: 2px solid transparent;
-  padding: 11px 20px 9px;
-  margin-right: 2px;
+  padding: 0 0 4px;
   cursor: pointer;
 }
-.pl-tab:hover { color: var(--ink); }
+.pl-tab:hover { color: var(--cyan); }
 .pl-tab[aria-selected='true'] {
-  font-weight: 600;
   color: var(--ink);
-  border-bottom-color: var(--ink);
+  border-bottom-color: var(--cyan);
+}
+/* Narrow: one row that scrolls sideways, never a wrapped stack of eight. */
+.is-narrow .pl-tabs-wrap { margin-bottom: var(--space-6); }
+.is-narrow .pl-tabs {
+  flex-wrap: nowrap;
+  overflow-x: auto;
+  /* A scroller clips its children's focus rings (2px + 2px offset): give the
+     ring room inside, and take it back outside so the tabs stay aligned. */
+  padding: var(--space-4) 4px 6px;
+  margin-inline: -4px;
+  scrollbar-width: none;
+  -webkit-overflow-scrolling: touch;
+}
+.is-narrow .pl-tabs::-webkit-scrollbar { display: none; }
+.is-narrow .pl-tab { flex: none; white-space: nowrap; }
+/* The scroller reaches 4px past the wrap (focus-ring room); so must the fade. */
+.is-narrow .pl-tabs-fade { right: -4px; }
+.pl-tabs-fade {
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  width: 48px;
+  pointer-events: none;
+  background: linear-gradient(to right, transparent, var(--paper));
 }
 
 /* ----------------------------------------------------------------- shell --- */
 
-/* One control surface on every tab. No border between rail and main — the
-   whitespace does it. The page scrolls normally: the fixed 100dvh shell this
-   replaces pinned header + ranking + tabs + question bar above an inner
-   scroller, which left the hero chart a few hundred pixels on a 13" laptop. */
+/* One control surface, on the tabs that read it. No border between rail and
+   main — the whitespace does it. A flex row that wraps: when the page cannot
+   fit both, main drops under the rail; a tab with no rail is main alone. The
+   page scrolls normally: the fixed 100dvh shell this replaces pinned header +
+   ranking + tabs + question bar above an inner scroller, which left the hero
+   chart a few hundred pixels on a 13" laptop. */
 .pl-shell {
-  display: grid;
-  grid-template-columns: 262px minmax(0, 1fr);
-  gap: 0 34px;
-  align-items: start;
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-6) var(--space-8);
+  align-items: flex-start;
 }
-.pl-side { position: sticky; top: 16px; padding-right: var(--space-6); }
-.pl-main { min-width: 0; }
+.pl-side {
+  flex: 1 1 260px;
+  max-width: 300px;
+  min-width: 0;
+  position: sticky;
+  top: var(--space-4);
+}
+.pl-main { flex: 999 1 520px; min-width: 0; }
 
-@media (max-width: 900px) {
-  .pl-shell { grid-template-columns: minmax(0, 1fr); }
-  .pl-side { position: static; padding-right: 0; margin-bottom: var(--space-6); }
+/* Narrow: the rail is a full-width block above the result, collapsed behind
+   a toggle that summarises it. */
+.is-narrow .pl-side { flex-basis: 100%; max-width: 100%; position: static; }
+.is-narrow .pl-main { flex-basis: 100%; }
+.pl-btn.pl-rail-toggle {
+  width: 100%;
+  min-height: 44px;
+  justify-content: space-between;
+  gap: var(--space-2);
+  text-align: left;
 }
+.pl-rail-toggle-text { display: flex; flex-direction: column; gap: 2px; font-size: 14px; }
+.pl-rail-toggle-act { color: var(--cyan-2); font-size: 14px; }
+.is-narrow #pl-rail-body:not([hidden]) { margin-top: var(--space-4); }
 
 /* Universe picker */
 .pl-list { max-height: 210px; overflow-y: auto; margin: 0 -4px var(--space-4); }
@@ -1033,7 +1081,7 @@
   border-top: 1px solid var(--rule); border-bottom: 1px solid var(--rule);
   margin-bottom: 18px; font-size: 14px;
 }
-.pl-surface-anchor { margin-right: 12px; white-space: nowrap; }
+.pl-surface-anchor { margin-right: 12px; }
 .pl-surface-panes { display: grid; grid-template-columns: 1fr 1fr; gap: 24px; align-items: start; }
 .pl-surface-pane { min-width: 0; height: 330px; overflow: hidden; }
 .pl-surface-plot { margin: 8px 0 0; }

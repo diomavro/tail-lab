@@ -53,9 +53,10 @@ function RegimeMix({ model }: { model: AccuracyResponse['model'] }) {
       </div>
       <ul className="pl-mix-legend">
         {model.regime_mix.map((s) => {
-          // Printed with its own sign. The residual flips sign in a crisis
-          // rather than ramping up from calm -- that flip is the finding, and a
-          // display that assumes a monotonic ramp gets it backwards.
+          // Printed with its own sign. PPUT's residual flips sign in a crisis
+          // rather than ramping up from calm (PPUT3M's does not:
+          // docs/MODEL_RESIDUAL.md), and a display that assumes a monotonic
+          // ramp gets that flip backwards.
           const residual = model.residual_by_regime[s.regime]
           return (
             <li key={s.regime}>

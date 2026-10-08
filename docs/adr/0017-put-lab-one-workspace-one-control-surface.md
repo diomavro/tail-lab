@@ -50,7 +50,9 @@ name's whole strike × tenor grid, so a click patches `best_moneyness_pct` and
 different number from the one just clicked.
 
 **`ParamRail` is the only control surface,** present on every tab, carrying the
-universe picker, the four parameters, and the run's provenance. `QuestionBar` and
+universe picker, the four parameters, and the run's provenance. *(Amended
+2026-10-07, `docs/adr/0028`: it now renders only the controls the open tab
+reads, and a tab that reads none has no rail. Still one surface, one state.)* `QuestionBar` and
 `ChartCockpit` are deleted.
 
 **The Screen tab's deeper question gets its own tab.** "Which screen actually

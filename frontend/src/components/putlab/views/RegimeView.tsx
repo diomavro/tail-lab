@@ -48,6 +48,13 @@ export function RegimeView({ regimes, vix, accuracy }: Props) {
   const last = regimes.segments[regimes.segments.length - 1]!.end
   const residuals =
     accuracy.status === 'ready' ? accuracy.data.model.residual_by_regime : ({} as Record<string, number>)
+  // The residuals replicate whichever published program sits nearest the
+  // strike and tenor on the rail (accuracy.select_reference), so the copy
+  // names the one it used and reads the sign off the numbers, never off PPUT.
+  const reference = accuracy.status === 'ready' ? accuracy.data.model.reference : null
+  const calm = residuals.calm
+  const crisis = residuals.crisis
+  const measured = Object.values(residuals)
   const longest = [...regimes.segments].sort((a, b) => b.n_days - a.n_days).slice(0, 5)
 
   return (
@@ -128,8 +135,29 @@ export function RegimeView({ regimes, vix, accuracy }: Props) {
         </div>
         <p className="pl-note" style={{ marginBottom: 14 }}>
           The residual beside each band is how far the model&rsquo;s price &mdash; Black&ndash;Scholes at the
-          VIX, replicating Cboe&rsquo;s PPUT &mdash; missed the published program in that regime. It <em>flips sign</em> in a crisis rather than ramping up from
-          calm &mdash; the model is too cheap in quiet markets and too dear in a dislocation.
+          VIX, replicating {reference ? <>Cboe&rsquo;s {reference}</> : 'the nearest Cboe program'} &mdash; missed
+          the published program in that regime.
+          {reference && <> {reference} is the program nearest the strike and tenor on the rail.</>}{' '}
+          {accuracy.status === 'loading' && (
+            <span role="status">Measuring the residuals at the rail&rsquo;s strike and tenor…</span>
+          )}
+          {accuracy.status === 'error' && (
+            <span className="pl-caveat" role="alert">
+              The residuals could not be read: {accuracy.message}.
+            </span>
+          )}
+          {calm !== undefined && crisis !== undefined && calm > 0 && crisis < 0 ? (
+            <>
+              It <em>flips sign</em> in a crisis rather than ramping up from calm &mdash; the model is too cheap in
+              quiet markets and too dear in a dislocation.
+            </>
+          ) : measured.length > 0 && measured.every((v) => v > 0) ? (
+            <>It is positive in every measured regime: the model prices these puts too cheap throughout{crisis !== undefined ? ', crisis included' : ''}.</>
+          ) : measured.length > 0 && measured.every((v) => v < 0) ? (
+            <>It is negative in every measured regime: the model prices these puts too dear throughout.</>
+          ) : measured.length > 0 ? (
+            <>Read its sign band by band below.</>
+          ) : null}
         </p>
         <div className="pl-regime-cards">
           {REGIME_ORDER.map((r) => {
@@ -144,7 +172,13 @@ export function RegimeView({ regimes, vix, accuracy }: Props) {
                 <div className="pl-stat-v">{Math.round((days / total) * 100)}%</div>
                 <div className="pl-stat-note">{days} sessions</div>
                 <div className="pl-stat-note">
-                  {residual === undefined ? 'residual unmeasured' : `${signedPct(residual)}/yr residual`}
+                  {accuracy.status === 'loading'
+                    ? 'residual: measuring…'
+                    : accuracy.status === 'error'
+                      ? 'residual not read (request failed)'
+                      : residual === undefined
+                        ? 'residual unmeasured'
+                        : `${signedPct(residual)}/yr residual`}
                 </div>
               </div>
             )
