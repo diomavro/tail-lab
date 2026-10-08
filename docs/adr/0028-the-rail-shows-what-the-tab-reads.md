@@ -101,9 +101,11 @@ would otherwise toggle the layout every frame.
 * A view that starts reading a shared control must add that section to its
   row in the same change, or the reader cannot see the state that drives it.
   That is the Regime trap above, and the reason each row carries its audit note.
-* Recommendations carries no strike. Each row reports that name's own best
-  cell over a fixed strike x tenor grid (`ranking.run_sweep`), and the
-  screening roll's cycle dates depend on the tenor alone, so the strike moved
-  nothing on screen while re-running the most expensive read in the app. The
-  tenor stays: it decides, at the 90% coverage edge, which names cover the
-  window. The handoff listed strike for this tab.
+* Recommendations carries no strike, and screens at the default one. Each row
+  reports that name's own best cell over a fixed strike x tenor grid
+  (`ranking.run_sweep`), and the screening roll's cycle dates depend on the
+  tenor alone, so a strike set elsewhere would re-run the most expensive read
+  in the app for an identical table. The Workspace's ranking strip prints
+  strike-dependent fields and keeps the rail's strike. The tenor stays on
+  Recommendations: it decides, at the 90% coverage edge, which names cover
+  the window. The handoff listed strike for this tab.

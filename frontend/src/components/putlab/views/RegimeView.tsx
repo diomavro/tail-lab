@@ -138,6 +138,14 @@ export function RegimeView({ regimes, vix, accuracy }: Props) {
           VIX, replicating {reference ? <>Cboe&rsquo;s {reference}</> : 'the nearest Cboe program'} &mdash; missed
           the published program in that regime.
           {reference && <> {reference} is the program nearest the strike and tenor on the rail.</>}{' '}
+          {accuracy.status === 'loading' && (
+            <span role="status">Measuring the residuals at the rail&rsquo;s strike and tenor…</span>
+          )}
+          {accuracy.status === 'error' && (
+            <span className="pl-caveat" role="alert">
+              The residuals could not be read: {accuracy.message}.
+            </span>
+          )}
           {calm !== undefined && crisis !== undefined && calm > 0 && crisis < 0 ? (
             <>
               It <em>flips sign</em> in a crisis rather than ramping up from calm &mdash; the model is too cheap in
@@ -164,7 +172,13 @@ export function RegimeView({ regimes, vix, accuracy }: Props) {
                 <div className="pl-stat-v">{Math.round((days / total) * 100)}%</div>
                 <div className="pl-stat-note">{days} sessions</div>
                 <div className="pl-stat-note">
-                  {residual === undefined ? 'residual unmeasured' : `${signedPct(residual)}/yr residual`}
+                  {accuracy.status === 'loading'
+                    ? 'residual: measuring…'
+                    : accuracy.status === 'error'
+                      ? 'residual not read (request failed)'
+                      : residual === undefined
+                        ? 'residual unmeasured'
+                        : `${signedPct(residual)}/yr residual`}
                 </div>
               </div>
             )

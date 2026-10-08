@@ -306,9 +306,12 @@ export function PutLab() {
   // that show it. Keyed on the screening axes only: which names are most
   // fragile does not depend on how much premium you would spend.
   const showsRanking = onWorkspace || tab === 'recommendations'
-  const rankKey = showsRanking
-    ? JSON.stringify([controls.moneyness_pct, controls.tenor_weeks, controls.years])
-    : null
+  // Recommendations shows only each name's best cell over a fixed grid, which
+  // no screening strike changes (docs/adr/0028), so it screens at the default
+  // strike rather than re-running the universe for an identical table. The
+  // Workspace strip prints strike-dependent fields, so it keys on the rail's.
+  const rankStrike = tab === 'recommendations' ? PUTLAB_DEFAULT_CONTROLS.moneyness_pct : controls.moneyness_pct
+  const rankKey = showsRanking ? JSON.stringify([rankStrike, controls.tenor_weeks, controls.years]) : null
 
   // The Surface reads one chain session, so it keys on the name and the anchor
   // only (the OOM control IS the anchor); the tenor is the rail's weeks in days.
@@ -363,7 +366,7 @@ export function PutLab() {
     rankKey,
     (s) =>
       fetchPutLabLeaderboard(
-        { moneyness_pct: controls.moneyness_pct, tenor_weeks: controls.tenor_weeks, years: controls.years },
+        { moneyness_pct: rankStrike, tenor_weeks: controls.tenor_weeks, years: controls.years },
         s,
       ),
     DEBOUNCE_MS,
@@ -432,7 +435,13 @@ export function PutLab() {
   // Only a read this tab shows: the backtest's on the Workspace, the chain
   // session's on the Surface. Elsewhere the backtest read is gated off and
   // would be the last Workspace run's.
-  const asOf = btHere ? btHere.as_of : sv && surface.status === 'ready' ? surface.data.as_of : null
+  const asOf = btHere
+    ? btHere.as_of
+    : sv && surface.status === 'ready'
+      ? surface.data.as_of
+      : tab === 'recommendations' && ranking.status === 'ready'
+        ? ranking.data.as_of
+        : null
   // One name's identity (and its data-quality tag) heads the dateline only on
   // the tabs that read that name: elsewhere it would describe a position the
   // tab is not showing. The backtest's spot, strike and r likewise only on the

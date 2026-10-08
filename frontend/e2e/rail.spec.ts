@@ -355,3 +355,39 @@ test('a fractional width under the threshold is narrow, not rounded up to it', a
   await page.addStyleTag({ content: '.putlab-root { max-width: 899.5px; }' })
   await expect(rail(page).getByRole('button', { name: /Controls/ })).toBeVisible()
 })
+
+test('a strike set on the Regime rail reaches the residuals, which say they are measuring meanwhile', async ({ page }) => {
+  // Hold the 10% read open so the in-between state stays on screen.
+  await page.route(
+    (url) => url.pathname === '/api/putlab/accuracy' && url.searchParams.get('moneyness_pct') === '10',
+    () => {},
+  )
+  await page.goto('/')
+  await page.getByRole('tab', { name: 'Regime' }).click()
+  await expect(page.getByText('+2.19%/yr residual')).toBeVisible()
+  const asked = page.waitForRequest(
+    (r) => r.url().includes('/api/putlab/accuracy') && new URL(r.url()).searchParams.get('moneyness_pct') === '10',
+  )
+  await rail(page).getByRole('radiogroup', { name: 'Strike presets' }).getByText('10%').click()
+  await asked
+  // Never "unmeasured" for a read that is merely in flight.
+  await expect(page.getByText('residual: measuring…')).toHaveCount(3)
+  await expect(page.getByText('residual unmeasured')).toHaveCount(0)
+})
+
+test('Recommendations screens at one strike whatever the rail elsewhere says, and dates its read', async ({ page }) => {
+  // Its table is each name's best cell, which no screening strike changes, so a
+  // strike set on another tab must not re-run the universe for it.
+  await page.goto('/')
+  await page.getByRole('tab', { name: 'Bake-off' }).click()
+  await rail(page).getByRole('radiogroup', { name: 'Strike presets' }).getByText('15%').click()
+  const screens: string[] = []
+  page.on('request', (r) => {
+    const u = new URL(r.url())
+    if (u.pathname === '/api/putlab/leaderboard') screens.push(u.searchParams.get('moneyness_pct') ?? '')
+  })
+  await page.getByRole('tab', { name: 'Recommendations' }).click()
+  await page.waitForLoadState('networkidle')
+  expect(screens.filter((m) => m !== '5')).toEqual([])
+  await expect(page.locator('.pl-masthead')).toContainText(/\d{4}-\d{2}-\d{2}/)
+})
