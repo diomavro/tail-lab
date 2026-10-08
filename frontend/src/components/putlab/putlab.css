@@ -151,6 +151,9 @@
 .putlab-root h3,
 .putlab-root h4,
 .putlab-root h5 {
+  /* index.css colours h2 for the light page; the sheet's ink must win, or a
+     heading prints near-invisible on plate. */
+  color: inherit;
   font-family: var(--serif);
   font-weight: 600;
   line-height: 1.12;
@@ -1104,12 +1107,19 @@
 .pl-chart-label.is-strong { color: var(--ink); }
 .pl-chart-caption { font-size: 13px; line-height: 1.5; color: var(--ink-70); max-width: 70ch; }
 .pl-chart-sub { font-size: 14px; color: var(--ink-70); margin-top: 2px; }
-.pl-legend { display: flex; flex-wrap: wrap; gap: 5px var(--space-4); font-size: 12px; }
-.pl-legend > span { display: inline-flex; align-items: center; gap: 6px; }
+.pl-keyrow { display: flex; flex-wrap: wrap; gap: 5px var(--space-4); font-size: 12px; }
+.pl-keyrow > span { display: inline-flex; align-items: center; gap: 6px; }
+.pl-axis-title { font-size: 11px; color: var(--ink-70); text-align: center; margin-top: 2px; }
+.pl-refusals { margin: var(--space-2) 0 0; padding-left: 1.2em; font-size: 13px; line-height: 1.5; color: var(--mag-2); }
+.pl-key-dot { width: 9px; height: 9px; border-radius: 50%; background: var(--ink); }
+.pl-key-ring { width: 9px; height: 9px; border-radius: 50%; border: 2px solid var(--ink); }
+.pl-key-realised { border-top: 2px dashed var(--ink); }
+.pl-key-band { height: 10px; background: var(--pl-n-200); }
+.putlab-root[data-theme='plate'] .pl-key-band { background: var(--pl-n-800); }
 .pl-key { display: inline-block; width: 18px; }
 .pl-key-line { height: 2px; background: var(--ink); }
 .pl-key-dash { border-top: 2px dashed var(--ink-45); }
-.pl-key-spread { width: 6px; height: 14px; background: var(--mag-tint); }
+.pl-key-spread { width: 6px; height: 14px; background: var(--mag); }
 .pl-key-loss { height: 2px; background: var(--mag); }
 .pl-key-onset { border-top: 1px dashed var(--ink-70); }
 .pl-readout { display: flex; flex-wrap: wrap; gap: 5px var(--space-4); font-size: 13px; min-height: 20px; }
@@ -1129,12 +1139,14 @@
 .pl-c-line { stroke: var(--ink); stroke-width: 2; fill: none; }
 .pl-c-loss { stroke: var(--mag); stroke-width: 2; fill: none; }
 .pl-c-bs { stroke: var(--ink-45); stroke-width: 1.5; stroke-dasharray: 5 4; fill: none; }
-.pl-c-spread { stroke: var(--mag-tint); stroke-width: 7; fill: none; }
-.pl-c-mid { stroke: var(--mag-2); stroke-width: 1.5; fill: none; }
+/* Full magenta: the spread is what the inside/outside verdict rests on, so it
+   must clear 3:1 on both sheets (a tint did not). The mid tick is cut in paper. */
+.pl-c-spread { stroke: var(--mag); stroke-width: 7; fill: none; }
+.pl-c-mid { stroke: var(--paper); stroke-width: 1.5; fill: none; }
 .pl-c-hi { fill: var(--cyan-wash); }
 .pl-c-hit { fill: transparent; cursor: crosshair; }
 .pl-c-one { stroke: var(--ink-45); stroke-width: 1; fill: none; }
-.pl-c-fit { stroke: var(--rule-2); stroke-width: 6; stroke-linecap: round; fill: none; }
+.pl-c-fit { stroke: var(--ink-70); stroke-width: 4; stroke-linecap: round; fill: none; }
 .pl-c-onset { stroke: var(--ink-70); stroke-width: 1; stroke-dasharray: 4 3; fill: none; }
 
 /* ------------------------------------------------------------ surface --- */

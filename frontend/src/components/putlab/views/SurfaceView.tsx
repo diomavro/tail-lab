@@ -100,33 +100,51 @@ function AlphaFigures({ s }: { s: SurfaceReading }) {
 
 // -------------------------------------------------------------- alpha chart --
 
+/** One anchor's reading in words: the chart's accessible name and, for a
+ *  refusal, the visible reason the chart has no room to print. */
+function anchorWords(r: SurfaceAnchorReading, spot: number) {
+  const a = r.fit?.alpha ?? null
+  const c = r.ceiling?.alpha ?? null
+  return {
+    name: `K ${r.strike.toFixed(0)} · ${oomOf(r.strike, spot)}% OOM`,
+    alpha: a == null ? `α REFUSED — ${anchorWhy(r, 'no fit')}` : `α ${a.toFixed(2)}`,
+    ceiling:
+      c == null ? `ceiling REFUSED — ${r.ceiling?.refusal ?? r.ceiling_reason ?? 'no ceiling'}` : `ceiling ${c.toFixed(2)}`,
+    short: `${a == null ? 'α refused' : `α ${a.toFixed(2)}`} · ${c == null ? 'ceiling refused' : `ceiling ${c.toFixed(2)}`}`,
+    refused: a == null || c == null,
+  }
+}
+
 function AlphaChart({ s, narrow }: { s: SurfaceReading; narrow: boolean }) {
   const rows = s.anchors.readings
   if (rows.length === 0) return null
   const realised = s.realised?.alpha ?? null
   const implied = rows[0]?.fit?.alpha ?? null
-  const values = [
-    ...rows.flatMap((r) => [r.fit?.alpha, r.ceiling?.alpha]),
-    realised,
-  ].filter((v): v is number => v != null && Number.isFinite(v))
+  const values = [...rows.flatMap((r) => [r.fit?.alpha, r.ceiling?.alpha]), realised].filter(
+    (v): v is number => v != null && Number.isFinite(v),
+  )
   // At least 2.0 to 4.5, widened to the half-unit that holds every value.
   const lo = Math.floor(Math.min(2, ...values) * 2) / 2
   const hi = Math.ceil(Math.max(4.5, ...values) * 2) / 2
 
+  // One layout at every width: each row's name and values sit above its marks,
+  // short, so nothing runs into the plot or off the page. Refusal reasons are
+  // listed below the chart, where they can wrap.
   const W = narrow ? 400 : 860
-  const X0 = narrow ? 10 : 150
-  const XW = narrow ? 380 : 560
-  const rowY = (i: number) => (narrow ? 46 + 48 * i : 24 + 36 * i)
-  const top = narrow ? 24 : 6
-  const bottom = rowY(rows.length - 1) + (narrow ? 10 : 16)
-  const axisY = bottom + (narrow ? 20 : 22)
-  const H = axisY + (narrow ? 28 : 31)
+  const X0 = 10
+  const XW = W - 20
+  const rowY = (i: number) => 40 + 44 * i
+  const top = 22
+  const bottom = rowY(rows.length - 1) + 12
+  const axisY = bottom + 18
+  const H = axisY + 28
   const AX = (a: number) => X0 + ((a - lo) / (hi - lo)) * XW
 
   const tickStep = narrow ? 1 : 0.5
   const ticks: number[] = []
   for (let a = Math.ceil(lo / tickStep) * tickStep; a <= hi + 1e-9; a += tickStep) ticks.push(a)
 
+  const words = rows.map((r) => anchorWords(r, s.spot))
   const labels: Label[] = []
   const links: string[] = []
   const filled: Pt[] = []
@@ -135,59 +153,66 @@ function AlphaChart({ s, narrow }: { s: SurfaceReading; narrow: boolean }) {
     const y = rowY(i)
     const a = r.fit?.alpha ?? null
     const c = r.ceiling?.alpha ?? null
-    const name = `K ${r.strike.toFixed(0)} · ${oomOf(r.strike, s.spot)}% OOM`
     if (a != null) filled.push([AX(a), y])
     if (c != null) open.push([AX(c), y])
     if (a != null && c != null) links.push(`M${AX(Math.min(a, c))},${y}H${AX(Math.max(a, c))}`)
-    const aText = a == null ? `α REFUSED — ${anchorWhy(r, 'no fit')}` : `α ${a.toFixed(2)}`
-    const cText =
-      c == null ? `ceiling REFUSED — ${r.ceiling?.refusal ?? r.ceiling_reason ?? 'no ceiling'}` : `ceiling ${c.toFixed(2)}`
-    if (narrow) {
-      labels.push({ x: X0, y: y - 17, text: name, align: 'start', strong: true })
-      labels.push({ x: X0 + XW, y: y - 17, text: `${aText} · ${cText}`, align: 'end' })
-    } else {
-      labels.push({ x: 0, y, text: name, align: 'start', strong: true })
-      const right = Math.max(...[a, c].filter((v): v is number => v != null).map(AX), X0)
-      labels.push({ x: right + 12, y, text: `${aText} · ${cText}`, align: 'start', strong: true })
-    }
+    labels.push({ x: X0, y: y - 16, text: words[i]!.name, align: 'start', strong: true })
+    labels.push({ x: X0 + XW, y: y - 16, text: words[i]!.short, align: 'end' })
   })
-
-  let band = ''
-  if (realised != null && implied != null) {
-    const [x1, x2] = [AX(Math.min(realised, implied)), AX(Math.max(realised, implied))]
-    band = `M${x1},${top + 2}H${x2}V${bottom}H${x1}Z`
-    if (s.alpha_gap != null) {
-      labels.push({ x: (x1 + x2) / 2, y: bottom + (narrow ? 10 : 9), text: `gap ${s.alpha_gap.toFixed(2)}` })
-    }
-  }
-  if (realised != null) {
-    labels.push(
-      narrow
-        ? { x: AX(realised) + 6, y: 12, text: `realised ${realised.toFixed(2)}`, align: 'start', strong: true }
-        : { x: AX(realised) - 6, y: 6, text: `realised ${realised.toFixed(2)}`, align: 'end', strong: true },
-    )
-  }
-  for (const t of ticks) labels.push({ x: AX(t), y: axisY + 18, text: `α ${t.toFixed(1)}` })
+  ticks.forEach((t, i) =>
+    labels.push({
+      x: AX(t),
+      y: axisY + 16,
+      text: `α ${t.toFixed(1)}`,
+      align: i === 0 ? 'start' : i === ticks.length - 1 ? 'end' : 'middle',
+    }),
+  )
+  const band =
+    realised != null && implied != null
+      ? (() => {
+          const [x1, x2] = [AX(Math.min(realised, implied)), AX(Math.max(realised, implied))]
+          return `M${x1},${top}H${x2}V${bottom}H${x1}Z`
+        })()
+      : ''
+  const refusals = rows.map((r, i) => ({ r, w: words[i]! })).filter(({ w }) => w.refused)
+  const description = words.map((w) => `${w.name}: ${w.alpha}, ${w.ceiling}`).join('; ')
 
   return (
-    <div className="pl-plot" style={{ maxWidth: 900 }}>
-      <svg
-        viewBox={`0 0 ${W} ${H}`}
-        role="img"
-        aria-label={`Implied alpha at ${rows.length} anchors beside the realised alpha`}
-        data-testid="alpha-chart"
-      >
-        {band && <path d={band} className="pl-c-band" />}
-        <path
-          d={`M${X0},${axisY}H${X0 + XW}` + ticks.map((t) => `M${AX(t)},${axisY - 4}V${axisY + 4}`).join('')}
-          className="pl-c-axis"
-        />
-        <path d={links.join('')} className="pl-c-link" />
-        {realised != null && <path d={`M${AX(realised)},${top}V${bottom}`} className="pl-c-realised" />}
-        <path d={dots(open, 4.5)} className="pl-c-ceiling" data-testid="alpha-ceilings" />
-        <path d={dots(filled, 5.5)} className="pl-c-ink" data-testid="alpha-dots" />
-      </svg>
-      <ChartLabels labels={labels} w={W} h={H} />
+    <div style={{ maxWidth: 900 }}>
+      <div className="pl-plot">
+        <svg
+          viewBox={`0 0 ${W} ${H}`}
+          role="img"
+          aria-label={`Implied alpha by anchor. ${description}.${realised != null ? ` Realised alpha ${realised.toFixed(2)}.` : ''}`}
+          data-testid="alpha-chart"
+        >
+          {band && <path d={band} className="pl-c-band" />}
+          <path
+            d={`M${X0},${axisY}H${X0 + XW}` + ticks.map((t) => `M${AX(t)},${axisY - 4}V${axisY + 4}`).join('')}
+            className="pl-c-axis"
+          />
+          <path d={links.join('')} className="pl-c-link" />
+          {realised != null && <path d={`M${AX(realised)},${top}V${bottom}`} className="pl-c-realised" />}
+          <path d={dots(open, 4.5)} className="pl-c-ceiling" data-testid="alpha-ceilings" />
+          <path d={dots(filled, 5.5)} className="pl-c-ink" data-testid="alpha-dots" />
+        </svg>
+        <ChartLabels labels={labels} w={W} h={H} />
+      </div>
+      <div className="pl-keyrow">
+        <span><i className="pl-key pl-key-dot" />implied α</span>
+        <span><i className="pl-key pl-key-ring" />its ceiling</span>
+        {realised != null && <span><i className="pl-key pl-key-realised" />realised {realised.toFixed(2)}</span>}
+        {band && s.alpha_gap != null && <span><i className="pl-key pl-key-band" />gap {s.alpha_gap.toFixed(2)}</span>}
+      </div>
+      {refusals.length > 0 && (
+        <ul className="pl-refusals" data-testid="anchor-refusals">
+          {refusals.map(({ r, w }) => (
+            <li key={r.strike}>
+              <strong>{w.name}</strong>: {w.alpha}; {w.ceiling}
+            </li>
+          ))}
+        </ul>
+      )}
     </div>
   )
 }
@@ -196,7 +221,8 @@ function AlphaChart({ s, narrow }: { s: SurfaceReading; narrow: boolean }) {
 
 const LW = 560
 const LH = 280
-const PX0 = 52
+// Room on the left for a tick label such as "0.005" at a phone's scale.
+const PX0 = 66
 const PX1 = 544
 const PY0 = 14
 const PY1 = 240
@@ -234,7 +260,8 @@ function LadderChart({ rungs }: { rungs: SurfaceRung[] }) {
   const lo = Math.min(...prices) * 0.9
   const hi = Math.max(...prices) * 1.1
   const PY = (p: number) => PY0 + (1 - (Math.log(p) - Math.log(lo)) / (Math.log(hi) - Math.log(lo))) * (PY1 - PY0)
-  const yt = logTicks(lo, hi, 5)
+  // A tick at the floor would sit on the strike labels.
+  const yt = logTicks(lo, hi, 5).filter((p) => PY(p) < PY1 - 10)
 
   const spreads = rungs
     .filter((r) => finitePositive(r.bid) && finitePositive(r.ask))
@@ -263,7 +290,6 @@ function LadderChart({ rungs }: { rungs: SurfaceRung[] }) {
   const labels: Label[] = [
     ...yt.map((p) => ({ x: PX0 - 8, y: PY(p), text: `$${tickText(p)}`, align: 'end' as const })),
     ...rungs.map((r, i) => ({ x: xs[i]!, y: 256, text: r.strike.toFixed(0) })),
-    { x: (PX0 + PX1) / 2, y: 274, text: 'strike → deeper' },
   ]
   const shown = hover ?? 0
   const r = rungs[shown]!
@@ -302,7 +328,8 @@ function LadderChart({ rungs }: { rungs: SurfaceRung[] }) {
         </svg>
         <ChartLabels labels={labels} w={LW} h={LH} />
       </div>
-      <div className="pl-readout" data-testid="ladder-readout" aria-live="polite">
+      <div className="pl-axis-title">strike → deeper</div>
+      <div className="pl-readout" data-testid="ladder-readout">
         <span>
           <span className="pl-readout-k">Strike</span> <strong>{r.strike.toFixed(0)}</strong>
         </span>
@@ -384,7 +411,7 @@ function TailLadder({ s }: { s: SurfaceReading }) {
         <p className="pl-status">{refused(s.ladder_reason)}</p>
       ) : (
         <>
-          <div className="pl-legend">
+          <div className="pl-keyrow">
             <span><i className="pl-key pl-key-line" />Paretan</span>
             <span><i className="pl-key pl-key-dash" />Black&ndash;Scholes</span>
             <span><i className="pl-key pl-key-spread" />Market bid&ndash;ask</span>
@@ -431,7 +458,8 @@ function SurvivalChart({ s }: { s: SurfaceReading }) {
   const ZY = (y: number) => PY0 + ((y1 - Math.log10(y)) / (y1 - y0 || 1)) * (PY1 - PY0)
   const curve = (pts: [number, number][]) => poly(pts.map(([x, y]) => [ZX(x), ZY(y)]))
   const xt = logTicks(10 ** x0, 10 ** x1, 6)
-  const yt = logTicks(10 ** y0, 10 ** y1, 5)
+  // A tick at the floor would sit on the x labels.
+  const yt = logTicks(10 ** y0, 10 ** y1, 5).filter((y) => ZY(y) < PY1 - 10)
 
   const onset = realised.onset
   const onsetX = finitePositive(onset) && onset >= 10 ** x0 && onset <= 10 ** x1 ? ZX(onset) : null
@@ -441,7 +469,6 @@ function SurvivalChart({ s }: { s: SurfaceReading }) {
   const labels: Label[] = [
     ...yt.map((y) => ({ x: PX0 - 8, y: ZY(y), text: tickText(y), align: 'end' as const })),
     ...xt.map((x) => ({ x: ZX(x), y: 256, text: `${tickText(x * 100)}%` })),
-    { x: (PX0 + PX1) / 2, y: 274, text: 'move size x' },
   ]
   if (onsetX != null && realised.alpha != null && loss.length) {
     const y0s = survivalAt(loss, onset as number)
@@ -465,7 +492,7 @@ function SurvivalChart({ s }: { s: SurfaceReading }) {
 
   return (
     <>
-      <div className="pl-legend">
+      <div className="pl-keyrow">
         <span><i className="pl-key pl-key-line" />S, gross move</span>
         <span><i className="pl-key pl-key-loss" />r, arithmetic loss</span>
         <span><i className="pl-key pl-key-onset" />Karamata onset</span>
@@ -480,6 +507,7 @@ function SurvivalChart({ s }: { s: SurfaceReading }) {
         </svg>
         <ChartLabels labels={labels} w={LW} h={LH} />
       </div>
+      <div className="pl-axis-title">move size x</div>
       <RealisedCaveat realised={realised} />
     </>
   )

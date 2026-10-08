@@ -1,7 +1,7 @@
 import { expect, test, type Page } from '@playwright/test'
 import type { SurfaceResponse } from '../src/api/client'
 import { mockPutLabApi } from './fixtures/mock-api'
-import { SURFACE_FITTED } from './fixtures/putlab'
+import { SURFACE_FITTED, SURFACE_REFUSED } from './fixtures/putlab'
 
 // The Surface: implied tail index beside the realised one.
 //
@@ -67,13 +67,14 @@ test('an alpha outside 2.0 to 4.5 still lands on the plot', async ({ page }) => 
   await page.getByRole('tab', { name: 'Surface' }).click()
   const chart = page.getByTestId('alpha-chart')
   const [vbW] = ((await chart.getAttribute('viewBox')) ?? '').split(' ').slice(2).map(Number)
+  // Inside the plotted axis (10 to width - 10), not merely the frame.
   for (const id of ['alpha-dots', 'alpha-ceilings']) {
     const box = await page.getByTestId(id).evaluate((el) => {
       const b = (el as SVGGraphicsElement).getBBox()
       return { x: b.x, width: b.width }
     })
-    expect(box.x, id).toBeGreaterThanOrEqual(0)
-    expect(box.x + box.width, id).toBeLessThanOrEqual(vbW!)
+    expect(box.x, id).toBeGreaterThanOrEqual(10 - 6)
+    expect(box.x + box.width, id).toBeLessThanOrEqual(vbW! - 10 + 6)
   }
 })
 
@@ -115,7 +116,20 @@ test('an IV ratio outside the market spread is a filled dot with its value; insi
   const shown = Math.min(s.surface.ladder.length, 8)
   expect(subpaths(await page.getByTestId('iv-outside').getAttribute('d'))).toBe(1)
   expect(subpaths(await page.getByTestId('iv-inside').getAttribute('d'))).toBe(shown - 1)
-  await expect(page.getByRole('tabpanel')).toContainText('1.031')
+  // On the strip itself, not just in the closed table beneath it.
+  const strip = page.locator('.pl-plot').filter({ has: page.getByTestId('iv-outside') })
+  await expect(strip).toContainText('1.031')
+})
+
+test('the headline implied alpha is the first anchor’s, the one the gap uses', async ({ page }) => {
+  const s = structuredClone(SURFACE_FITTED)
+  const [a0, a1, a2] = s.surface.anchors.readings
+  a0!.fit!.alpha = 3.1
+  a1!.fit!.alpha = 2.8
+  a2!.fit!.alpha = 2.9
+  await serveSurface(page, s)
+  await page.getByRole('tab', { name: 'Surface' }).click()
+  await expect(figures(page)).toContainText('Implied α3.10') // not the median, 2.90
 })
 
 test('the survival chart draws the fitted tail only when alpha and onset were measured', async ({ page }) => {
@@ -133,8 +147,12 @@ test('a refused payload says REFUSED with the reason, not a blank or a zero', as
   await expect(f).toContainText('REFUSED — fewer than 6 hygienic strikes below the anchor')
   await expect(f).toContainText('REFUSED — fewer than two anchors accepted')
   await expect(f).not.toContainText(/\b0\.00\b/)
-  // The chart rows refuse in words too, ceiling reason included.
-  await expect(page.getByRole('tabpanel')).toContainText('REFUSED — no smile slope')
+  // Every anchor's refusal is listed in words below the chart, ceiling reason
+  // included -- the figures above show only the first anchor's.
+  const list = page.getByTestId('anchor-refusals').locator('li')
+  await expect(list).toHaveCount(SURFACE_REFUSED.surface.anchors.readings.length)
+  await expect(list.first()).toContainText('REFUSED — no smile slope')
+  await expect(page.getByTestId('alpha-chart')).toHaveAttribute('aria-label', /α REFUSED — fewer than 6 hygienic strikes/)
   await expect(page.getByTestId('tail-fit')).toHaveCount(0)
 })
 
@@ -159,3 +177,16 @@ test.describe('on a phone-width page', () => {
     await expect(page.getByTestId('alpha-chart')).toHaveAttribute('viewBox', /^0 0 400 /)
   })
 })
+
+for (const width of [390, 900, 1024]) {
+  test(`a refused payload does not scroll the page sideways at ${width}px`, async ({ page }) => {
+    // Refusal reasons are long; they belong in the list, which wraps, never
+    // in a chart label, which does not.
+    await serveSurface(page, SURFACE_REFUSED)
+    await page.setViewportSize({ width, height: 900 })
+    await page.getByRole('tab', { name: 'Surface' }).click()
+    await expect(page.getByTestId('anchor-refusals')).toBeVisible()
+    const overflow = await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth)
+    expect(overflow).toBeLessThanOrEqual(1)
+  })
+}
