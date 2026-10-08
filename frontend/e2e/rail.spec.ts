@@ -253,6 +253,7 @@ test('the narrow layout follows the page’s own width, not the window’s', asy
 })
 
 test('a rail stacked above the result is never sticky over it', async ({ page }) => {
+  test.slow() // eight full page loads
   // Between the phone layout and the side-by-side one the flex row wraps; a
   // rail that stayed sticky there scrolled the ranking underneath itself.
   for (const width of [760, 800, 820, 850, 880, 900, 1024, 1440]) {
