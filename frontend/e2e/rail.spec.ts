@@ -212,6 +212,56 @@ test.describe('on a phone-width page', () => {
     await expect(page.locator('.pl-tabs-fade')).toHaveCount(0)
   })
 
+  test('a rail opened on one tab starts collapsed on the next', async ({ page }) => {
+    await page.goto('/')
+    const toggle = rail(page).getByRole('button', { name: /Controls/ })
+    await toggle.click()
+    await expect(toggle).toHaveAttribute('aria-expanded', 'true')
+    await page.getByRole('tab', { name: 'Recommendations' }).click()
+    await expect(rail(page).getByRole('button', { name: /Controls/ })).toHaveAttribute('aria-expanded', 'false')
+  })
+
+  test('a row swiped to its end by hand drops the fade, and its tabs keep the 16px inset', async ({ page }) => {
+    await page.goto('/')
+    await expect(page.locator('.pl-tabs-fade')).toBeVisible()
+    await page.getByRole('tablist', { name: 'Put Lab views' }).evaluate((el) => {
+      el.scrollLeft = el.scrollWidth
+    })
+    await expect(page.locator('.pl-tabs-fade')).toHaveCount(0)
+    // A tab mid-row is placed 16px from the row's left edge.
+    await page.getByRole('tab', { name: 'Workspace' }).focus()
+    await page.keyboard.press('ArrowRight')
+    await page.keyboard.press('ArrowRight')
+    const inset = () =>
+      page.evaluate(() => {
+        const nav = document.querySelector('[role=tablist]')!.getBoundingClientRect()
+        const tab = document.getElementById('tab-portfolio')!.getBoundingClientRect()
+        return Math.round(tab.left - nav.left)
+      })
+    await expect.poll(inset).toBe(16)
+  })
+
+  test('moving between tabs by keyboard never scrolls the page itself', async ({ page }) => {
+    // scrollIntoView would also scroll the page to bring the row into view;
+    // the placement must move the row only.
+    await page.goto('/')
+    await page.waitForLoadState('networkidle')
+    // Tall enough on every tab that a shorter panel cannot clamp the scroll.
+    await page.addStyleTag({ content: 'body { min-height: 5000px; }' })
+    await page.evaluate(() => window.scrollTo(0, 300))
+    // Between two tabs with no rail, so nothing above the panel changes height
+    // and the browser's own scroll anchoring has nothing to correct.
+    await page.getByRole('tab', { name: 'Book' }).evaluate((el) => (el as HTMLElement).click())
+    await page.evaluate(() => window.scrollTo(0, 300))
+    await page.getByRole('tab', { name: 'Book' }).evaluate((el) => (el as HTMLElement).focus({ preventScroll: true }))
+    await page.keyboard.press('ArrowLeft')
+    await expect(page.getByRole('tab', { name: 'Portfolio' })).toHaveAttribute('aria-selected', 'true')
+    await page.waitForTimeout(200)
+    // A few px of the browser's scroll anchoring is not a jump; scrolling the
+    // tab row into view would move the page ~100px.
+    expect(Math.abs((await page.evaluate(() => window.scrollY)) - 300)).toBeLessThanOrEqual(10)
+  })
+
   test('the scroller leaves room for a tab’s whole focus ring', async ({ page }) => {
     // A scrolling row clips what overflows it; the ring is 2px wide at a 2px
     // offset, so it needs 4px inside the row on every side a tab touches.

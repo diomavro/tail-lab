@@ -264,6 +264,8 @@
 }
 .is-narrow .pl-tabs::-webkit-scrollbar { display: none; }
 .is-narrow .pl-tab { flex: none; white-space: nowrap; }
+/* The scroller reaches 4px past the wrap (focus-ring room); so must the fade. */
+.is-narrow .pl-tabs-fade { right: -4px; }
 .pl-tabs-fade {
   position: absolute;
   top: 0;
