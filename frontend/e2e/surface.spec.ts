@@ -258,3 +258,31 @@ test.describe('on a touch screen', () => {
     expect(errors).toEqual([])
   })
 })
+
+test('a ladder the backend could not price says REFUSED with its reason', async ({ page }) => {
+  // read_surface returns no rungs, with a reason, when the first anchor's fit
+  // refused -- the ladder is priced from that alpha.
+  const s = structuredClone(SURFACE_FITTED)
+  s.surface.ladder = []
+  s.surface.ladder_reason = 'no accepted implied alpha at the first anchor to price a ladder from'
+  await serveSurface(page, s)
+  await page.getByRole('tab', { name: 'Surface' }).click()
+  await expect(page.getByRole('region', { name: 'Tail ladder' })).toContainText(
+    'REFUSED — no accepted implied alpha at the first anchor to price a ladder from',
+  )
+  await expect(page.getByTestId('ladder-rung')).toHaveCount(0)
+})
+
+test('the caption reads as sentences, and names no onset it did not draw', async ({ page }) => {
+  await page.getByRole('tab', { name: 'Surface' }).click()
+  const pane = page.getByRole('region', { name: 'Realised tail' })
+  await expect(pane).toContainText('loss. Horizon 30 calendar days')
+  await expect(pane.getByText('Karamata onset')).toHaveCount(1)
+  const s = structuredClone(SURFACE_FITTED)
+  s.surface.realised!.is_flat = false
+  await serveSurface(page, s)
+  await page.reload()
+  await page.getByRole('tab', { name: 'Surface' }).click()
+  await expect(page.getByRole('img', { name: /Survival curves/ })).toBeVisible()
+  await expect(page.getByRole('region', { name: 'Realised tail' }).getByText('Karamata onset')).toHaveCount(0)
+})

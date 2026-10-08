@@ -1,5 +1,5 @@
-// Shared SVG geometry for the Surface and Book charts; ChartLabels.tsx
-// draws their labels.
+// Shared SVG geometry for the Put Lab's charts; ChartLabels.tsx draws
+// their labels.
 
 export type Pt = readonly [number, number]
 

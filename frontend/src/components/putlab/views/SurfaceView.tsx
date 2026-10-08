@@ -501,7 +501,7 @@ function SurvivalChart({ s }: { s: SurfaceReading }) {
       <div className="pl-keyrow">
         <span><i className="pl-key pl-key-line" />S, gross move</span>
         <span><i className="pl-key pl-key-loss" />r, arithmetic loss</span>
-        <span><i className="pl-key pl-key-onset" />Karamata onset</span>
+        {onsetX != null && <span><i className="pl-key pl-key-onset" />Karamata onset</span>}
       </div>
       <div className="pl-plot">
         <svg viewBox={`0 0 ${LW} ${LH}`} role="img" aria-label="Survival curves, gross move S and arithmetic loss r">
@@ -540,7 +540,7 @@ function RealisedCaveat({ realised }: { realised: SurfaceRealised }) {
           .
         </>
       )}
-      Horizon {realised.horizon_days} calendar days. Log-basis α{' '}
+      {' '}Horizon {realised.horizon_days} calendar days. Log-basis α{' '}
       {realised.log_basis.alpha == null
         ? `refused (${realised.log_basis.refusal ?? 'no reason given'})`
         : fmtFixed(realised.log_basis.alpha, 2)}{' '}
