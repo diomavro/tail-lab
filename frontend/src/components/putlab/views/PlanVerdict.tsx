@@ -28,8 +28,9 @@ function GapStrip({ r, narrow }: { r: RollingSummary; narrow: boolean }) {
   const hi = Math.max(r.best_gap, 0)
   const pad = (hi - lo) * 0.06 || 0.001
   const W = narrow ? 360 : 640
-  // Narrow: worst/best, 10th and 90th each get a row of their own below.
-  const H = narrow ? 150 : 110
+  // Worst/best, 10th and 90th each get a row below the strip: on one row they
+  // overprint whenever two of them sit close.
+  const H = 150
   const X = (v: number) => 20 + ((v - (lo - pad)) / (hi + pad - (lo - pad))) * (W - 40)
   // A label near either edge reads inward, so it never runs off the chart
   // (and, on a phone, off the page).
@@ -42,19 +43,10 @@ function GapStrip({ r, narrow }: { r: RollingSummary; narrow: boolean }) {
   const labels: Label[] = [
     { x: X(0), y: 6, text: 'parity' },
     at(X(r.median_gap), 30, `median ${pp(r.median_gap)}`, true),
-    ...(narrow
-      ? [
-          at(X(r.p10_gap), 90, `10th ${pp(r.p10_gap)}`),
-          at(X(r.p90_gap), 108, `90th ${pp(r.p90_gap)}`),
-          at(X(r.worst_gap), 128, `worst ${pp(r.worst_gap)}`),
-          at(X(r.best_gap), 144, `best ${pp(r.best_gap)}`),
-        ]
-      : [
-          at(X(r.p10_gap), 88, `10th ${pp(r.p10_gap)}`),
-          at(X(r.p90_gap), 102, `90th ${pp(r.p90_gap)}`),
-          at(X(r.worst_gap), 30, `worst ${pp(r.worst_gap)}`),
-          at(X(r.best_gap), 30, `best ${pp(r.best_gap)}`),
-        ]),
+    at(X(r.p10_gap), 90, `10th ${pp(r.p10_gap)}`),
+    at(X(r.p90_gap), 108, `90th ${pp(r.p90_gap)}`),
+    at(X(r.worst_gap), 128, `worst ${pp(r.worst_gap)}`),
+    at(X(r.best_gap), 144, `best ${pp(r.best_gap)}`),
   ]
   return (
     <div className="pl-plot">
@@ -72,7 +64,7 @@ function GapStrip({ r, narrow }: { r: RollingSummary; narrow: boolean }) {
   )
 }
 
-function ArmBar({ arm, max, hedged }: { arm: PlanArm; max: number; hedged: boolean }) {
+function ArmBar({ arm, max, ddMax, hedged }: { arm: PlanArm; max: number; ddMax: number; hedged: boolean }) {
   return (
     <div className="pl-arm" data-testid="plan-arm">
       <div className="pl-arm-head">
@@ -91,7 +83,7 @@ function ArmBar({ arm, max, hedged }: { arm: PlanArm; max: number; hedged: boole
       <div className="pl-arm-dd">
         <span>Paid in {usd(arm.contributed)} · worst drawdown</span>
         <span className="pl-arm-dd-track">
-          <span style={{ width: `${Math.min(1, Math.abs(arm.max_drawdown) / 0.6) * 100}%` }} />
+          <span style={{ width: `${(Math.abs(arm.max_drawdown) / ddMax) * 100}%` }} />
         </span>
         <span className="pl-arm-dd-v">{pct(arm.max_drawdown)}</span>
       </div>
@@ -114,12 +106,22 @@ export function PlanVerdict({
   const span = (Date.parse(r.last_start) - Date.parse(r.first_start)) / (365.25 * 86_400_000) + r.horizon_years
   const separate = Math.max(1, Math.floor(span / r.horizon_years))
   const max = Math.max(w.hedged.terminal_wealth, w.comparator.terminal_wealth, w.hedged.contributed) * 1.08
+  // Drawdown bars share a 0 to 60% scale unless an arm fell further: never a
+  // bar silently full at -85%.
+  const ddMax = Math.max(0.6, Math.abs(w.hedged.max_drawdown), Math.abs(w.comparator.max_drawdown))
   // 0 to 10% of starts unless a share runs past it: never a bar cut at the edge.
   const yieldScale = Math.max(0.1, ...(byYield ?? []).map((y) => y.share_ahead))
   const startsText = r.n_starts === 1 ? `the one monthly start` : `${r.n_starts} monthly starts`
   return (
     <>
       <section className="pl-plan-share" aria-label="Share of starts led">
+        {/* Above the figure it qualifies: a caveat after the number has lost. */}
+        <p className="pl-caveat" data-testid="overlap-caveat">
+          {r.n_starts === 1 ? 'This one start covers' : `These ${r.n_starts} starts are not independent: they cover`}{' '}
+          {Math.round(span)} years of history, about {separate} separate {r.horizon_years}-year{' '}
+          {separate === 1 ? 'period' : 'periods'}, so these shares describe this history; they do not test a
+          hypothesis.
+        </p>
         <div className="pl-plan-share-head">
           <span className="pl-plan-share-fig" data-testid="plan-share">
             {share(r.share_ahead)}
@@ -139,12 +141,6 @@ export function PlanVerdict({
           <span><i className="pl-key pl-key-sq is-within" />Within 1bp · {share(r.share_inconclusive)}</span>
           <span><i className="pl-key pl-key-sq is-behind" />Hedged trailed · {share(r.share_behind)}</span>
         </div>
-        <p className="pl-caveat" data-testid="overlap-caveat">
-          {r.n_starts === 1 ? 'This one start covers' : `These ${r.n_starts} starts are not independent: they cover`}{' '}
-          {Math.round(span)} years of history, about {separate} separate {r.horizon_years}-year{' '}
-          {separate === 1 ? 'period' : 'periods'}, so these shares describe this history; they do not test a
-          hypothesis.
-        </p>
       </section>
 
       <section className="pl-plan-block" aria-label="How far ahead or behind">
@@ -177,8 +173,8 @@ export function PlanVerdict({
           </h3>
           <p className="pl-chart-sub">What each arm ends with. The tick marks what was paid in.</p>
         </div>
-        <ArmBar arm={w.hedged} max={max} hedged />
-        <ArmBar arm={w.comparator} max={max} hedged={false} />
+        <ArmBar arm={w.hedged} max={max} ddMax={ddMax} hedged />
+        <ArmBar arm={w.comparator} max={max} ddMax={ddMax} hedged={false} />
       </section>
 
       <details className="pl-plan-numbers">

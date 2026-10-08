@@ -1178,14 +1178,6 @@
 
 /* --------------------------------------------------------------- book --- */
 
-.pl-sr-only {
-  position: absolute;
-  width: 1px;
-  height: 1px;
-  overflow: hidden;
-  clip-path: inset(50%);
-  white-space: nowrap;
-}
 .pl-book { display: flex; flex-direction: column; gap: var(--space-6); }
 .pl-book-head { display: flex; flex-direction: column; gap: var(--space-3); }
 .pl-book-head .pl-caveat { font-size: 14px; max-width: 72ch; }
@@ -1225,6 +1217,8 @@
 .pl-panel-head { display: flex; justify-content: space-between; align-items: baseline; gap: var(--space-2); }
 .putlab-root .pl-panel-sym { font-size: 18px; }
 .pl-panel-span { font-size: 12px; color: var(--ink-70); }
+.pl-panel-desc { display: block; font-size: 12px; color: var(--ink-70); }
+.pl-panel-sens-text { flex-basis: 100%; font-size: 12px; line-height: 1.45; color: var(--ink-70); }
 .pl-panel-note { font-size: 12px; line-height: 1.45; }
 .pl-panel-svg { cursor: crosshair; touch-action: pan-y; }
 .pl-panel-readout { font-size: 12px; line-height: 1.5; min-height: 36px; }

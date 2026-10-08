@@ -95,8 +95,9 @@ export function OverlayView({ narrow }: { narrow: boolean }) {
             <p className="pl-caveat">
               In sample, one history. The S&P 500 leg's dividends are an assumed flat yield
               {state.status === 'ready' ? ` (${pct(state.data.overlay.dividend_yield)})` : ''}, not measured; a low
-              guess understates the unhedged leg against every hedged one, so each verdict is re-run at other yields
-              below. CAGR / vol nets no risk-free rate and tends to favour any mix that lowers volatility; growth is
+              guess understates the unhedged leg against every hedged one, so each growth verdict is re-run at
+              other yields below. Every test shares one S&amp;P 500 history, so they are not independent. CAGR / vol
+              nets no risk-free rate and tends to favour any mix that lowers volatility; growth is
               the test that sizes a hedge.
             </p>
           </>

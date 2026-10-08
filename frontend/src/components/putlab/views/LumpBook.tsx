@@ -15,6 +15,14 @@ const pct = (x: number, digits = 1) => `${fmtFixed(x * 100, digits)}%`
 const pp = (x: number) => `${x >= 0 ? '+' : '−'}${Math.abs(x * 100).toFixed(3)}pp/yr`
 const hedged = (w: number) => `${Math.round(w * 100)}% hedged`
 
+/** CAGR per unit of vol is the letter's yardstick, not the paradox's (which
+ *  the page defines on growth), so its tags never say "Paradox". */
+const RATIO_TAG: Record<OverlayOutcome, { cls: string; text: string }> = {
+  holds: { cls: 'pl-tag pl-tag-ok', text: 'Interior mix wins' },
+  inconclusive: { cls: 'pl-tag pl-tag-mute', text: 'Too close to call' },
+  fails: { cls: 'pl-tag pl-tag-bad', text: 'An end wins' },
+}
+
 const TAG: Record<OverlayOutcome, { cls: string; text: string }> = {
   holds: { cls: 'pl-tag pl-tag-ok', text: 'Paradox holds' },
   inconclusive: { cls: 'pl-tag pl-tag-mute', text: 'Too close to call' },
@@ -52,6 +60,14 @@ function ratioSentence(w: OverlayWindow): string {
 }
 
 const inWindow = (label: string) => `${label.charAt(0).toLowerCase()}${label.slice(1)}`
+/** Where a test ran: the window's name, or the span it actually covered when
+ *  the data cut it short -- never a shorter test wearing the letter's label
+ *  (hedge_overlay.run_hedge_overlay). */
+const ranIn = (w: OverlayWindow) =>
+  w.clipped
+    ? `in ${inWindow(w.label.replace(/\s*\([^)]*\)$/, ''))}, shortened to ${w.start} to ${w.end}`
+    : `in ${inWindow(w.label)}`
+const WEAKER = 'This is the weaker test: it rewards any mix that lowers volatility.'
 
 /** The page's one-line answer, counted from the outcomes on screen. */
 function lumpHeadline(programs: ProgramOverlay[], metric: LumpMetric): string {
@@ -62,7 +78,10 @@ function lumpHeadline(programs: ProgramOverlay[], metric: LumpMetric): string {
   if (n === 1) {
     const { w } = all[0]!
     if (metric === 'ratio') {
-      return `On CAGR per unit of vol, the one test ${w.outcome_risk_adjusted === 'holds' ? 'favours' : 'does not favour'} an interior mix. This is the weaker test: it rewards any mix that lowers volatility.`
+      if (w.outcome_risk_adjusted == null) {
+        return 'On CAGR per unit of vol, the one test is undefined here (a mix has zero volatility).'
+      }
+      return `On CAGR per unit of vol, the one test ${w.outcome_risk_adjusted === 'holds' ? 'favours' : 'does not favour'} an interior mix. ${WEAKER}`
     }
     return w.outcome === 'holds'
       ? `On growth, the one test holds: ${hedged(w.best_weight)}, by ${Math.abs(w.margin * 100).toFixed(3)}pp/yr.`
@@ -70,14 +89,16 @@ function lumpHeadline(programs: ProgramOverlay[], metric: LumpMetric): string {
   }
   if (metric === 'ratio') {
     const k = all.filter(({ w }) => w.outcome_risk_adjusted === 'holds').length
+    const u = all.filter(({ w }) => w.outcome_risk_adjusted == null).length
     const lead =
       k === n ? `every one of the ${tests} favours` : k === 0 ? `none of the ${tests} favours` : `${inWords(k)} of the ${tests} ${k === 1 ? 'favours' : 'favour'}`
-    return `On CAGR per unit of vol, ${lead} an interior mix. This is the weaker test: it rewards any mix that lowers volatility.`
+    const undef = u === 0 ? '' : ` ${u === 1 ? 'One is' : `${inWords(u).replace(/^./, (c) => c.toUpperCase())} are`} undefined (a mix has zero volatility).`
+    return `On CAGR per unit of vol, ${lead} an interior mix.${undef} ${WEAKER}`
   }
   const holds = all.filter(({ w }) => w.outcome === 'holds')
   if (holds.length === 0) return `On growth, none of the ${tests} holds: each fails or is too close to call.`
   const list = holds
-    .map(({ p, w }) => `${p.index_symbol} in ${inWindow(w.label)}, ${hedged(w.best_weight)}, by ${Math.abs(w.margin * 100).toFixed(3)}pp/yr`)
+    .map(({ p, w }) => `${p.index_symbol} ${ranIn(w)}, ${hedged(w.best_weight)}, by ${Math.abs(w.margin * 100).toFixed(3)}pp/yr`)
     .join('; ')
   if (holds.length === n) return `On growth, every one of the ${tests} holds: ${list}.`
   return `On growth, ${inWords(holds.length)} of ${tests} ${holds.length === 1 ? 'holds' : 'hold'}: ${list}. The rest fail or are too close to call.`
@@ -151,7 +172,7 @@ function Panel({ prog, w, metric }: { prog: ProgramOverlay; w: OverlayWindow; me
 
   const p = pts[shown]!
   const name = p.weight === 0 ? 'S&P 500 only' : p.weight === 1 ? `${prog.index_symbol} only` : hedged(p.weight)
-  const tag = outcome ? TAG[outcome] : { cls: 'pl-tag pl-tag-mute', text: 'Undefined' }
+  const tag = outcome ? (growth ? TAG : RATIO_TAG)[outcome] : { cls: 'pl-tag pl-tag-mute', text: 'Undefined' }
   const hoverPt = hover != null && value(hover) != null ? [X(pts[hover]!.weight), Y(value(hover) as number)] as Pt : null
 
   return (
@@ -159,6 +180,9 @@ function Panel({ prog, w, metric }: { prog: ProgramOverlay; w: OverlayWindow; me
       <div className="pl-panel-head">
         <div>
           <h4 className="pl-panel-sym">{prog.index_symbol}</h4>
+          <span className="pl-panel-desc" data-testid="panel-desc">
+            {prog.description}
+          </span>
           <span className="pl-panel-span">
             {w.start} to {w.end}
           </span>
@@ -220,9 +244,9 @@ function Panel({ prog, w, metric }: { prog: ProgramOverlay; w: OverlayWindow; me
               {pct(s.dividend_yield)}
             </span>
           ))}
-          {/* The dots say it by colour; this says it in words, for a screen
-              reader and for anyone who cannot tell the colours apart. */}
-          <span className="pl-sr-only" data-testid="sensitivity">
+          {/* The dots say it at a glance by colour; this says it in words, for
+              anyone who cannot tell the colours apart or hover a title. */}
+          <span className="pl-panel-sens-text" data-testid="sensitivity">
             Best interior mix vs the better end, by assumed dividend yield:{' '}
             {w.sensitivity
               .map(
@@ -306,7 +330,7 @@ export function LumpBook({ data, metric }: { data: HedgeOverlayResponse; metric:
           {metric === 'growth' ? 'Where a mix out-grows the better end' : 'Where a mix beats the better end'}
         </span>
         <span><i className="pl-key pl-key-dash" />The better end</span>
-        <span><i className="pl-key pl-key-ring" />Best mix</span>
+        <span><i className="pl-key pl-key-ring" />Best mix (an end, when none beats it)</span>
         {metric === 'growth' && (
           <>
             <span><i className="pl-sens-dot is-holds" />holds</span>

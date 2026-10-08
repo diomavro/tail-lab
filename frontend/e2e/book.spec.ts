@@ -72,6 +72,8 @@ test('real data: one section per window, one panel per program, the span actuall
   // VXTH starts 2006: the panel shows what the data cover, not what was asked.
   const vxth = region(page, /^VXTH The letter's window/)
   await expect(vxth.getByRole('heading', { level: 4 })).toHaveText('VXTH')
+  // Each panel names what the program is, not just its ticker.
+  await expect(region(page, COLE).getByTestId('panel-desc')).toHaveText(PPUT!.description)
   await expect(vxth.locator('.pl-panel-span')).toHaveText('2006-03-31 to 2016-03-31')
   await expect(page.locator('.pl-lede').filter({ hasText: "Rodman's Paradox" })).toContainText('by more than 1bp a year')
   // Every hedge result names its accounting (README; docs/adr/0027).
@@ -84,7 +86,7 @@ test('the headline is counted from the outcomes, and follows the test chosen', a
   await openBook(page)
   const headline = page.getByTestId('lump-headline')
   await expect(headline).toHaveText(
-    "On growth, one of six tests holds: VXTH in the letter's window (2005 to Mar 2016), 40% hedged, by 0.125pp/yr. " +
+    "On growth, one of six tests holds: VXTH in the letter's window, shortened to 2006-03-31 to 2016-03-31, 40% hedged, by 0.125pp/yr. " +
       'The rest fail or are too close to call.',
   )
   await page.getByRole('radiogroup', { name: 'Judge each mix on' }).getByText('CAGR / vol').click()
@@ -94,8 +96,9 @@ test('the headline is counted from the outcomes, and follows the test chosen', a
   await expect(headline).toHaveText(
     'On CAGR per unit of vol, every one of the six tests favours an interior mix. This is the weaker test: it rewards any mix that lowers volatility.',
   )
-  // ...and each panel re-tags on that test's own outcome, not on growth's.
-  await expect(region(page, COLE).getByTestId('panel-tag')).toHaveText('Paradox holds')
+  // ...and each panel re-tags on that test's own outcome -- never as the
+  // paradox, which the page defines on growth (PPUT fails on growth here).
+  await expect(region(page, COLE).getByTestId('panel-tag')).toHaveText('Interior mix wins')
   await expect(region(page, COLE).getByTestId('verdict')).toHaveText(
     'Best CAGR per unit of vol at 40% hedged (an interior mix wins). The weaker test: it favours any mix that lowers volatility.',
   )
@@ -165,6 +168,10 @@ test('real data: a win under a basis point is too close to call, never "trails"'
 
 test('real data: each verdict is re-run at every assumed dividend yield, with its outcome', async ({ page }) => {
   await openBook(page)
+  // Printed, not only coloured dots and hover titles: a visually-hidden span
+  // still counts as "visible" to Playwright, so measure it.
+  const sens = region(page, /^VXTH Full history/).getByTestId('sensitivity')
+  expect((await sens.boundingBox())!.width).toBeGreaterThan(100)
   await expect(region(page, /^VXTH Full history/).getByTestId('sensitivity')).toHaveText(
     'Best interior mix vs the better end, by assumed dividend yield: ' +
       'at 1.4%, paradox holds (best mix 20% hedged, +0.082pp/yr); ' +
@@ -195,7 +202,7 @@ test('the risk-adjusted test can go to an end, be too close, or be undefined', a
   await expect(region(page, COLE).getByTestId('verdict')).toContainText(
     'Best CAGR per unit of vol at 0% hedged (an end wins).',
   )
-  await expect(region(page, COLE).getByTestId('panel-tag')).toHaveText('Paradox fails')
+  await expect(region(page, COLE).getByTestId('panel-tag')).toHaveText('An end wins')
 })
 
 test('the risk-adjusted test reports too close to call', async ({ page }) => {
@@ -216,6 +223,10 @@ test('an undefined ratio says so instead of printing a number', async ({ page })
     'CAGR per unit of vol is undefined here (a mix has zero volatility).',
   )
   await expect(pput.getByTestId('panel-tag')).toHaveText('Undefined')
+  // ...and the headline counts it as undefined, not as "does not favour".
+  await expect(page.getByTestId('lump-headline')).toHaveText(
+    'On CAGR per unit of vol, the one test is undefined here (a mix has zero volatility).',
+  )
   // No best mix to ring, and the undefined point is left off the line.
   await expect(pput.getByTestId('panel-best')).toHaveCount(0)
   const rows = await numbers(page, COLE)

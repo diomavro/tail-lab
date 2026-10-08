@@ -77,7 +77,8 @@ test('the overlap caveat is computed from the span and sits above the verdict', 
     'These 364 starts are not independent: they cover 40 years of history, about 4 separate 10-year periods, so ' +
       'these shares describe this history; they do not test a hypothesis.',
   )
-  const verdict = page.getByTestId('plan-verdict')
+  // Above the headline figure it qualifies, not merely above the collapsed numbers.
+  const verdict = page.getByTestId('plan-share')
   const order = await caveat.evaluate(
     (el, v) => el.compareDocumentPosition(v) & Node.DOCUMENT_POSITION_FOLLOWING,
     await verdict.elementHandle(),
@@ -592,4 +593,33 @@ test('a history refusal on an available button comparator is shown, not swallowe
     plan: { ...BOOK_PLAN.plan, window: null, rolling: null, by_yield: [], refusal: 'history is shorter than one 20-year plan' },
   })
   await expect(page.getByTestId('plan-refusal')).toHaveText('history is shorter than one 20-year plan.')
+})
+
+test('a drawdown past 60% widens the scale rather than filling the bar', async ({ page }) => {
+  const w = BOOK_PLAN.plan.window!
+  await openPlan(page, {
+    ...BOOK_PLAN,
+    plan: { ...BOOK_PLAN.plan, window: { ...w, hedged: { ...w.hedged, max_drawdown: -0.85 }, comparator: { ...w.comparator, max_drawdown: -0.6 } } },
+  })
+  const widths = await page.locator('.pl-arm-dd-track > span').evaluateAll((els) => els.map((e) => (e as HTMLElement).style.width))
+  expect(widths[0]).toBe('100%')
+  expect(parseFloat(widths[1]!)).toBeCloseTo((0.6 / 0.85) * 100, 1)
+})
+
+test('gap-strip labels never overprint, even when worst sits by the median', async ({ page }) => {
+  await page.setViewportSize({ width: 1280, height: 900 })
+  const r = BOOK_PLAN.plan.rolling!
+  await openPlan(page, { ...BOOK_PLAN, plan: { ...BOOK_PLAN.plan, rolling: { ...r, worst_gap: -0.03, median_gap: -0.029, p10_gap: -0.0295, p90_gap: -0.028 } } })
+  const boxes = await page
+    .locator('.pl-plot')
+    .filter({ has: page.getByTestId('gap-strip') })
+    .locator('.pl-chart-label')
+    .evaluateAll((els) => els.map((e) => e.getBoundingClientRect()).map((b) => [b.left, b.top, b.right, b.bottom]))
+  for (let i = 0; i < boxes.length; i++) {
+    for (let j = i + 1; j < boxes.length; j++) {
+      const [a, b] = [boxes[i]!, boxes[j]!]
+      const overlap = a[0]! < b[2]! && b[0]! < a[2]! && a[1]! < b[3]! && b[1]! < a[3]!
+      expect(overlap, `labels ${i} and ${j}`).toBe(false)
+    }
+  }
 })
