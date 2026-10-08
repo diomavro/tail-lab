@@ -48,10 +48,13 @@ export function RegimeView({ regimes, vix, accuracy }: Props) {
   const last = regimes.segments[regimes.segments.length - 1]!.end
   const residuals =
     accuracy.status === 'ready' ? accuracy.data.model.residual_by_regime : ({} as Record<string, number>)
-  // The residuals are the replication of whichever published program sits
-  // nearest the strike and tenor last set on the Workspace -- PPUT at the
-  // defaults, PPUT3M deeper and longer -- so the copy names the one it used.
+  // The residuals replicate whichever published program sits nearest the
+  // strike and tenor on the rail (accuracy.select_reference), so the copy
+  // names the one it used and reads the sign off the numbers, never off PPUT.
   const reference = accuracy.status === 'ready' ? accuracy.data.model.reference : null
+  const calm = residuals.calm
+  const crisis = residuals.crisis
+  const measured = Object.values(residuals)
   const longest = [...regimes.segments].sort((a, b) => b.n_days - a.n_days).slice(0, 5)
 
   return (
@@ -132,14 +135,21 @@ export function RegimeView({ regimes, vix, accuracy }: Props) {
         </div>
         <p className="pl-note" style={{ marginBottom: 14 }}>
           The residual beside each band is how far the model&rsquo;s price &mdash; Black&ndash;Scholes at the
-          VIX, replicating Cboe&rsquo;s {reference ?? 'PPUT'} &mdash; missed the published program in that regime.
-          {reference && (
+          VIX, replicating {reference ? <>Cboe&rsquo;s {reference}</> : 'the nearest Cboe program'} &mdash; missed
+          the published program in that regime.
+          {reference && <> {reference} is the program nearest the strike and tenor on the rail.</>}{' '}
+          {calm !== undefined && crisis !== undefined && calm > 0 && crisis < 0 ? (
             <>
-              {' '}
-              {reference} is the program nearest the strike and tenor set on the Workspace.
+              It <em>flips sign</em> in a crisis rather than ramping up from calm &mdash; the model is too cheap in
+              quiet markets and too dear in a dislocation.
             </>
-          )} It <em>flips sign</em> in a crisis rather than ramping up from
-          calm &mdash; the model is too cheap in quiet markets and too dear in a dislocation.
+          ) : measured.length > 0 && measured.every((v) => v > 0) ? (
+            <>It is positive in every measured regime: the model prices these puts too cheap throughout{crisis !== undefined ? ', crisis included' : ''}.</>
+          ) : measured.length > 0 && measured.every((v) => v < 0) ? (
+            <>It is negative in every measured regime: the model prices these puts too dear throughout.</>
+          ) : measured.length > 0 ? (
+            <>Read its sign band by band below.</>
+          ) : null}
         </p>
         <div className="pl-regime-cards">
           {REGIME_ORDER.map((r) => {

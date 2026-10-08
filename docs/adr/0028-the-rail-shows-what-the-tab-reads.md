@@ -34,9 +34,13 @@ fetch keys in `PutLab.tsx` and the views, and two of its rows were wrong:
   `tenor_days` to pick the expiry. The anchor *is* the strike control
   (`docs/adr/0026`), so dropping it would have pinned the Surface to 5% / 30
   days with no way to move it.
-* It said **Regime** is market-wide. Its per-regime residuals come from
-  `/accuracy`, whose reference program (`PPUT` or `PPUT3M`) is chosen by the
-  nearest strike and tenor. The view hard-coded "PPUT" in its copy regardless.
+* It said **Regime** is market-wide. Its timeline is, but its per-regime
+  residuals come from `/accuracy`, whose reference program (`PPUT` or
+  `PPUT3M`) is chosen by the nearest strike and tenor
+  (`accuracy.select_reference`): the 10, 15 and 20% strikes pick PPUT3M at
+  every tenor. The view hard-coded "PPUT" in its copy regardless, and said the
+  residual "flips sign in a crisis" -- true of PPUT, false of PPUT3M, whose
+  crisis residual is +2.89%/yr (`docs/MODEL_RESIDUAL.md`).
 
 ## Decision
 
@@ -50,17 +54,25 @@ rail.ts` (`RAIL`), with the reason for each row beside it:
 | Recommendations | strike, tenor, years |
 | Bake-off | strike, tenor, years |
 | Surface | universe, strike (the anchor), tenor (picks the expiry) |
-| Portfolio, Book, Regime, Glossary | none |
+| Regime | strike, tenor (pick the program the residuals replicate) |
+| Portfolio, Book, Glossary | none |
 
 There is still **one** `PutLabControls` state and one rail component. Nothing
 is duplicated into a view, so a Recommendations click still opens the Workspace
 at that name's strike and tenor, and a strike set on one tab is the strike on
 the next.
 
-**Regime names the program it measured.** Without a rail it states which
-reference the residuals replicate (from the payload's `model.reference`) and
-that it is the program nearest the strike and tenor set on the Workspace,
-instead of claiming PPUT.
+**Regime names the program it measured and reads the sign off the numbers.**
+It states which reference the residuals replicate (the payload's
+`model.reference`) and says the residual flips sign only when the calm and
+crisis residuals on screen actually do.
+
+**The dateline follows the same rule.** A single name's identity and its
+data-quality tag head the dateline only where the rail carries the name; the
+backtest's spot, strike and rate only on the Workspace, whose read is gated off
+every other tab (off-tab they would be the last Workspace run's, possibly for
+another name). The Surface states its own chain session's spot, anchor and
+expiry; the Book its underlying.
 
 **Inputs that no other tab reads stay in their page.** Portfolio's basket and
 the Book's plan inputs are not shared controls; moving them into the rail would
@@ -68,10 +80,14 @@ make the rail carry state that means nothing on any other tab. This is the line
 between "a second control surface" (forbidden by 0017) and a page's own
 question.
 
-**Below 760px of container width** the rail is a full-width block collapsed
-behind a toggle that summarises only that tab's sections, and the tab row
-scrolls sideways instead of wrapping. The width is measured on the page's own
-box, not the window.
+**When the page cannot hold the rail beside the result** (a content box under
+820px: the rail's 260px, the 40px gap and main's 520px) the rail is a
+full-width block above it, collapsed behind a toggle that summarises only that
+tab's sections, and the tab row scrolls sideways instead of wrapping. The
+handoff put this switch at 760px; between there and ~880px of window the row
+had already wrapped, and a wrapped rail that was still sticky scrolled the
+result underneath itself. The width is measured on the page's own box, not the
+window.
 
 ## Consequences
 
@@ -83,3 +99,6 @@ box, not the window.
 * A view that starts reading a shared control must add that section to its
   row in the same change, or the reader cannot see the state that drives it.
   That is the Regime trap above, and the reason each row carries its audit note.
+* Recommendations keeps strike and tenor although each row reports that name's
+  own best cell: they set the screening roll, which decides which names cover
+  the window and is what the exported roll schedule states.

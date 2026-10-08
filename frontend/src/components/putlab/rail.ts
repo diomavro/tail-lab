@@ -13,7 +13,10 @@ export const RAIL: Record<TabId, readonly RailSection[]> = {
   // Backtest, sweep, verdict and prefetch read all five.
   workspace: ['universe', 'notional', 'strike', 'tenor', 'years'],
   // The ranking keys on strike, tenor and years (rankKey); not on the name or
-  // on how much premium is spent.
+  // on how much premium is spent. Years is the window every name's best cell
+  // is searched over; strike and tenor set the screening roll, which decides
+  // which names cover the window and is what the exported roll schedule
+  // states. Each row's figures are that name's own best cell.
   recommendations: ['strike', 'tenor', 'years'],
   // fetchMetricScreen runs at these on Run, across the whole universe.
   bakeoff: ['strike', 'tenor', 'years'],
@@ -24,9 +27,10 @@ export const RAIL: Record<TabId, readonly RailSection[]> = {
   portfolio: [],
   // Reads nothing from the controls; its plan inputs are page-scoped.
   book: [],
-  // Market-wide. Its residuals come from the reference program nearest the
-  // current strike and tenor, and the view names which one it used.
-  regime: [],
+  // The timeline is market-wide, but the per-regime residuals replicate
+  // whichever Cboe program sits nearest the strike and tenor
+  // (accuracy.select_reference), so those two drive numbers on this tab.
+  regime: ['strike', 'tenor'],
   glossary: [],
 }
 

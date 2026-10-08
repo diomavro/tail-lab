@@ -255,6 +255,10 @@
 .is-narrow .pl-tabs {
   flex-wrap: nowrap;
   overflow-x: auto;
+  /* A scroller clips its children's focus rings (2px + 2px offset): give the
+     ring room inside, and take it back outside so the tabs stay aligned. */
+  padding: var(--space-4) 4px 6px;
+  margin-inline: -4px;
   scrollbar-width: none;
   -webkit-overflow-scrolling: touch;
 }
@@ -1075,7 +1079,7 @@
   border-top: 1px solid var(--rule); border-bottom: 1px solid var(--rule);
   margin-bottom: 18px; font-size: 14px;
 }
-.pl-surface-anchor { margin-right: 12px; white-space: nowrap; }
+.pl-surface-anchor { margin-right: 12px; }
 .pl-surface-panes { display: grid; grid-template-columns: 1fr 1fr; gap: 24px; align-items: start; }
 .pl-surface-pane { min-width: 0; height: 330px; overflow: hidden; }
 .pl-surface-plot { margin: 8px 0 0; }

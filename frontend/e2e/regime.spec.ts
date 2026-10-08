@@ -64,4 +64,6 @@ test('the residual names the model it measures', async ({ page }) => {
   await page.goto('/')
   await page.getByRole('tab', { name: 'Regime' }).click()
   await expect(page.getByText(/Black–Scholes at the VIX, replicating Cboe’s PPUT/)).toBeVisible()
+  // The fixture's PPUT residuals are positive in calm and negative in crisis.
+  await expect(page.getByText(/flips sign/)).toBeVisible()
 })

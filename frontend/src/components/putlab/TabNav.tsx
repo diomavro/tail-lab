@@ -30,7 +30,11 @@ export function TabNav({
     setAtEnd(nav.scrollLeft + nav.clientWidth >= nav.scrollWidth - 4)
   }, [])
 
-  useEffect(() => {
+  // Places the active tab NARROW_INSET_PX from the row's left edge. Re-run on
+  // a row resize and once the web font lands too: either reflows the tabs
+  // after the first placement, and a placement made against the fallback
+  // font's widths leaves the active tab short of where it should be.
+  const place = useCallback(() => {
     const nav = navRef.current
     if (!nav) return
     if (narrow) {
@@ -43,14 +47,24 @@ export function TabNav({
     checkEnd()
   }, [activeTab, narrow, checkEnd])
 
-  // A width change without a tab change (rotating a phone) moves the end too.
+  useEffect(() => {
+    place()
+    let live = true
+    void document.fonts?.ready.then(() => {
+      if (live) place()
+    })
+    return () => {
+      live = false
+    }
+  }, [place])
+
   useEffect(() => {
     const nav = navRef.current
     if (!nav) return
-    const ro = new ResizeObserver(checkEnd)
+    const ro = new ResizeObserver(place)
     ro.observe(nav)
     return () => ro.disconnect()
-  }, [checkEnd])
+  }, [place])
 
   const onKeyDown = (e: KeyboardEvent<HTMLButtonElement>) => {
     if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') return

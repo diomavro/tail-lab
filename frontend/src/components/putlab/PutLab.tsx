@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import {
   ApiError,
   fetchAccuracy,
@@ -91,10 +91,14 @@ export type ResourceState<T> =
 // A slider/number drag fires many onChange events per second -- wait for the
 // controls to settle before hitting the network.
 const DEBOUNCE_MS = 250
-// Below this container width the rail collapses behind a toggle and the tab
-// row scrolls sideways. Measured on the page's own box, not the window, so an
-// embedded or split-screen sheet lays out by the room it actually has.
-const NARROW_PX = 760
+// The rail and main sit side by side only while the page's content box holds
+// both: the rail's 260px basis, the 40px gap and main's 520px basis (the
+// .pl-shell flex rules in putlab.css). Below that the row would wrap, and a
+// wrapped rail above the result is the narrow layout -- collapsed behind a
+// toggle, not sticky (a sticky wrapped rail scrolls the result under itself).
+// Measured on the page's own box, not the window, so an embedded or
+// split-screen sheet lays out by the room it actually has.
+const SIDE_BY_SIDE_PX = 260 + 40 + 520
 // After the primary read, warm the preset rails in the background so a rail
 // click is instant. Deferred so it never competes with the primary fetch.
 const PREFETCH_DELAY_MS = 350
@@ -230,10 +234,16 @@ export function PutLab() {
     }
   }, [sheet])
 
-  useEffect(() => {
+  // A layout effect, so a phone never paints the wide layout first and then
+  // collapses it.
+  useLayoutEffect(() => {
     const el = wrapRef.current
     if (!el) return
-    const measure = () => setNarrow(el.clientWidth < NARROW_PX)
+    const measure = () => {
+      const cs = getComputedStyle(el)
+      const content = el.clientWidth - parseFloat(cs.paddingLeft) - parseFloat(cs.paddingRight)
+      setNarrow(content < SIDE_BY_SIDE_PX)
+    }
     measure()
     const ro = new ResizeObserver(measure)
     ro.observe(el)
@@ -277,7 +287,9 @@ export function PutLab() {
     controls.tenor_weeks,
     controls.years,
   ])
-  // The rail's provenance block is on every tab, so these two are never gated.
+  // Cadence and data quality feed the rail's provenance and the dateline's
+  // data tag, on the tabs that carry the name (RAIL). Two cheap per-name reads,
+  // left ungated so a tab switch never waits on them.
   const assetKey = JSON.stringify([controls.asset])
   // The ranking feeds the Workspace's opening line and the whole
   // Recommendations table -- Portfolio's fragile-basket button screens on its
@@ -404,15 +416,19 @@ export function PutLab() {
   const cad = cadence.status === 'ready' ? cadence.data : null
 
   const sv = tab === 'surface' && surface.status === 'ready' ? surface.data.surface : null
-  // The Book reads the S&P 500 and Cboe's programs, never the rail's name.
-  const namesAsset = tab !== 'book'
+  // One name's identity (and its data-quality tag) heads the dateline only on
+  // the tabs that read that name: elsewhere it would describe a position the
+  // tab is not showing. The backtest's spot, strike and r likewise only on the
+  // Workspace -- its read is gated off every other tab, so off-tab it is the
+  // last Workspace run's, possibly for another name.
+  const namesAsset = RAIL[tab].includes('universe')
 
   const dateline = useMemo(() => {
     const rows: { k: string; v: string }[] = []
     const member = universe.find((m) => m.symbol.toLowerCase() === controls.asset.toLowerCase())
     if (tab === 'book') {
       rows.push({ k: 'Underlying', v: 'S&P 500 total return' })
-    } else {
+    } else if (namesAsset) {
       rows.push({ k: 'Name', v: `${controls.asset.toUpperCase()} ${member?.name ?? ''}`.trim() })
     }
     if (tab === 'surface') {
@@ -423,7 +439,7 @@ export function PutLab() {
         if (anchor) rows.push({ k: 'Anchor', v: `K ${anchor.strike.toFixed(0)} · ${sv.moneyness_pct}% OOM` })
         rows.push({ k: 'Expiry', v: `${sv.expiration} · ${sv.t_days} days` })
       }
-    } else if (tab !== 'book' && bt) {
+    } else if (tab === 'workspace' && bt) {
       rows.push({ k: 'Spot', v: fmtPrice(bt.spot) })
       rows.push({
         k: 'Strike',
@@ -434,7 +450,7 @@ export function PutLab() {
     if (regimes) rows.push({ k: 'Regime', v: regimes.current })
     if (vix) rows.push({ k: 'VIX', v: vix.close.toFixed(1) })
     return rows
-  }, [tab, universe, controls.asset, controls.moneyness_pct, bt, sv, regimes, vix])
+  }, [tab, namesAsset, universe, controls.asset, controls.moneyness_pct, bt, sv, regimes, vix])
 
   const railSections = RAIL[tab]
 
@@ -498,7 +514,16 @@ export function PutLab() {
               universe={universe}
               dataQuality={dq}
               cadence={cad}
-              asOf={bt ? bt.as_of : null}
+              // Only a read this tab shows: the backtest's on the Workspace, the
+              // chain session's on the Surface. Elsewhere the backtest read is
+              // gated off and would be the last Workspace run's.
+              asOf={
+                tab === 'workspace' && bt
+                  ? bt.as_of
+                  : tab === 'surface' && surface.status === 'ready'
+                    ? surface.data.as_of
+                    : null
+              }
               narrow={narrow}
             />
           )}
