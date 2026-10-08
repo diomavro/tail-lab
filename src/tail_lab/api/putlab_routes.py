@@ -20,13 +20,14 @@ from __future__ import annotations
 import datetime as dt
 import logging
 import time
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from functools import lru_cache
 from typing import Any
 
 import pandas as pd
 from fastapi import APIRouter, Depends, HTTPException, Query
 
+from tail_lab.api.memo import RefreshingMemo
 from tail_lab.api.schemas import (
     BookPlanResponse,
     HedgeOverlayResponse,
@@ -94,10 +95,21 @@ from tail_lab.research.surface.reading import read_surface
 router = APIRouter()
 logger = logging.getLogger("tail_lab.api.putlab")
 
-#: Short-TTL memo of the (35-backtest) leaderboard, keyed by
-#: (moneyness, tenor, years, as_of); the read cache keeps it fresh underneath.
-_LEADERBOARD_CACHE: dict[tuple[float, float, float, str], tuple[float, UniverseRanking]] = {}
-_LEADERBOARD_TTL_S = 120.0
+#: The universe ranking, keyed by (moneyness, tenor, years, as_of). A cold
+#: screen takes ~25 s on the app's one shared CPU when nothing else runs, and
+#: minutes when several overlap, so the memo serves a stale entry at once while
+#: one background refresh recomputes it, and concurrent misses share a single
+#: compute (api/memo.py). Fresh for 15 minutes -- longer than a screen, so a
+#: steady reader does not keep one running; ingests land daily, and one shows
+#: up after one refresh. Servable for the rest of the as-of day, whose date is
+#: in the key (it changes at midnight UTC, when the daily warm re-screens).
+_LEADERBOARD_CACHE: RefreshingMemo[tuple[float, float, float, str], UniverseRanking] = (
+    RefreshingMemo(name="leaderboard", fresh_s=15 * 60.0, serve_stale_s=24 * 3600.0)
+)
+#: The screen the app opens on (the Workspace defaults, which are also the
+#: leaderboard route's query defaults), warmed at startup -- every deploy
+#: restarts the process with an empty memo -- and again each UTC day.
+_WARM_SCREEN = (5.0, 4.0, 4.0)
 
 #: Short-TTL memos of the single-name reads the Backtest cockpit refetches on
 #: every OOM/tenor click. Bronze is immutable for a given as_of, so caching a
@@ -577,22 +589,62 @@ def _rank_cached(
     the roll schedule so asking for the schedule never re-screens a universe
     the leaderboard just screened."""
     cache_key = (moneyness_pct, tenor_weeks, years, resolved.isoformat())
-    hit = _LEADERBOARD_CACHE.get(cache_key)
-    if hit is not None and hit[0] > time.monotonic():
-        return hit[1]
     try:
-        ranking = rank_universe(
-            store,
-            symbols=universe_symbols(),
-            as_of=resolved,
-            moneyness_pct=moneyness_pct,
-            tenor_weeks=tenor_weeks,
-            years=years,
-        )
+        return _LEADERBOARD_CACHE.get(cache_key, _screen(store, cache_key))
     except LookupError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
-    _LEADERBOARD_CACHE[cache_key] = (time.monotonic() + _LEADERBOARD_TTL_S, ranking)
-    return ranking
+
+
+def warm_leaderboard(store: LakeStore) -> None:
+    """Start screening the app's opening ranking in the background, so the
+    first visitor after a deploy does not wait for it."""
+    key = (*_WARM_SCREEN, _resolve_as_of(None).isoformat())
+    _LEADERBOARD_CACHE.warm(key, _screen(store, key))
+
+
+#: How long after midnight UTC the next day's ranking is warmed: past the date
+#: change, so ``_resolve_as_of`` already answers the new day.
+_WARM_AFTER_MIDNIGHT = dt.timedelta(minutes=1)
+
+
+def warm_leaderboard_daily(
+    store: LakeStore,
+    *,
+    now: Callable[[], dt.datetime] = lambda: dt.datetime.now(dt.UTC),
+    sleep: Callable[[float], None] = time.sleep,
+    rounds: int | None = None,
+) -> None:
+    """Warm the opening ranking now and again just after each UTC midnight.
+
+    The as-of date is in the memo key, so without this the first visitor of
+    every day would wait for the cold screen. Runs in a daemon thread for the
+    life of the process; ``rounds`` bounds it for tests.
+    """
+    done = 0
+    while rounds is None or done < rounds:
+        warm_leaderboard(store)
+        current = now()
+        next_warm = (current + dt.timedelta(days=1)).replace(
+            hour=0, minute=0, second=0, microsecond=0
+        ) + _WARM_AFTER_MIDNIGHT
+        log_event(logger, "putlab.leaderboard_warm_scheduled", next_warm=next_warm.isoformat())
+        done += 1
+        sleep((next_warm - current).total_seconds())
+
+
+def _screen(
+    store: LakeStore, key: tuple[float, float, float, str]
+) -> Callable[[], UniverseRanking]:
+    """The universe screen a memo key stands for, as a deferred compute."""
+    moneyness_pct, tenor_weeks, years, as_of = key
+    return lambda: rank_universe(
+        store,
+        symbols=universe_symbols(),
+        as_of=dt.date.fromisoformat(as_of),
+        moneyness_pct=moneyness_pct,
+        tenor_weeks=tenor_weeks,
+        years=years,
+    )
 
 
 @router.get("/api/putlab/roll-schedule/marked")
@@ -739,9 +791,9 @@ def putlab_leaderboard(
     "which names' OOM puts got the best results" — each tagged with its
     cross-regime verdict."""
     resolved = _resolve_as_of(as_of)
-    # Ranking the universe is a strike x tenor sweep per name; the result is
-    # deterministic given the (immutable) bronze, so a short TTL cache makes
-    # repeat clicks instant. Shared with the roll-schedule route.
+    # Ranking the universe is a strike x tenor sweep per name, minutes cold;
+    # the memo (stale-while-revalidate, single flight) keeps visits from
+    # waiting on it. Shared with the roll-schedule route.
     ranking = _rank_cached(
         store,
         moneyness_pct=moneyness_pct,

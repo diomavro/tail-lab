@@ -12,6 +12,9 @@ primary_region = "fra"
   TAIL_LAB_LAKE_BACKEND = "tigris"
   TAIL_LAB_S3_BUCKET = "tail-lab-lake"
   PORT = "8080"
+  # Screen the opening ranking at startup (api/memo.py): a deploy restarts
+  # with an empty memo, and a cold screen takes minutes on this machine.
+  TAIL_LAB_WARM_RANKING = "true"
 
 [http_service]
   internal_port = 8080
