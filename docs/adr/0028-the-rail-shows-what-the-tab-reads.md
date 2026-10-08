@@ -51,7 +51,7 @@ rail.ts` (`RAIL`), with the reason for each row beside it:
 | Tab | Rail sections |
 |---|---|
 | Workspace | universe, premium, strike, tenor, years |
-| Recommendations | strike, tenor, years |
+| Recommendations | tenor, years |
 | Bake-off | strike, tenor, years |
 | Surface | universe, strike (the anchor), tenor (picks the expiry) |
 | Regime | strike, tenor (pick the program the residuals replicate) |
@@ -87,7 +87,9 @@ tab's sections, and the tab row scrolls sideways instead of wrapping. The
 handoff put this switch at 760px; between there and ~880px of window the row
 had already wrapped, and a wrapped rail that was still sticky scrolled the
 result underneath itself. The width is measured on the page's own box, not the
-window.
+window, to the fraction of a pixel, and the return to side by side waits for
+24px of spare room: a classic scrollbar appearing on the taller wide page
+would otherwise toggle the layout every frame.
 
 ## Consequences
 
@@ -99,6 +101,9 @@ window.
 * A view that starts reading a shared control must add that section to its
   row in the same change, or the reader cannot see the state that drives it.
   That is the Regime trap above, and the reason each row carries its audit note.
-* Recommendations keeps strike and tenor although each row reports that name's
-  own best cell: they set the screening roll, which decides which names cover
-  the window and is what the exported roll schedule states.
+* Recommendations carries no strike. Each row reports that name's own best
+  cell over a fixed strike x tenor grid (`ranking.run_sweep`), and the
+  screening roll's cycle dates depend on the tenor alone, so the strike moved
+  nothing on screen while re-running the most expensive read in the app. The
+  tenor stays: it decides, at the 90% coverage edge, which names cover the
+  window. The handoff listed strike for this tab.

@@ -237,7 +237,7 @@ client, `src/api/client.ts`, hand-mirrors `api/schemas.py`; there is no separate
 response shapes).
 
 The app is the **Put Lab workspace** and nothing else. `PutLab.tsx` owns the
-shared controls, the active tab, the sheet, and every cached read; the six tabs
+shared controls, the active tab, the sheet, and every cached read; the eight tabs
 are thin views under `components/putlab/views/`. `ParamRail` is the *only*
 control surface for the shared controls — do not add a second one (`docs/adr/
 0017`). It renders only the sections the open tab reads (`rail.ts`, `docs/adr/

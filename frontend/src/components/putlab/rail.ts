@@ -12,18 +12,20 @@ export type RailSection = 'universe' | 'notional' | 'strike' | 'tenor' | 'years'
 export const RAIL: Record<TabId, readonly RailSection[]> = {
   // Backtest, sweep, verdict and prefetch read all five.
   workspace: ['universe', 'notional', 'strike', 'tenor', 'years'],
-  // The ranking keys on strike, tenor and years (rankKey); not on the name or
-  // on how much premium is spent. Years is the window every name's best cell
-  // is searched over; strike and tenor set the screening roll, which decides
-  // which names cover the window and is what the exported roll schedule
-  // states. Each row's figures are that name's own best cell.
-  recommendations: ['strike', 'tenor', 'years'],
+  // Every row reports that name's own best cell over a fixed strike x tenor
+  // grid (ranking.run_sweep), so the rail's strike changes nothing in the
+  // table: the screening roll's cycle dates depend on the tenor alone, and
+  // the strike reaches only the export's screen_moneyness_pct label. Years is
+  // the window every best cell is searched over; tenor decides, at the 90%
+  // coverage edge, which names cover that window.
+  recommendations: ['tenor', 'years'],
   // fetchMetricScreen runs at these on Run, across the whole universe.
   bakeoff: ['strike', 'tenor', 'years'],
   // The anchor IS the strike control and the tenor picks the expiry
   // (read_surface), so both stay; years never enter.
   surface: ['universe', 'strike', 'tenor'],
-  // Owns its own basket and window (Portfolio.tsx).
+  // Owns its own basket and window (Portfolio.tsx); it seeds that window from
+  // the shared years once, at mount, and never reads the controls again.
   portfolio: [],
   // Reads nothing from the controls; its plan inputs are page-scoped.
   book: [],

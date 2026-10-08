@@ -30,16 +30,24 @@ test('Workspace carries all five controls', async ({ page }) => {
   await expectSections(page, [UNIVERSE, PREMIUM, STRIKE, TENOR, YEARS], [])
 })
 
-for (const name of ['Recommendations', 'Bake-off']) {
-  test(`${name} carries strike, tenor and years, and no name or premium`, async ({ page }) => {
-    // Neither read keys on the name or on the premium (rankKey, metric-screen).
-    await page.goto('/')
-    await page.getByRole('tab', { name }).click()
-    await expect(rail(page).getByText(`Controls ${name} reads`)).toBeVisible()
-    await expectSections(page, [STRIKE, TENOR, YEARS], [UNIVERSE, PREMIUM])
-    await expect(rail(page).getByLabel('Filter the universe')).toHaveCount(0)
-  })
-}
+test('Bake-off carries strike, tenor and years, and no name or premium', async ({ page }) => {
+  // metric-screen runs at exactly these, across the whole universe.
+  await page.goto('/')
+  await page.getByRole('tab', { name: 'Bake-off' }).click()
+  await expect(rail(page).getByText('Controls Bake-off reads')).toBeVisible()
+  await expectSections(page, [STRIKE, TENOR, YEARS], [UNIVERSE, PREMIUM])
+  await expect(rail(page).getByLabel('Filter the universe')).toHaveCount(0)
+})
+
+test('Recommendations carries tenor and years only: every row is its own best strike', async ({ page }) => {
+  // The table reports each name's best cell over a fixed grid, so the rail's
+  // strike would change nothing on screen while re-running the whole screen.
+  await page.goto('/')
+  await page.getByRole('tab', { name: 'Recommendations' }).click()
+  await expect(rail(page).getByText('Controls Recommendations reads')).toBeVisible()
+  await expectSections(page, [TENOR, YEARS], [UNIVERSE, PREMIUM, STRIKE])
+  await expect(rail(page).getByLabel('Out of the money, %')).toHaveCount(0)
+})
 
 test('Surface keeps the name, the anchor and the expiry, and drops years and premium', async ({ page }) => {
   // The anchor IS the strike control and the tenor picks the expiry
@@ -93,18 +101,21 @@ test('the dateline names a single position only on tabs that read one', async ({
   }
 })
 
-test('a strike set on Recommendations is the strike on the Workspace: one shared state', async ({ page }) => {
+test('a strike set on Bake-off is the strike on the Workspace: one shared state', async ({ page }) => {
   await page.goto('/')
-  await page.getByRole('tab', { name: 'Recommendations' }).click()
+  await page.getByRole('tab', { name: 'Bake-off' }).click()
   await rail(page).getByRole('radiogroup', { name: 'Strike presets' }).getByText('10%').click()
+  await page.getByRole('tab', { name: 'Recommendations' }).click()
+  await rail(page).getByRole('radiogroup', { name: 'Held to expiry' }).getByText('1 quarter').click()
   await page.getByRole('tab', { name: 'Workspace' }).click()
   await expect(rail(page).getByLabel('Out of the money, %')).toHaveValue('10')
   await expect(rail(page).getByRole('radiogroup', { name: 'Strike presets' }).getByRole('radio', { name: '10%' })).toBeChecked()
+  await expect(rail(page).getByRole('radiogroup', { name: 'Held to expiry' }).getByRole('radio', { name: '1 quarter' })).toBeChecked()
 })
 
 test('Regime names the program its residuals replicate, not a fixed PPUT', async ({ page }) => {
-  // The reference is picked by the nearest strike and tenor, and Regime has no
-  // rail to show them, so the copy has to say which program it used.
+  // The reference is picked by the nearest strike and tenor, so the copy has
+  // to say which program the numbers beneath it replicate.
   await page.route(
     (url) => url.pathname === '/api/putlab/accuracy',
     (route) =>
@@ -162,7 +173,7 @@ test.describe('on a phone-width page', () => {
     await expect(rail(page).getByLabel('Filter the universe')).toBeVisible()
 
     await page.getByRole('tab', { name: 'Recommendations' }).click()
-    await expect(page.getByTestId('rail-summary')).toHaveText('5% OOM · 1m · 4y')
+    await expect(page.getByTestId('rail-summary')).toHaveText('1m · 4y')
   })
 
   test('the tab row scrolls sideways and keeps the active tab in view', async ({ page }) => {
@@ -193,12 +204,34 @@ test.describe('on a phone-width page', () => {
     expect(new Set(ys).size).toBe(1)
   })
 
+  test('a fade says more tabs follow, until the row is at its end', async ({ page }) => {
+    await page.goto('/')
+    await expect(page.locator('.pl-tabs-fade')).toBeVisible()
+    await page.getByRole('tab', { name: 'Workspace' }).focus()
+    await page.keyboard.press('ArrowLeft') // the last tab: the row scrolls to its end
+    await expect(page.locator('.pl-tabs-fade')).toHaveCount(0)
+  })
+
+  test('the scroller leaves room for a tab’s whole focus ring', async ({ page }) => {
+    // A scrolling row clips what overflows it; the ring is 2px wide at a 2px
+    // offset, so it needs 4px inside the row on every side a tab touches.
+    await page.goto('/')
+    await page.evaluate(() => document.fonts.ready)
+    // Both rects in one frame, polled until the narrow layout has settled.
+    const room = () =>
+      page.evaluate(() => {
+        const nav = document.querySelector('[role=tablist]')!.getBoundingClientRect()
+        const tab = document.getElementById('tab-workspace')!.getBoundingClientRect()
+        return Math.min(tab.left - nav.left, nav.bottom - tab.bottom)
+      })
+    await expect.poll(room).toBeGreaterThanOrEqual(4)
+  })
+
   test('no tab scrolls the page sideways', async ({ page }) => {
     // Measured once each tab's reads have landed: right after the click the
-    // panel is a loading line, which never overflows. Surface is left to
-    // surface.spec -- its pre-redesign alpha strip overflows a phone.
+    // panel is a loading line, which never overflows.
     await page.goto('/')
-    for (const name of ['Workspace', 'Recommendations', 'Portfolio', 'Book', 'Bake-off', 'Regime', 'Glossary']) {
+    for (const name of ['Workspace', 'Recommendations', 'Portfolio', 'Book', 'Bake-off', 'Regime', 'Surface', 'Glossary']) {
       await page.getByRole('tab', { name }).click()
       await page.waitForLoadState('networkidle')
       const overflow = await page.evaluate(
@@ -243,4 +276,81 @@ test('a rail stacked above the result is never sticky over it', async ({ page })
     const overlap = s2.x < m2.x + m2.width && m2.x < s2.x + s2.width && s2.y < m2.y + m2.height && m2.y < s2.y + s2.height
     expect(overlap, `${width}px after scrolling`).toBe(false)
   }
+})
+
+test('Regime never claims a crisis flip the numbers do not show', async ({ page }) => {
+  // Negative in calm, positive in crisis is a sign change, but the wrong way
+  // round for "too cheap in quiet markets, too dear in a dislocation".
+  await page.route(
+    (url) => url.pathname === '/api/putlab/accuracy',
+    (route) =>
+      route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({
+          ...ACCURACY,
+          model: { ...ACCURACY.model, residual_by_regime: { calm: -0.01, elevated: 0.002, crisis: 0.02 } },
+        }),
+      }),
+  )
+  await page.goto('/')
+  await page.getByRole('tab', { name: 'Regime' }).click()
+  await expect(page.getByText(/Read its sign band by band/)).toBeVisible()
+  await expect(page.getByText(/flips sign/)).toHaveCount(0)
+})
+
+test('the masthead dates only a read the open tab shows', async ({ page }) => {
+  await page.goto('/')
+  const masthead = page.locator('.pl-masthead')
+  await expect(masthead).toContainText('2026-08-21') // the Workspace backtest's as_of
+  await page.getByRole('tab', { name: 'Glossary' }).click()
+  await expect(masthead).not.toContainText('2026-08-21')
+  await page.getByRole('tab', { name: 'Surface' }).click()
+  await expect(masthead).toContainText('2026-10-02') // the chain session's
+})
+
+test('the dateline never pairs a new name with the previous name’s chain', async ({ page }) => {
+  // For one debounce after a name change the old payload is still 'ready'.
+  // Hold QQQ's read open so that window lasts as long as the assertion.
+  await page.route(
+    (url) => url.pathname === '/api/putlab/surface' && url.searchParams.get('asset') === 'qqq',
+    () => {},
+  )
+  await page.goto('/')
+  await page.getByRole('tab', { name: 'Surface' }).click()
+  const dateline = page.locator('.pl-dateline')
+  await expect(dateline).toContainText('K 930')
+  await rail(page).locator('.pl-list-row', { hasText: 'QQQ' }).click()
+  await expect(dateline).toContainText('QQQ')
+  // Read once, inside the debounce: a retrying assertion would simply wait the
+  // old payload out and pass without the guard.
+  const text = (await dateline.textContent()) ?? ''
+  expect(text).not.toContain('K 930')
+  expect(text).not.toContain('$1000.00')
+})
+
+test('the switch back to side by side needs room to spare, so a scrollbar cannot toggle it', async ({ page }) => {
+  // A classic scrollbar (~15px) appears on the taller wide page and goes on the
+  // shorter narrow one; one threshold flipped the layout every frame. Content
+  // is the .putlab-root width less the page's 2 x 40px padding at 1440px.
+  await page.setViewportSize({ width: 1440, height: 900 })
+  await page.goto('/')
+  const toggle = rail(page).getByRole('button', { name: /Controls/ })
+  const content = (px: number) => page.addStyleTag({ content: `.putlab-root { max-width: ${px + 80}px; }` })
+  await content(830)
+  await expect(toggle).toHaveCount(0) // 830 fits side by side from a wide start
+  await content(810)
+  await expect(toggle).toBeVisible()
+  await content(830)
+  await expect(toggle).toBeVisible() // ...but not back from narrow: inside the margin
+  await content(860)
+  await expect(toggle).toHaveCount(0)
+})
+
+test('a fractional width under the threshold is narrow, not rounded up to it', async ({ page }) => {
+  // clientWidth rounds 819.5 to 820, while the flex row wraps on the fraction.
+  await page.setViewportSize({ width: 1440, height: 900 })
+  await page.goto('/')
+  await page.addStyleTag({ content: '.putlab-root { max-width: 899.5px; }' })
+  await expect(rail(page).getByRole('button', { name: /Controls/ })).toBeVisible()
 })

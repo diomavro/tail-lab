@@ -225,34 +225,40 @@ export function ParamRail({ tab, tabLabel, controls, onChange, universe, dataQua
           </div>
         )}
 
-        <div className="pl-kicker" style={{ marginBottom: 9 }}>
-          Provenance
-        </div>
-        <dl className="pl-prov">
-          {asOf && (
-            <>
-              <dt>as_of</dt>
-              <dd>{asOf}</dd>
-            </>
-          )}
-          {/* Bars and cadence describe one name: shown only where the name is. */}
-          {has('universe') && dataQuality && (
-            <>
-              <dt>bars</dt>
-              <dd>{dataQuality.n_bars}</dd>
-              <dt>flagged</dt>
-              <dd className={dataQuality.n_suspicious ? 'pl-neg' : undefined}>{dataQuality.n_suspicious}</dd>
-            </>
-          )}
-          {has('universe') && cadence && (
-            <>
-              <dt>cadence</dt>
-              <dd>{cadence.cadence}</dd>
-              <dt>gap</dt>
-              <dd>{cadence.avg_gap_days.toFixed(1)}d</dd>
-            </>
-          )}
-        </dl>
+        {/* Only what this tab can source: a heading over an empty list reads
+            as missing provenance. */}
+        {(asOf || has('universe')) && (
+          <>
+          <div className="pl-kicker" style={{ marginBottom: 9 }}>
+            Provenance
+          </div>
+          <dl className="pl-prov">
+            {asOf && (
+              <>
+                <dt>as_of</dt>
+                <dd>{asOf}</dd>
+              </>
+            )}
+            {/* Bars and cadence describe one name: shown only where the name is. */}
+            {has('universe') && dataQuality && (
+              <>
+                <dt>bars</dt>
+                <dd>{dataQuality.n_bars}</dd>
+                <dt>flagged</dt>
+                <dd className={dataQuality.n_suspicious ? 'pl-neg' : undefined}>{dataQuality.n_suspicious}</dd>
+              </>
+            )}
+            {has('universe') && cadence && (
+              <>
+                <dt>cadence</dt>
+                <dd>{cadence.cadence}</dd>
+                <dt>gap</dt>
+                <dd>{cadence.avg_gap_days.toFixed(1)}d</dd>
+              </>
+            )}
+          </dl>
+          </>
+        )}
       </div>
     </aside>
   )

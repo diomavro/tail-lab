@@ -99,6 +99,11 @@ const DEBOUNCE_MS = 250
 // Measured on the page's own box, not the window, so an embedded or
 // split-screen sheet lays out by the room it actually has.
 const SIDE_BY_SIDE_PX = 260 + 40 + 520
+// Back to side by side only with this much room to spare. A classic scrollbar
+// (~15px) appears on the taller wide page and goes on the shorter narrow one;
+// with a single threshold that toggled the layout every frame between ~891
+// and ~908px of window.
+const HYSTERESIS_PX = 24
 // After the primary read, warm the preset rails in the background so a rail
 // click is instant. Deferred so it never competes with the primary fetch.
 const PREFETCH_DELAY_MS = 350
@@ -239,13 +244,16 @@ export function PutLab() {
   useLayoutEffect(() => {
     const el = wrapRef.current
     if (!el) return
-    const measure = () => {
-      const cs = getComputedStyle(el)
-      const content = el.clientWidth - parseFloat(cs.paddingLeft) - parseFloat(cs.paddingRight)
-      setNarrow(content < SIDE_BY_SIDE_PX)
-    }
-    measure()
-    const ro = new ResizeObserver(measure)
+    // The exact content width: clientWidth rounds to a whole pixel, and the
+    // flex row wraps on the fraction, so 819.5px of content read as 820.
+    const decide = (content: number) =>
+      setNarrow((was) => (was ? content < SIDE_BY_SIDE_PX + HYSTERESIS_PX : content < SIDE_BY_SIDE_PX))
+    const cs = getComputedStyle(el)
+    decide(el.getBoundingClientRect().width - parseFloat(cs.paddingLeft) - parseFloat(cs.paddingRight))
+    const ro = new ResizeObserver((entries) => {
+      const entry = entries[0]
+      if (entry) decide(entry.contentRect.width)
+    })
     ro.observe(el)
     return () => ro.disconnect()
   }, [])
@@ -415,7 +423,16 @@ export function PutLab() {
   const dq = dataQuality.status === 'ready' ? dataQuality.data : null
   const cad = cadence.status === 'ready' ? cadence.data : null
 
-  const sv = tab === 'surface' && surface.status === 'ready' ? surface.data.surface : null
+  const same = (a: string) => a.toLowerCase() === controls.asset.toLowerCase()
+  // A read is shown only for the name it was made for: for one debounce after
+  // a name change the previous name's payload is still 'ready'.
+  const sv =
+    tab === 'surface' && surface.status === 'ready' && same(surface.data.asset) ? surface.data.surface : null
+  const btHere = tab === 'workspace' && bt && same(bt.asset) ? bt : null
+  // Only a read this tab shows: the backtest's on the Workspace, the chain
+  // session's on the Surface. Elsewhere the backtest read is gated off and
+  // would be the last Workspace run's.
+  const asOf = btHere ? btHere.as_of : sv && surface.status === 'ready' ? surface.data.as_of : null
   // One name's identity (and its data-quality tag) heads the dateline only on
   // the tabs that read that name: elsewhere it would describe a position the
   // tab is not showing. The backtest's spot, strike and r likewise only on the
@@ -439,18 +456,18 @@ export function PutLab() {
         if (anchor) rows.push({ k: 'Anchor', v: `K ${anchor.strike.toFixed(0)} · ${sv.moneyness_pct}% OOM` })
         rows.push({ k: 'Expiry', v: `${sv.expiration} · ${sv.t_days} days` })
       }
-    } else if (tab === 'workspace' && bt) {
-      rows.push({ k: 'Spot', v: fmtPrice(bt.spot) })
+    } else if (btHere) {
+      rows.push({ k: 'Spot', v: fmtPrice(btHere.spot) })
       rows.push({
         k: 'Strike',
-        v: `${fmtPrice(bt.spot * (1 - controls.moneyness_pct / 100))} (${controls.moneyness_pct}% OOM)`,
+        v: `${fmtPrice(btHere.spot * (1 - controls.moneyness_pct / 100))} (${controls.moneyness_pct}% OOM)`,
       })
-      rows.push({ k: 'r', v: `${(bt.rate * 100).toFixed(2)}%` })
+      rows.push({ k: 'r', v: `${(btHere.rate * 100).toFixed(2)}%` })
     }
     if (regimes) rows.push({ k: 'Regime', v: regimes.current })
     if (vix) rows.push({ k: 'VIX', v: vix.close.toFixed(1) })
     return rows
-  }, [tab, namesAsset, universe, controls.asset, controls.moneyness_pct, bt, sv, regimes, vix])
+  }, [tab, namesAsset, universe, controls.asset, controls.moneyness_pct, btHere, sv, regimes, vix])
 
   const railSections = RAIL[tab]
 
@@ -464,7 +481,7 @@ export function PutLab() {
             <span className="pl-brand-sub">Tail&nbsp;Risk Desk</span>
           </div>
           <div className="pl-masthead-right">
-            {bt && <span className="pl-micro">{bt.as_of}</span>}
+            {asOf && <span className="pl-micro">{asOf}</span>}
             <div className="pl-seg" role="radiogroup" aria-label="Sheet">
               {(['paper', 'plate'] as Sheet[]).map((s) => (
                 <label className="pl-seg-opt" key={s}>
@@ -514,16 +531,7 @@ export function PutLab() {
               universe={universe}
               dataQuality={dq}
               cadence={cad}
-              // Only a read this tab shows: the backtest's on the Workspace, the
-              // chain session's on the Surface. Elsewhere the backtest read is
-              // gated off and would be the last Workspace run's.
-              asOf={
-                tab === 'workspace' && bt
-                  ? bt.as_of
-                  : tab === 'surface' && surface.status === 'ready'
-                    ? surface.data.as_of
-                    : null
-              }
+              asOf={asOf}
               narrow={narrow}
             />
           )}
