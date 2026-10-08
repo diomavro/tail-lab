@@ -72,6 +72,11 @@ class RefreshingMemo[K: Hashable, V]:
         self._entries: dict[K, _Entry[V]] = {}
         #: Keys being computed now, each with the event its waiters block on.
         self._inflight: dict[K, threading.Event] = {}
+        #: Background refreshes run one at a time across ALL keys: each one is
+        #: a whole screen on a single shared CPU, and several readers on
+        #: several keys would otherwise screen at once. Callers that miss still
+        #: compute in their own request.
+        self._background_slot = threading.Lock()
 
     def clear(self) -> None:
         with self._lock:
@@ -79,29 +84,27 @@ class RefreshingMemo[K: Hashable, V]:
 
     def get(self, key: K, compute: Callable[[], V]) -> V:
         """The value for ``key``: memoised, stale-served, or computed once."""
-        with self._lock:
-            entry = self._entries.get(key)
-            age = None if entry is None else self._clock() - entry.computed_at
-            if entry is not None and age is not None and age < self._serve_stale_s:
-                if age >= self._fresh_s:
-                    self._start_background(key, compute, reason="stale")
-                return entry.value
-            event = self._inflight.get(key)
-            leader = event is None
+        while True:
+            with self._lock:
+                entry = self._entries.get(key)
+                age = None if entry is None else self._clock() - entry.computed_at
+                if entry is not None and age is not None and age < self._serve_stale_s:
+                    if age >= self._fresh_s:
+                        self._start_background(key, compute, reason="stale")
+                    return entry.value
+                event = self._inflight.get(key)
+                if event is None:
+                    event = threading.Event()
+                    self._inflight[key] = event
+                    leader = True
+                else:
+                    leader = False
             if leader:
-                event = threading.Event()
-                self._inflight[key] = event
-        assert event is not None
-        if leader:
-            return self._compute_and_store(key, compute, event, reason="miss")
-        event.wait()
-        with self._lock:
-            done = self._entries.get(key)
-        if done is not None:
-            return done.value
-        # The leader failed and stored nothing: compute here, so this caller
-        # gets the real error (or a result) rather than a guess.
-        return compute()
+                return self._compute_and_store(key, compute, event, reason="miss")
+            event.wait()
+            # Round again: the value if the compute stored one; if it failed,
+            # exactly one waiter becomes the next leader and the rest wait on
+            # it -- never every waiter screening at once.
 
     def warm(self, key: K, compute: Callable[[], V]) -> None:
         """Start a background compute for ``key`` unless one exists or runs."""
@@ -115,11 +118,11 @@ class RefreshingMemo[K: Hashable, V]:
         if key in self._inflight:
             return
         event = threading.Event()
-        self._inflight[key] = event
 
         def run() -> None:
             try:
-                self._compute_and_store(key, compute, event, reason=reason)
+                with self._background_slot:
+                    self._compute_and_store(key, compute, event, reason=reason)
             except Exception:
                 # Deliberately broad (Rule 14's process-boundary case): this is
                 # a background worker with no caller to raise to. Not silent --
@@ -129,7 +132,17 @@ class RefreshingMemo[K: Hashable, V]:
                     "event=memo.refresh_failed memo=%s key=%s reason=%s", self._name, key, reason
                 )
 
-        self._spawn(run)
+        try:
+            self._spawn(run)
+        except RuntimeError:
+            # "can't start new thread": nothing will ever set this event, so it
+            # must not be registered -- a key stuck in flight hangs every
+            # later miss. The stale entry, if any, keeps being served.
+            logger.exception(
+                "event=memo.spawn_failed memo=%s key=%s reason=%s", self._name, key, reason
+            )
+            return
+        self._inflight[key] = event
 
     def _compute_and_store(
         self, key: K, compute: Callable[[], V], event: threading.Event, *, reason: str

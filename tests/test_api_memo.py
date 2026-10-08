@@ -207,3 +207,114 @@ def test_entries_past_the_stale_window_are_pruned() -> None:
 def test_the_stale_window_cannot_be_shorter_than_the_fresh_one() -> None:
     with pytest.raises(ValueError, match="serve_stale_s"):
         RefreshingMemo(name="t", fresh_s=10.0, serve_stale_s=5.0)
+
+
+def test_a_failed_leader_hands_over_to_one_waiter_not_to_all() -> None:
+    """One transient error mid-screen must not turn every queued reader into
+    a screen of its own -- the stampede single flight exists to stop."""
+    memo: RefreshingMemo[str, int] = RefreshingMemo(name="t", fresh_s=10.0, serve_stale_s=100.0)
+    started = threading.Event()
+    release = threading.Event()
+    lock = threading.Lock()
+    running = [0]
+    peak = [0]
+    calls: list[int] = []
+
+    def compute() -> int:
+        with lock:
+            calls.append(1)
+            running[0] += 1
+            peak[0] = max(peak[0], running[0])
+            first = len(calls) == 1
+        try:
+            if first:
+                started.set()
+                release.wait(5)
+                raise OSError("transient lake read")
+            return 4
+        finally:
+            with lock:
+                running[0] -= 1
+
+    results: list[object] = []
+
+    def read() -> None:
+        try:
+            results.append(memo.get("k", compute))
+        except OSError as exc:
+            results.append(exc)
+
+    leader = threading.Thread(target=read)
+    leader.start()
+    assert started.wait(5)
+    waiters = [threading.Thread(target=read) for _ in range(6)]
+    for t in waiters:
+        t.start()
+    release.set()
+    for t in [leader, *waiters]:
+        t.join(5)
+    assert not any(t.is_alive() for t in [leader, *waiters])
+    assert len(calls) == 2  # the failed one, then exactly one retry
+    assert peak[0] == 1  # never two screens at once
+    assert sum(isinstance(r, OSError) for r in results) == 1
+    assert results.count(4) == 6
+
+
+def test_a_refresh_whose_thread_cannot_start_does_not_wedge_the_key(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    clock = Clock()
+
+    def no_threads(fn: Callable[[], None]) -> None:
+        raise RuntimeError("can't start new thread")
+
+    memo: RefreshingMemo[str, int] = RefreshingMemo(
+        name="t", fresh_s=10.0, serve_stale_s=100.0, clock=clock, spawn=no_threads
+    )
+    memo.get("k", lambda: 1)
+    clock.now = 50.0
+    with caplog.at_level(logging.ERROR, logger="tail_lab.api.memo"):
+        assert memo.get("k", lambda: 2) == 1  # stale still served, no raise
+    assert "memo.spawn_failed" in caplog.text
+    clock.now = 150.0
+    # Past the stale window the miss computes rather than waiting forever on
+    # a refresh that never started.
+    assert memo.get("k", lambda: 3) == 3
+
+
+def test_background_refreshes_run_one_at_a_time_across_keys() -> None:
+    """Each refresh is a whole screen on one CPU; readers on several keys
+    must not set several running at once."""
+    clock = Clock()
+    threads: list[threading.Thread] = []
+
+    def spawn(fn: Callable[[], None]) -> None:
+        t = threading.Thread(target=fn)
+        threads.append(t)
+        t.start()
+
+    memo: RefreshingMemo[str, int] = RefreshingMemo(
+        name="t", fresh_s=10.0, serve_stale_s=100.0, clock=clock, spawn=spawn
+    )
+    for k in ("a", "b", "c"):
+        memo.get(k, lambda: 0)
+    clock.now = 50.0
+    lock = threading.Lock()
+    running = [0]
+    peak = [0]
+
+    def slow() -> int:
+        with lock:
+            running[0] += 1
+            peak[0] = max(peak[0], running[0])
+        threading.Event().wait(0.05)
+        with lock:
+            running[0] -= 1
+        return 1
+
+    for k in ("a", "b", "c"):
+        memo.get(k, slow)
+    for t in threads:
+        t.join(5)
+    assert len(threads) == 3
+    assert peak[0] == 1

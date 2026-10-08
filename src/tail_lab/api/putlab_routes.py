@@ -96,16 +96,19 @@ router = APIRouter()
 logger = logging.getLogger("tail_lab.api.putlab")
 
 #: The universe ranking, keyed by (moneyness, tenor, years, as_of). A cold
-#: screen takes minutes on the app's one shared CPU, so the memo serves a stale
-#: entry at once while one background refresh recomputes it, and concurrent
-#: misses share a single compute (api/memo.py). Fresh for 2 minutes, as before;
-#: servable for the rest of the as-of day -- the key changes at midnight UTC.
+#: screen takes ~25 s on the app's one shared CPU when nothing else runs, and
+#: minutes when several overlap, so the memo serves a stale entry at once while
+#: one background refresh recomputes it, and concurrent misses share a single
+#: compute (api/memo.py). Fresh for 15 minutes -- longer than a screen, so a
+#: steady reader does not keep one running; ingests land daily, and one shows
+#: up after one refresh. Servable for the rest of the as-of day, whose date is
+#: in the key (it changes at midnight UTC, when the daily warm re-screens).
 _LEADERBOARD_CACHE: RefreshingMemo[tuple[float, float, float, str], UniverseRanking] = (
-    RefreshingMemo(name="leaderboard", fresh_s=120.0, serve_stale_s=24 * 3600.0)
+    RefreshingMemo(name="leaderboard", fresh_s=15 * 60.0, serve_stale_s=24 * 3600.0)
 )
 #: The screen the app opens on (the Workspace defaults, which are also the
 #: leaderboard route's query defaults), warmed at startup -- every deploy
-#: restarts the process with an empty memo.
+#: restarts the process with an empty memo -- and again each UTC day.
 _WARM_SCREEN = (5.0, 4.0, 4.0)
 
 #: Short-TTL memos of the single-name reads the Backtest cockpit refetches on
@@ -594,9 +597,39 @@ def _rank_cached(
 
 def warm_leaderboard(store: LakeStore) -> None:
     """Start screening the app's opening ranking in the background, so the
-    first visitor after a deploy does not wait minutes for it."""
+    first visitor after a deploy does not wait for it."""
     key = (*_WARM_SCREEN, _resolve_as_of(None).isoformat())
     _LEADERBOARD_CACHE.warm(key, _screen(store, key))
+
+
+#: How long after midnight UTC the next day's ranking is warmed: past the date
+#: change, so ``_resolve_as_of`` already answers the new day.
+_WARM_AFTER_MIDNIGHT = dt.timedelta(minutes=1)
+
+
+def warm_leaderboard_daily(
+    store: LakeStore,
+    *,
+    now: Callable[[], dt.datetime] = lambda: dt.datetime.now(dt.UTC),
+    sleep: Callable[[float], None] = time.sleep,
+    rounds: int | None = None,
+) -> None:
+    """Warm the opening ranking now and again just after each UTC midnight.
+
+    The as-of date is in the memo key, so without this the first visitor of
+    every day would wait for the cold screen. Runs in a daemon thread for the
+    life of the process; ``rounds`` bounds it for tests.
+    """
+    done = 0
+    while rounds is None or done < rounds:
+        warm_leaderboard(store)
+        current = now()
+        next_warm = (current + dt.timedelta(days=1)).replace(
+            hour=0, minute=0, second=0, microsecond=0
+        ) + _WARM_AFTER_MIDNIGHT
+        log_event(logger, "putlab.leaderboard_warm_scheduled", next_warm=next_warm.isoformat())
+        done += 1
+        sleep((next_warm - current).total_seconds())
 
 
 def _screen(

@@ -347,21 +347,54 @@ def test_leaderboard_and_roll_schedule_share_one_screen(
 def test_startup_warms_the_opening_ranking_only_when_enabled(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    """A deploy restarts with an empty memo; production (fly.toml) warms the
-    Workspace's opening screen at startup, tests and local runs do not."""
+    """A deploy restarts with an empty memo; production (fly.toml) starts the
+    daily warm at startup, on the routes' own store; tests and local runs do not."""
+    import threading
+
     from tail_lab.api import main
     from tail_lab.config import Settings
 
     warmed: list[object] = []
+    ran = threading.Event()
+
+    def record(store: object) -> None:
+        warmed.append(store)
+        ran.set()
+
     store = DeltaLakeStore(tmp_path)
-    monkeypatch.setattr(main, "warm_leaderboard", warmed.append)
-    monkeypatch.setattr(main, "_get_configured_lake_store", lambda: store)
-    for enabled, expected in ((False, []), (True, [store])):
-        warmed.clear()
-        monkeypatch.setattr(main, "get_settings", lambda e=enabled: Settings(warm_ranking=e))
-        with TestClient(app):
-            pass
-        assert warmed == expected
+    monkeypatch.setattr(main, "warm_leaderboard_daily", record)
+    monkeypatch.setattr(main, "putlab_lake_store", lambda: store)
+    monkeypatch.setattr(main, "get_settings", lambda: Settings(warm_ranking=False))
+    with TestClient(app):
+        pass
+    assert warmed == []
+    monkeypatch.setattr(main, "get_settings", lambda: Settings(warm_ranking=True))
+    with TestClient(app):
+        assert ran.wait(5)
+    assert warmed == [store]
+
+
+def test_the_daily_warm_rewarms_just_after_each_utc_midnight(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The as-of date is in the memo key, so each UTC day needs its own warm or
+    its first visitor waits for the cold screen."""
+    warms: list[object] = []
+    sleeps: list[float] = []
+    monkeypatch.setattr(putlab_routes, "warm_leaderboard", warms.append)
+    clock = iter(
+        [
+            dt.datetime(2026, 10, 8, 15, 0, tzinfo=dt.UTC),
+            dt.datetime(2026, 10, 9, 0, 1, tzinfo=dt.UTC),
+        ]
+    )
+    store = DeltaLakeStore(Path("unused"))
+    putlab_routes.warm_leaderboard_daily(
+        store, now=lambda: next(clock), sleep=sleeps.append, rounds=2
+    )
+    assert warms == [store, store]
+    # 15:00 -> 00:01 next day, then 00:01 -> 00:01 the day after.
+    assert sleeps == [9 * 3600 + 60, 24 * 3600]
 
 
 def test_warm_leaderboard_screens_the_workspace_defaults(monkeypatch: pytest.MonkeyPatch) -> None:
