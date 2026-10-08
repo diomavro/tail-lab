@@ -67,6 +67,13 @@ class Settings(BaseSettings):
     #: tail_lab.api.feedback_routes.
     feedback_token: str | None = None
 
+    #: Start screening the app's opening universe ranking in the background
+    #: when the API starts (env: TAIL_LAB_WARM_RANKING). Off by default so tests
+    #: and local runs never kick off a minutes-long screen; fly.toml turns it
+    #: on, because every deploy restarts the process with an empty memo and the
+    #: first visitor would otherwise wait for the whole screen.
+    warm_ranking: bool = False
+
     #: FRED API key for ingestion/rates.py (docs/DATA_CONTRACTS.md #3).
     #: Plain env name, not TAIL_LAB_-prefixed — mirrors the AWS_* fields
     #: above: it's the name already used for the repo secret and the local

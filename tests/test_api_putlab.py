@@ -324,6 +324,57 @@ def test_leaderboard_ranks_seeded_universe(client: TestClient) -> None:
     assert body["snapshot_ids"]  # VIX + spy's own OHLCV snapshot
 
 
+def test_leaderboard_and_roll_schedule_share_one_screen(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The screen is minutes cold in production; a second read of the same
+    question, from either route, must be served from the memo."""
+    calls: list[float] = []
+    real = putlab_routes.rank_universe
+
+    def counted(*args: object, **kwargs: object) -> object:
+        calls.append(1)
+        return real(*args, **kwargs)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(putlab_routes, "rank_universe", counted)
+    params = {"moneyness_pct": 5, "tenor_weeks": 4, "years": 1}
+    assert client.get("/api/putlab/leaderboard", params=params).status_code == 200
+    assert client.get("/api/putlab/leaderboard", params=params).status_code == 200
+    assert client.get("/api/putlab/roll-schedule", params=params).status_code == 200
+    assert len(calls) == 1
+
+
+def test_startup_warms_the_opening_ranking_only_when_enabled(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """A deploy restarts with an empty memo; production (fly.toml) warms the
+    Workspace's opening screen at startup, tests and local runs do not."""
+    from tail_lab.api import main
+    from tail_lab.config import Settings
+
+    warmed: list[object] = []
+    store = DeltaLakeStore(tmp_path)
+    monkeypatch.setattr(main, "warm_leaderboard", warmed.append)
+    monkeypatch.setattr(main, "_get_configured_lake_store", lambda: store)
+    for enabled, expected in ((False, []), (True, [store])):
+        warmed.clear()
+        monkeypatch.setattr(main, "get_settings", lambda e=enabled: Settings(warm_ranking=e))
+        with TestClient(app):
+            pass
+        assert warmed == expected
+
+
+def test_warm_leaderboard_screens_the_workspace_defaults(monkeypatch: pytest.MonkeyPatch) -> None:
+    seen: list[tuple[object, ...]] = []
+    monkeypatch.setattr(
+        putlab_routes._LEADERBOARD_CACHE, "warm", lambda key, compute: seen.append(key)
+    )
+    putlab_routes.warm_leaderboard(DeltaLakeStore(Path("unused")))
+    today = dt.datetime.now(dt.UTC).date().isoformat()
+    # PUTLAB_DEFAULT_CONTROLS in the frontend, and the route's query defaults.
+    assert seen == [(5.0, 4.0, 4.0, today)]
+
+
 def test_metric_screen_returns_bakeoff(client: TestClient) -> None:
     resp = client.get(
         "/api/putlab/metric-screen",

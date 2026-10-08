@@ -6,7 +6,9 @@ The one dashboard tile (frontend/) fetches ``GET /api/vix/stretch``.
 from __future__ import annotations
 
 import datetime as dt
-from collections.abc import Awaitable, Callable
+import logging
+from collections.abc import AsyncIterator, Awaitable, Callable
+from contextlib import asynccontextmanager
 from functools import lru_cache
 from pathlib import Path
 
@@ -18,18 +20,33 @@ from tail_lab.api.feedback_routes import router as feedback_router
 from tail_lab.api.ingest_routes import router as ingest_router
 from tail_lab.api.putlab_memory_routes import router as putlab_memory_router
 from tail_lab.api.putlab_routes import router as putlab_router
+from tail_lab.api.putlab_routes import warm_leaderboard
 from tail_lab.api.schemas import HealthResponse, VixStretchResponse
 from tail_lab.config import get_lake_store as _get_configured_lake_store
 from tail_lab.config import get_settings
 from tail_lab.lake.store import LakeStore
-from tail_lab.observability import configure_logging
+from tail_lab.observability import configure_logging, log_event
 from tail_lab.research.vix_stretch import compute_vix_stretch
 
 # Composition root: configure structured logging once for the whole app
 # (docs/STANDARDS.md §f) before anything starts emitting.
 configure_logging()
 
-app = FastAPI(title="tail-lab API")
+logger = logging.getLogger("tail_lab.api.main")
+
+
+@asynccontextmanager
+async def lifespan(_: FastAPI) -> AsyncIterator[None]:
+    """Warm the opening ranking in the background when enabled (config
+    ``warm_ranking``): a deploy restarts the process with an empty memo."""
+    warm = get_settings().warm_ranking
+    log_event(logger, "api.startup", warm_ranking=warm)
+    if warm:
+        warm_leaderboard(_get_configured_lake_store())
+    yield
+
+
+app = FastAPI(title="tail-lab API", lifespan=lifespan)
 
 app.add_middleware(
     CORSMiddleware,
