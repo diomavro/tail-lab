@@ -570,7 +570,7 @@ export function PutLab() {
             {tab === 'book' && <OverlayView />}
             {tab === 'bakeoff' && <BakeOffView controls={controls} />}
             {tab === 'regime' && <RegimeView regimes={regimes} vix={vix} accuracy={accuracy} />}
-            {tab === 'surface' && <SurfaceView surface={surface} controls={controls} />}
+            {tab === 'surface' && <SurfaceView surface={surface} controls={controls} narrow={narrow} />}
             {tab === 'glossary' && <GlossaryView />}
           </main>
         </div>
