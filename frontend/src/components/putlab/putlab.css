@@ -1085,9 +1085,6 @@
    instead of needing a plate copy of every hex. */
 .putlab-root {
   --cyan-wash: color-mix(in srgb, var(--cyan) 12%, var(--paper));
-  --cyan-tint: color-mix(in srgb, var(--cyan) 26%, var(--paper));
-  --mag-wash: color-mix(in srgb, var(--mag) 14%, var(--paper));
-  --mag-tint: color-mix(in srgb, var(--mag) 30%, var(--paper));
 }
 
 .pl-view-title { font-size: 36px; letter-spacing: -0.01em; margin-bottom: var(--space-2); }

@@ -78,7 +78,7 @@ function AlphaFigures({ s }: { s: SurfaceReading }) {
       >
         {implied == null ? refused(anchorWhy(first, 'no anchor strike below spot')) : fmtFixed(implied, 2)}
       </Figure>
-      <Figure k="Dispersion" note={`Across the ${n} anchors; near zero is what a power law shows`}>
+      <Figure k="Dispersion" note={`Across the ${n} ${n === 1 ? 'anchor' : 'anchors'}; near zero is what a power law shows`}>
         {s.anchors.dispersion == null ? refused(s.anchors.dispersion_reason) : s.anchors.dispersion.toFixed(3)}
       </Figure>
       <Figure
@@ -92,7 +92,7 @@ function AlphaFigures({ s }: { s: SurfaceReading }) {
             : fmtFixed(realised.alpha, 2)}
       </Figure>
       <Figure k="Gap" note={s.alpha_gap == null ? 'Implied minus realised' : gapNote(s.alpha_gap)}>
-        {s.alpha_gap == null ? refused(s.alpha_gap_reason) : s.alpha_gap.toFixed(2)}
+        {s.alpha_gap == null ? refused(s.alpha_gap_reason) : fmtFixed(s.alpha_gap, 2)}
       </Figure>
     </div>
   )
@@ -202,7 +202,7 @@ function AlphaChart({ s, narrow }: { s: SurfaceReading; narrow: boolean }) {
         <span><i className="pl-key pl-key-dot" />implied α</span>
         <span><i className="pl-key pl-key-ring" />its ceiling</span>
         {realised != null && <span><i className="pl-key pl-key-realised" />realised {realised.toFixed(2)}</span>}
-        {band && s.alpha_gap != null && <span><i className="pl-key pl-key-band" />gap {s.alpha_gap.toFixed(2)}</span>}
+        {band && s.alpha_gap != null && <span><i className="pl-key pl-key-band" />gap {fmtFixed(s.alpha_gap, 2)}</span>}
       </div>
       {refusals.length > 0 && (
         <ul className="pl-refusals" data-testid="anchor-refusals">
@@ -291,7 +291,7 @@ function LadderChart({ rungs }: { rungs: SurfaceRung[] }) {
     ...yt.map((p) => ({ x: PX0 - 8, y: PY(p), text: `$${tickText(p)}`, align: 'end' as const })),
     ...rungs.map((r, i) => ({ x: xs[i]!, y: 256, text: r.strike.toFixed(0) })),
   ]
-  const shown = hover ?? 0
+  const shown = hover != null && hover < rungs.length ? hover : 0
   const r = rungs[shown]!
 
   return (
@@ -304,7 +304,7 @@ function LadderChart({ rungs }: { rungs: SurfaceRung[] }) {
           onPointerLeave={() => setHover(null)}
         >
           <path d={yt.map((p) => `M${PX0},${PY(p).toFixed(1)}H${PX1}`).join('') + `M${PX0},${PY1}H${PX1}`} className="pl-c-grid" />
-          {hover != null && (
+          {hover != null && cols[hover] && (
             <rect x={cols[hover]!.x} y={PY0} width={cols[hover]!.w} height={PY1 - PY0} className="pl-c-hi" />
           )}
           <path d={spreads} className="pl-c-spread" data-testid="ladder-spreads" />
@@ -359,7 +359,8 @@ function IvRatioStrip({ rungs }: { rungs: SurfaceRung[] }) {
   const { X } = strikeAxis(rungs)
   const vals = rungs.map((r) => r.iv_ratio).filter((v): v is number => v != null && Number.isFinite(v))
   const span = Math.max(0.01, ...vals.map((v) => Math.abs(v - 1))) * 1.25
-  const [lo, hi] = [1 - span, 1 + span]
+  // A ratio of two vols is never negative: the axis floors at 0.
+  const [lo, hi] = [Math.max(0, 1 - span), 1 + span]
   const IY = (v: number) => 10 + (1 - (v - lo) / (hi - lo)) * 80
   const withIv = rungs.filter((r) => r.iv_ratio != null && Number.isFinite(r.iv_ratio))
   const inside = withIv.filter(insideSpread)
@@ -414,9 +415,11 @@ function TailLadder({ s }: { s: SurfaceReading }) {
           <div className="pl-keyrow">
             <span><i className="pl-key pl-key-line" />Paretan</span>
             <span><i className="pl-key pl-key-dash" />Black&ndash;Scholes</span>
-            <span><i className="pl-key pl-key-spread" />Market bid&ndash;ask</span>
+            <span><i className="pl-key pl-key-spread" />Market bid&ndash;ask, cut at the mid</span>
           </div>
-          <LadderChart rungs={rungs} />
+          {/* Keyed on the strikes: a rung picked on one ladder is not an index
+              into the next (a cached switch never passes through loading). */}
+          <LadderChart key={rungs.map((r) => r.strike).join(',')} rungs={rungs} />
           <IvRatioStrip rungs={rungs} />
         </>
       )}
@@ -445,8 +448,9 @@ function SurvivalChart({ s }: { s: SurfaceReading }) {
   if (realised == null || all.length < 2) {
     return (
       <p className="pl-status">
-        No price history read for this name, so there is no survival curve
-        {realised == null && s.realised_reason ? ` (${s.realised_reason})` : ''}.
+        {realised == null
+          ? `No price history read for this name, so there is no survival curve${s.realised_reason ? ` (${s.realised_reason})` : ''}.`
+          : 'Too few observed moves to draw a survival curve.'}
       </p>
     )
   }
@@ -461,14 +465,16 @@ function SurvivalChart({ s }: { s: SurfaceReading }) {
   // A tick at the floor would sit on the x labels.
   const yt = logTicks(10 ** y0, 10 ** y1, 5).filter((y) => ZY(y) < PY1 - 10)
 
-  const onset = realised.onset
+  // karamata.py: an onset without a flat plateau is the minimum-count floor,
+  // not a measurement, and must not be used. Drawn only when it was measured.
+  const onset = onsetMeasured(realised) ? realised.onset : null
   const onsetX = finitePositive(onset) && onset >= 10 ** x0 && onset <= 10 ** x1 ? ZX(onset) : null
   // The fitted tail: slope -alpha on both log axes, from the loss curve at the
   // onset out to the largest loss. Only drawn when both were measured.
   let fit = ''
   const labels: Label[] = [
     ...yt.map((y) => ({ x: PX0 - 8, y: ZY(y), text: tickText(y), align: 'end' as const })),
-    ...xt.map((x) => ({ x: ZX(x), y: 256, text: `${tickText(x * 100)}%` })),
+    ...xt.map((x) => ({ x: ZX(x), y: 256, text: tickText(x) })),
   ]
   if (onsetX != null && realised.alpha != null && loss.length) {
     const y0s = survivalAt(loss, onset as number)
@@ -488,7 +494,7 @@ function SurvivalChart({ s }: { s: SurfaceReading }) {
       })
     }
   }
-  if (onsetX != null) labels.push({ x: onsetX + 6, y: 24, text: `onset ${tickText((onset as number) * 100)}%`, align: 'start' })
+  if (onsetX != null) labels.push({ x: onsetX + 6, y: 24, text: `onset ${tickText(onset as number)}`, align: 'start' })
 
   return (
     <>
@@ -507,18 +513,33 @@ function SurvivalChart({ s }: { s: SurfaceReading }) {
         </svg>
         <ChartLabels labels={labels} w={LW} h={LH} />
       </div>
-      <div className="pl-axis-title">move size x</div>
+      <div className="pl-axis-title">x: S as a price ratio, r as a fractional loss</div>
       <RealisedCaveat realised={realised} />
     </>
   )
 }
 
+/** Whether the onset is a measurement: a flat plateau and an accepted alpha. */
+const onsetMeasured = (r: SurfaceRealised) => r.onset != null && r.is_flat === true && r.alpha != null
+
 function RealisedCaveat({ realised }: { realised: SurfaceRealised }) {
   return (
     <p className="pl-chart-caption">
-      {realised.n_beyond} observations beyond the onset
-      {realised.onset != null && ` at ${tickText(realised.onset * 100)}%`}
-      {realised.is_flat === false && ' — the stable plateau is NOT flat (stable: false), so no onset is claimed'}.
+      {onsetMeasured(realised) ? (
+        <>
+          {realised.n_beyond} observations beyond the onset at a {tickText((realised.onset as number) * 100)}% loss.
+        </>
+      ) : (
+        <>
+          No onset is claimed
+          {realised.is_flat === false
+            ? ': the stable plateau is NOT flat (stable: false)'
+            : realised.refusal
+              ? `: ${realised.refusal}`
+              : ''}
+          .
+        </>
+      )}
       Horizon {realised.horizon_days} calendar days. Log-basis α{' '}
       {realised.log_basis.alpha == null
         ? `refused (${realised.log_basis.refusal ?? 'no reason given'})`

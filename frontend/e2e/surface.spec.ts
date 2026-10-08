@@ -190,3 +190,71 @@ for (const width of [390, 900, 1024]) {
     expect(overflow).toBeLessThanOrEqual(1)
   })
 }
+
+test('every anchor’s alpha and ceiling is in the chart’s accessible name', async ({ page }) => {
+  await page.getByRole('tab', { name: 'Surface' }).click()
+  const name = await page.getByTestId('alpha-chart').getAttribute('aria-label')
+  for (const r of SURFACE_FITTED.surface.anchors.readings) {
+    expect(name).toContain(`K ${r.strike.toFixed(0)}`)
+    expect(name).toContain(`ceiling ${r.ceiling!.alpha!.toFixed(2)}`)
+  }
+})
+
+test('an onset on a plateau that is not flat is not drawn or stated', async ({ page }) => {
+  // karamata.py: without is_flat the onset is the minimum-count floor, not a
+  // measurement, and a consumer must not use it.
+  const s = structuredClone(SURFACE_FITTED)
+  const r = s.surface.realised!
+  r.is_flat = false
+  r.alpha = null
+  r.refusal = 'no Hill plateau beyond the Karamata onset'
+  await serveSurface(page, s)
+  await page.getByRole('tab', { name: 'Surface' }).click()
+  await expect(page.getByRole('img', { name: /Survival curves/ })).toBeVisible()
+  const pane = page.getByRole('region', { name: 'Realised tail' })
+  await expect(pane).toContainText('No onset is claimed: the stable plateau is NOT flat')
+  await expect(pane).not.toContainText('onset 0.02')
+  await expect(pane).not.toContainText('beyond the onset at')
+  await expect(page.getByTestId('tail-fit')).toHaveCount(0)
+})
+
+test('an IV ratio far from 1 never puts a negative ratio on the axis', async ({ page }) => {
+  const s = structuredClone(SURFACE_FITTED)
+  const rung = s.surface.ladder[0]!
+  rung.iv_ratio = 3
+  rung.paretan_price = (rung.ask as number) * 2 // a ratio that far is outside the spread
+  await serveSurface(page, s)
+  await page.getByRole('tab', { name: 'Surface' }).click()
+  const strip = page.locator('.pl-plot').filter({ has: page.getByTestId('iv-outside') })
+  await expect(strip).toContainText('3.000')
+  await expect(strip).not.toContainText('-')
+  await expect(strip).not.toContainText('−')
+})
+
+test.describe('on a touch screen', () => {
+  test.use({ hasTouch: true })
+
+  test('a rung tapped on one ladder does not crash a shorter one', async ({ page }) => {
+    // A cached Surface swaps in without a loading state, so the chart is not
+    // rebuilt between them: the tapped index must not carry over.
+    const short = structuredClone(SURFACE_FITTED)
+    short.surface.ladder = short.surface.ladder.slice(0, 3)
+    await page.route(
+      (url) => url.pathname === '/api/putlab/surface' && url.searchParams.get('moneyness_pct') === '10',
+      (route) => route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(short) }),
+    )
+    const errors: string[] = []
+    page.on('pageerror', (e) => errors.push(e.message))
+    await page.getByRole('tab', { name: 'Surface' }).click()
+    const presets = page.getByRole('radiogroup', { name: 'Strike presets' })
+    await presets.getByText('10%').tap()
+    await expect(page.getByTestId('ladder-rung')).toHaveCount(3)
+    await presets.getByText('5%', { exact: true }).tap()
+    await expect(page.getByTestId('ladder-rung')).toHaveCount(8)
+    await page.getByTestId('ladder-rung').nth(7).tap()
+    await presets.getByText('10%').tap() // cached: no loading state between
+    await expect(page.getByTestId('ladder-rung')).toHaveCount(3)
+    await expect(page.getByTestId('ladder-readout')).toBeVisible()
+    expect(errors).toEqual([])
+  })
+})
