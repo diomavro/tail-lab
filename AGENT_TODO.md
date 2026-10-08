@@ -18,6 +18,20 @@ a large one strictly in order.
 
 ## Next increments
 
+- [ ] **A 3D view of the real option surface** (from the 2026-10-07 redesign
+      handoff, deliberately not shipped with it). The
+      handoff's `Tail Surface 3D.html` drew a Black–Scholes surface from an
+      invented skew (`σ = 0.15 + 0.6·m`, r = 4%) and a hard-coded "ladder" at
+      5.8–11.7% OOM, and loaded three.js from unpkg at runtime. Beside the
+      Surface tab, whose every number is a chain reading, an invented surface
+      would read as data. Build it only from real quotes: a point-in-time
+      `GET /api/putlab/chain-grid?asset=` returning put mids by (strike,
+      expiry) from one `option_chain_snapshot` session (zero-filled
+      `iv`/`theo` are nulls, never 0.0 — CLAUDE.md), three.js as a bundled
+      npm dependency rather than a CDN import, the anchor and ladder taken
+      from `/api/putlab/surface`, OBJ/GLB export kept. Link it from the
+      Surface tab's footer only once the mesh is the chain's.
+
 - [x] **Fix the flaky `surface.spec.ts` TSLA click** (found 2026-10-05).
       **Done 2026-10-06**: the click is now scoped to the `Fragility ranking`
       group, as `ranking.spec.ts` already does; 3 consecutive runs green.
