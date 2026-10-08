@@ -47,11 +47,13 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
     if warm:
         # The routes' own (cached) store, so the warm screen fills the read
         # cache the requests and refreshes will use.
-        store = putlab_lake_store()
         try:
+            store = putlab_lake_store()
             threading.Thread(target=warm_leaderboard_daily, args=(store,), daemon=True).start()
-        except RuntimeError:
-            # A warm that cannot start must not stop the app serving.
+        except (ValueError, RuntimeError):
+            # A misconfigured lake (config raises ValueError) or a thread that
+            # cannot start must not stop the app serving: the warm is an
+            # optimisation, and the lake routes report their own failures.
             logger.exception("event=api.warm_ranking_failed")
     yield
 

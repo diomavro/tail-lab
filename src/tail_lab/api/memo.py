@@ -12,7 +12,8 @@ and failed Fly's health check (2026-10-08). Three changes, each logged
 * **Stale while revalidate.** Past ``fresh_s`` an entry is still served at
   once while ONE background refresh recomputes it, so a just-landed ingest
   shows up after one refresh without anyone waiting on it. Past
-  ``serve_stale_s`` it is recomputed in the caller, as a miss.
+  ``serve_stale_s`` it is recomputed in the caller, as a miss (or, if a
+  refresh for it is already queued, the caller waits for that one).
 * **Warm.** :meth:`RefreshingMemo.warm` starts a background compute for a key
   nobody has asked for yet -- the app's startup uses it, since every deploy
   restarts the process with an empty memo.
@@ -72,10 +73,13 @@ class RefreshingMemo[K: Hashable, V]:
         self._entries: dict[K, _Entry[V]] = {}
         #: Keys being computed now, each with the event its waiters block on.
         self._inflight: dict[K, threading.Event] = {}
-        #: Background refreshes run one at a time across ALL keys: each one is
-        #: a whole screen on a single shared CPU, and several readers on
-        #: several keys would otherwise screen at once. Callers that miss still
-        #: compute in their own request.
+        #: Stale refreshes run one at a time across ALL keys: each one is a
+        #: whole screen on a single shared CPU, and several readers on several
+        #: keys would otherwise screen at once. Warms do not queue here -- they
+        #: are rare (startup, each UTC day) and are exactly what readers are
+        #: about to ask for -- and a miss computes in its own request. The one
+        #: case that waits on this queue: a miss on a key whose stale refresh
+        #: is already queued, which a reader then waits for like any flight.
         self._background_slot = threading.Lock()
 
     def clear(self) -> None:
@@ -121,7 +125,10 @@ class RefreshingMemo[K: Hashable, V]:
 
         def run() -> None:
             try:
-                with self._background_slot:
+                if reason == "stale":
+                    with self._background_slot:
+                        self._compute_and_store(key, compute, event, reason=reason)
+                else:
                     self._compute_and_store(key, compute, event, reason=reason)
             except Exception:
                 # Deliberately broad (Rule 14's process-boundary case): this is

@@ -318,3 +318,58 @@ def test_background_refreshes_run_one_at_a_time_across_keys() -> None:
         t.join(5)
     assert len(threads) == 3
     assert peak[0] == 1
+
+
+def test_a_warm_does_not_queue_behind_other_keys_refreshes() -> None:
+    """The midnight warm must not wait out a stale refresh of yesterday's key
+    -- a reader of the new day would wait for both screens."""
+    clock = Clock()
+
+    def spawn(fn: Callable[[], None]) -> None:
+        threading.Thread(target=fn, daemon=True).start()
+
+    memo: RefreshingMemo[str, int] = RefreshingMemo(
+        name="t", fresh_s=10.0, serve_stale_s=100.0, clock=clock, spawn=spawn
+    )
+    memo.get("yesterday", lambda: 0)
+    clock.now = 50.0
+    refresh_started = threading.Event()
+    release_refresh = threading.Event()
+
+    def long_refresh() -> int:
+        refresh_started.set()
+        release_refresh.wait(5)
+        return 1
+
+    memo.get("yesterday", long_refresh)  # stale: its refresh takes the slot
+    assert refresh_started.wait(5)
+    warmed = threading.Event()
+
+    def warm_compute() -> int:
+        warmed.set()
+        return 2
+
+    memo.warm("today", warm_compute)
+    try:
+        assert warmed.wait(2), "the warm queued behind the stale refresh"
+    finally:
+        release_refresh.set()
+    assert memo.get("today", lambda: 3) == 2
+
+
+def test_a_misconfigured_lake_does_not_stop_the_app_starting(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    from fastapi.testclient import TestClient
+
+    from tail_lab.api import main
+    from tail_lab.config import Settings
+
+    def broken() -> object:
+        raise ValueError("TAIL_LAB_LAKE_BACKEND=tigris requires the following env vars")
+
+    monkeypatch.setattr(main, "get_settings", lambda: Settings(warm_ranking=True))
+    monkeypatch.setattr(main, "putlab_lake_store", broken)
+    with caplog.at_level(logging.ERROR, logger="tail_lab.api.main"), TestClient(main.app) as client:
+        assert client.get("/api/health").status_code == 200
+    assert "api.warm_ranking_failed" in caplog.text
