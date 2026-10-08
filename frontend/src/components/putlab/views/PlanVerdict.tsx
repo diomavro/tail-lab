@@ -78,7 +78,14 @@ function ArmBar({ arm, max, ddMax, hedged }: { arm: PlanArm; max: number; ddMax:
           className={hedged ? 'pl-arm-fill' : 'pl-arm-fill is-comparator'}
           style={{ width: `${(arm.terminal_wealth / max) * 100}%` }}
         />
-        <div className="pl-arm-paid" style={{ left: `${(arm.contributed / max) * 100}%` }} title={`Paid in ${usd(arm.contributed)}`} />
+        {/* Paper cut into the fill; ink when it falls past the fill (an arm
+            that ended below what was paid in), where paper would vanish. */}
+        <div
+          className={`pl-arm-paid${arm.contributed > arm.terminal_wealth ? ' is-beyond' : ''}`}
+          data-testid="arm-paid"
+          style={{ left: `${(arm.contributed / max) * 100}%` }}
+          title={`Paid in ${usd(arm.contributed)}`}
+        />
       </div>
       <div className="pl-arm-dd">
         <span>Paid in {usd(arm.contributed)} · worst drawdown</span>

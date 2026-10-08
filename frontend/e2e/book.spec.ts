@@ -300,3 +300,66 @@ test('a snapshot without SPX says so, rather than claiming the lake is empty', a
   await page.getByRole('tab', { name: 'Book' }).click()
   await expect(page.getByText('Nothing to blend: no SPX rows in the snapshot known as of 2026-10-03.')).toBeVisible()
 })
+
+// ------------------------------------------------------------- geometry
+// The marks themselves, not just the text beside them: a chart drawn wrong
+// with the right labels must still go red.
+
+/** The panel's line points and the better-end line's y, read off the SVG. */
+async function panelGeometry(page: Page, name: RegExp) {
+  return region(page, name).getByTestId('panel-chart').evaluate((svg) => {
+    const pts = (d: string) => [...d.matchAll(/[ML]([\d.]+),([\d.]+)/g)].map((m) => [Number(m[1]), Number(m[2])])
+    const line = pts(svg.querySelector('.pl-c-line')!.getAttribute('d')!)
+    const ry = pts(svg.querySelector('.pl-c-parity')!.getAttribute('d')!)[0]![1]!
+    const area = svg.querySelector('.pl-c-area')
+    return { line, ry, areaRight: area ? (area as SVGGraphicsElement).getBBox().x + (area as SVGGraphicsElement).getBBox().width : null }
+  })
+}
+
+test('the better-end line sits on the better end, and the area stops where the curve crosses it', async ({ page }) => {
+  await openBook(page)
+  // PPUT: the unhedged end is best, so the line is drawn at its height.
+  const pput = await panelGeometry(page, COLE)
+  expect(pput.ry).toBeCloseTo(Math.min(pput.line[0]![1]!, pput.line[pput.line.length - 1]![1]!), 1)
+  // VXTH rises above the better end, then falls below it: shade only up to the crossing.
+  const v = await panelGeometry(page, /^VXTH The letter's window/)
+  const i = v.line.findIndex(([, y], k) => k > 0 && y! < v.ry && v.line[k + 1]![1]! >= v.ry)
+  const [a, b] = [v.line[i]!, v.line[i + 1]!]
+  const crossing = a[0]! + ((v.ry - a[1]!) / (b[1]! - a[1]!)) * (b[0]! - a[0]!)
+  expect(v.areaRight!).toBeLessThanOrEqual(crossing + 0.5)
+})
+
+test('the y labels put the top value above the bottom one', async ({ page }) => {
+  await openBook(page)
+  const labels = region(page, COLE).locator('.pl-chart-label')
+  const hi = (await labels.filter({ hasText: '6.90%' }).boundingBox())!
+  const lo = (await labels.filter({ hasText: '4.55%' }).boundingBox())!
+  expect(hi.y).toBeLessThan(lo.y)
+})
+
+test('each dividend-yield dot is coloured by its own outcome', async ({ page }) => {
+  await openBook(page)
+  const dots = region(page, /^VXTH Full history/).locator('.pl-sens-dot')
+  const want = { holds: /is-holds/, inconclusive: /is-close/, fails: /is-fails/ }
+  const sens = VXTH!.windows[1]!.sensitivity
+  for (let k = 0; k < sens.length; k++) await expect(dots.nth(k)).toHaveClass(want[sens[k]!.outcome])
+})
+
+test('leaving a chart puts its readout back on the best mix', async ({ page }) => {
+  await openBook(page)
+  const vxth = region(page, /^VXTH The letter's window/)
+  const chart = vxth.getByTestId('panel-chart')
+  await chart.scrollIntoViewIfNeeded()
+  const box = (await chart.boundingBox())!
+  await page.mouse.move(box.x + (290 / 300) * box.width, box.y + box.height / 2)
+  await expect(vxth.getByTestId('panel-readout')).toContainText('VXTH only')
+  await page.mouse.move(box.x + box.width / 2, box.y - 60)
+  await expect(vxth.getByTestId('panel-readout')).toContainText('40% hedged')
+})
+
+test('in CAGR / vol mode the table marks the CAGR / vol best, as the ring does', async ({ page }) => {
+  await openBook(page)
+  await page.getByRole('radiogroup', { name: 'Judge each mix on' }).getByText('CAGR / vol').click()
+  await numbers(page, COLE)
+  await expect(region(page, COLE).locator('tr[aria-current="true"] td').first()).toHaveText('40% hedged best CAGR / vol')
+})

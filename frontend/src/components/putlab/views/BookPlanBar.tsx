@@ -159,7 +159,6 @@ export function BookPlanBar({
           <>
             <Seg
               label="Priced from"
-              aria="Source"
               name="pl-plan-source"
               value={source}
               onChange={setSource}
@@ -186,7 +185,6 @@ export function BookPlanBar({
                 />
                 <Seg
                   label="Compare with"
-                  aria="Comparator"
                   name="pl-plan-comparator"
                   value={real.comparator}
                   onChange={(comparator) => setReal({ comparator })}
@@ -202,7 +200,6 @@ export function BookPlanBar({
                   <select
                     id="pl-plan-other"
                     className="pl-input"
-                    aria-label="Other comparator"
                     value={others.some((o) => o.key === real.comparator) ? real.comparator : ''}
                     onChange={(e) => e.target.value && setReal({ comparator: e.target.value })}
                   >

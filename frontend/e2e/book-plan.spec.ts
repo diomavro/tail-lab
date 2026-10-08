@@ -125,7 +125,7 @@ test('every control re-runs the plan with exactly its own input', async ({ page 
   await page.getByRole('slider').fill('0.8')
   await next
   next = sent('comparator', 'cash')
-  await page.getByRole('radiogroup', { name: 'Comparator' }).getByText('Cash').click()
+  await page.getByRole('radiogroup', { name: 'Compare with' }).getByText('Cash').click()
   await next
 })
 
@@ -200,7 +200,7 @@ test('the picker lists the other Cboe indices and marks the unavailable ones', a
     },
   }
   await openPlan(page, body)
-  const picker = page.getByLabel('Other comparator')
+  const picker = page.getByLabel('or another Cboe index')
   // toBeDisabled() reads an <option> inside a <select> as enabled even with
   // the attribute set, so assert the attribute itself.
   await expect(picker.locator('option', { hasText: /^PUT$/ })).not.toHaveAttribute('disabled')
@@ -234,7 +234,7 @@ test('the real-quote plan names its accounting and why stocks are not offered', 
 
 async function openModel(page: Page) {
   await openPlan(page)
-  await page.getByRole('radiogroup', { name: 'Source' }).getByText('Our model').click()
+  await page.getByRole('radiogroup', { name: 'Priced from' }).getByText('Our model').click()
 }
 
 test('the model source states its measured error above the numbers', async ({ page }) => {
@@ -293,7 +293,7 @@ test('a missing VIX reads as nothing to price', async ({ page }) => {
   await page.goto('/')
   await page.getByRole('tab', { name: 'Book' }).click()
   await page.getByRole('radiogroup', { name: 'Plan' }).getByText('Monthly contributions').click()
-  await page.getByRole('radiogroup', { name: 'Source' }).getByText('Our model').click()
+  await page.getByRole('radiogroup', { name: 'Priced from' }).getByText('Our model').click()
   await expect(page.getByText('Nothing to price: no data.')).toBeVisible()
 })
 
@@ -307,7 +307,7 @@ async function openModelWith(page: Page, body: unknown) {
   await page.goto('/')
   await page.getByRole('tab', { name: 'Book' }).click()
   await page.getByRole('radiogroup', { name: 'Plan' }).getByText('Monthly contributions').click()
-  await page.getByRole('radiogroup', { name: 'Source' }).getByText('Our model').click()
+  await page.getByRole('radiogroup', { name: 'Priced from' }).getByText('Our model').click()
 }
 
 test('every model control re-runs the plan with exactly its own input', async ({ page }) => {
@@ -362,7 +362,7 @@ test('a model server failure reads as a failure, not as nothing to price', async
   await page.goto('/')
   await page.getByRole('tab', { name: 'Book' }).click()
   await page.getByRole('radiogroup', { name: 'Plan' }).getByText('Monthly contributions').click()
-  await page.getByRole('radiogroup', { name: 'Source' }).getByText('Our model').click()
+  await page.getByRole('radiogroup', { name: 'Priced from' }).getByText('Our model').click()
   await expect(page.locator('.pl-caveat').filter({ hasText: 'boom' })).toHaveText('boom')
   await expect(page.getByText(/Nothing to price/)).toHaveCount(0)
 })
@@ -469,7 +469,7 @@ for (const source of ['Real quotes', 'Our model'] as const) {
     await page.goto('/')
     await page.getByRole('tab', { name: 'Book' }).click()
     await page.getByRole('radiogroup', { name: 'Plan' }).getByText('Monthly contributions').click()
-    await page.getByRole('radiogroup', { name: 'Source' }).getByText(source).click()
+    await page.getByRole('radiogroup', { name: 'Priced from' }).getByText(source).click()
     await expect(page.getByTestId('plan-share')).toBeVisible()
     const width = await page.evaluate(() => document.documentElement.scrollWidth)
     expect(width).toBeLessThanOrEqual(375)
@@ -496,7 +496,7 @@ test('the model view says it is updating while a new plan is pending', async ({ 
 for (const source of ['Real quotes', 'Our model'] as const) {
   test(`a typed amount past the API's limit is clamped, not sent (${source})`, async ({ page }) => {
     await openPlan(page)
-    if (source === 'Our model') await page.getByRole('radiogroup', { name: 'Source' }).getByText('Our model').click()
+    if (source === 'Our model') await page.getByRole('radiogroup', { name: 'Priced from' }).getByText('Our model').click()
     await expect(page.getByTestId('plan-share')).toBeVisible()
     const path = source === 'Our model' ? '/api/putlab/book-plan/model' : '/api/putlab/book-plan'
     const sent = page.waitForRequest((r) => {
@@ -521,7 +521,7 @@ test('a refused field is named in the message', async ({ page }) => {
   await page.goto('/')
   await page.getByRole('tab', { name: 'Book' }).click()
   await page.getByRole('radiogroup', { name: 'Plan' }).getByText('Monthly contributions').click()
-  await page.getByRole('radiogroup', { name: 'Source' }).getByText('Our model').click()
+  await page.getByRole('radiogroup', { name: 'Priced from' }).getByText('Our model').click()
   await expect(page.getByText('monthly: Input should be greater than 0')).toBeVisible()
 })
 
@@ -622,4 +622,57 @@ test('gap-strip labels never overprint, even when worst sits by the median', asy
       expect(overlap, `labels ${i} and ${j}`).toBe(false)
     }
   }
+})
+
+// ------------------------------------------------------------- geometry
+
+test('the stacked bar is drawn at the shares it labels', async ({ page }) => {
+  await openPlan(page)
+  const r = BOOK_PLAN.plan.rolling!
+  const w = await page.locator('.pl-plan-stack > span').evaluateAll((els) => els.map((e) => parseFloat((e as HTMLElement).style.width)))
+  expect(w[0]).toBeCloseTo(r.share_ahead * 100, 3)
+  expect(w[1]).toBeCloseTo(r.share_inconclusive * 100, 3)
+  expect(w[2]).toBeCloseTo(r.share_behind * 100, 3)
+})
+
+test('the gap box spans the 10th to 90th percentile, inside the worst-to-best whisker', async ({ page }) => {
+  await openPlan(page)
+  const r = BOOK_PLAN.plan.rolling!
+  const g = await page.getByTestId('gap-strip').evaluate((svg) => {
+    const rect = svg.querySelector('.pl-c-box')!
+    const xs = [...svg.querySelector('.pl-c-whisker')!.getAttribute('d')!.matchAll(/M([\d.]+),/g)].map((m) => Number(m[1]))
+    return { x: Number(rect.getAttribute('x')), w: Number(rect.getAttribute('width')), lo: Math.min(...xs), hi: Math.max(...xs) }
+  })
+  expect(g.w / (g.hi - g.lo)).toBeCloseTo((r.p90_gap - r.p10_gap) / (r.best_gap - r.worst_gap), 2)
+  expect((g.x - g.lo) / (g.hi - g.lo)).toBeCloseTo((r.p10_gap - r.worst_gap) / (r.best_gap - r.worst_gap), 2)
+})
+
+test('each arm is drawn to what it ended with, with the paid-in tick at what was paid', async ({ page }) => {
+  await openPlan(page)
+  const w = BOOK_PLAN.plan.window!
+  const fills = await page.locator('.pl-arm-fill').evaluateAll((els) => els.map((e) => parseFloat((e as HTMLElement).style.width)))
+  expect(fills[0]! / fills[1]!).toBeCloseTo(w.hedged.terminal_wealth / w.comparator.terminal_wealth, 3)
+  const ticks = await page.getByTestId('arm-paid').evaluateAll((els) => els.map((e) => parseFloat((e as HTMLElement).style.left)))
+  expect(ticks[0]! / fills[0]!).toBeCloseTo(w.hedged.contributed / w.hedged.terminal_wealth, 3)
+})
+
+test('an arm that ended below what was paid in shows the tick in ink, past its fill', async ({ page }) => {
+  const w = BOOK_PLAN.plan.window!
+  await openPlan(page, { ...BOOK_PLAN, plan: { ...BOOK_PLAN.plan, window: { ...w, hedged: { ...w.hedged, terminal_wealth: 50_000 } } } })
+  await expect(page.getByTestId('arm-paid').first()).toHaveClass(/is-beyond/)
+  await expect(page.getByTestId('arm-paid').last()).not.toHaveClass(/is-beyond/)
+})
+
+test('by-yield bars are drawn in proportion to the shares they print', async ({ page }) => {
+  await openPlan(page)
+  const by = BOOK_PLAN.plan.by_yield
+  const w = await page.locator('.pl-plan-yield-track > span').evaluateAll((els) => els.map((e) => parseFloat((e as HTMLElement).style.width)))
+  const scale = Math.max(0.1, ...by.map((y) => y.share_ahead))
+  by.forEach((y, k) => expect(w[k]).toBeCloseTo((y.share_ahead / scale) * 100, 3))
+})
+
+test('on a phone the gap strip uses its narrow frame', async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 })
+  await openPlan(page)
+  await expect(page.getByTestId('gap-strip')).toHaveAttribute('viewBox', /^0 0 360 /)
 })

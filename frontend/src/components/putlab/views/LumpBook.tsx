@@ -141,8 +141,24 @@ function Panel({ prog, w, metric }: { prog: ProgramOverlay; w: OverlayWindow; me
   const ry = ref == null ? null : Y(ref)
   let area = ''
   if (ry != null && line.some(([, y]) => y < ry - 0.01)) {
-    const above = line.map(([x, y]) => [x, Math.min(y, ry)] as Pt)
-    area = `${poly(above)}L${line[line.length - 1]![0].toFixed(1)},${ry.toFixed(1)}L${line[0]![0].toFixed(1)},${ry.toFixed(1)}Z`
+    // The curve clipped to the better-end line, with the exact crossings
+    // added: joining a point above the line straight to the next point's
+    // clamp would shade a wedge where no mix out-grows the better end.
+    const above: Pt[] = []
+    line.forEach(([x, y], i) => {
+      above.push([x, Math.min(y, ry)])
+      const next = line[i + 1]
+      if (next && (y - ry) * (next[1] - ry) < 0) {
+        above.push([x + ((ry - y) / (next[1] - y)) * (next[0] - x), ry])
+      }
+    })
+    // Only the span between the outermost crossings: clamped points on the
+    // line itself enclose nothing and would stretch the shape past them.
+    const first = above.findIndex(([, y]) => y < ry - 0.01)
+    let last = above.length - 1
+    while (last > first && above[last]![1] >= ry - 0.01) last--
+    const span = above.slice(Math.max(0, first - 1), Math.min(above.length, last + 2))
+    area = `${poly(span)}L${span[span.length - 1]![0].toFixed(1)},${ry.toFixed(1)}L${span[0]![0].toFixed(1)},${ry.toFixed(1)}Z`
   }
   const f = growth ? (v: number) => pct(v, 2) : (v: number) => v.toFixed(3)
   const labels: Label[] = [
@@ -224,7 +240,7 @@ function Panel({ prog, w, metric }: { prog: ProgramOverlay; w: OverlayWindow; me
         </svg>
         <ChartLabels labels={labels} w={PW} h={PH} />
       </div>
-      <div className="pl-panel-readout" data-testid="panel-readout" aria-live="polite">
+      <div className="pl-panel-readout" data-testid="panel-readout">
         <strong>{name}</strong> · CAGR {pct(p.cagr, 2)} · vol {pct(p.volatility)} · max DD {pct(p.max_drawdown)} · CAGR/vol{' '}
         {p.cagr_per_vol == null ? 'n/a' : fmtFixed(p.cagr_per_vol, 3)}
       </div>
@@ -273,10 +289,12 @@ function Panel({ prog, w, metric }: { prog: ProgramOverlay; w: OverlayWindow; me
             </thead>
             <tbody>
               {pts.map((q) => (
-                <tr key={q.weight} aria-current={q.weight === w.best_weight ? 'true' : undefined}>
+                <tr key={q.weight} aria-current={q.weight === bestWeight ? 'true' : undefined}>
                   <td>
                     {q.weight === 0 ? 'S&P 500 only' : q.weight === 1 ? `${prog.index_symbol} only` : hedged(q.weight)}
-                    {q.weight === w.best_weight && <span className="pl-tag pl-tag-ok"> best growth</span>}
+                    {q.weight === bestWeight && (
+                      <span className="pl-tag pl-tag-ok"> {growth ? 'best growth' : 'best CAGR / vol'}</span>
+                    )}
                   </td>
                   <td className="num">{pct(q.cagr, 2)}</td>
                   <td className="num">{pct(q.volatility)}</td>
