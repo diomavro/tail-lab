@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import type { BookPlanParams, ModelPlanParams } from '../../../api/client'
 import { fmtFixed } from '../format'
 
 // Formatters and the input debounce shared by the Book's two plan sources.
@@ -35,3 +36,38 @@ export function useDebounced<T>(value: T, ms = 400): T {
   }, [value, ms])
   return settled
 }
+
+// ---- The Book's page-scoped plan state (docs/adr/0028: inputs no other tab
+// reads stay in their page). OverlayView owns it so the plan bar can sit above
+// the result it drives.
+
+export type BookMode = 'lump' | 'monthly'
+export type LumpMetric = 'growth' | 'ratio'
+export type PlanSource = 'real' | 'model'
+
+export const PLAN_PROGRAMS = ['PPUT', 'PPUT3M', 'VXTH'] as const
+export const PLAN_HORIZONS = [5, 10, 15, 20] as const
+export const MODEL_DEPTHS = [5, 10] as const
+/** The comparators with a button; every other Cboe index is in the picker. */
+export const COMPARATOR_BUTTONS = ['spx', 'cash', 'bills'] as const
+
+export const DEFAULT_REAL_PLAN: BookPlanParams = {
+  program: 'PPUT',
+  hedge_ratio: 0.5,
+  e0: 10_000,
+  monthly: 500,
+  comparator: 'spx',
+  horizon_years: 10,
+}
+
+export const DEFAULT_MODEL_PLAN: ModelPlanParams = {
+  moneyness_pct: 5,
+  e0: 10_000,
+  monthly: 500,
+  put_share: 1,
+  horizon_years: 10,
+}
+
+/** Small counts in words, as a sentence reads them ("one of six tests"). */
+const WORDS = ['none', 'one', 'two', 'three', 'four', 'five', 'six', 'seven', 'eight', 'nine', 'ten']
+export const inWords = (n: number): string => WORDS[n] ?? String(n)

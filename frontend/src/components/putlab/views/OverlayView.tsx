@@ -2,12 +2,23 @@ import { useEffect, useState } from 'react'
 import {
   ApiError,
   fetchHedgeOverlay,
+  type BookPlanParams,
+  type ComparatorOption,
   type HedgeOverlayResponse,
-  type OverlayOutcome,
-  type OverlayWindow,
+  type ModelPlanParams,
 } from '../../../api/client'
 import { fmtFixed } from '../format'
 import { BookPlan } from './BookPlan'
+import { BookPlanBar } from './BookPlanBar'
+import { LumpBook } from './LumpBook'
+import { ModelPlan } from './ModelPlan'
+import {
+  DEFAULT_MODEL_PLAN,
+  DEFAULT_REAL_PLAN,
+  type BookMode,
+  type LumpMetric,
+  type PlanSource,
+} from './planFormat'
 
 /* The Book: how much of the equity book should carry the hedge -- Rodman's
  * Paradox, tested on Cboe's real-quote programs. Named from docs/adr/0021's
@@ -22,7 +33,10 @@ import { BookPlan } from './BookPlan'
  * Growth is the headline because it is the only yardstick a hedge can be sized
  * on (docs/END_STATE.md §4 Q8); CAGR per unit of vol is shown because it is the
  * letter's own, and labelled as the weaker test. The caveats sit above the
- * tables, in the loss colour, for the same reason as the bake-off's.
+ * charts, in the loss colour, for the same reason as the bake-off's.
+ *
+ * Every input the Book reads is page-scoped (docs/adr/0028) and owned here, so
+ * the plan bar can sit above the result it drives.
  */
 
 type State =
@@ -31,114 +45,17 @@ type State =
   | { status: 'ready'; data: HedgeOverlayResponse }
 
 const pct = (x: number, digits = 1) => `${fmtFixed(x * 100, digits)}%`
-/** A margin in pp/yr at the precision the 1bp threshold needs. */
-const pp = (x: number) => `${x >= 0 ? '+' : '−'}${Math.abs(x * 100).toFixed(3)}pp/yr`
-const hedged = (w: number) => `${Math.round(w * 100)}% hedged`
 
-const TAG: Record<OverlayOutcome, { cls: string; text: string }> = {
-  holds: { cls: 'pl-tag pl-tag-ok', text: 'Paradox holds' },
-  inconclusive: { cls: 'pl-tag pl-tag-mute', text: 'Too close to call' },
-  fails: { cls: 'pl-tag pl-tag-bad', text: 'Paradox fails' },
-}
-
-/** The growth verdict in words. The margin's sign decides the verb, so a mix
- *  that beats the ends by a sliver is never described as trailing them, and
- *  the reverse. */
-function growthSentence(w: OverlayWindow): string {
-  const size = `${Math.abs(w.margin * 100).toFixed(3)}pp/yr`
-  const interior = w.margin > 0
-  if (w.outcome === 'holds') return `On growth, ${hedged(w.best_weight)} beats both ends by ${size}.`
-  if (w.outcome === 'fails') {
-    return `On growth, no interior mix beats the better end; the best one trails it by ${size}.`
-  }
-  // At or below zero the better end is best (ties go to an end), so the
-  // interior mix is "within" it -- never "beating" or, at exactly 0, "trailing".
-  return interior
-    ? `On growth, ${hedged(w.best_weight)} beats both ends, but only by ${size}, under the 1bp/yr threshold.`
-    : `On growth, no interior mix beats the better end, but the best one is within ${size} of it, under the 1bp/yr threshold.`
-}
-
-const RA_WHERE: Record<OverlayOutcome, string> = {
-  holds: 'an interior mix wins',
-  inconclusive: 'too close to call',
-  fails: 'an end wins',
-}
-
-function riskAdjustedSentence(w: OverlayWindow): string {
-  if (w.best_weight_risk_adjusted == null || w.outcome_risk_adjusted == null) {
-    return 'CAGR per unit of vol is undefined here (a mix has zero volatility).'
-  }
-  return `On CAGR per unit of vol the best mix is ${hedged(w.best_weight_risk_adjusted)} (${RA_WHERE[w.outcome_risk_adjusted]}).`
-}
-
-function Verdict({ w }: { w: OverlayWindow }) {
-  const tag = TAG[w.outcome]
-  return (
-    <p data-testid="verdict">
-      <span className={tag.cls}>{tag.text}</span> {growthSentence(w)} {riskAdjustedSentence(w)}
-    </p>
-  )
-}
-
-function WindowTable({ w, symbol }: { w: OverlayWindow; symbol: string }) {
-  return (
-    <section aria-label={`${symbol} ${w.label}`} style={{ marginBottom: 18 }}>
-      <h4 style={{ marginBottom: 2 }}>
-        {w.label}: {w.start} to {w.end}
-      </h4>
-      {w.clipped && (
-        <p className="pl-caveat" data-testid="clipped">
-          Shortened: the data cover {w.start} to {w.end}, not the {w.requested_start} to {w.requested_end} asked for
-          ({symbol} or the S&P 500 starts late or stops early, or the as-of date falls inside the window).
-        </p>
-      )}
-      <Verdict w={w} />
-      <p className="pl-lede" data-testid="sensitivity">
-        Best interior mix vs the better end, by assumed dividend yield:{' '}
-        {w.sensitivity
-          .map(
-            (s) =>
-              `at ${pct(s.dividend_yield)}, ${TAG[s.outcome].text.toLowerCase()} (best ${s.best_weight === 0 || s.best_weight === 1 ? 'is an end' : `mix ${hedged(s.best_weight)}`}, ${pp(s.margin)})`,
-          )
-          .join('; ')}
-        .
-      </p>
-      <div className="pl-scroll">
-      <table className="pl-table">
-        <thead>
-          <tr>
-            <th>Hedge ratio</th>
-            <th className="num">Growth (CAGR)</th>
-            <th className="num">Volatility</th>
-            <th className="num">Max drawdown</th>
-            <th className="num">CAGR / vol</th>
-          </tr>
-        </thead>
-        <tbody>
-          {w.points.map((p) => (
-            <tr key={p.weight} aria-current={p.weight === w.best_weight ? 'true' : undefined}>
-              <td>
-                {p.weight === 0 ? 'S&P 500 only' : p.weight === 1 ? `${symbol} only` : hedged(p.weight)}
-                {p.weight === w.best_weight && <span className="pl-tag pl-tag-ok"> best growth</span>}
-              </td>
-              <td className="num">{pct(p.cagr, 2)}</td>
-              <td className="num">{pct(p.volatility)}</td>
-              <td className="num">{pct(p.max_drawdown)}</td>
-              <td className="num">{p.cagr_per_vol == null ? 'n/a' : fmtFixed(p.cagr_per_vol, 3)}</td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
-      </div>
-    </section>
-  )
-}
-
-type Plan = 'lump' | 'monthly'
-
-export function OverlayView() {
-  const [plan, setPlan] = useState<Plan>('lump')
+export function OverlayView({ narrow }: { narrow: boolean }) {
+  const [mode, setMode] = useState<BookMode>('lump')
+  const [metric, setMetric] = useState<LumpMetric>('growth')
+  const [source, setSource] = useState<PlanSource>('real')
+  const [real, setRealState] = useState<BookPlanParams>(DEFAULT_REAL_PLAN)
+  const [model, setModelState] = useState<ModelPlanParams>(DEFAULT_MODEL_PLAN)
+  const [options, setOptions] = useState<ComparatorOption[]>([])
   const [state, setState] = useState<State>({ status: 'loading' })
+  const setReal = (p: Partial<BookPlanParams>) => setRealState((cur) => ({ ...cur, ...p }))
+  const setModel = (p: Partial<ModelPlanParams>) => setModelState((cur) => ({ ...cur, ...p }))
 
   useEffect(() => {
     const ctl = new AbortController()
@@ -160,71 +77,63 @@ export function OverlayView() {
   }, [])
 
   return (
-    <div>
-      <h2 style={{ marginBottom: 4 }}>The Book</h2>
-      <div className="pl-seg" role="radiogroup" aria-label="Plan" style={{ marginBottom: 10 }}>
-        {(
-          [
-            ['lump', 'Lump sum'],
-            ['monthly', 'Monthly contributions'],
-          ] as const
-        ).map(([key, label]) => (
-          <label className="pl-seg-opt" key={key}>
-            <input type="radio" name="pl-book-plan" checked={plan === key} onChange={() => setPlan(key)} />
-            {label}
-          </label>
-        ))}
-      </div>
-      {plan === 'monthly' && <BookPlan />}
-      {plan === 'lump' && (
-        <>
-          <p className="pl-lede" data-testid="accounting">
-            Accounting: self-financed — the hedge's premium is paid from the book (docs/adr/0027).
-          </p>
-      <p className="pl-lede" style={{ marginBottom: 10 }}>
-        How much of the equity book should carry the hedge? Rodman's Paradox (Artemis Capital, 2016): an asset that
-        loses money most years can still make the whole book grow faster, by paying off in the crash. The letter's long-vol fund index is licensed, so this blends each Cboe
-        hedge program (priced from real OPRA trades or quotes) with the plain S&P 500 at every hedge ratio, rebalanced monthly. The
-        paradox holds if some mix grows faster than both 0% and 100% hedged, by more than 1bp a year.
-      </p>
-      <p className="pl-caveat" style={{ marginBottom: 14 }}>
-        In sample, one history. The S&P 500 leg's dividends are an assumed flat yield
-        {state.status === 'ready' ? ` (${pct(state.data.overlay.dividend_yield)})` : ''}, not measured; a low guess
-        understates the unhedged leg against every hedged one, so each verdict is re-run at other yields below. CAGR / vol nets no risk-free rate
-        and tends to favour any mix that lowers volatility; growth is the test that sizes a hedge.
-      </p>
-      {state.status === 'loading' && <p className="pl-lede">Blending…</p>}
-      {state.status === 'error' && <p className="pl-caveat">{state.message}</p>}
-      {state.status === 'ready' && (
-        <>
-          {Object.entries(state.data.overlay.missing).map(([symbol, reason]) => (
-            <p key={symbol} className="pl-caveat" data-testid="missing">
-              {symbol}: not tested ({reason}).
+    <div className="pl-book">
+      <div className="pl-book-head">
+        <h2 className="pl-view-title">The Book</h2>
+        {mode === 'lump' && (
+          <>
+            <p className="pl-view-lede pl-lede">
+              How much of the equity book should carry the hedge? Rodman's Paradox (Artemis Capital, 2016): an asset
+              that loses money most years can still make the whole book grow faster, by paying off in the crash. The
+              letter's long-vol fund index is licensed, so this blends each Cboe hedge program (priced from real OPRA
+              trades or quotes) with the plain S&P 500 at every hedge ratio, rebalanced monthly. The paradox holds if
+              some mix grows faster than both 0% and 100% hedged, by more than 1bp a year.
             </p>
-          ))}
-          {state.data.overlay.programs.map((prog) => (
-            <section key={prog.index_symbol} style={{ marginBottom: 24 }}>
-              <h3 style={{ marginBottom: 4 }}>
-                {prog.index_symbol}: {prog.description}
-              </h3>
-              {prog.windows.map((w) => (
-                <WindowTable key={w.key} w={w} symbol={prog.index_symbol} />
-              ))}
-              {Object.entries(prog.unavailable).map(([key, reason]) => (
-                <p key={key} className="pl-caveat" data-testid="unavailable">
-                  {key === 'cole' ? "The letter's window" : 'Full history'}: not computed ({reason}).
-                </p>
-              ))}
-            </section>
-          ))}
-          <p className="pl-lede" style={{ fontSize: 12 }}>
-            Cboe snapshot {state.data.cboe_snapshot ?? 'unknown'} · code {state.data.code_sha} · as of{' '}
-            {state.data.overlay.as_of}
-          </p>
+            <p className="pl-lede" data-testid="accounting">
+              Accounting: self-financed — the hedge's premium is paid from the book (docs/adr/0027).
+            </p>
+            <p className="pl-caveat">
+              In sample, one history. The S&P 500 leg's dividends are an assumed flat yield
+              {state.status === 'ready' ? ` (${pct(state.data.overlay.dividend_yield)})` : ''}, not measured; a low
+              guess understates the unhedged leg against every hedged one, so each verdict is re-run at other yields
+              below. CAGR / vol nets no risk-free rate and tends to favour any mix that lowers volatility; growth is
+              the test that sizes a hedge.
+            </p>
+          </>
+        )}
+      </div>
+
+      <BookPlanBar
+        mode={mode}
+        setMode={setMode}
+        metric={metric}
+        setMetric={setMetric}
+        source={source}
+        setSource={setSource}
+        real={real}
+        setReal={setReal}
+        model={model}
+        setModel={setModel}
+        options={options}
+      />
+
+      {mode === 'lump' && (
+        <>
+          {state.status === 'loading' && <p className="pl-lede">Blending…</p>}
+          {state.status === 'error' && <p className="pl-caveat">{state.message}</p>}
+          {state.status === 'ready' && <LumpBook data={state.data} metric={metric} />}
         </>
       )}
-        </>
-      )}
+      {mode === 'monthly' &&
+        (source === 'real' ? (
+          <section aria-label="Monthly contributions plan">
+            <BookPlan params={real} onOptions={setOptions} narrow={narrow} />
+          </section>
+        ) : (
+          <section aria-label="Monthly contributions plan">
+            <ModelPlan params={model} narrow={narrow} />
+          </section>
+        ))}
     </div>
   )
 }

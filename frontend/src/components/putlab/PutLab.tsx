@@ -567,7 +567,7 @@ export function PutLab() {
               />
             )}
             {tab === 'portfolio' && <PortfolioView universe={universe} controls={controls} />}
-            {tab === 'book' && <OverlayView />}
+            {tab === 'book' && <OverlayView narrow={narrow} />}
             {tab === 'bakeoff' && <BakeOffView controls={controls} />}
             {tab === 'regime' && <RegimeView regimes={regimes} vix={vix} accuracy={accuracy} />}
             {tab === 'surface' && <SurfaceView surface={surface} controls={controls} narrow={narrow} />}

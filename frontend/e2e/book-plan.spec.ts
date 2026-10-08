@@ -38,6 +38,7 @@ test('headlines the rolling-start verdict, then one window, from real data', asy
   await expect(page.getByTestId('plan-by-yield')).toHaveText(
     'Share of starts led, by assumed S&P dividend yield: at 1.4%, 7%; at 1.9%, 5%; at 2.4%, 2%.',
   )
+  await page.getByText('The plan in numbers').click()
   const rows = page.getByRole('table').locator('tbody tr')
   await expect(rows.nth(0).locator('td')).toHaveText(['50% hedged with PPUT', '$70,000', '$163,460', '14.18%', '−23.1%'])
   await expect(rows.nth(1).locator('td')).toHaveText([
@@ -49,13 +50,32 @@ test('headlines the rolling-start verdict, then one window, from real data', asy
   ])
 })
 
+test('draws the verdict: the share led, the gap’s spread, and each arm against what it was paid', async ({ page }) => {
+  await openPlan(page)
+  const r = BOOK_PLAN.plan.rolling!
+  await expect(page.getByTestId('plan-share')).toHaveText('5%')
+  await expect(page.getByText(/^of 364 monthly starts, the hedged book’s 10-year IRR led/)).toBeVisible()
+  // The strip labels every summary statistic it draws, from the payload.
+  const strip = page.locator('.pl-plot').filter({ has: page.getByTestId('gap-strip') })
+  for (const t of ['worst −3.35pp', 'median −1.48pp', 'best +1.35pp', '10th −2.26pp', '90th −0.51pp', 'parity']) {
+    await expect(strip).toContainText(t)
+  }
+  expect(r.worst_gap).toBeLessThan(r.median_gap)
+  // Two arms, ends-with in bold, and the drawdown in the loss colour's track.
+  const arms = page.getByTestId('plan-arm')
+  await expect(arms).toHaveCount(2)
+  await expect(arms.first()).toContainText('$163,460 · IRR 14.18%')
+  await expect(arms.last()).toContainText('$183,424 · IRR 16.06%')
+  await expect(arms.first()).toContainText('Paid in $70,000 · worst drawdown')
+})
+
 test('the overlap caveat is computed from the span and sits above the verdict', async ({ page }) => {
   await openPlan(page)
   const caveat = page.getByTestId('overlap-caveat')
   // 364 starts, 1986-07 to 2016-10, plus the 10-year horizon: 40 years, 4 periods.
   await expect(caveat).toHaveText(
     'These 364 starts are not independent: they cover 40 years of history, about 4 separate 10-year periods, so ' +
-      'the shares below describe this history; they do not test a hypothesis.',
+      'these shares describe this history; they do not test a hypothesis.',
   )
   const verdict = page.getByTestId('plan-verdict')
   const order = await caveat.evaluate(
@@ -85,20 +105,20 @@ test('the dividend assumption and the currency are stated beside the plan', asyn
 
 test('every control re-runs the plan with exactly its own input', async ({ page }) => {
   await openPlan(page)
-  await expect(page.getByTestId('plan-verdict')).toBeVisible()
+  await expect(page.getByTestId('plan-share')).toBeVisible()
   const sent = (k: string, v: string) =>
     page.waitForRequest((r) => {
       const u = new URL(r.url())
       return u.pathname === '/api/putlab/book-plan' && u.searchParams.get(k) === v
     })
   let next = sent('program', 'VXTH')
-  await page.getByRole('combobox').filter({ hasText: 'PPUT3M' }).selectOption('VXTH')
+  await page.getByRole('radiogroup', { name: 'Hedge program' }).getByText('VXTH').click()
   await next
   next = sent('e0', '25000')
   await page.getByLabel('Start with $').fill('25000')
   await next
   next = sent('monthly', '750')
-  await page.getByLabel('Monthly $').fill('750')
+  await page.getByLabel('Every month $').fill('750')
   await next
   next = sent('hedge_ratio', '0.8')
   await page.getByRole('slider').fill('0.8')
@@ -110,7 +130,7 @@ test('every control re-runs the plan with exactly its own input', async ({ page 
 
 test('typing a number sends one request, not one per keystroke', async ({ page }) => {
   await openPlan(page)
-  await expect(page.getByTestId('plan-verdict')).toBeVisible()
+  await expect(page.getByTestId('plan-share')).toBeVisible()
   const seen: string[] = []
   page.on('request', (r) => {
     if (r.url().includes('/api/putlab/book-plan?')) seen.push(new URL(r.url()).searchParams.get('e0') ?? '')
@@ -133,7 +153,7 @@ test('a server failure reads as a failure, not as nothing to plan', async ({ pag
 
 test('the window title and provenance are the payload\'s own', async ({ page }) => {
   await openPlan(page)
-  await expect(page.getByRole('heading', { level: 4 })).toHaveText('One window: 2016-10-03 to 2026-10-01')
+  await expect(page.getByRole('heading', { name: /^One window/ })).toHaveText('One window, 2016-10-03 to 2026-10-01')
   await expect(page.getByText(/^Cboe snapshot/)).toHaveText(
     'Cboe snapshot cboe_strategy@2026-10-02 · rates none · code e2e0000 · as of 2026-10-02',
   )
@@ -164,6 +184,7 @@ test('a refused comparator renders its refusal instead of a verdict', async ({ p
   await openPlan(page, refused)
   await expect(page.getByTestId('plan-refusal')).toHaveText('history is shorter than one 10-year plan.')
   await expect(page.getByTestId('plan-verdict')).toHaveCount(0)
+  await expect(page.getByTestId('plan-share')).toHaveCount(0)
   await expect(page.getByRole('table')).toHaveCount(0)
 })
 
@@ -188,9 +209,9 @@ test('the picker lists the other Cboe indices and marks the unavailable ones', a
 
 test('changing a control re-runs the plan with that input', async ({ page }) => {
   await openPlan(page)
-  await expect(page.getByTestId('plan-verdict')).toBeVisible()
+  await expect(page.getByTestId('plan-share')).toBeVisible()
   const next = page.waitForRequest((r) => r.url().includes('/api/putlab/book-plan') && r.url().includes('horizon_years=20'))
-  await page.getByRole('combobox').filter({ hasText: '10 years' }).selectOption('20')
+  await page.getByRole('radiogroup', { name: 'Horizon' }).getByText('20y').click()
   await next
 })
 
@@ -221,7 +242,7 @@ test('the model source states its measured error above the numbers', async ({ pa
   await expect(caveat).toHaveText(MODEL_PLAN.plan.accuracy.statement)
   await expect(caveat).toContainText('+2.2 vol points')
   await expect(caveat).toContainText('which flatters the puts')
-  const verdict = page.getByTestId('plan-verdict')
+  const verdict = page.getByTestId('plan-share')
   await expect(verdict).toBeVisible()
   const order = await caveat.evaluate(
     (el, v) => el.compareDocumentPosition(v) & Node.DOCUMENT_POSITION_FOLLOWING,
@@ -244,6 +265,7 @@ test('the model source shows its contribution-funded accounting and real verdict
     'Across 321 monthly starts (1990-01-19 to 2016-09-16), each a 10-year plan, the hedged book\'s IRR led by more ' +
       'than 1bp/yr in 7%, trailed in 93%',
   )
+  await page.getByText('The plan in numbers').click()
   const rows = page.getByRole('table').locator('tbody tr')
   await expect(rows.nth(0).locator('td')).toHaveText([
     'S&P 500 + 100% of each month on puts (model)',
@@ -257,7 +279,7 @@ test('the model source shows its contribution-funded accounting and real verdict
 
 test('picking the other measured depth re-prices at 10% OTM', async ({ page }) => {
   await openModel(page)
-  await expect(page.getByTestId('plan-verdict')).toBeVisible()
+  await expect(page.getByTestId('plan-share')).toBeVisible()
   const next = page.waitForRequest(
     (r) => r.url().includes('/api/putlab/book-plan/model') && r.url().includes('moneyness_pct=10'),
   )
@@ -289,7 +311,7 @@ async function openModelWith(page: Page, body: unknown) {
 
 test('every model control re-runs the plan with exactly its own input', async ({ page }) => {
   await openModel(page)
-  await expect(page.getByTestId('plan-verdict')).toBeVisible()
+  await expect(page.getByTestId('plan-share')).toBeVisible()
   const sent = (k: string, v: string) =>
     page.waitForRequest((r) => {
       const u = new URL(r.url())
@@ -305,22 +327,22 @@ test('every model control re-runs the plan with exactly its own input', async ({
   await page.getByLabel('Start with $').fill('25000')
   await next
   next = sent('monthly', '750')
-  await page.getByLabel('Monthly $').fill('750')
+  await page.getByLabel('Every month $').fill('750')
   await next
   next = sent('horizon_years', '5')
-  await page.getByRole('combobox').selectOption('5')
+  await page.getByRole('radiogroup', { name: 'Horizon' }).getByText('5y', { exact: true }).click()
   await next
 })
 
 test('the model view debounces typing into one request', async ({ page }) => {
   await openModel(page)
-  await expect(page.getByTestId('plan-verdict')).toBeVisible()
+  await expect(page.getByTestId('plan-share')).toBeVisible()
   const seen: string[] = []
   page.on('request', (r) => {
     if (r.url().includes('/api/putlab/book-plan/model?')) seen.push(new URL(r.url()).searchParams.get('monthly') ?? '')
   })
-  await page.getByLabel('Monthly $').fill('')
-  await page.getByLabel('Monthly $').pressSequentially('750', { delay: 40 })
+  await page.getByLabel('Every month $').fill('')
+  await page.getByLabel('Every month $').pressSequentially('750', { delay: 40 })
   await expect.poll(() => seen.includes('750')).toBe(true)
   await page.waitForTimeout(600)
   expect(seen).toEqual(['750'])
@@ -359,7 +381,7 @@ test('one start and one period read in the singular, and periods are counted dow
   }
   await openPlan(page, one as BookPlanResponse)
   await expect(page.getByTestId('overlap-caveat')).toHaveText(
-    'This one start covers 10 years of history, about 1 separate 10-year period, so the shares below describe ' +
+    'This one start covers 10 years of history, about 1 separate 10-year period, so these shares describe ' +
       'this history; they do not test a hypothesis.',
   )
   await expect(page.getByTestId('plan-verdict')).toContainText('Across 1 monthly start (2016-10-03), each a 10-year')
@@ -400,6 +422,7 @@ test('shares never round to a false 0% or 100%, and a zero gap reads +0.00', asy
 test('a window missing beside a rolling summary renders nothing rather than crashing', async ({ page }) => {
   await openPlan(page, { ...BOOK_PLAN, plan: { ...BOOK_PLAN.plan, window: null } } as BookPlanResponse)
   await expect(page.getByTestId('plan-verdict')).toHaveCount(0)
+  await expect(page.getByTestId('plan-share')).toHaveCount(0)
   await expect(page.getByTestId('accounting')).toBeVisible()
 })
 
@@ -418,8 +441,8 @@ test('the currency is stated in full', async ({ page }) => {
 
 test('the page says it is updating while a new plan is pending', async ({ page }) => {
   await openPlan(page)
-  await expect(page.getByTestId('plan-verdict')).toBeVisible()
-  await page.getByLabel('Monthly $').fill('900')
+  await expect(page.getByTestId('plan-share')).toBeVisible()
+  await page.getByLabel('Every month $').fill('900')
   await expect(page.getByTestId('updating')).toBeVisible()
 })
 
@@ -446,7 +469,7 @@ for (const source of ['Real quotes', 'Our model'] as const) {
     await page.getByRole('tab', { name: 'Book' }).click()
     await page.getByRole('radiogroup', { name: 'Plan' }).getByText('Monthly contributions').click()
     await page.getByRole('radiogroup', { name: 'Source' }).getByText(source).click()
-    await expect(page.getByTestId('plan-verdict')).toBeVisible()
+    await expect(page.getByTestId('plan-share')).toBeVisible()
     const width = await page.evaluate(() => document.documentElement.scrollWidth)
     expect(width).toBeLessThanOrEqual(375)
   })
@@ -464,8 +487,8 @@ test('the Book hides the trailing-RV pricing badge, which describes other tabs',
 
 test('the model view says it is updating while a new plan is pending', async ({ page }) => {
   await openModel(page)
-  await expect(page.getByTestId('plan-verdict')).toBeVisible()
-  await page.getByLabel('Monthly $').fill('900')
+  await expect(page.getByTestId('plan-share')).toBeVisible()
+  await page.getByLabel('Every month $').fill('900')
   await expect(page.getByTestId('updating')).toBeVisible()
 })
 
@@ -473,15 +496,15 @@ for (const source of ['Real quotes', 'Our model'] as const) {
   test(`a typed amount past the API's limit is clamped, not sent (${source})`, async ({ page }) => {
     await openPlan(page)
     if (source === 'Our model') await page.getByRole('radiogroup', { name: 'Source' }).getByText('Our model').click()
-    await expect(page.getByTestId('plan-verdict')).toBeVisible()
+    await expect(page.getByTestId('plan-share')).toBeVisible()
     const path = source === 'Our model' ? '/api/putlab/book-plan/model' : '/api/putlab/book-plan'
     const sent = page.waitForRequest((r) => {
       const u = new URL(r.url())
       return u.pathname === path && u.searchParams.get('monthly') === '1000000000'
     })
-    await page.getByLabel('Monthly $').fill('5000000000')
+    await page.getByLabel('Every month $').fill('5000000000')
     await sent
-    await expect(page.getByLabel('Monthly $')).toHaveValue('1000000000')
+    await expect(page.getByLabel('Every month $')).toHaveValue('1000000000')
   })
 }
 
@@ -515,7 +538,7 @@ test('199 of 200 starts is never shown as 100%', async ({ page }) => {
 
 test('the model accounting sentence follows the share and the depth', async ({ page }) => {
   await openModel(page)
-  await expect(page.getByTestId('plan-verdict')).toBeVisible()
+  await expect(page.getByTestId('plan-share')).toBeVisible()
   await page.getByRole('slider').fill('0.35')
   await page.getByRole('radiogroup', { name: 'Strike depth' }).getByText('10% OTM').click()
   await expect(page.getByTestId('accounting')).toContainText(
@@ -557,7 +580,7 @@ test('the trailing-RV badge and footer appear only on tabs that run that backtes
 
 test('a typed starting amount past the limit is clamped too', async ({ page }) => {
   await openPlan(page)
-  await expect(page.getByTestId('plan-verdict')).toBeVisible()
+  await expect(page.getByTestId('plan-share')).toBeVisible()
   const sent = page.waitForRequest((r) => new URL(r.url()).searchParams.get('e0') === '1000000000')
   await page.getByLabel('Start with $').fill('5000000000')
   await sent
