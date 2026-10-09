@@ -400,22 +400,10 @@ def validate_and_quarantine(df: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFram
         return OptionsDxQuoteSchema.validate(kept, lazy=True), quarantined
 
 
-def ingest_optionsdx(
-    store: LakeStore,
-    symbol: str,
-    *,
-    vendor_dir: Path | None = None,
-    ingest_date: dt.date | None = None,
-    months: Sequence[tuple[str, str]] | None = None,
-) -> IngestResult:
-    """Read every archive for ``symbol``, slice, and commit ONE bronze partition.
-
-    ``months`` lets tests drive the whole orchestration off in-memory text
-    without a vendor directory or ``py7zr``.
-    """
-    vendor_dir = vendor_dir or DEFAULT_VENDOR_DIR
-    ingest_date = ingest_date or dt.date.today()
-
+def _collect_frames(
+    symbol: str, vendor_dir: Path, months: Sequence[tuple[str, str]] | None
+) -> tuple[list[pd.DataFrame], int, int]:
+    """Parse every month for ``symbol``; returns (non-empty frames, unparsable rows, archives read)."""
     frames: list[pd.DataFrame] = []
     unparsable = 0
     archives = 0
@@ -439,6 +427,26 @@ def ingest_optionsdx(
             unparsable += bad
             if not frame.empty:
                 frames.append(frame)
+    return frames, unparsable, archives
+
+
+def ingest_optionsdx(
+    store: LakeStore,
+    symbol: str,
+    *,
+    vendor_dir: Path | None = None,
+    ingest_date: dt.date | None = None,
+    months: Sequence[tuple[str, str]] | None = None,
+) -> IngestResult:
+    """Read every archive for ``symbol``, slice, and commit ONE bronze partition.
+
+    ``months`` lets tests drive the whole orchestration off in-memory text
+    without a vendor directory or ``py7zr``.
+    """
+    vendor_dir = vendor_dir or DEFAULT_VENDOR_DIR
+    ingest_date = ingest_date or dt.date.today()
+
+    frames, unparsable, archives = _collect_frames(symbol, vendor_dir, months)
 
     combined = _concat_and_free(frames)
     # Filename dedup handles re-downloads; this handles OVERLAPPING archives,

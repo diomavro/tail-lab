@@ -137,6 +137,30 @@ def _scaled(cycle: PutRollCycle, s: float) -> PutRollCycle:
     )
 
 
+def _cum_curve(cycles: list[PutRollCycle]) -> list[tuple[dt.date, float]]:
+    """Cumulative net PnL of one leg, stamped at each cycle's expiry."""
+    cum = 0.0
+    curve: list[tuple[dt.date, float]] = []
+    for c in sorted(cycles, key=lambda x: x.expiry_date):
+        cum += c.net
+        curve.append((c.expiry_date, cum))
+    return curve
+
+
+def _combine_curves(per_leg_cum: list[list[tuple[dt.date, float]]]) -> list[EquityPoint]:
+    """Sum the legs' cumulative PnL on the union of expiry dates, forward-filling
+    each leg's realized cum (0 before its first expiry)."""
+    union_dates = sorted({d for curve in per_leg_cum for d, _ in curve})
+    points: list[EquityPoint] = []
+    for d in union_dates:
+        total = 0.0
+        for curve in per_leg_cum:
+            realized = [c for dd, c in curve if dd <= d]
+            total += realized[-1] if realized else 0.0
+        points.append(EquityPoint(date=d, cum_pnl=total))
+    return points
+
+
 def run_portfolio(
     store: LakeStore,
     *,
@@ -199,11 +223,7 @@ def run_portfolio(
         leg_net = sum(c.net for c in scaled)  # net of brokerage
         _, leg_verdict = regime_breakdown(scaled, timeline)
 
-        cum = 0.0
-        curve: list[tuple[dt.date, float]] = []
-        for c in sorted(scaled, key=lambda x: x.expiry_date):
-            cum += c.net
-            curve.append((c.expiry_date, cum))
+        curve = _cum_curve(scaled)
         per_leg_cum.append(curve)
 
         snap = store.bronze_snapshot_id(f"ohlcv_{leg.asset.lower()}", as_of)
@@ -233,16 +253,8 @@ def run_portfolio(
 
     # Combined cumulative PnL on the union of expiry dates: forward-fill each
     # leg's realized cum (0 before its first expiry) and sum.
-    union_dates = sorted({d for curve in per_leg_cum for d, _ in curve})
-    combined_curve: list[EquityPoint] = []
-    combined_cum_values: list[float] = []
-    for d in union_dates:
-        total = 0.0
-        for curve in per_leg_cum:
-            realized = [c for dd, c in curve if dd <= d]
-            total += realized[-1] if realized else 0.0
-        combined_curve.append(EquityPoint(date=d, cum_pnl=total))
-        combined_cum_values.append(total)
+    combined_curve = _combine_curves(per_leg_cum)
+    combined_cum_values = [p.cum_pnl for p in combined_curve]
 
     total_premium = sum(r.total_premium for r in leg_results)
     total_payoff = sum(c.payoff for c in pooled_cycles)
