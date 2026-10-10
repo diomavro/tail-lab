@@ -323,7 +323,9 @@ def _sizing(
     if not measured:
         withheld = "sizing needs measured dividends"
     elif not cons_ok:
-        withheld = "sizing needs T-bills for the cash-drag check"
+        # The leg's own reason (no T-bills, or no measured y); a leg that
+        # exists but starts late is short of T-bill history.
+        withheld = leg.basis.conservative_reason or "sizing needs T-bills for the cash-drag check"
         if leg.basis.conservative_from is not None:
             withheld += f" (T-bill history starts {leg.basis.conservative_from})"
     prog = program.loc[common]

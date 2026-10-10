@@ -462,7 +462,7 @@ export const CONCEPTS: Record<string, Concept> = {
     intuition:
       'An average return across many investors is not what one investor gets: one investor lives through one sequence, and losses compound. Time-average growth is the rate one book compounds at along its own path. That is where a hedge can earn its keep: it costs a little every month, but by cutting the book\'s worst months it can raise the growth of the WHOLE book even while losing money on its own. The Book holds w in a Cboe hedge program and the rest in the S&P 500, rebalanced monthly, with the premium paid from the book; because g is a sum of logs of lines in w it is concave, so it has exactly one best hedge ratio, w*.',
     howToRead:
-      'Read the curve, not a single return: if growth falls from the first step of the hedge ratio, the honest size is none. A peak inside 0-100% is the growth-optimal ratio, full Kelly; the Book holds half of it only when the gain over no hedge at that peak clears 1bp a year on both index legs -- a peak too shallow to clear it (VXTH over its full history) is still held at none.',
+      'Read the curve, not a single return: if growth falls from the first step of the hedge ratio, the honest size is none. A peak inside 0-100% is the growth-optimal ratio, full Kelly; the Book holds half of it only when the gain over no hedge at that peak clears 1bp a year on both index legs -- a peak too shallow to clear it is still held at none.',
     seeAlso: ['fractional_kelly', 'diversification', 'strike_rule'],
   },
   fractional_kelly: {

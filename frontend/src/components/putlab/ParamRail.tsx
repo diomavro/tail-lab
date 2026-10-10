@@ -202,7 +202,7 @@ export function ParamRail({ tab, tabLabel, controls, onChange, universe, dataQua
                     Standalone · fixed premium, not a size recommendation
                   </span>
                   <span className="pl-note" data-testid="notional-book">
-                    The Book sizes Cboe&rsquo;s fixed-strike programs, not this strategy.
+                    The Book sizes Cboe&rsquo;s rule-based programs, not this strategy.
                   </span>
                 </div>
               )}

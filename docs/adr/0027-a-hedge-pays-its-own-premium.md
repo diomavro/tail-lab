@@ -160,7 +160,12 @@ which flatters a hedge; a constant add-back `k` to the index moves a blend's
 margin by about `-w*k`, so the leg with the larger add-back always binds. Hence
 two named legs: **base** (SPY TR + fee) and **conservative** (base + the cash
 drag `y/8 x (equity - T-bill)`, `y` the trailing twelve-month mean of the
-measured SPY yield -- point-in-time, where the plan said a calendar-year mean).
+measured SPY yield -- point-in-time, where the plan said a calendar-year mean;
+months with no measured reading (`unknown`, and SPY's pre-first-dividend
+`non_payer`) are left out, the months before SPY's first measured reading
+(1993-06) take that reading -- a stated look-ahead exception to ADR 0009 --
+and a later stretch with no measured reading leaves the conservative leg
+unbuilt, so the size is withheld rather than gated on `y = 0`).
 Without `tiingo_eod` the old flat yield remains, labelled assumed.
 
 **The window start.** A measured leg exists only from SPY's listing
@@ -185,10 +190,10 @@ with the reason and margin named, and 0.5 when `w*` is the cap of 1 (not
 called half-Kelly). Missing measured dividends or T-bills **withhold** the
 size rather than gate on a partial leg set. The criterion is §1's -- beats no
 hedge, self-financed -- not the Rodman test's "beats both ends". The Book
-sizes **Cboe's fixed-strike programs**, not the Workspace strategy (real
+sizes **Cboe's rule-based programs**, not the Workspace strategy (real
 quotes only, §5); no standalone result appears on the Book (§2).
 
-**Measured 2026-10-10** (Cboe through 2026-10-09; SPY from one Tiingo fetch;
+**Measured 2026-10-10** (Cboe through 2026-10-08; SPY from one Tiingo fetch;
 `rates` as ingested): PPUT and PPUT3M **0** in both windows -- growth falls at
 every step; VXTH 2006-2016 `w*` = 0.24, size **0.12** (base +4.2bp,
 conservative +4.0bp); VXTH full history `w*` = 0.053, size **0** (+0.57bp base,

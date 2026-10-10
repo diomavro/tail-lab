@@ -877,7 +877,7 @@ def test_a_comparator_frozen_inside_the_last_month_is_a_refusal_not_a_crash() ->
 def _measured_plan(
     *, rates_from: str | None = "1990-01-02", comparator: str = "spx", hedge_ratio: float = 0.5
 ) -> BookPlanResult:
-    from tests.test_research_backtest_index_leg import rates_rows, spy_rows
+    from tests.test_research_backtest_index_leg import rates_rows, spy_history
 
     spx, cboe = _market("1995-01-02", "2015-12-31")
     index = pd.DatetimeIndex(spx.index)
@@ -889,7 +889,7 @@ def _measured_plan(
         )
     )
     as_of = dt.date(2015, 12, 31)
-    leg = measured_leg(spy_rows(index), spx, rates, as_of=as_of, snapshot_ids={})
+    leg = measured_leg(spy_history(index), spx, rates, as_of=as_of, snapshot_ids={})
     return run_book_plan(
         spx,
         cboe,
@@ -935,6 +935,20 @@ def test_each_row_rebuilds_the_spx_comparator_on_its_own_leg() -> None:
     for row in r.legs:
         assert row.share_ahead == 0.0
         assert row.median_gap == pytest.approx(0.0, abs=1e-12)
+
+
+@pytest.mark.parametrize("comparator", ["cash", "PUT"])
+def test_only_the_spx_comparator_is_rebuilt_per_leg(comparator: str) -> None:
+    """Cash and another Cboe program do not depend on the S&P's dividends, so
+    every row keeps the headline's comparator: at 0% hedged the book is the
+    index, which out-grows both here, so every row reads the headline's
+    share ahead. Rebuilding the comparator on the row's own leg would compare
+    the index with itself and read 0."""
+    r = _measured_plan(comparator=comparator, hedge_ratio=0.0)
+    assert r.rolling is not None and r.rolling.share_ahead > 0.0
+    assert [y.key for y in r.legs] == [LegTag(leg="base"), LegTag(leg="conservative")]
+    for row in r.legs:
+        assert row.share_ahead == r.rolling.share_ahead
 
 
 def test_the_overlay_and_the_plan_read_the_same_index_leg(

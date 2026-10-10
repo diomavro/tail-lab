@@ -221,7 +221,7 @@ export function HoldSize({ data }: { data: HedgeOverlayResponse }) {
         <ConceptInfo id="time_average_growth" /> of the whole book (monthly rebalanced), found by golden-section search
         on 0 to 100%. The recommendation is w*/2 when w* beats no hedge by more than 1bp a year on the base and the
         conservative leg; none when it does not; 50% when w* is 100% (the program then dominates the index at every
-        mix, and 50% is a cap, not half-Kelly). It sizes Cboe&rsquo;s fixed-strike programs, not a Workspace strategy:
+        mix, and 50% is a cap, not half-Kelly). It sizes Cboe&rsquo;s rule-based programs, not a Workspace strategy:
         only real quotes may size a hedge (docs/adr/0027). {inWords(placed).replace(/^./, (c) => c.toUpperCase())} of{' '}
         {inWords(rows.length)} program-windows {placed === 1 ? 'carries' : 'carry'} a size.
       </p>

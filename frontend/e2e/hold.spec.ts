@@ -89,7 +89,7 @@ test('the caveat sits above the table and says the put programs earn no place', 
   )
   await expect(hold(page).getByTestId('hold-method')).toContainText('found by golden-section search')
   await expect(hold(page).getByTestId('hold-method')).toContainText(
-    'It sizes Cboe’s fixed-strike programs, not a Workspace strategy',
+    'It sizes Cboe’s rule-based programs, not a Workspace strategy',
   )
   await expect(hold(page).getByTestId('hold-method')).toContainText('One of six program-windows carries a size.')
   await expect(hold(page).getByTestId('hold-not-prefilled')).toContainText('Not pre-filled into the monthly plan')
@@ -243,7 +243,7 @@ test('the Workspace premium budget says it is not a size', async ({ page }) => {
   await mockPutLabApi(page)
   await page.goto('/')
   await expect(page.getByTestId('notional-note')).toHaveText('Standalone · fixed premium, not a size recommendation')
-  await expect(page.getByTestId('notional-book')).toHaveText('The Book sizes Cboe’s fixed-strike programs, not this strategy.')
+  await expect(page.getByTestId('notional-book')).toHaveText('The Book sizes Cboe’s rule-based programs, not this strategy.')
 })
 
 test('the glossary thread runs from the strike to the size', () => {

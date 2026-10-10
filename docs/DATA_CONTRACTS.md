@@ -1088,7 +1088,9 @@ the roll schedule, the Surface (which falls back to its old assumed 1.9%,
 labelled, when a name has no measured yield) and `scripts/greeks_check.py`.
 Each result cites the snapshot (`dividend_snapshot` or `snapshot_ids`). The
 Book (`hedge_overlay`, `contribution_plan`) reads **SPY's rows only**, through
-`research/backtest/index_leg.build_index_leg`: SPY's `adj_close` total return
+`research/backtest/index_leg.build_index_leg`, which gets them (with
+`adj_close`) and SPY's yields from the same memoised snapshot via
+`research/dividends.index_history`: SPY's `adj_close` total return
 (verified dividend-reinvested) plus SPY's dated expense ratio, as the S&P 500
 total-return proxy; without SPY rows it falls back to the flat 1.9%, labelled,
 and recommends no size (its responses cite `tiingo_snapshot`). **Not yet:**

@@ -155,8 +155,8 @@ them.
   return + fee; conservative + cash drag), else **0**. Measured 2026-10-10 on
   SPY's real Tiingo history: PPUT and PPUT3M **0** (growth falls at every
   step), VXTH 2006-16 0.12 (half of 0.24), VXTH full history 0 (+0.57bp under
-  the bar; Cboe through 2026-10-09 — the e2e fixture, through 10-02, reads +0.69bp). The live lake has no `tiingo_eod` yet, so the page **withholds**
-  every size until the first ingest. It sizes Cboe's fixed-strike programs, not
+  the bar; Cboe through 2026-10-08 — the e2e fixture, through 10-02, reads +0.69bp). The live lake has no `tiingo_eod` yet, so the page **withholds**
+  every size until the first ingest. It sizes Cboe's rule-based programs, not
   the Workspace strategy — the Workspace's $1,000 is still a standalone budget.
 - **The regime classifier HAS hysteresis now** — `docs/PRIOR_ART.md` §8 says it
   does not, and §8 is the historical record of what prior art suggested, not the
@@ -204,7 +204,7 @@ The layer boundaries and dependency rules in `ARCHITECTURE.md` are enforced and 
 - `lake/` is `store.py` (`LakeStore` protocol + `DeltaLakeStore`, including as-of resolution — there is no separate `asof.py`) and `blob_store.py` (JSON blobs, used by feedback).
 - `api/` is flat (`main.py`, `putlab_routes.py`, `feedback_routes.py`, `ingest_routes.py`, `schemas.py`), no `routes/` subpackage yet.
 - `feedback/` is a real layer (peer of ingestion/transforms in the import-linter contract) not shown in the tree.
-- `transforms/` gained `dividend_yield.py` (bronze `tiingo_eod` -> the yield `q`), and `research/dividends.py` is its one reader (backtest, ranking, sweep, portfolio, metric screen, roll schedule, Surface; not yet the Book).
+- `transforms/` gained `dividend_yield.py` (bronze `tiingo_eod` -> the yield `q`), and `research/dividends.py` is its one reader (backtest, ranking, sweep, portfolio, metric screen, roll schedule, Surface, and the Book's SPY index leg via `index_history`).
 - `research/` currently has `metrics/` (downside_beta, downside_capture, tail_beta, co_skewness, co_kurtosis, vol_beta), `option_pricer.py` (one module, not the `pricing/` package `ARCHITECTURE.md` shows), `skew.py`, `accuracy.py`, `cadence.py`, `vix_stretch.py`, `data_quality.py`, `regimes/timeline.py`, `surface/` (hill, karamata, returns, paretan, ladder, implied_alpha, alpha_bound — the Paretan tail analytics, `docs/adr/0026`), and `backtest/` (put_roll, portfolio, ranking, metric_screen, regime_verdict, brokerage, index_replication, hedge_overlay, index_leg, hedge_sizing, contribution_plan, model_plan, sizing, sweep, growth, marks, quote_fills, quote_cache, roll_schedule).
 
 Follow the existing code's shape when extending; update `ARCHITECTURE.md` in the same change if you move it structurally, and add an ADR for consequential decisions.

@@ -538,7 +538,7 @@ def test_a_bug_is_not_dressed_up_as_missing_data(monkeypatch: pytest.MonkeyPatch
 def _measured(
     start: str = "1998-01-02", end: str = "2012-12-31", rates_from: str | None = "1990-01-02"
 ) -> tuple[pd.Series, pd.Series, IndexLeg]:
-    from tests.test_research_backtest_index_leg import rates_rows, spy_rows
+    from tests.test_research_backtest_index_leg import rates_rows, spy_history
 
     index = pd.bdate_range(start, end)
     rng = np.random.default_rng(9)
@@ -549,7 +549,7 @@ def _measured(
         if rates_from is None
         else rates_rows(pd.bdate_range(rates_from, end), first_vintage="2005-06-28", value=3.0)
     )
-    leg = measured_leg(spy_rows(index), spx, rates, as_of=index[-1].date(), snapshot_ids={})
+    leg = measured_leg(spy_history(index), spx, rates, as_of=index[-1].date(), snapshot_ids={})
     return spx, program, leg
 
 

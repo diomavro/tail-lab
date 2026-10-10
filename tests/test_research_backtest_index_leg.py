@@ -20,11 +20,13 @@ import pandas as pd
 import pytest
 
 from tail_lab.lake.store import DeltaLakeStore
+from tail_lab.research import dividends
 from tail_lab.research.backtest.hedge_overlay import run_hedge_overlay
 from tail_lab.research.backtest.index_leg import (
     CASH_DRAG_YEARS,
     MAX_EXTENSION_DAYS,
     SPY_LISTING,
+    Y_UNMEASURED,
     LegTag,
     _trailing_q,
     build_index_leg,
@@ -33,6 +35,7 @@ from tail_lab.research.backtest.index_leg import (
     measured_leg,
 )
 from tail_lab.research.backtest.index_replication import DAYS_PER_YEAR
+from tail_lab.research.dividends import IndexHistory, dividend_lookup
 
 
 def spy_rows(
@@ -56,6 +59,13 @@ def spy_rows(
             "split_factor": 1.0,
         }
     )
+
+
+def spy_history(
+    index: pd.DatetimeIndex, *, daily: float = 0.0003, quarterly_div: float = 0.5
+) -> IndexHistory:
+    """:func:`spy_rows` as the index leg receives them (rows plus yields)."""
+    return IndexHistory.from_rows(spy_rows(index, daily=daily, quarterly_div=quarterly_div))
 
 
 def rates_rows(
@@ -108,7 +118,9 @@ def test_a_flat_spy_grows_by_exactly_its_fee_over_a_year() -> None:
     of it compounds to exactly 1 + fee, weekends included."""
     index = pd.bdate_range("2010-01-04", "2011-01-04")
     spy = spy_rows(index, daily=0.0, quarterly_div=0.0)
-    leg = measured_leg(spy, _spx(index), None, as_of=index[-1].date(), snapshot_ids={})
+    leg = measured_leg(
+        IndexHistory.from_rows(spy), _spx(index), None, as_of=index[-1].date(), snapshot_ids={}
+    )
     years = (index[-1] - index[0]).days / DAYS_PER_YEAR
     assert float(leg.headline.iloc[-1] / leg.headline.iloc[0]) == pytest.approx(
         (1 + 0.000945) ** years, rel=1e-12
@@ -120,7 +132,9 @@ def test_the_base_leg_is_spy_total_return_not_price() -> None:
     and flatter every hedge by it."""
     index = pd.bdate_range("2010-01-04", "2012-12-31")
     spy = spy_rows(index)
-    leg = measured_leg(spy, _spx(index), None, as_of=index[-1].date(), snapshot_ids={})
+    leg = measured_leg(
+        IndexHistory.from_rows(spy), _spx(index), None, as_of=index[-1].date(), snapshot_ids={}
+    )
     years = (index[-1] - index[0]).days / DAYS_PER_YEAR
     tr = float(spy["adj_close"].iloc[-1] / spy["adj_close"].iloc[0])
     assert float(leg.headline.iloc[-1] / leg.headline.iloc[0]) == pytest.approx(
@@ -140,7 +154,9 @@ def test_the_cash_drag_add_back_matches_a_hand_computation() -> None:
     rates = rates_rows(
         pd.bdate_range("2009-01-02", "2013-12-31"), first_vintage="2005-06-28", value=4.0
     )
-    leg = measured_leg(spy, _spx(index), rates, as_of=index[-1].date(), snapshot_ids={})
+    leg = measured_leg(
+        IndexHistory.from_rows(spy), _spx(index), rates, as_of=index[-1].date(), snapshot_ids={}
+    )
     cons = leg.conservative
     assert cons is not None
     q = -math.log(1 - 2.0 / 100.0)
@@ -166,7 +182,9 @@ def test_the_legs_share_one_calendar() -> None:
     rates = rates_rows(
         pd.bdate_range("2009-01-02", "2012-12-31"), first_vintage="2005-06-28", value=1.0
     )
-    leg = measured_leg(spy_rows(index), _spx(index), rates, as_of=index[-1].date(), snapshot_ids={})
+    leg = measured_leg(
+        spy_history(index), _spx(index), rates, as_of=index[-1].date(), snapshot_ids={}
+    )
     assert [k for k, _ in leg.rows] == [LegTag(leg="base"), LegTag(leg="conservative")]
     assert all(s.index.equals(leg.headline.index) for _, s in leg.rows)
 
@@ -181,7 +199,7 @@ def test_before_point_in_time_bills_the_latest_vintage_is_used_and_labelled() ->
     assert latest_vintage_rates(rates, dates).tolist() == [6.0]
     index = pd.bdate_range("1994-01-03", "2015-12-31")  # after the 2015 revision
     leg = measured_leg(
-        spy_rows(index, daily=0.0), _spx(index), rates, as_of=index[-1].date(), snapshot_ids={}
+        spy_history(index, daily=0.0), _spx(index), rates, as_of=index[-1].date(), snapshot_ids={}
     )
     assert leg.basis.bill_point_in_time_from == dt.date(2005, 6, 28)
     cons, base = leg.conservative, leg.headline
@@ -207,7 +225,9 @@ def test_bills_that_start_late_leave_the_conservative_leg_blank_before_them() ->
     rates = rates_rows(
         pd.bdate_range("2004-01-02", "2012-12-31"), first_vintage="2005-06-28", value=2.0
     )
-    leg = measured_leg(spy_rows(index), _spx(index), rates, as_of=index[-1].date(), snapshot_ids={})
+    leg = measured_leg(
+        spy_history(index), _spx(index), rates, as_of=index[-1].date(), snapshot_ids={}
+    )
     cons = leg.conservative
     assert cons is not None and leg.basis.conservative_from == dt.date(2004, 1, 5)
     assert cons[: pd.Timestamp("2004-01-02")].isna().all()
@@ -216,7 +236,9 @@ def test_bills_that_start_late_leave_the_conservative_leg_blank_before_them() ->
 
 def test_without_rates_there_is_no_conservative_leg_and_the_reason_is_named() -> None:
     index = pd.bdate_range("2010-01-04", "2012-12-31")
-    leg = measured_leg(spy_rows(index), _spx(index), None, as_of=index[-1].date(), snapshot_ids={})
+    leg = measured_leg(
+        spy_history(index), _spx(index), None, as_of=index[-1].date(), snapshot_ids={}
+    )
     assert leg.conservative is None
     assert [k for k, _ in leg.rows] == [LegTag(leg="base")]
     assert leg.basis.conservative_reason == "sizing needs T-bills for the cash-drag check"
@@ -235,7 +257,9 @@ def test_a_trailing_weekly_feed_is_extended_on_spx_price_up_to_two_weeks(
     cboe = pd.date_range("2010-01-01", "2015-06-30", freq="D")
     last = cboe[-1] - pd.Timedelta(days=lag)
     spy_days = cboe[cboe <= last]
-    leg = measured_leg(spy_rows(spy_days), _spx(cboe), None, as_of=cboe[-1].date(), snapshot_ids={})
+    leg = measured_leg(
+        spy_history(spy_days), _spx(cboe), None, as_of=cboe[-1].date(), snapshot_ids={}
+    )
     sources = [s.source for s in leg.basis.spans]
     if extended:
         assert sources == ["spy_total_return", "spx_price_only"]
@@ -262,7 +286,7 @@ def test_the_full_window_is_clipped_only_past_the_extension(lag: int, clipped: b
     program = pd.Series(np.cumprod(np.full(len(cboe), 1.0001)), index=cboe)
     last = cboe[-1] - pd.Timedelta(days=lag)
     leg = measured_leg(
-        spy_rows(cboe[cboe <= last]), _spx(cboe), None, as_of=cboe[-1].date(), snapshot_ids={}
+        spy_history(cboe[cboe <= last]), _spx(cboe), None, as_of=cboe[-1].date(), snapshot_ids={}
     )
     result = run_hedge_overlay(_spx(cboe), {"PPUT": program}, as_of=cboe[-1].date(), leg=leg)
     full = next(w for w in result.programs[0].windows if w.key == "full")
@@ -276,7 +300,9 @@ def test_the_full_window_starts_at_spys_listing_and_is_not_called_clipped() -> N
     cboe = pd.bdate_range("1986-06-30", "1999-12-31")
     program = pd.Series(np.cumprod(np.full(len(cboe), 1.0002)), index=cboe)
     spy_days = cboe[cboe >= pd.Timestamp(SPY_LISTING)]
-    leg = measured_leg(spy_rows(spy_days), _spx(cboe), None, as_of=cboe[-1].date(), snapshot_ids={})
+    leg = measured_leg(
+        spy_history(spy_days), _spx(cboe), None, as_of=cboe[-1].date(), snapshot_ids={}
+    )
     result = run_hedge_overlay(_spx(cboe), {"PPUT": program}, as_of=cboe[-1].date(), leg=leg)
     (prog,) = result.programs
     full = next(w for w in prog.windows if w.key == "full")
@@ -349,7 +375,7 @@ def test_no_extension_when_spx_lacks_tiingos_last_session() -> None:
     last = pd.Timestamp("2020-03-20")
     spx = _spx(cboe).drop(last)
     leg = measured_leg(
-        spy_rows(cboe[cboe <= last]), spx, None, as_of=cboe[-1].date(), snapshot_ids={}
+        spy_history(cboe[cboe <= last]), spx, None, as_of=cboe[-1].date(), snapshot_ids={}
     )
     assert leg.headline.index[-1] == last
     assert leg.basis.unextended_gap_days == (cboe[-1] - last).days
@@ -365,8 +391,8 @@ def test_vintages_after_as_of_never_reach_the_splice() -> None:
     as_of = index[-1].date()
     clean = rates_rows(obs, first_vintage="2005-06-28", value=4.0)
     leaky = rates_rows(obs, first_vintage="2005-06-28", value=4.0, revised=9.0)
-    a = measured_leg(spy_rows(index), _spx(index), clean, as_of=as_of, snapshot_ids={})
-    b = measured_leg(spy_rows(index), _spx(index), leaky, as_of=as_of, snapshot_ids={})
+    a = measured_leg(spy_history(index), _spx(index), clean, as_of=as_of, snapshot_ids={})
+    b = measured_leg(spy_history(index), _spx(index), leaky, as_of=as_of, snapshot_ids={})
     pd.testing.assert_series_equal(a.conservative, b.conservative)  # type: ignore[arg-type]
 
 
@@ -384,7 +410,9 @@ def test_the_cash_drag_yield_reads_only_month_ends_already_past() -> None:
     rates = rates_rows(
         pd.bdate_range("2009-01-02", "2013-12-31"), first_vintage="2005-06-28", value=4.0
     )
-    leg = measured_leg(spy, _spx(index), rates, as_of=index[-1].date(), snapshot_ids={})
+    leg = measured_leg(
+        IndexHistory.from_rows(spy), _spx(index), rates, as_of=index[-1].date(), snapshot_ids={}
+    )
     cons = leg.conservative
     assert cons is not None
 
@@ -426,7 +454,7 @@ def test_each_day_earns_the_bill_rate_known_at_its_start() -> None:
     rates = rates_rows(obs, first_vintage="2005-06-28", value=2.0)
     rates.loc[pd.to_datetime(rates["obs_date"]) >= pd.Timestamp("2013-06-03"), "value"] = 8.0
     leg = measured_leg(
-        spy_rows(index, daily=0.0), _spx(index), rates, as_of=index[-1].date(), snapshot_ids={}
+        spy_history(index, daily=0.0), _spx(index), rates, as_of=index[-1].date(), snapshot_ids={}
     )
     cons, base = leg.conservative, leg.headline
     assert cons is not None
@@ -450,7 +478,7 @@ def test_an_unknown_yield_is_left_out_of_y_not_counted_as_zero() -> None:
     left out of the trailing mean instead."""
     index = pd.bdate_range("2010-01-04", "2011-03-31")
     spy = spy_rows(index, daily=0.0)
-    y = _trailing_q(spy, pd.DatetimeIndex([pd.Timestamp("2011-03-31")]))
+    y = _trailing_q(IndexHistory.from_rows(spy), pd.DatetimeIndex([pd.Timestamp("2011-03-31")]))
     # Apr-Jun 2010 are unknown (one payment); Jul 2010-Mar 2011 all read q.
     assert y[0] == pytest.approx(-math.log(1 - 2.0 / 100.0), rel=1e-12)
 
@@ -458,6 +486,94 @@ def test_an_unknown_yield_is_left_out_of_y_not_counted_as_zero() -> None:
 def test_spy_rows_after_as_of_never_reach_the_leg() -> None:
     index = pd.bdate_range("2010-01-04", "2012-12-31")
     as_of = dt.date(2011, 6, 30)
-    leg = measured_leg(spy_rows(index), _spx(index), None, as_of=as_of, snapshot_ids={})
+    leg = measured_leg(spy_history(index), _spx(index), None, as_of=as_of, snapshot_ids={})
     assert leg.headline.index[-1] <= pd.Timestamp(as_of)
     assert leg.basis.spans[-1].end <= as_of
+
+
+def test_months_before_spys_first_dividend_are_not_averaged_in_as_zero() -> None:
+    """SPY listed in January 1993 and first paid in March: the trust held its
+    constituents' dividends from day one, so its pre-dividend ``non_payer``
+    months are no reading of ``y``. Averaged in as zero they dragged 1993's
+    ``y`` to 0.8%. Here SPY pays from April 2010: on 2010-12-31 the trailing
+    twelve months hold Jan-Mar ``non_payer``, Apr-Jun ``unknown`` and
+    Jul-Dec measured, and ``y`` is the measured readings' mean -- not 2/3 of
+    it. Before the first measured reading ``y`` is that first reading."""
+    index = pd.bdate_range("2010-01-04", "2011-03-31")
+    q = -math.log(1 - 2.0 / 100.0)
+    y = _trailing_q(
+        spy_history(index, daily=0.0),
+        pd.DatetimeIndex(["2010-01-04", "2010-02-15", "2010-06-30", "2010-12-31"]),
+    )
+    assert y.tolist() == pytest.approx([q, q, q, q], rel=1e-12)
+
+
+def test_a_full_history_from_spys_listing_still_gets_a_size() -> None:
+    """The pre-dividend months must not withhold the whole full-history
+    window: ``y`` starts from the first measured reading, so the
+    conservative leg exists from SPY's first session."""
+    index = pd.bdate_range(SPY_LISTING, "2000-12-29")
+    rates = rates_rows(
+        pd.bdate_range("1990-01-02", "2000-12-29"), first_vintage="1990-01-02", value=3.0
+    )
+    leg = measured_leg(
+        spy_history(index), _spx(index), rates, as_of=index[-1].date(), snapshot_ids={}
+    )
+    assert leg.basis.conservative_from == index[0].date()
+    assert leg.basis.conservative_reason is None
+    program = pd.Series(np.cumprod(np.full(len(index), 1.0002)), index=index)
+    result = run_hedge_overlay(_spx(index), {"PPUT": program}, as_of=index[-1].date(), leg=leg)
+    full = next(w for w in result.programs[0].windows if w.key == "full")
+    assert full.sizing.recommended_ratio is not None
+    assert set(full.sizing.margin_by_leg) == {"base", "conservative"}
+
+
+def test_an_unmeasured_y_withholds_the_size_and_says_why() -> None:
+    """If SPY's yield is never measured (here one payment on record, so
+    every reading is ``unknown``), ``y`` must not silently become 0 -- that
+    makes the conservative leg equal the base and lets a size through on what
+    is really one leg. The leg is not built, and the size is withheld."""
+    index = pd.bdate_range("2000-01-03", "2012-12-31")
+    spy = spy_rows(index)
+    first = spy.index[spy["div_cash"] > 0][0]
+    spy.loc[spy.index != first, "div_cash"] = 0.0
+    rates = rates_rows(
+        pd.bdate_range("1999-01-04", "2012-12-31"), first_vintage="2005-06-28", value=3.0
+    )
+    leg = measured_leg(
+        IndexHistory.from_rows(spy), _spx(index), rates, as_of=index[-1].date(), snapshot_ids={}
+    )
+    assert leg.conservative is None
+    assert leg.basis.conservative_from is None
+    assert leg.basis.conservative_reason == Y_UNMEASURED
+    program = pd.Series(np.cumprod(np.full(len(index), 1.0002)), index=index)
+    result = run_hedge_overlay(_spx(index), {"PPUT": program}, as_of=index[-1].date(), leg=leg)
+    for window in result.programs[0].windows:
+        assert window.sizing.recommended_ratio is None
+        assert window.sizing.reason == Y_UNMEASURED
+
+
+def test_the_book_reads_spy_through_the_one_tiingo_reader(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """``research/dividends.py`` is the one reader of ``tiingo_eod``: the
+    Book's SPY read goes through its memo, so two Book builds and a pricing
+    lookup on the same snapshot read bronze once, not once each."""
+    dividends._memo.clear()
+    store = DeltaLakeStore(tmp_path)
+    index = pd.bdate_range("2010-01-04", "2012-12-31")
+    seed_spy(store, index[-1].date(), index)
+    reads: list[str] = []
+    real = store.read_bronze_columns_as_of
+
+    def counting(dataset: str, as_of: dt.date, columns: list[str]) -> pd.DataFrame:
+        reads.append(dataset)
+        return real(dataset, as_of, columns)
+
+    monkeypatch.setattr(store, "read_bronze_columns_as_of", counting)
+    a = build_index_leg(store, index[-1].date(), spx=_spx(index))
+    b = build_index_leg(store, index[-1].date(), spx=_spx(index))
+    dividend_lookup(store, "spy", index[-1].date())
+    assert reads == ["tiingo_eod"]
+    assert a.basis.source == b.basis.source == "measured"
+    pd.testing.assert_series_equal(a.headline, b.headline)

@@ -22,7 +22,16 @@ legs come out (``docs/adr/0027`` amendment):
   average an eighth of a year), costing ``y/8 x (equity return - T-bill)`` a
   year -- roughly 1.5-2bp, and negative when equities trail bills. ``y`` is
   the trailing twelve-month average of PR1's measured SPY ``q``
-  (point-in-time: month-end readings on or before the day).
+  (point-in-time: month-end readings on or before the day). Readings with
+  no measured basis -- ``unknown``, and ``non_payer`` before SPY's first
+  dividend (the trust was already holding its constituents' dividends) --
+  are left out, never averaged in as zero. Before SPY's first measured
+  reading (1993-06, five months after listing) ``y`` takes that first
+  reading: a stated look-ahead exception to ``docs/adr/0009``, bounded by
+  those months and reaching the margin only through ``y/8``. If any later
+  day has no measured reading in its trailing twelve months, ``y`` is
+  unmeasured there and the conservative leg is not built (the Book then
+  withholds its size, naming why) -- never a silent ``y = 0``.
 
 SPY total return *understates* the index, which flatters the hedge; adding a
 constant ``k`` to the index's return moves a blend's margin by about
@@ -71,7 +80,7 @@ from tail_lab.research.backtest.index_replication import (
     DEFAULT_DIVIDEND_YIELD,
     SENSITIVITY_YIELDS,
 )
-from tail_lab.transforms.dividend_yield import DividendYields
+from tail_lab.research.dividends import IndexHistory, index_history
 
 #: The FRED series the T-bill legs compound: 3-month constant maturity.
 BILL_SERIES = "DGS3MO"
@@ -92,8 +101,15 @@ CASH_DRAG_YEARS = 1 / 8
 #: Month-end readings averaged into the cash drag's ``y``.
 _Y_MONTHS = 12
 
-#: Dividend sources that are a real basis (anything but ``unknown``).
-_REAL_Q = frozenset({"measured", "non_payer", "suspended", "short_history", "carried", "stale"})
+#: Dividend sources that measure SPY's ``y``. Not ``unknown``, and not
+#: ``non_payer``: for SPY that is only the weeks before its first dividend,
+#: when the trust already held cash dividends it had not yet paid out.
+_REAL_Q = frozenset({"measured", "suspended", "short_history", "carried", "stale"})
+
+_NO_BILLS = "sizing needs T-bills for the cash-drag check"
+
+#: Why the conservative leg is missing when ``y`` cannot be measured.
+Y_UNMEASURED = "sizing needs SPY's measured dividend yield for the cash-drag check"
 
 
 class FeeRow(BaseModel):
@@ -341,23 +357,29 @@ def latest_vintage_rates(rates: pd.DataFrame, dates: pd.DatetimeIndex) -> np.nda
     return out
 
 
-def _trailing_q(spy: pd.DataFrame, dates: pd.DatetimeIndex) -> np.ndarray:
-    """``y`` on each date: the mean of the last twelve month-end SPY ``q``
-    readings dated on or before it (0 before the first real reading)."""
-    yields = DividendYields("spy", spy)
-    days = pd.DatetimeIndex(spy["trade_date"]).sort_values()
+def _trailing_q(spy: IndexHistory, dates: pd.DatetimeIndex) -> np.ndarray:
+    """``y`` on each date: the mean of the measured month-end SPY ``q``
+    readings among the last twelve dated on or before it. Before the first
+    measured reading, that reading (the stated exception); NaN where twelve
+    months hold none, and everywhere when SPY has no measured reading."""
+    days = pd.DatetimeIndex(spy.rows["trade_date"]).sort_values()
     months = days.to_period("M")
     ends = days[np.r_[np.flatnonzero(months[1:] != months[:-1]), len(days) - 1]]
     readings = []
     for day in ends:
-        value = yields.at(day.date())
+        value = spy.yields.at(day.date())
         readings.append(value.q if value.source in _REAL_Q else np.nan)
-    rolling = pd.Series(readings, index=ends).rolling(_Y_MONTHS, min_periods=1).mean()
+    measured = np.flatnonzero(~np.isnan(readings))
+    if len(measured) == 0:
+        return np.full(len(dates), np.nan)
+    first = readings[measured[0]]
+    rolling = pd.Series(readings).rolling(_Y_MONTHS, min_periods=1).mean().to_numpy(copy=True)
+    rolling[: measured[0]] = first
     pos = np.searchsorted(ends.to_numpy(), dates.to_numpy(), side="right") - 1
-    out = np.zeros(len(dates))
+    out = np.full(len(dates), first)
     ok = pos >= 0
-    out[ok] = rolling.to_numpy()[pos[ok]]
-    return np.nan_to_num(out, nan=0.0)
+    out[ok] = rolling[pos[ok]]
+    return out
 
 
 def _extend(
@@ -401,10 +423,11 @@ def _extend(
 
 
 def _conservative(
-    base: pd.Series, spy: pd.DataFrame, rates: pd.DataFrame
-) -> tuple[pd.Series, dt.date | None, dt.date | None]:
+    base: pd.Series, spy: IndexHistory, rates: pd.DataFrame
+) -> tuple[pd.Series, dt.date | None, dt.date | None, str | None]:
     """The base leg plus the cash-drag add-back, NaN before the first day a
-    T-bill rate is known; that day, and the first point-in-time day."""
+    T-bill rate is known; that day, the first point-in-time day, and why
+    there is no leg (``None`` when there is one)."""
     dates = pd.DatetimeIndex(base.index)
     pit = bill_rates_in_force(rates, dates)
     rate = np.where(np.isnan(pit), latest_vintage_rates(rates, dates), pit) / 100.0
@@ -412,53 +435,57 @@ def _conservative(
     pit_known = np.flatnonzero(~np.isnan(pit))
     pit_from = dates[pit_known[0]].date() if len(pit_known) else None
     if len(known) == 0 or known[0] >= len(dates) - 1:
-        return pd.Series(np.nan, index=dates), None, pit_from
+        return pd.Series(np.nan, index=dates), None, pit_from, _NO_BILLS
     j = int(known[0])
+    y = _trailing_q(spy, dates)[:-1]
+    if np.isnan(y[j:]).any():
+        return pd.Series(np.nan, index=dates), None, pit_from, Y_UNMEASURED
     levels = base.to_numpy(dtype=float)
     gaps = np.diff(dates.to_numpy(dtype="datetime64[D]")).astype(float)
     equity = levels[1:] / levels[:-1] - 1.0
     bill = (1.0 + rate[:-1]) ** (gaps / DAYS_PER_YEAR) - 1.0
-    y = _trailing_q(spy, dates)[:-1]
     growth = 1.0 + equity + y * CASH_DRAG_YEARS * (equity - bill)
     out = np.full(len(dates), np.nan)
     out[j] = levels[j]
     out[j + 1 :] = levels[j] * np.cumprod(growth[j:])
-    return pd.Series(out, index=dates), dates[j].date(), pit_from
+    return pd.Series(out, index=dates), dates[j].date(), pit_from, None
 
 
 def measured_leg(
-    spy: pd.DataFrame,
+    spy: IndexHistory,
     spx: pd.Series,
     rates: pd.DataFrame | None,
     *,
     as_of: dt.date,
     snapshot_ids: dict[str, str],
 ) -> IndexLeg:
-    """The measured legs from SPY's Tiingo rows (``trade_date``, ``close``,
-    ``adj_close``, ``div_cash``, ``split_factor``), cut at ``as_of``."""
-    spy = spy[pd.to_datetime(spy["trade_date"]) <= pd.Timestamp(as_of)]
+    """The measured legs from SPY's Tiingo rows and yields
+    (:func:`~tail_lab.research.dividends.index_history`), cut at ``as_of``.
+    The yields need no cut: :meth:`DividendYields.at` reads only rows on or
+    before the date asked, and every date asked is on or before ``as_of``."""
+    rows = spy.rows[pd.to_datetime(spy.rows["trade_date"]) <= pd.Timestamp(as_of)]
     if rates is not None:
         # Defence in depth: a bronze snapshot cannot hold later vintages, but
         # the latest-vintage splice would read any frame it is handed.
         rates = rates[pd.to_datetime(rates["vintage_date"]) <= pd.Timestamp(as_of)]
-    spy = spy.sort_values("trade_date").drop_duplicates(subset="trade_date", keep="last")
-    dates = pd.DatetimeIndex(pd.to_datetime(spy["trade_date"]))
-    adj = spy["adj_close"].to_numpy(dtype=float)
+    rows = rows.sort_values("trade_date").drop_duplicates(subset="trade_date", keep="last")
+    spy = replace(spy, rows=rows)
+    dates = pd.DatetimeIndex(pd.to_datetime(rows["trade_date"]))
+    adj = rows["adj_close"].to_numpy(dtype=float)
     gaps = np.r_[0.0, np.diff(dates.to_numpy(dtype="datetime64[D]")).astype(float)]
     fee = (1.0 + fee_in_force(dates)) ** (gaps / DAYS_PER_YEAR)
     growth = np.r_[1.0, adj[1:] / adj[:-1]] * fee
     base, spans, unextended, why = _extend(
         pd.Series(np.cumprod(growth), index=dates), spx, as_of=as_of
     )
-    rows: list[tuple[LegTag | AssumedYieldTag, pd.Series]] = [(LegTag(leg="base"), base)]
+    legs: list[tuple[LegTag | AssumedYieldTag, pd.Series]] = [(LegTag(leg="base"), base)]
     conservative_from: dt.date | None = None
     pit_from: dt.date | None = None
-    reason: str | None = "sizing needs T-bills for the cash-drag check"
+    reason: str | None = _NO_BILLS
     if rates is not None and not rates[rates["series_id"] == BILL_SERIES].empty:
-        cons, conservative_from, pit_from = _conservative(base, spy, rates)
+        cons, conservative_from, pit_from, reason = _conservative(base, spy, rates)
         if conservative_from is not None:
-            rows.append((LegTag(leg="conservative"), cons))
-            reason = None
+            legs.append((LegTag(leg="conservative"), cons))
     basis = DividendBasis(
         source="measured",
         assumed_yield=None,
@@ -474,10 +501,7 @@ def measured_leg(
         bill_point_in_time_from=pit_from,
         snapshot_ids=snapshot_ids,
     )
-    return IndexLeg(headline=base, rows=tuple(rows), basis=basis)
-
-
-_SPY_COLUMNS = ["symbol", "trade_date", "close", "adj_close", "div_cash", "split_factor"]
+    return IndexLeg(headline=base, rows=tuple(legs), basis=basis)
 
 
 def _read_optional(store: LakeStore, dataset: str, as_of: dt.date) -> tuple[str, str] | None:
@@ -499,14 +523,12 @@ def build_index_leg(store: LakeStore, as_of: dt.date, *, spx: pd.Series) -> Inde
     store is a bug, never absence, and propagates.
     """
     spx = spx[spx.index <= pd.Timestamp(as_of)]
-    tiingo = _read_optional(store, TIINGO_DATASET, as_of)
-    if tiingo is None:
+    spy = index_history(store, as_of)
+    if spy is None or spy.snapshot_id is None:
         return assumed_leg(spx, reason=f"no {TIINGO_DATASET} snapshot known as of {as_of}")
-    frame = store.read_bronze_columns_as_of(TIINGO_DATASET, as_of, _SPY_COLUMNS)
-    spy = frame[frame["symbol"] == "spy"]
-    if len(spy) < 2:
+    if len(spy.rows) < 2:
         return assumed_leg(spx, reason=f"no SPY history in {TIINGO_DATASET} as of {as_of}")
-    ids = {TIINGO_DATASET: tiingo[1]}
+    ids = {TIINGO_DATASET: spy.snapshot_id}
     rates_id = _read_optional(store, RATES_DATASET, as_of)
     rates: pd.DataFrame | None = None
     if rates_id is not None:
