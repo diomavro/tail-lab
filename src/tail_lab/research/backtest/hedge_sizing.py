@@ -48,6 +48,7 @@ from pydantic import BaseModel
 from scipy.optimize import brentq
 
 from tail_lab.research.backtest.index_replication import DAYS_PER_YEAR
+from tail_lab.research.optimise import golden_section
 
 #: A margin within this of zero, either side, is too close to call: 1bp/yr of
 #: CAGR. Shared with the Rodman verdict (``hedge_overlay.outcome``).
@@ -64,8 +65,6 @@ DECISIVE_MONTHS = 3
 
 #: Points on the served ``g(w)`` curve, 0 to 1 inclusive.
 CURVE_POINTS = 41
-
-_INV_PHI = (math.sqrt(5.0) - 1.0) / 2.0
 
 
 @dataclass(frozen=True)
@@ -118,19 +117,7 @@ def golden_max(f: Callable[[float], float], lo: float = 0.0, hi: float = 1.0) ->
 
     The ends are checked too, so a maximum at a bound is returned exactly
     (golden section alone would stop within the tolerance of it)."""
-    a, b = lo, hi
-    c, d = b - _INV_PHI * (b - a), a + _INV_PHI * (b - a)
-    fc, fd = f(c), f(d)
-    while b - a > W_TOL:
-        if fc >= fd:
-            b, d, fd = d, c, fc
-            c = b - _INV_PHI * (b - a)
-            fc = f(c)
-        else:
-            a, c, fc = c, d, fd
-            d = a + _INV_PHI * (b - a)
-            fd = f(d)
-    mid = (a + b) / 2.0
+    mid = golden_section(f, lo, hi, W_TOL, maximise=True)
     return max((lo, mid, hi), key=f)
 
 

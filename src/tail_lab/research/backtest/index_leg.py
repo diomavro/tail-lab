@@ -310,6 +310,11 @@ def _first_vintages(rates: pd.DataFrame) -> pd.DataFrame:
     )
 
 
+def compound(rate: np.ndarray, gaps: np.ndarray) -> np.ndarray:
+    """Growth factor of an annual ``rate`` held over calendar-day ``gaps``."""
+    return (1.0 + rate) ** (gaps / DAYS_PER_YEAR)
+
+
 def bill_rates_in_force(rates: pd.DataFrame, dates: pd.DatetimeIndex) -> np.ndarray:
     """The 3-month T-bill yield (percent) in force on each date, point-in-time;
     NaN where none is known yet.
@@ -445,7 +450,7 @@ def _conservative(
     levels = base.to_numpy(dtype=float)
     gaps = np.diff(dates.to_numpy(dtype="datetime64[D]")).astype(float)
     equity = levels[1:] / levels[:-1] - 1.0
-    bill = (1.0 + rate[:-1]) ** (gaps / DAYS_PER_YEAR) - 1.0
+    bill = compound(rate[:-1], gaps) - 1.0
     growth = 1.0 + equity + y * CASH_DRAG_YEARS * (equity - bill)
     out = np.full(len(dates), np.nan)
     out[j] = levels[j]

@@ -63,6 +63,7 @@ from tail_lab.research.backtest.index_leg import (
     assumed_leg,
     bill_rates_in_force,
     build_index_leg,
+    compound,
 )
 from tail_lab.research.backtest.index_replication import (
     DAYS_PER_YEAR,
@@ -317,7 +318,7 @@ def bill_levels(rates: pd.DataFrame, dates: pd.DatetimeIndex) -> pd.Series:
     rate = in_force[start:] / 100.0
     gaps = tail.to_series().diff().dt.days.fillna(0).to_numpy(dtype=float)
     growth = np.ones(len(tail))
-    growth[1:] = (1.0 + rate[:-1]) ** (gaps[1:] / DAYS_PER_YEAR)
+    growth[1:] = compound(rate[:-1], gaps[1:])
     return pd.Series(np.cumprod(growth), index=tail)
 
 
