@@ -33,7 +33,7 @@ test('lists the latest roll inputs, q included', async ({ page }) => {
   const inputs = section.getByTestId('price-build-inputs')
   await expect(inputs).toContainText('Volatility σ')
   await expect(inputs).toContainText('(20-day realised)')
-  await expect(section.getByTestId('price-build-q')).toHaveText('1.31%')
+  await expect(section.getByTestId('price-build-q')).toHaveText('1.307%')
 })
 
 test('redoes q from the payments: -ln(1 - D / S)', async ({ page }) => {
@@ -56,7 +56,7 @@ test('an unknown yield says it priced at q = 0 and why that matters', async ({ p
     dividend_basis: { ...BACKTEST.dividend_basis!, q: 0, source: 'unknown', close: null, payments: [] },
   })
   const section = await open(page)
-  await expect(section.getByTestId('price-build-q')).toHaveText('0.00%')
+  await expect(section.getByTestId('price-build-q')).toHaveText('0.000%')
   await expect(section.getByTestId('price-build-unknown')).toContainText('Priced at q = 0')
   await expect(section.getByTestId('price-build-formula')).toHaveCount(0)
 })
@@ -67,13 +67,19 @@ test('a carried yield says how old it is', async ({ page }) => {
     dividend_basis: { ...BACKTEST.dividend_basis!, source: 'carried', age_days: 6 },
   })
   const section = await open(page)
-  await expect(section).toContainText('(carried 6 days)')
+  await expect(section).toContainText('(6 days old)')
+  // The yield was measured 6 days before the roll: its share basis and its
+  // close are that day's, and the page names it.
+  await expect(section.getByTestId('price-build-d')).toContainText(
+    "S is the as-traded close on 2025-03-30, the data's last day, 6 days before 2025-04-05",
+  )
+  await expect(section.locator('thead')).toContainText("On 2025-03-30’s basis")
 })
 
 test('the ranking says which rows priced at an unknown q = 0', async ({ page }) => {
   await page.goto('/')
   await page.getByRole('button', { name: /All 7 names/ }).click()
-  await expect(page.getByTestId('q-source-eem')).toHaveText('q = 0')
+  await expect(page.getByTestId('q-source-eem')).toHaveText('some at q = 0')
   await expect(page.getByTestId('q-source-spy')).toHaveText('measured')
 })
 
@@ -97,6 +103,8 @@ test('sums the split-adjusted dividends, not the cash paid', async ({ page }) =>
   await serveBacktest(page, { ...BACKTEST, dividend_basis: basis })
   const section = await open(page)
   await expect(section.getByTestId('price-build-formula')).toContainText('−ln(1 − 4.00 / 494.40)')
+  // The basis column shows the adjusted 1.0000, not the 4.0000 paid.
+  await expect(section.locator('tbody tr').first().locator('td').nth(1)).toHaveText('1.0000')
 })
 
 test('a short history states the scaling, so the arithmetic still closes', async ({ page }) => {
@@ -154,4 +162,22 @@ test('a floored premium says it is a floor, not a model price', async ({ page })
   })
   const section = await open(page)
   await expect(section.getByTestId('price-build-floored')).toContainText('a floor (spot × 0.0001), not a model price')
+})
+
+
+test('every displayed input reprices to the displayed premium, to the cent', async ({ page }) => {
+  // The section's promise: a reader can redo the price from what it shows. Read
+  // each input AS DISPLAYED (rounding included) and reprice.
+  const section = await open(page)
+  const value = async (term: string) =>
+    (await section.locator('dt', { hasText: term }).locator('xpath=following-sibling::dd[1]').innerText()).trim()
+  const num = (text: string) => Number(text.replace(/[^0-9.]/g, ''))
+  const spot = num(await value('Spot'))
+  const strike = num((await value('Strike')).split('(')[0]!)
+  const T = num((await value('Time')).split(' ')[0]!)
+  const r = num(await value('Rate r')) / 100
+  const sigma = num((await value('Volatility σ')).split(' ')[0]!) / 100
+  const q = num(await value('Dividend yield q')) / 100
+  const shown = num((await value('Premium')).split(' ')[0]!)
+  expect(Math.abs(bsPut(spot, strike, T, r, sigma, q) - shown)).toBeLessThan(0.01)
 })

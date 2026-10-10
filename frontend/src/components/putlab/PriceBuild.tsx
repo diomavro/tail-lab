@@ -17,12 +17,21 @@ const SOURCE_TEXT: Record<DividendSource, string> = {
   non_payer: 'a real zero: this name has never paid a dividend',
   suspended: 'a real zero: this name stopped paying (its last dividend is more than two periods old)',
   short_history: 'measured, but from fewer payments than a full year, scaled up to one',
-  carried: "measured, carried forward from the data's last day",
+  carried: "measured on the data's last day and carried forward",
   stale: "measured, but carried more than three weeks past the data's last day -- refresh Tiingo",
-  unknown: 'unknown: no dividend data for this name, so the roll was priced at q = 0',
+  unknown:
+    'unknown, so the roll was priced at q = 0: no dividend data for this name, a single dividend so far (no frequency to read), or a dividend the close cannot support',
 }
 
 const pct = (x: number, digits = 2) => `${(x * 100).toFixed(digits)}%`
+const days = (n: number) => `${n} day${n === 1 ? '' : 's'}`
+
+/** The session q was measured on: the requested date, less any carry. */
+function measuredOn(basis: DividendBasis): string {
+  const d = new Date(`${basis.date}T00:00:00Z`)
+  d.setUTCDate(d.getUTCDate() - basis.age_days)
+  return d.toISOString().slice(0, 10)
+}
 
 export function PriceBuild({ bt }: { bt: PutBacktestResponse }) {
   const last = bt.cycles[bt.cycles.length - 1]
@@ -51,12 +60,12 @@ export function PriceBuild({ bt }: { bt: PutBacktestResponse }) {
         <dt>Time</dt>
         <dd>{last.t_years == null ? 'to the listed expiry' : `${last.t_years.toFixed(4)} years (trading days / 252)`}</dd>
         <dt>Rate r</dt>
-        <dd>{pct(bt.rate)}</dd>
+        <dd>{pct(bt.rate, 3)}</dd>
         <dt>Volatility σ</dt>
-        <dd>{pct(last.sigma, 1)} (20-day realised)</dd>
+        <dd>{pct(last.sigma, 3)} (20-day realised)</dd>
         <dt>Dividend yield q</dt>
         <dd data-testid="price-build-q">
-          {bt.priced_from === 'market' ? 'not used: the premium is a real quote' : pct(last.q)}
+          {bt.priced_from === 'market' ? 'not used: the premium is a real quote' : pct(last.q, 3)}
         </dd>
         <dt>Premium</dt>
         <dd data-testid="price-build-premium">
@@ -90,7 +99,8 @@ export function PriceBuild({ bt }: { bt: PutBacktestResponse }) {
 function DividendDerivation({ basis }: { basis: DividendBasis }) {
   const total = basis.payments.reduce((s, p) => s + p.adjusted, 0)
   const scaled = basis.payments.length > 0 && basis.payments.length < basis.per_year
-  const carried = basis.age_days > 0 ? ` (carried ${basis.age_days} days)` : ''
+  const carried = basis.age_days > 0 ? ` (${days(basis.age_days)} old)` : ''
+  const on = measuredOn(basis)
   return (
     <div data-testid="price-build-dividends">
       <p>
@@ -113,11 +123,11 @@ function DividendDerivation({ basis }: { basis: DividendBasis }) {
             ) : (
               <>
                 D is the last {basis.per_year} dividends &mdash; this name pays {basis.per_year} a year &mdash; each on the
-                share basis of {basis.date}.
+                share basis of {on}.
               </>
             )}{' '}
-            A later split divides the cash paid; S is the as-traded close the yield was measured against
-            {basis.age_days > 0 ? ` (the data's last day, ${basis.age_days} days before ${basis.date})` : ''}.
+            A later split divides the cash paid; S is the as-traded close on {on}
+            {basis.age_days > 0 ? `, the data's last day, ${days(basis.age_days)} before ${basis.date}` : ''}.
           </p>
           <div className="pl-scroll">
             <table className="pl-table">
@@ -125,14 +135,16 @@ function DividendDerivation({ basis }: { basis: DividendBasis }) {
                 <tr>
                   <th>Ex-date</th>
                   <th className="num">Paid per share</th>
-                  <th className="num">On {basis.date}&rsquo;s basis</th>
+                  <th className="num">On {on}&rsquo;s basis</th>
                 </tr>
               </thead>
               <tbody>
                 {basis.payments.map((p) => (
                   <tr key={p.ex_date}>
                     {/* The date labels its row: a row header, not a figure cell. */}
-                    <th scope="row">{p.ex_date}</th>
+                    <th scope="row" className="pl-explain-rowhead">
+                      {p.ex_date}
+                    </th>
                     <td className="num">{p.cash.toFixed(4)}</td>
                     <td className="num">{p.adjusted.toFixed(4)}</td>
                   </tr>

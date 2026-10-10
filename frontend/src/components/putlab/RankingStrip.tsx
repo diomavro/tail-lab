@@ -158,8 +158,11 @@ export function RankingStrip({ ranked, currentAsset, onSelect, snapshotIds, code
                   </td>
                   <td className="num" data-testid={`q-source-${r.asset}`}>
                     {r.q_source === 'none' ? (
-                      <span className="pl-tag pl-tag-bad" title="Some rolls priced at q = 0: no dividend data">
-                        q = 0
+                      <span
+                        className="pl-tag pl-tag-bad"
+                        title="At least one roll priced at q = 0: no dividend data for it, a single dividend so far, or one the close cannot support"
+                      >
+                        some at q = 0
                       </span>
                     ) : r.q_source === 'measured' ? (
                       <span className="pl-tag pl-tag-mute">measured</span>

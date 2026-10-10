@@ -64,7 +64,9 @@ export const CYCLES: PutBacktestCycle[] = Array.from({ length: 12 }, (_, i) => {
     expiry_date: iso(START + (i * 108 + 28) * day),
     spot,
     strike,
-    sigma: Number((0.17 + i * 0.004).toFixed(4)),
+    // Roll 11's vol is solved so its 10.28 premium IS the Black-Scholes price of
+    // its displayed inputs (the Workspace prints them for a reader to check).
+    sigma: i === 11 ? 0.38245 : Number((0.17 + i * 0.004).toFixed(4)),
     // SPY's measured yield (~1.3%), read at each entry.
     q: 0.01307,
     q_source: 'measured',

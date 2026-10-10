@@ -32,6 +32,12 @@ FIXTURE = Path(__file__).parent / "fixtures" / "tiingo_prices_sample.json"
 DAY = dt.date(2026, 10, 10)
 
 
+@pytest.fixture(autouse=True)
+def _no_backoff(monkeypatch: pytest.MonkeyPatch) -> None:
+    # A retried fetch must never sleep the real 300 s in a test.
+    monkeypatch.setattr(tiingo_eod, "_FETCH_BACKOFF_S", 0.0)
+
+
 def _sample() -> list[dict[str, object]]:
     rows: list[dict[str, object]] = json.loads(FIXTURE.read_text())
     return rows
@@ -190,3 +196,55 @@ def test_a_boolean_cell_is_malformed_not_one() -> None:
     rows = _sample()
     rows[2]["divCash"] = True
     assert pd.isna(parse_tiingo_prices("nvda", rows).iloc[2]["div_cash"])
+
+
+def _response(status: int, body: bytes) -> requests.Response:
+    resp = requests.Response()
+    resp.status_code = status
+    resp._content = body
+    resp.url = "https://api.tiingo.com/tiingo/daily/spy/prices?token=SECRET"
+    return resp
+
+
+def test_the_getter_returns_the_parsed_payload(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(
+        tiingo_eod.requests,
+        "get",
+        lambda url, params, timeout: _response(200, FIXTURE.read_bytes()),
+    )
+    payload = tiingo_getter("SECRET", throttle_s=0.0, sleep=lambda s: None)("spy", {})
+    assert payload == _sample()
+
+
+def test_a_truncated_200_is_retried_like_any_blip(monkeypatch: pytest.MonkeyPatch) -> None:
+    # A half-sent body must not kill a 95-minute run on the first try: it is
+    # parsed inside the retried call, as every sibling adapter does.
+    bodies = [b'[{"date":"2020', b"<html>busy</html>", FIXTURE.read_bytes()]
+    monkeypatch.setattr(
+        tiingo_eod.requests, "get", lambda url, params, timeout: _response(200, bodies.pop(0))
+    )
+    payload = tiingo_getter("SECRET", throttle_s=0.0, sleep=lambda s: None)("spy", {})
+    assert payload == _sample()
+    assert bodies == []
+
+
+def test_an_empty_200_is_a_failed_fetch(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(
+        tiingo_eod.requests, "get", lambda url, params, timeout: _response(200, b"")
+    )
+    with pytest.raises(ValueError, match="empty 200 body"):
+        tiingo_getter("SECRET", throttle_s=0.0, sleep=lambda s: None)("spy", {})
+
+
+def test_the_run_log_counts_dividends_and_splits(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    caplog.set_level("INFO")
+    ingest_tiingo_eod(
+        DeltaLakeStore(tmp_path), ["nvda"], get=_fake({"nvda": _sample()}), ingest_date=DAY
+    )
+    line = next(
+        r.getMessage() for r in caplog.records if "event=ingest.tiingo_eod " in r.getMessage()
+    )
+    # The fixture holds one dividend (2024-06-11) and one 10:1 split (2024-06-10).
+    assert "dividend_rows=1" in line and "split_rows=1" in line

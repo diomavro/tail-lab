@@ -7,9 +7,9 @@ Documentation=file:///home/dio/Documents/apps/tail-lab/scripts/weekly_tiingo_ref
 # Routed to its own alert context: the chain's would overwrite a real chain
 # alert with a remedy that is wrong for this job (scripts/chain_sweep_alert.sh).
 OnFailure=tail-lab-alert@tiingo.service
-# Orders this after the chain units when both are queued together (After=
-# alone starts nothing); the Saturday schedule is what keeps them apart.
-After=tail-lab-chain.service tail-lab-chain-verify.service
+# The chain units, where installed, never run on Saturday; the schedule is what
+# keeps the two apart. (After= only orders jobs queued together and is a no-op
+# for a unit that does not exist, so it is not relied on.)
 
 [Service]
 Type=oneshot

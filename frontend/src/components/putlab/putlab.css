@@ -1187,6 +1187,17 @@
 }
 .pl-explain-inputs dt { color: var(--ink-70); }
 .pl-explain-inputs dd { margin: 0; color: var(--ink); font-variant-numeric: tabular-nums; }
+.pl-explain .pl-table th.pl-explain-rowhead {
+  /* A row header that reads like its row: a date, not a column title. */
+  font-size: 13px;
+  text-transform: none;
+  letter-spacing: 0;
+  color: var(--ink);
+  font-weight: 400;
+  border-bottom: 1px solid color-mix(in srgb, var(--ink) 8%, transparent);
+  padding: var(--space-2);
+  text-align: left;
+}
 .pl-explain-formula { font-size: 13.5px; color: var(--cyan-2); overflow-wrap: anywhere; }
 .is-narrow .pl-ladder-table { font-size: 12px; }
 

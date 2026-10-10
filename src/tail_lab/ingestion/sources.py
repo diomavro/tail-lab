@@ -220,7 +220,8 @@ def retry_transient[T](
     """Run ``call``, retrying only faults :func:`is_transient_fetch_error`
     accepts, sleeping ``backoff_s`` between attempts.
 
-    One implementation for every keyless fetch that can blip: the chain sweep
+    One implementation for every fetch that can blip (keyless or keyed --
+    the Tiingo getter uses it too): the chain sweep
     grew this first (a per-symbol Cboe 429 used to cost that symbol its whole
     session), and ``options_expiry`` hits the same endpoint with none of it.
     Each retry is logged as ``event`` with ``fields`` so a flaky source shows

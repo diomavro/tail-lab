@@ -119,14 +119,20 @@ def tiingo_getter(
     redacted from every error. Network -- used by ``make ingest-tiingo-eod``."""
     calls = 0
 
-    def call(symbol: str, params: Mapping[str, str]) -> requests.Response:
+    def call(symbol: str, params: Mapping[str, str]) -> object:
         resp = requests.get(
             TIINGO_PRICES_URL.format(symbol=symbol),
             params={**params, "token": api_key, "format": "json"},
             timeout=timeout,
         )
         resp.raise_for_status()
-        return resp
+        if not resp.content:
+            raise ValueError(f"Tiingo returned an empty 200 body for {symbol}")
+        # Parsed INSIDE the retried call: a truncated or HTML 200 raises
+        # requests' JSONDecodeError, which retry_transient treats as a blip --
+        # as every sibling adapter does -- rather than killing a 95-minute run.
+        payload: object = resp.json()
+        return payload
 
     def get(symbol: str, params: Mapping[str, str]) -> object:
         nonlocal calls
@@ -135,7 +141,7 @@ def tiingo_getter(
         calls += 1
         redacted: requests.exceptions.RequestException | None = None
         try:
-            resp = retry_transient(
+            payload = retry_transient(
                 lambda: call(symbol, params),
                 attempts=_FETCH_ATTEMPTS,
                 backoff_s=_FETCH_BACKOFF_S,
@@ -150,9 +156,6 @@ def tiingo_getter(
             redacted = type(exc)(f"{exc} {body}".strip().replace(api_key, "<redacted>"))
         if redacted is not None:
             raise redacted
-        if not resp.content:
-            raise ValueError(f"Tiingo returned an empty 200 body for {symbol}")
-        payload: object = resp.json()
         return payload
 
     return get

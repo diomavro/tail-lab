@@ -1063,7 +1063,7 @@ lake and snapshot id, built once per key even under concurrent requests):
   reconciling against bronze OHLCV, whose closes are split-adjusted as of
   their fetch date.
 * **Disclosed limits:** a cut lags up to `N` payments; Tiingo does not flag
-  specials, which inflate `q` for `N` payments; a frequency change biases `q`
+  specials; a frequency change biases `q`
   both ways for up to a year (TSM 2019-20); a special distorts `q` in either
   direction -- a large one inflates `D`, a small one displaces a regular payment
   and deflates it -- and depending on where it falls can raise `N` itself (a

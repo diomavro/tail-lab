@@ -204,7 +204,7 @@ export const CONCEPTS: Record<string, Concept> = {
     intuition:
       'A put is a claim on where the stock will be at expiry, and a stock that pays a dividend drops by it on the ex-date -- so a payer is expected to end lower than a non-payer with the same price and volatility, and its puts cost more. Until October 2026 this lab priced every name at q = 0, which under-priced puts on income names worst: scored against the exchange\'s own deltas, HYG was off by 0.197 and TLT by 0.060, against 0.004 for SPY. q is now read from each name\'s paid dividends (Tiingo): the last N payments at its own frequency, summed and divided by the close. It deliberately carries no forecast, so it lags a cut by up to N payments, a special dividend moves it for N payments (up if larger than a regular payment, down if smaller), and it misses a dividend falling inside a short put\'s life (a 21-day SPY put across an ex-date loses ~0.25% of spot to it, where q·T gives ~0.08%).',
     howToRead:
-      'Every roll says where its q came from. "measured" is the name\'s own payments; "non-payer" and "suspended" are real zeros; "carried" and "stale" are the last measured value held past the data\'s end; "unknown" means there was no dividend data and the roll was priced at q = 0 -- read those numbers as the old, cheap prices.',
+      'Every roll says where its q came from. "measured" is the name\'s own payments; "non-payer" and "suspended" are real zeros; "carried" and "stale" are the last measured value held past the data\'s end; "unknown" means q could not be read -- no dividend data, a single dividend so far, or one the close cannot support -- and the roll was priced at q = 0: read those numbers as the old, cheap prices.',
     seeAlso: ['model_priced', 'oom_put'],
   },
 
