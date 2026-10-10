@@ -16,7 +16,7 @@ every "regular vs special" heuristic discarding real raises (JPM 2011, NVDA
    starts fresh rather than averaging in decade-old dividends.
 2. **Frequency.** ``N`` is the run's MEAN gap over its payments in the last
    700 days (at least its last two), snapped to the nearest of 1, 2, 4 or 12
-   payments a year. The mean, not a median of recent gaps, because two extra
+   payments a year on a log scale (counts are multiplicative). The mean, not a median of recent gaps, because two extra
    payments in a quarterly payer's year halve the median and would snap to 12
    -- summing three years of dividends, then a false suspension. (A count of
    payments over 730 days failed the other way: an annual payer whose ex-date

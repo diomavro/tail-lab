@@ -587,3 +587,39 @@ def test_an_annual_payer_is_suspended_only_after_two_full_years() -> None:
     last = dt.date(2020, 5, 4)
     assert yields.at(last + dt.timedelta(days=730)).source == "measured"
     assert yields.at(last + dt.timedelta(days=731)).source == "suspended"
+
+
+def test_the_frequency_snaps_on_a_log_scale() -> None:
+    # A 125-day mean gap is 2.92 payments a year: nearer 4 than 2 by ratio
+    # (2.92/2 = 1.46 vs 4/2.92 = 1.37), nearer 2 by plain distance. Payment
+    # counts are multiplicative, so the ratio decides.
+    first = dt.date(2015, 1, 5)
+    ex = [(first + dt.timedelta(days=125 * i)) for i in range(12)]
+    ex = [d + dt.timedelta(days=(7 - d.weekday()) % 7) if d.weekday() > 4 else d for d in ex]
+    yields = DividendYields(
+        "x", _history("2015-01-02", "2019-12-31", 100.0, {d.isoformat(): 1.0 for d in ex})
+    )
+    assert yields.at(ex[-1] + dt.timedelta(days=3)).per_year == 4
+
+
+def test_a_lone_resumed_annual_payment_is_suspended_only_after_two_full_years() -> None:
+    # The lone-payment path's cut-off is strict too: day 730 still counts.
+    old = ["2010-05-03", "2011-05-03", "2012-05-03", "2013-05-03", "2014-05-05"]
+    divs = {**dict.fromkeys(old, 2.0), "2018-04-30": 2.0}
+    yields = DividendYields("x", _history("2010-01-04", "2021-12-31", 50.0, divs))
+    last = dt.date(2018, 4, 30)
+    assert yields.at(last + dt.timedelta(days=730)).source == "unknown"
+    assert yields.at(last + dt.timedelta(days=731)).source == "suspended"
+
+
+def test_a_pause_of_exactly_three_periods_continues_the_run() -> None:
+    # Gaps of 91 days, then exactly 273 (3 x 91): a new run starts only on a
+    # gap LONGER than 3 x P0, so this payer is still measured, not restarted.
+    first = dt.date(2015, 1, 5)  # a Monday; 91 days is 13 weeks, so every ex-date is a Monday
+    ex = [first + dt.timedelta(days=91 * i) for i in range(8)]
+    ex.append(ex[-1] + dt.timedelta(days=273))
+    yields = DividendYields(
+        "x", _history("2015-01-02", "2018-12-31", 100.0, {d.isoformat(): 0.5 for d in ex})
+    )
+    got = yields.at(ex[-1] + dt.timedelta(days=1))
+    assert got.source == "measured"
