@@ -53,8 +53,9 @@ semiannual payer with ONE reads ``N = 4`` for weeks of the following year
 (whenever the window holds three regular payments and the special), and an
 annual payer can read ``N = 2``. A carried ``short_history`` value is labelled ``carried``; its
 ``annual`` is still the scaled figure. And a trailing estimate misses a dividend inside a short put's
-life: a 21-day SPY put across an ex-date loses ~0.25% of spot to it, where
-``q·T`` gives ~0.08%.
+life: the stock drops a whole quarterly dividend (~0.3% of spot at q ~ 1.3%)
+inside a 21-day SPY put that spans an ex-date, while ``q·T`` (T = 21/252) prices
+in only ~0.1%.
 """
 
 from __future__ import annotations

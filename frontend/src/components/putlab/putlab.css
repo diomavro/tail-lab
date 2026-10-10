@@ -1314,3 +1314,6 @@
 .pl-arm-dd-track > span { display: block; height: 6px; background: var(--mag); }
 .pl-arm-dd-v { color: var(--mag-2); }
 
+/* The dividend derivation is a block of its own paragraphs: space them like
+   the section's direct children. */
+.pl-explain-stack > * + * { margin-top: var(--space-2); }

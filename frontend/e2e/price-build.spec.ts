@@ -1,6 +1,6 @@
 import { expect, test, type Page } from '@playwright/test'
 import type { PutBacktestResponse } from '../src/api/client'
-import { BACKTEST } from './fixtures/putlab'
+import { BACKTEST, LEADERBOARD } from './fixtures/putlab'
 import { mockPutLabApi } from './fixtures/mock-api'
 
 // "How the price is built": the latest roll taken apart, and the dividend yield
@@ -40,7 +40,7 @@ test('redoes q from the payments: -ln(1 - D / S)', async ({ page }) => {
   const section = await open(page)
   // 1.60 + 1.75 + 1.53 + 1.54 = 6.42 against the roll's 494.40 close.
   await expect(section.getByTestId('price-build-formula')).toHaveText(
-    'q = −ln(1 − D / S) = −ln(1 − 6.42 / 494.40) = 1.307%',
+    'q = −ln(1 − D / S) = −ln(1 − 6.4200 / 494.4000) = 1.307%',
   )
   await expect(section.locator('tbody tr')).toHaveCount(4)
   await expect(section.locator('tbody th')).toHaveText(['2024-06-21', '2024-09-20', '2024-12-20', '2025-03-21'])
@@ -80,7 +80,26 @@ test('the ranking says which rows priced at an unknown q = 0', async ({ page }) 
   await page.goto('/')
   await page.getByRole('button', { name: /All 7 names/ }).click()
   await expect(page.getByTestId('q-source-eem')).toHaveText('q = 0 rolls')
+  // ...in the warning style, not the muted one a measured row wears.
+  await expect(page.getByTestId('q-source-eem').locator('span')).toHaveClass(/pl-tag-bad/)
   await expect(page.getByTestId('q-source-spy')).toHaveText('measured')
+})
+
+test('a ranking row with no dividend basis (a real-quote run) says nothing about q', async ({ page }) => {
+  await page.route(
+    (url) => url.pathname === '/api/putlab/leaderboard',
+    (route) =>
+      route.fulfill({
+        contentType: 'application/json',
+        body: JSON.stringify({
+          ...LEADERBOARD,
+          ranked: LEADERBOARD.ranked.map((r) => (r.asset === 'spy' ? { ...r, q_source: null } : r)),
+        }),
+      }),
+  )
+  await page.goto('/')
+  await page.getByRole('button', { name: /All 7 names/ }).click()
+  await expect(page.getByTestId('q-source-spy')).toHaveText('—')
 })
 
 test('prints the time the premium was priced with: trading days / 252', async ({ page }) => {
@@ -102,7 +121,7 @@ test('sums the split-adjusted dividends, not the cash paid', async ({ page }) =>
   }
   await serveBacktest(page, { ...BACKTEST, dividend_basis: basis })
   const section = await open(page)
-  await expect(section.getByTestId('price-build-formula')).toContainText('−ln(1 − 4.00 / 494.40)')
+  await expect(section.getByTestId('price-build-formula')).toContainText('−ln(1 − 4.0000 / 494.4000)')
   // The basis column shows the adjusted 1.0000, not the 4.0000 paid.
   await expect(section.locator('tbody tr').first().locator('td').nth(1)).toHaveText('1.0000')
 })
@@ -117,7 +136,7 @@ test('a short history states the scaling, so the arithmetic still closes', async
   }
   await serveBacktest(page, { ...BACKTEST, dividend_basis: basis })
   const section = await open(page)
-  await expect(section.getByTestId('price-build-formula')).toContainText('−ln(1 − 6.40 / 494.40)')
+  await expect(section.getByTestId('price-build-formula')).toContainText('−ln(1 − 6.4000 / 494.4000)')
   await expect(section.getByTestId('price-build-d')).toContainText('sum to 3.20, scaled by 4/2')
 })
 
@@ -209,25 +228,64 @@ test('an unknown q names every reason it can be unknown', async ({ page }) => {
   await expect(why).toContainText('a dividend the close cannot support')
 })
 
-test('the dividend table is legible: dates read as dates, headers meet AA', async ({ page }) => {
-  const section = await open(page)
-  const rowhead = section.locator('tbody th').first()
-  await expect(rowhead).toHaveCSS('text-transform', 'none')
-  await expect(rowhead).toHaveCSS('font-size', '13px')
-  const contrast = await section.locator('thead th').first().evaluate((el) => {
-    const rgb = (c: string) => (c.match(/[\d.]+/g) ?? []).slice(0, 3).map(Number)
-    const lum = ([r, g, b]: number[]) => {
-      const f = (v: number) => ((v /= 255) <= 0.03928 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4)
-      return 0.2126 * f(r!) + 0.7152 * f(g!) + 0.0722 * f(b!)
+for (const sheet of ['paper', 'plate'] as const) {
+  test(`the dividend table is legible on the ${sheet} sheet: dates read as dates, every cell meets AA`, async ({
+    page,
+  }) => {
+    await page.addInitScript((s) => localStorage.setItem('putlab.sheet', s), sheet)
+    const section = await open(page)
+    await expect(page.locator('.putlab-root')).toHaveAttribute('data-theme', sheet)
+    const rowhead = section.locator('tbody th').first()
+    const cell = section.locator('tbody td').first()
+    await expect(rowhead).toHaveCSS('text-transform', 'none')
+    await expect(rowhead).toHaveCSS('font-size', '13px')
+    await expect(rowhead).toHaveCSS('font-weight', '400')
+    for (const target of [section.locator('thead th').first(), rowhead, cell]) {
+      const contrast = await target.evaluate((el) => {
+        const rgb = (c: string) => (c.match(/[\d.]+/g) ?? []).slice(0, 3).map(Number)
+        const lum = ([r, g, b]: number[]) => {
+          const f = (v: number) => ((v /= 255) <= 0.03928 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4)
+          return 0.2126 * f(r!) + 0.7152 * f(g!) + 0.0722 * f(b!)
+        }
+        let bg: Element | null = el
+        let back = 'rgba(0, 0, 0, 0)'
+        while (bg && (back === 'rgba(0, 0, 0, 0)' || back === 'transparent')) {
+          back = getComputedStyle(bg).backgroundColor
+          bg = bg.parentElement
+        }
+        const [a, b] = [lum(rgb(getComputedStyle(el).color)), lum(rgb(back))]
+        return (Math.max(a, b) + 0.05) / (Math.min(a, b) + 0.05)
+      })
+      expect(contrast).toBeGreaterThanOrEqual(4.5)
     }
-    let bg: Element | null = el
-    let back = 'rgba(0, 0, 0, 0)'
-    while (bg && (back === 'rgba(0, 0, 0, 0)' || back === 'transparent')) {
-      back = getComputedStyle(bg).backgroundColor
-      bg = bg.parentElement
-    }
-    const [a, b] = [lum(rgb(getComputedStyle(el).color)), lum(rgb(back))]
-    return (Math.max(a, b) + 0.05) / (Math.min(a, b) + 0.05)
   })
-  expect(contrast).toBeGreaterThanOrEqual(4.5)
+}
+
+test('a real zero is not the unknown zero: no under-pricing warning, and each says why', async ({ page }) => {
+  for (const [source, why] of [
+    ['non_payer', 'never paid a dividend'],
+    ['suspended', 'stopped paying (its last dividend is more than two periods old)'],
+  ] as const) {
+    await serveBacktest(page, {
+      ...BACKTEST,
+      dividend_basis: { ...BACKTEST.dividend_basis!, q: 0, source, payments: [], close: null },
+    })
+    const section = await open(page)
+    await expect(section.getByTestId('price-build-dividends')).toContainText(why)
+    await expect(section.getByTestId('price-build-unknown')).toHaveCount(0)
+  }
+})
+
+test('a stale yield says how to refresh it; a current one claims no age', async ({ page }) => {
+  await serveBacktest(page, {
+    ...BACKTEST,
+    dividend_basis: { ...BACKTEST.dividend_basis!, source: 'stale', age_days: 30 },
+  })
+  let section = await open(page)
+  await expect(section.getByTestId('price-build-dividends')).toContainText(
+    "carried more than three weeks past the data's last day -- refresh Tiingo (30 days old)",
+  )
+  await serveBacktest(page, BACKTEST)
+  section = await open(page)
+  await expect(section.getByTestId('price-build-dividends')).not.toContainText('old)')
 })

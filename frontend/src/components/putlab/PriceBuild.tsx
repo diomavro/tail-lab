@@ -83,9 +83,9 @@ export function PriceBuild({ bt }: { bt: PutBacktestResponse }) {
       <p className="pl-caveat">
         What a trailing yield cannot see: a cut shows up only as the next payments arrive (up to a year late), a
         special dividend moves q for up to a year &mdash; up if it is larger than a regular payment, down if smaller
-        &mdash; and a dividend falling inside a short put&rsquo;s life is spread
-        across the year &mdash; a 21-day SPY put across an ex-date loses a whole quarterly dividend (~0.3% of spot at q &asymp; 1.3%),
-        where q&middot;T, with T = 21/252, charges ~0.1%.
+        &mdash; and a dividend falling inside a short put&rsquo;s life is spread across the year: the stock drops by a
+        whole quarterly dividend (~0.3% of spot at q &asymp; 1.3%) inside a 21-day SPY put that spans an ex-date, while
+        q&middot;T, with T = 21/252, prices in only ~0.1% of it &mdash; so that put is under-priced.
       </p>
       <p className="pl-note">
         Next: the strike itself is a fixed distance below spot here, which reaches very different deltas in calm and
@@ -102,7 +102,7 @@ function DividendDerivation({ basis }: { basis: DividendBasis }) {
   const carried = basis.age_days > 0 ? ` (${days(basis.age_days)} old)` : ''
   const on = measuredOn(basis)
   return (
-    <div data-testid="price-build-dividends">
+    <div data-testid="price-build-dividends" className="pl-explain-stack">
       <p>
         <strong>Where q comes from:</strong> {SOURCE_TEXT[basis.source]}
         {carried}.
@@ -110,7 +110,9 @@ function DividendDerivation({ basis }: { basis: DividendBasis }) {
       {basis.payments.length > 0 && basis.close != null && (
         <>
           <p className="pl-explain-formula" data-testid="price-build-formula">
-            q = &minus;ln(1 &minus; D / S) = &minus;ln(1 &minus; {basis.annual.toFixed(2)} / {basis.close.toFixed(2)}) ={' '}
+            {/* D and S to 4 decimals, like the payments: q is shown to 3, and a
+                rounded D could not reproduce it (HYG: 4.68 vs 4.6789). */}
+            q = &minus;ln(1 &minus; D / S) = &minus;ln(1 &minus; {basis.annual.toFixed(4)} / {basis.close.toFixed(4)}) ={' '}
             {pct(basis.q, 3)}
           </p>
           <p data-testid="price-build-d">
