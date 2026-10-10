@@ -169,3 +169,25 @@ def test_gap_is_implied_minus_realised_when_both_exist() -> None:
         None,
         "no accepted implied alpha at the first anchor",
     )
+
+
+@pytest.mark.parametrize(
+    ("source", "says"),
+    [
+        ("measured", "from its paid dividends"),
+        ("short_history", "scaled up"),
+        ("carried", "carried from the data's last day"),
+        ("stale", "Tiingo needs a refresh"),
+        ("non_payer", "never paid a dividend"),
+        ("suspended", "stopped paying"),
+    ],
+)
+def test_the_q_note_says_where_q_came_from_in_words(source: str, says: str) -> None:
+    # A reader sees this sentence under the Surface: a raw label ("non_payer")
+    # is jargon, and "from its paid dividends" is false for a zero.
+    from tail_lab.research.surface.reading import rate_note_for
+
+    note = rate_note_for(source)
+    assert says in note and f"({source})" not in note and "_" not in note.split(";")[0]
+    if source in ("non_payer", "suspended"):
+        assert "paid dividends" not in note

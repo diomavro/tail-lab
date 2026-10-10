@@ -623,3 +623,34 @@ def test_a_pause_of_exactly_three_periods_continues_the_run() -> None:
     )
     got = yields.at(ex[-1] + dt.timedelta(days=1))
     assert got.source == "measured"
+
+
+def test_a_change_of_frequency_is_read_over_a_700_day_window() -> None:
+    # Quarterly until 2015-09-28, semiannual after. A year into the new
+    # schedule the 700-day window still holds the quarterly tail and reads 4;
+    # the docstring's window is the rule, so a 600-day one (reading 2) is not.
+    start = dt.date(2012, 1, 2)  # a Monday; 91 and 182 days keep every ex-date a Monday
+    ex = [start + dt.timedelta(days=91 * i) for i in range(16)]
+    ex += [ex[-1] + dt.timedelta(days=182 * i) for i in range(1, 6)]
+    yields = DividendYields(
+        "x", _history("2012-01-02", "2018-12-31", 100.0, {d.isoformat(): 0.5 for d in ex})
+    )
+    assert yields.at(dt.date(2016, 10, 3)).per_year == 4
+
+
+def test_a_run_with_one_payment_in_the_window_reads_its_last_two() -> None:
+    # Semiannual (182 days) then a 329-day gap, read 372 days after the last
+    # payment: only one payment sits in the window, so the frequency comes
+    # from the last TWO (329 days -> 1 a year) -- measured, not suspended.
+    first = dt.date(2012, 1, 2)
+    ex = [first + dt.timedelta(days=182 * i) for i in range(6)]
+    ex.append(ex[-1] + dt.timedelta(days=329))
+    ex = [d + dt.timedelta(days=(7 - d.weekday()) % 7) if d.weekday() > 4 else d for d in ex]
+    last = ex[-1]
+    day = last + dt.timedelta(days=372)
+    day = day + dt.timedelta(days=(7 - day.weekday()) % 7) if day.weekday() > 4 else day
+    yields = DividendYields(
+        "x", _history("2012-01-02", "2017-12-29", 100.0, {d.isoformat(): 0.5 for d in ex})
+    )
+    got = yields.at(day)
+    assert (got.source, got.per_year) == ("measured", 1)

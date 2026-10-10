@@ -44,6 +44,17 @@ LOG_BASIS_NOTE: Final = "dismissed -- docs/adr/0026 §5: log returns are not in 
 _Q_DEPENDS: Final = "anchor_iv, lambda_guard_ok and the Black-Scholes overlay depend on it"
 
 
+#: Each measured source in a reader's words -- never the raw label.
+_Q_SOURCE_WORDS = {
+    "measured": "this name's own dividend yield, from its paid dividends",
+    "short_history": "this name's own dividend yield, from fewer payments than a year, scaled up",
+    "carried": "this name's own dividend yield, carried from the data's last day",
+    "stale": "this name's own dividend yield, carried over three weeks -- Tiingo needs a refresh",
+    "non_payer": "zero: this name has never paid a dividend",
+    "suspended": "zero: this name has stopped paying dividends",
+}
+
+
 def rate_note_for(q_source: str) -> str:
     """What the reader must know about ``q`` for this reading.
 
@@ -57,7 +68,7 @@ def rate_note_for(q_source: str) -> str:
             "q is an assumed index-like dividend yield (no measured dividends for this name) "
             f"and is WRONG for income names (HYG, TLT); {_Q_DEPENDS}"
         )
-    return f"q is this name's own dividend yield from its paid dividends ({q_source}); {_Q_DEPENDS}"
+    return f"q is {_Q_SOURCE_WORDS.get(q_source, q_source)}; {_Q_DEPENDS}"
 
 
 @dataclass(frozen=True)

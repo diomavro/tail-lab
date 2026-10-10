@@ -47,16 +47,26 @@ export function PriceBuild({ bt }: { bt: PutBacktestResponse }) {
   if (!last) return null
   const basis = bt.dividend_basis
   const moneyness = 1 - last.strike / last.spot
+  // A market run's premium is a listed ask: nothing below is a model price.
+  const market = bt.priced_from === 'market'
   return (
     <details className="pl-explain" data-testid="price-build">
       <summary>How the price is built</summary>
-      <p>
-        Every roll is priced as a Black&ndash;Scholes put with five inputs: the spot, the strike, the time to expiry,
+      {market ? (
+        <p data-testid="price-build-market">
+          Every premium in this run is a real listed ask, not a model price: the spot, strike and expiry below say
+          which contract, and the volatility is shown only for comparison. No dividend yield enters &mdash; the
+          market&rsquo;s price already carries it. The latest roll:
+        </p>
+      ) : (
+        <p>
+          Every roll is priced as a Black&ndash;Scholes put with five inputs: the spot, the strike, the time to expiry,
         a flat rate, and a volatility &mdash; plus the name&rsquo;s <strong>dividend yield q</strong>
         <ConceptInfo id="dividend_yield" />. The volatility is the trailing 20-day realised volatility, an
         implied-vol stand-in clamped to 6&ndash;200%
         <ConceptInfo id="model_priced" />. The latest roll, as priced:
-      </p>
+        </p>
+      )}
       <dl className="pl-explain-inputs" data-testid="price-build-inputs">
         <dt>Entry</dt>
         <dd>{last.entry_date}</dd>
@@ -89,7 +99,8 @@ export function PriceBuild({ bt }: { bt: PutBacktestResponse }) {
         </dd>
       </dl>
       {basis && <DividendDerivation basis={basis} />}
-      <p className="pl-caveat">
+      {!market && (
+        <p className="pl-caveat">
         What a trailing yield cannot see: a cut shows up only as the next payments arrive (up to a year late), a
         special dividend moves q for up to a year &mdash; up if it is larger than a regular payment, down if smaller
         &mdash; and a dividend falling inside a short put&rsquo;s life is spread across the year: the stock drops by a
@@ -98,11 +109,13 @@ export function PriceBuild({ bt }: { bt: PutBacktestResponse }) {
         expects the stock ~0.2% of spot too high and is under-priced, while each of the two in three that span no
         ex-date expects it ~0.1% too low and is over-priced &mdash; the premium errors are those shifts times the
         put&rsquo;s delta. Across a year of rolls it nets out; roll by roll it does not.
-      </p>
+        </p>
+      )}
       <p className="pl-note">
         Next: the strike itself is a fixed distance below spot here, which reaches very different deltas in calm and
         crisis. Whether any of this earns a place in a portfolio is the Book&rsquo;s question &mdash; and there only
-        Cboe&rsquo;s real-quote programs count as evidence, never a model-priced backtest like this one (ADR 0027).
+        Cboe&rsquo;s real-quote programs count as evidence
+        {market ? '' : ', never a model-priced backtest like this one'} (ADR 0027).
       </p>
     </details>
   )
