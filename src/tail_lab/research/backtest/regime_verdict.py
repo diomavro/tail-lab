@@ -28,6 +28,7 @@ from tail_lab.contracts.hypothesis import (
 from tail_lab.contracts.regime import REGIME_LABELS, RegimeLabel
 from tail_lab.lake.store import LakeStore
 from tail_lab.research.backtest.put_roll import PutRollCycle, compute_put_backtest
+from tail_lab.research.backtest.strike_rule import ByMoneyness, StrikeRule
 from tail_lab.research.regimes.timeline import compute_regime_timeline, regime_on_or_before
 
 
@@ -49,8 +50,10 @@ class RegimeVerdict(BaseModel):
     as_of: dt.date
     #: The spec this verdict's outcomes are recorded under -- carried so the
     #: memory recorder stores exactly this, never a second spec built apart.
-    rule_spec: RuleSpec
-    rule_hash: str
+    #: ``None`` under a delta strike rule: hypothesis memory records moneyness
+    #: rules only (docs/adr/0029), so a delta verdict has no stored identity.
+    rule_spec: RuleSpec | None
+    rule_hash: str | None
     #: The ``tiingo_eod`` snapshot the backtest priced from -- carried so the
     #: recorder cites the one it used, never a re-read that a weekly ingest
     #: landing mid-request could change.
@@ -122,7 +125,7 @@ def compute_regime_verdict(
     asset: str,
     as_of: dt.date,
     notional: float,
-    moneyness_pct: float,
+    rule: StrikeRule,
     tenor_weeks: float,
     years: float,
 ) -> RegimeVerdict:
@@ -134,24 +137,28 @@ def compute_regime_verdict(
         asset=asset,
         as_of=as_of,
         notional=notional,
-        moneyness_pct=moneyness_pct,
+        rule=rule,
         tenor_weeks=tenor_weeks,
         lookback_years=years,
     )
     timeline = compute_regime_timeline(store, as_of=as_of)
     slices, verdict = regime_breakdown(result.cycles, timeline)
-    spec = rule_spec_for(
-        asset=asset,
-        moneyness_pct=moneyness_pct,
-        tenor_weeks=tenor_weeks,
-        years=years,
-        q_source=result.q_source,
+    spec = (
+        rule_spec_for(
+            asset=asset,
+            moneyness_pct=rule.pct,
+            tenor_weeks=tenor_weeks,
+            years=years,
+            q_source=result.q_source,
+        )
+        if isinstance(rule, ByMoneyness)
+        else None
     )
     return RegimeVerdict(
         asset=asset,
         as_of=as_of,
         rule_spec=spec,
-        rule_hash=spec.rule_hash(),
+        rule_hash=None if spec is None else spec.rule_hash(),
         dividend_snapshot=result.dividend_snapshot,
         verdict=verdict,
         slices=slices,

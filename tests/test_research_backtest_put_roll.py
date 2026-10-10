@@ -36,6 +36,7 @@ from tail_lab.research.backtest.put_roll import (
     trailing_realized_vol,
 )
 from tail_lab.research.backtest.sizing import FixedPremium, WealthFraction
+from tail_lab.research.backtest.strike_rule import ByMoneyness, put_delta
 from tail_lab.research.option_pricer import BlackScholesPricer
 
 
@@ -65,7 +66,7 @@ def test_run_put_roll_pins_arithmetic_against_the_pricer() -> None:
         asset="TEST",
         as_of=dt.date(2021, 6, 1),
         notional=notional,
-        moneyness_pct=moneyness,
+        rule=ByMoneyness(moneyness),
         tenor_weeks=tenor_w,
         lookback_years=10,
     )
@@ -139,7 +140,7 @@ def test_costs_strictly_reduce_net_pnl_and_roi() -> None:
         asset="T",
         as_of=dt.date(2021, 6, 1),
         notional=1000.0,
-        moneyness_pct=8.0,
+        rule=ByMoneyness(8.0),
         tenor_weeks=4.0,
         lookback_years=10,
     )
@@ -170,7 +171,7 @@ def test_less_frequent_tenor_bleeds_less_to_brokerage() -> None:
         np.full(n, 500.0), index=pd.date_range("2016-01-01", periods=n, freq="B"), name="T"
     )
     realized_vol = pd.Series(np.full(n, 0.18), index=prices.index)
-    common = dict(asset="T", as_of=dt.date(2020, 1, 1), notional=1000.0, moneyness_pct=5.0)
+    common = dict(asset="T", as_of=dt.date(2020, 1, 1), notional=1000.0, rule=ByMoneyness(5.0))
     years = 4.0
     weekly = run_put_roll(prices, realized_vol, tenor_weeks=1.0, lookback_years=years, **common)  # type: ignore[arg-type]
     quarterly = run_put_roll(prices, realized_vol, tenor_weeks=12.0, lookback_years=years, **common)  # type: ignore[arg-type]
@@ -257,7 +258,7 @@ def test_run_put_roll_threads_annualized_so_far_and_sharpe() -> None:
         asset="T",
         as_of=dt.date(2021, 6, 1),
         notional=notional,
-        moneyness_pct=5.0,
+        rule=ByMoneyness(5.0),
         tenor_weeks=tenor_w,
         lookback_years=years,
     )
@@ -307,7 +308,7 @@ def test_price_path_spans_the_traded_window() -> None:
         asset="T",
         as_of=dt.date(2021, 6, 1),
         notional=1000.0,
-        moneyness_pct=5.0,
+        rule=ByMoneyness(5.0),
         tenor_weeks=8.0,
         lookback_years=10,
     )
@@ -330,7 +331,7 @@ def test_mtm_curve_spans_price_path_and_shares_dates() -> None:
         asset="T",
         as_of=dt.date(2021, 6, 1),
         notional=1000.0,
-        moneyness_pct=5.0,
+        rule=ByMoneyness(5.0),
         tenor_weeks=8.0,
         lookback_years=10,
     )
@@ -355,7 +356,7 @@ def test_mtm_curve_converges_to_realized_equity_at_every_expiry() -> None:
         asset="T",
         as_of=dt.date(2021, 6, 1),
         notional=1000.0,
-        moneyness_pct=5.0,
+        rule=ByMoneyness(5.0),
         tenor_weeks=8.0,
         lookback_years=10,
     )
@@ -388,7 +389,7 @@ def test_mtm_curve_moves_intra_cycle_on_a_sharp_drop() -> None:
         asset="T",
         as_of=dt.date(2021, 6, 1),
         notional=1000.0,
-        moneyness_pct=5.0,
+        rule=ByMoneyness(5.0),
         tenor_weeks=4.0,
         lookback_years=10,
     )
@@ -408,7 +409,7 @@ def test_sigma_is_the_positive_realized_vol_proxy_used_at_entry() -> None:
         asset="T",
         as_of=dt.date(2021, 6, 1),
         notional=1000.0,
-        moneyness_pct=5.0,
+        rule=ByMoneyness(5.0),
         tenor_weeks=8.0,
         lookback_years=10,
     )
@@ -426,8 +427,8 @@ def test_deeper_oom_is_cheaper_per_cycle() -> None:
     common = dict(
         asset="T", as_of=dt.date(2021, 6, 1), notional=1000.0, tenor_weeks=8.0, lookback_years=10
     )
-    near = run_put_roll(prices, realized_vol, moneyness_pct=3.0, **common)
-    far = run_put_roll(prices, realized_vol, moneyness_pct=12.0, **common)
+    near = run_put_roll(prices, realized_vol, rule=ByMoneyness(3.0), **common)
+    far = run_put_roll(prices, realized_vol, rule=ByMoneyness(12.0), **common)
     assert far.cycles[0].premium < near.cycles[0].premium
     assert far.cycles[0].contracts > near.cycles[0].contracts
 
@@ -444,7 +445,7 @@ def test_non_finite_realized_vol_entry_is_skipped_not_priced() -> None:
         asset="T",
         as_of=dt.date(2021, 6, 1),
         notional=1000.0,
-        moneyness_pct=5.0,
+        rule=ByMoneyness(5.0),
         tenor_weeks=8.0,
         lookback_years=10,
     )
@@ -458,14 +459,15 @@ def test_run_put_roll_validates_inputs() -> None:
         asset="T",
         as_of=dt.date(2021, 6, 1),
         notional=1000.0,
-        moneyness_pct=5.0,
+        rule=ByMoneyness(5.0),
         tenor_weeks=4.0,
         lookback_years=10,
     )
     with pytest.raises(ValueError, match="same date index"):
         run_put_roll(prices, realized_vol.iloc[:-1], **ok)  # type: ignore[arg-type]
-    with pytest.raises(ValueError, match="moneyness_pct"):
-        run_put_roll(prices, realized_vol, **{**ok, "moneyness_pct": 0.0})  # type: ignore[arg-type]
+    # The rule validates its own parameter: an impossible moneyness never reaches the roll.
+    with pytest.raises(ValueError, match="moneyness"):
+        run_put_roll(prices, realized_vol, **{**ok, "rule": ByMoneyness(0.0)})  # type: ignore[arg-type]
 
 
 def test_run_put_roll_raises_when_window_too_short() -> None:
@@ -478,7 +480,7 @@ def test_run_put_roll_raises_when_window_too_short() -> None:
             asset="T",
             as_of=dt.date(2021, 6, 1),
             notional=1000.0,
-            moneyness_pct=5.0,
+            rule=ByMoneyness(5.0),
             tenor_weeks=8.0,
             lookback_years=10,
         )
@@ -533,7 +535,9 @@ def test_compute_put_backtest_respects_no_look_ahead(tmp_path: Path) -> None:
     closes1 = np.clip(closes1, 20, None)
     _write_ohlcv(store, day1, closes1)
 
-    kw = dict(asset="spy", notional=1000.0, moneyness_pct=5.0, tenor_weeks=4.0, lookback_years=10)
+    kw = dict(
+        asset="spy", notional=1000.0, rule=ByMoneyness(5.0), tenor_weeks=4.0, lookback_years=10
+    )
     res1 = compute_put_backtest(store, as_of=day1, **kw)  # type: ignore[arg-type]
 
     # A later snapshot with entirely different prices must not change the day1 read.
@@ -557,7 +561,7 @@ def test_compute_put_backtest_sizing_mode_overrides_notional(tmp_path: Path) -> 
     closes = np.clip(100 + np.cumsum(rng.normal(0, 1.2, size=80)), 20, None)
     _write_ohlcv(store, day1, closes)
 
-    kw = dict(asset="spy", as_of=day1, moneyness_pct=5.0, tenor_weeks=4.0, lookback_years=10)
+    kw = dict(asset="spy", as_of=day1, rule=ByMoneyness(5.0), tenor_weeks=4.0, lookback_years=10)
     plain = compute_put_backtest(store, notional=2000.0, **kw)  # type: ignore[arg-type]
     via_fixed = compute_put_backtest(store, notional=1.0, sizing_mode=FixedPremium(2000.0), **kw)  # type: ignore[arg-type]
     assert via_fixed.model_dump() == plain.model_dump()
@@ -597,7 +601,7 @@ def test_compute_put_backtest_time_average_growth_matches_the_pure_function(
     rng = np.random.default_rng(3)
     closes = np.clip(100 + np.cumsum(rng.normal(0, 1.2, size=80)), 20, None)
     _write_ohlcv(store, day1, closes)
-    kw = dict(asset="spy", as_of=day1, moneyness_pct=5.0, tenor_weeks=4.0, lookback_years=10)
+    kw = dict(asset="spy", as_of=day1, rule=ByMoneyness(5.0), tenor_weeks=4.0, lookback_years=10)
 
     for wealth in (200_000.0, 4_000.0):
         result = compute_put_backtest(
@@ -619,7 +623,7 @@ def test_compute_put_backtest_missing_symbol_raises(tmp_path: Path) -> None:
             asset="nope",
             as_of=dt.date(2026, 3, 1),
             notional=1000.0,
-            moneyness_pct=5.0,
+            rule=ByMoneyness(5.0),
             tenor_weeks=4.0,
             lookback_years=10,
         )
@@ -717,7 +721,7 @@ def test_compute_put_backtest_merges_dividends_into_the_callers_basis(tmp_path: 
         asset="spy",
         as_of=day,
         notional=1000.0,
-        moneyness_pct=5.0,
+        rule=ByMoneyness(5.0),
         tenor_weeks=4.0,
         lookback_years=1.0,
         basis=PricingBasis(pricer=_Recording()),
@@ -741,7 +745,7 @@ def test_each_roll_reports_the_time_it_was_priced_with() -> None:
         asset="spy",
         as_of=idx[-1].date(),
         notional=1000.0,
-        moneyness_pct=10.0,
+        rule=ByMoneyness(10.0),
         tenor_weeks=4.0,
         lookback_years=1.0,
     )
@@ -772,7 +776,7 @@ def test_a_floored_premium_says_so() -> None:
         asset="spy",
         as_of=idx[-1].date(),
         notional=1000.0,
-        moneyness_pct=30.0,
+        rule=ByMoneyness(30.0),
         tenor_weeks=4.0,
         lookback_years=1.0,
     )
@@ -784,8 +788,163 @@ def test_a_floored_premium_says_so() -> None:
         asset="spy",
         as_of=idx[-1].date(),
         notional=1000.0,
-        moneyness_pct=1.0,
+        rule=ByMoneyness(1.0),
         tenor_weeks=4.0,
         lookback_years=1.0,
     )
     assert not any(c.premium_floored for c in shallow.cycles)
+
+
+# ---------- strike rule: by delta ----------
+
+
+def _calm_then_wild(n: int = 500) -> tuple[pd.Series, pd.Series]:
+    idx = pd.bdate_range("2023-01-02", periods=n)
+    rng = np.random.default_rng(4)
+    vol = np.where(np.arange(n) < n // 2, 0.006, 0.03)  # daily: calm, then a crisis
+    prices = pd.Series(100 * np.exp(np.cumsum(rng.normal(0, vol))), index=idx)
+    return prices, trailing_realized_vol(prices)
+
+
+def test_a_delta_rule_lands_every_roll_on_its_target_and_lets_the_distance_move() -> None:
+    # The confound a delta rule removes: at a fixed distance below spot the
+    # delta swings with vol; at a fixed delta the distance does instead.
+    from tail_lab.research.backtest.strike_rule import ByDelta
+
+    prices, rv = _calm_then_wild()
+    kw = dict(
+        asset="spy",
+        as_of=prices.index[-1].date(),
+        notional=1000.0,
+        tenor_weeks=4.0,
+        lookback_years=2.0,
+    )
+    by_delta = run_put_roll(prices, rv, rule=ByDelta(0.10), **kw)  # type: ignore[arg-type]
+    by_pct = run_put_roll(prices, rv, rule=ByMoneyness(5.0), **kw)  # type: ignore[arg-type]
+    assert all(c.entry_delta == pytest.approx(-0.10, abs=1e-9) for c in by_delta.cycles)
+    distances = [c.entry_moneyness_pct for c in by_delta.cycles]
+    assert max(distances) > 2 * min(distances)  # deeper in the crisis half
+    assert all(c.entry_moneyness_pct == pytest.approx(5.0) for c in by_pct.cycles)
+    deltas = [c.entry_delta for c in by_pct.cycles]
+    assert max(deltas) - min(deltas) > 0.05  # the same 5% is a different option by regime
+    assert (by_delta.strike_rule, by_delta.target_delta, by_delta.moneyness_pct) == (
+        "delta",
+        0.10,
+        None,
+    )
+    assert (by_pct.strike_rule, by_pct.target_delta, by_pct.moneyness_pct) == (
+        "moneyness",
+        None,
+        5.0,
+    )
+
+
+def test_rolls_deeper_than_the_model_can_price_are_counted() -> None:
+    from tail_lab.research.backtest.strike_rule import ByDelta
+
+    prices, rv = _calm_then_wild()
+    kw = dict(
+        asset="spy",
+        as_of=prices.index[-1].date(),
+        notional=1000.0,
+        tenor_weeks=12.0,
+        lookback_years=2.0,
+    )
+    deep = run_put_roll(prices, rv, rule=ByDelta(0.02), **kw)  # type: ignore[arg-type]
+    expected = sum(c.entry_moneyness_pct > 10.0 for c in deep.cycles) / len(deep.cycles)
+    assert 0 < deep.beyond_model_depth_share == pytest.approx(expected)
+    shallow = run_put_roll(prices, rv, rule=ByMoneyness(5.0), **kw)  # type: ignore[arg-type]
+    assert shallow.beyond_model_depth_share == 0.0
+
+
+def test_the_market_path_refuses_a_delta_rule() -> None:
+    from tail_lab.research.backtest.put_roll import PricingBasis
+    from tail_lab.research.backtest.strike_rule import ByDelta
+
+    prices, rv = _calm_then_wild(60)
+
+    class _NoQuotes:
+        def fill(self, **kwargs: object) -> None:
+            raise AssertionError("never asked")
+
+        def mark(self, **kwargs: object) -> None:
+            return None
+
+    with pytest.raises(ValueError, match="moneyness rule, not a delta rule"):
+        run_put_roll(
+            prices,
+            rv,
+            asset="spy",
+            as_of=prices.index[-1].date(),
+            notional=1000.0,
+            rule=ByDelta(0.10),
+            tenor_weeks=4.0,
+            lookback_years=1.0,
+            basis=PricingBasis(quotes=_NoQuotes()),  # type: ignore[arg-type]
+        )
+
+
+def test_a_moneyness_rule_at_the_depth_limit_is_never_counted_beyond_it() -> None:
+    from tail_lab.research.backtest.put_roll import MODEL_PRICED_MAX_MONEYNESS_PCT
+
+    # (1 - K/S) * 100 for a 10% rule is 10.000000000000002 on some spots; the
+    # limit itself is priced (docs/adr/0018), so none of these rolls is beyond.
+    prices, rv = _calm_then_wild()
+    at_limit = run_put_roll(
+        prices,
+        rv,
+        asset="spy",
+        as_of=prices.index[-1].date(),
+        notional=1000.0,
+        rule=ByMoneyness(MODEL_PRICED_MAX_MONEYNESS_PCT),
+        tenor_weeks=4.0,
+        lookback_years=2.0,
+    )
+    # The rule's own pct is reported, never (1 - K/S) * 100 recomputed.
+    assert all(c.entry_moneyness_pct == MODEL_PRICED_MAX_MONEYNESS_PCT for c in at_limit.cycles)
+    assert at_limit.beyond_model_depth_share == 0.0
+
+
+def test_a_delta_rule_solves_and_reports_its_strike_with_the_dividend_yield() -> None:
+    # The convention is the dividend-adjusted delta (docs/adr/0029): at q = 5%
+    # the strike that has delta -0.10 differs from the q = 0 one, and the roll
+    # must both pick it and report it with that same q.
+    from tail_lab.research.backtest.put_roll import PricingBasis
+    from tail_lab.research.backtest.strike_rule import ByDelta
+    from tail_lab.transforms.dividend_yield import DividendYield
+
+    prices, rv = _calm_then_wild()
+    paying = DividendYield(0.05, "measured", 0, (), 100.0)
+    kw = dict(
+        asset="spy",
+        as_of=prices.index[-1].date(),
+        notional=1000.0,
+        tenor_weeks=4.0,
+        lookback_years=2.0,
+    )
+    with_q = run_put_roll(
+        prices, rv, rule=ByDelta(0.10), basis=PricingBasis(dividends=lambda d: paying), **kw
+    )  # type: ignore[arg-type]
+    no_q = run_put_roll(prices, rv, rule=ByDelta(0.10), **kw)  # type: ignore[arg-type]
+    for c, c0 in zip(with_q.cycles, no_q.cycles, strict=True):
+        assert c.q == 0.05
+        assert put_delta(
+            spot=c.spot, strike=c.strike, sigma=c.sigma, t_years=c.t_years, r=with_q.rate, q=0.05
+        ) == (pytest.approx(-0.10, abs=1e-9))
+        assert c.entry_delta == pytest.approx(-0.10, abs=1e-9)
+        assert c.strike != pytest.approx(c0.strike, rel=1e-6)
+
+
+@pytest.mark.parametrize("bad", [{"notional": 0.0}, {"tenor_weeks": 0.0}])
+def test_the_roll_refuses_a_zero_budget_or_tenor(bad: dict[str, float]) -> None:
+    prices, rv = _calm_then_wild(60)
+    kw: dict[str, object] = dict(
+        asset="spy",
+        as_of=prices.index[-1].date(),
+        notional=1000.0,
+        rule=ByMoneyness(5.0),
+        tenor_weeks=4.0,
+        lookback_years=1.0,
+    )
+    with pytest.raises(ValueError, match="notional>0 and tenor_weeks>0"):
+        run_put_roll(prices, rv, **{**kw, **bad})  # type: ignore[arg-type]

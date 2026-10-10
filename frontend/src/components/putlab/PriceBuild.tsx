@@ -42,7 +42,16 @@ function measuredOn(basis: DividendBasis): string {
   return d.toISOString().slice(0, 10)
 }
 
-export function PriceBuild({ bt }: { bt: PutBacktestResponse }) {
+export function PriceBuild({
+  bt,
+  open,
+  onToggle,
+}: {
+  bt: PutBacktestResponse
+  /** Held by the Workspace so a re-run never closes it (see StrikeBuild). */
+  open: boolean
+  onToggle: (open: boolean) => void
+}) {
   const last = bt.cycles[bt.cycles.length - 1]
   if (!last) return null
   const basis = bt.dividend_basis
@@ -50,7 +59,12 @@ export function PriceBuild({ bt }: { bt: PutBacktestResponse }) {
   // A market run's premium is a listed ask: nothing below is a model price.
   const market = bt.priced_from === 'market'
   return (
-    <details className="pl-explain" data-testid="price-build">
+    <details
+      className="pl-explain"
+      data-testid="price-build"
+      open={open}
+      onToggle={(e) => onToggle(e.currentTarget.open)}
+    >
       <summary>How the price is built</summary>
       {market ? (
         <p data-testid="price-build-market">

@@ -44,6 +44,7 @@ from tail_lab.research.backtest.put_roll import (
 )
 from tail_lab.research.backtest.regime_verdict import regime_breakdown
 from tail_lab.research.backtest.sizing import SizingMode
+from tail_lab.research.backtest.strike_rule import ByMoneyness
 from tail_lab.research.backtest.sweep import (
     MODEL_PRICED_SWEEP_MONEYNESS,
     best_point,
@@ -283,7 +284,7 @@ def _rank_one(symbol: str, ctx: _RankContext) -> RankedAsset | None:
             asset=symbol,
             as_of=ctx.as_of,
             notional=ctx.notional,
-            moneyness_pct=ctx.moneyness_pct,
+            rule=ByMoneyness(ctx.moneyness_pct),
             tenor_weeks=ctx.tenor_weeks,
             lookback_years=ctx.years,
             basis=basis,
@@ -328,7 +329,7 @@ def _rank_one(symbol: str, ctx: _RankContext) -> RankedAsset | None:
                 asset=symbol,
                 as_of=ctx.as_of,
                 notional=ctx.notional,
-                moneyness_pct=best.moneyness_pct,
+                rule=ByMoneyness(best.moneyness_pct),
                 tenor_weeks=best.tenor_weeks,
                 lookback_years=ctx.years,
                 basis=basis,

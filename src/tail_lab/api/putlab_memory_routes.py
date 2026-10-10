@@ -41,6 +41,7 @@ from tail_lab.lake.store import LakeStore
 from tail_lab.memory.store import HypothesisMemory
 from tail_lab.observability import log_event
 from tail_lab.research.backtest.regime_verdict import compute_regime_verdict
+from tail_lab.research.backtest.strike_rule import ByMoneyness
 
 router = APIRouter()
 logger = logging.getLogger("tail_lab.api.putlab.memory")
@@ -82,7 +83,8 @@ def record_verdict(
             asset=asset,
             as_of=resolved,
             notional=RECORD_NOTIONAL,
-            moneyness_pct=moneyness_pct,
+            # Memory records moneyness rules only (docs/adr/0029).
+            rule=ByMoneyness(moneyness_pct),
             tenor_weeks=tenor_weeks,
             years=years,
         )
@@ -92,6 +94,8 @@ def record_verdict(
     # The verdict's own spec: its dividend basis is the run's, so a run that
     # priced any roll at an unknown q = 0 is stored under the "none" hash.
     spec = verdict.rule_spec
+    if spec is None:  # a moneyness verdict always carries its spec
+        raise RuntimeError("regime verdict for a moneyness rule came back without a RuleSpec")
     # run_id ties this recording to the exact data version it saw (§f provenance).
     try:
         ohlcv_snap = store.bronze_snapshot_id(dataset_id(asset), resolved)

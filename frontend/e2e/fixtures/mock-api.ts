@@ -44,6 +44,13 @@ export async function mockPutLabApi(page: Page, opts: MockOptions = {}): Promise
       case '/api/putlab/universe':
         return json(route, fx.UNIVERSE)
       case '/api/putlab/backtest':
+        if (url.searchParams.get('strike_rule') === 'delta') {
+          return json(route, {
+            ...fx.backtestByDelta(Number(url.searchParams.get('target_delta') ?? 0.1)),
+            asset: url.searchParams.get('asset') ?? 'spy',
+            tenor_weeks: Number(url.searchParams.get('tenor_weeks') ?? 4),
+          })
+        }
         return json(route, {
           ...fx.BACKTEST,
           asset: url.searchParams.get('asset') ?? 'spy',
@@ -62,7 +69,16 @@ export async function mockPutLabApi(page: Page, opts: MockOptions = {}): Promise
       case '/api/putlab/leaderboard':
         return json(route, fx.LEADERBOARD)
       case '/api/putlab/regime-verdict':
-        return json(route, fx.REGIME_VERDICT)
+        // Memory records moneyness rules only: a delta verdict has no hash.
+        return json(
+          route,
+          url.searchParams.get('strike_rule') === 'delta' ? { ...fx.REGIME_VERDICT, rule_hash: null } : fx.REGIME_VERDICT,
+        )
+      case '/api/putlab/strike-preview':
+        return json(route, {
+          ...fx.strikePreview(Number(url.searchParams.get('target_delta') ?? 0.1)),
+          asset: url.searchParams.get('asset') ?? 'spy',
+        })
       case '/api/putlab/regimes':
         return json(route, fx.REGIMES)
       case '/api/vix/stretch':
@@ -72,10 +88,16 @@ export async function mockPutLabApi(page: Page, opts: MockOptions = {}): Promise
       case '/api/putlab/metric-screen':
         // The two branches of the bake-off verdict are selected by basket size:
         // at Top 5 the composite beats the baseline, at Top 3 nothing does.
-        return json(
-          route,
-          url.searchParams.get('top_k') === '3' ? fx.METRIC_SCREEN_NO_WINNER : fx.METRIC_SCREEN_WINNER,
-        )
+        return json(route, {
+          ...(url.searchParams.get('top_k') === '3' ? fx.METRIC_SCREEN_NO_WINNER : fx.METRIC_SCREEN_WINNER),
+          ...(url.searchParams.get('strike_rule') === 'delta'
+            ? {
+                strike_rule: 'delta',
+                target_delta: Number(url.searchParams.get('target_delta')),
+                moneyness_pct: null,
+              }
+            : {}),
+        })
       case '/api/putlab/surface':
         // TSLA is the all-refused payload; every other name is the fitted one.
         return json(route, url.searchParams.get('asset') === 'tsla' ? fx.SURFACE_REFUSED : fx.SURFACE_FITTED)

@@ -14,6 +14,7 @@ import pandas as pd
 import pytest
 
 from tail_lab.research.backtest.put_roll import trailing_realized_vol
+from tail_lab.research.backtest.strike_rule import ByMoneyness
 from tail_lab.research.backtest.sweep import (
     MODEL_PRICED_MAX_MONEYNESS_PCT,
     SWEEP_MONEYNESS,
@@ -76,7 +77,7 @@ def test_skipping_the_per_day_curves_does_not_change_the_verdict() -> None:
         asset="spy",
         as_of=AS_OF,
         notional=1000.0,
-        moneyness_pct=8.0,
+        rule=ByMoneyness(8.0),
         tenor_weeks=4.0,
         lookback_years=4.0,
     )

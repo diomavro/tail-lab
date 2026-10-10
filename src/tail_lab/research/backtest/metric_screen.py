@@ -46,6 +46,7 @@ import datetime as dt
 import math
 from collections.abc import Callable
 from dataclasses import dataclass
+from typing import Literal
 
 import pandas as pd
 from pydantic import BaseModel
@@ -70,6 +71,7 @@ from tail_lab.research.backtest.ranking import (
     _returns,
 )
 from tail_lab.research.backtest.regime_verdict import RegimeSlice, regime_breakdown
+from tail_lab.research.backtest.strike_rule import ByDelta, ByMoneyness, StrikeRule
 from tail_lab.research.dividends import dividend_lookup
 from tail_lab.research.metrics.co_kurtosis import co_kurtosis
 from tail_lab.research.metrics.co_skewness import co_skewness
@@ -165,7 +167,11 @@ class MetricScreenComparison(BaseModel):
     """
 
     as_of: dt.date
-    moneyness_pct: float
+    #: The strike rule every basket rolled: percent below spot, or a target put
+    #: delta (``None`` for the other). Delta is the model's, at realised vol.
+    moneyness_pct: float | None
+    strike_rule: Literal["moneyness", "delta"] = "moneyness"
+    target_delta: float | None = None
     tenor_weeks: float
     lookback_years: float
     top_k: int
@@ -342,7 +348,7 @@ def compare_metric_screens(
     *,
     symbols: tuple[str, ...],
     as_of: dt.date,
-    moneyness_pct: float,
+    rule: StrikeRule,
     tenor_weeks: float,
     years: float,
     top_k: int = 5,
@@ -390,7 +396,7 @@ def compare_metric_screens(
                 asset=symbol,
                 as_of=as_of,
                 notional=1.0,
-                moneyness_pct=moneyness_pct,
+                rule=rule,
                 tenor_weeks=tenor_weeks,
                 lookback_years=years,
                 basis=PricingBasis(dividends=dividend_lookup(store, symbol, as_of).lookup),
@@ -464,7 +470,9 @@ def compare_metric_screens(
 
     return MetricScreenComparison(
         as_of=as_of,
-        moneyness_pct=moneyness_pct,
+        moneyness_pct=rule.pct if isinstance(rule, ByMoneyness) else None,
+        strike_rule=rule.kind,
+        target_delta=rule.target if isinstance(rule, ByDelta) else None,
         tenor_weeks=tenor_weeks,
         lookback_years=years,
         top_k=top_k,

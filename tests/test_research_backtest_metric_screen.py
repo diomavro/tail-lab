@@ -16,6 +16,7 @@ from tail_lab.research.backtest.metric_screen import (
     compare_metric_screens,
 )
 from tail_lab.research.backtest.put_roll import annualized_return
+from tail_lab.research.backtest.strike_rule import ByMoneyness
 
 _ALL_SCREENS = {*_METRIC_FUNCS, "vol_beta", "fragility_score"}
 
@@ -88,7 +89,7 @@ def test_bakeoff_covers_all_screens_and_is_sorted(tmp_path: Path) -> None:
         store,
         symbols=("spy", "wild", "calm", "mid", "missing"),
         as_of=ingest,
-        moneyness_pct=10.0,
+        rule=ByMoneyness(10.0),
         tenor_weeks=4.0,
         years=1.0,
         top_k=2,
@@ -130,7 +131,7 @@ def test_downside_beta_basket_holds_the_wild_name(tmp_path: Path) -> None:
         store,
         symbols=("spy", "wild", "calm", "mid"),
         as_of=ingest,
-        moneyness_pct=10.0,
+        rule=ByMoneyness(10.0),
         tenor_weeks=4.0,
         years=1.0,
         top_k=2,
@@ -158,7 +159,7 @@ def test_deterministic_baseline_equals_mean_roi(tmp_path: Path) -> None:
         store,
         symbols=symbols,
         as_of=ingest,
-        moneyness_pct=10.0,
+        rule=ByMoneyness(10.0),
         tenor_weeks=4.0,
         years=1.0,
         top_k=3,
@@ -173,7 +174,7 @@ def test_deterministic_baseline_equals_mean_roi(tmp_path: Path) -> None:
             asset=sym,
             as_of=ingest,
             notional=1.0,
-            moneyness_pct=10.0,
+            rule=ByMoneyness(10.0),
             tenor_weeks=4.0,
             lookback_years=1.0,
         )
@@ -190,7 +191,7 @@ def test_missing_vix_raises(tmp_path: Path) -> None:
             store,
             symbols=("spy",),
             as_of=ingest,
-            moneyness_pct=10.0,
+            rule=ByMoneyness(10.0),
             tenor_weeks=4.0,
             years=1.0,
         )
@@ -207,7 +208,7 @@ def test_missing_benchmark_raises(tmp_path: Path) -> None:
             store,
             symbols=("wild",),
             as_of=ingest,
-            moneyness_pct=10.0,
+            rule=ByMoneyness(10.0),
             tenor_weeks=4.0,
             years=1.0,
         )
@@ -224,7 +225,7 @@ def test_no_scorable_name_raises(tmp_path: Path) -> None:
             store,
             symbols=("nope", "alsonope"),
             as_of=ingest,
-            moneyness_pct=10.0,
+            rule=ByMoneyness(10.0),
             tenor_weeks=4.0,
             years=1.0,
         )
@@ -276,7 +277,7 @@ def test_bakeoff_multiple_testing_correction_on_pure_noise(tmp_path: Path) -> No
         store,
         symbols=symbols,
         as_of=ingest,
-        moneyness_pct=10.0,
+        rule=ByMoneyness(10.0),
         tenor_weeks=4.0,
         years=1.0,
         top_k=3,

@@ -43,6 +43,7 @@ from tail_lab.research.backtest.put_roll import (
 )
 from tail_lab.research.backtest.regime_verdict import regime_breakdown
 from tail_lab.research.backtest.sizing import SizingMode
+from tail_lab.research.backtest.strike_rule import ByMoneyness
 from tail_lab.research.dividends import dividend_lookup, dividend_snapshot_id
 from tail_lab.research.regimes.timeline import VIX_DATASET, compute_regime_timeline
 
@@ -186,7 +187,7 @@ def run_portfolio(
                 asset=leg.asset,
                 as_of=as_of,
                 notional=1.0,
-                moneyness_pct=leg.moneyness_pct,
+                rule=ByMoneyness(leg.moneyness_pct),
                 tenor_weeks=leg.tenor_weeks,
                 lookback_years=years,
                 basis=PricingBasis(dividends=dividend_lookup(store, leg.asset, as_of).lookup),

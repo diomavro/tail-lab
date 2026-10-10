@@ -212,7 +212,33 @@ export const CONCEPTS: Record<string, Concept> = {
       'A put is a claim on where the stock will be at expiry, and a stock that pays a dividend drops by it on the ex-date -- so a payer is expected to end lower than a non-payer with the same price and volatility, and its puts cost more. Until October 2026 this lab priced every name at q = 0, which under-priced puts on income names worst: scored against the exchange\'s own deltas, HYG was off by 0.197 and TLT by 0.060, against 0.004 for SPY. q is now read from each name\'s paid dividends (Tiingo): the last N payments at its own frequency, summed and divided by the close. It deliberately carries no forecast, so it lags a cut by up to N payments, a special dividend moves it for N payments (up if larger than a regular payment, down if smaller), and it misses a dividend falling inside a short put\'s life (the stock drops by a whole quarterly dividend, ~0.3% of spot at q ≈ 1.3%, inside a 21-day SPY put that spans an ex-date, where q·T with T = 21/252 takes only ~0.1% off the expected price -- so that put\'s model expects the stock ~0.2% of spot too high and under-prices it, while the two in three that span no ex-date expect it ~0.1% too low and over-price; the premium errors are those shifts times the delta, and they net out over a year, not roll by roll).',
     howToRead:
       `Every roll says where its q came from. "measured" is the name's own payments; "non-payer" and "suspended" are real zeros; "carried" and "stale" are the last measured value held past the data's end; "unknown" means q could not be read -- ${UNKNOWN_Q_CAUSES} -- and the roll was priced at q = 0: read those numbers as the old, cheap prices.`,
-    seeAlso: ['model_priced', 'oom_put'],
+    seeAlso: ['model_priced', 'oom_put', 'put_delta'],
+  },
+  put_delta: {
+    id: 'put_delta',
+    term: 'Put delta (Δ)',
+    category: 'option',
+    short:
+      'How much the put\'s price moves per $1 move in the stock -- and, roughly, the chance it ends in the money. A 0.10-delta put moves 10 cents per dollar.',
+    formula: 'Δ = −e^(−qT) · N(−d₁),  d₁ = (ln(S/K) + (r − q + σ²/2)T) / (σ√T)',
+    intuition:
+      'Delta measures distance in the market\'s own units: how far the strike is, scaled by how much the stock moves. The same 5% below spot is a remote, near-worthless put when volatility is 10% and a close, expensive one when it is 40%; their deltas say so, the 5% does not. This lab uses one convention everywhere -- the Black–Scholes spot delta with the dividend yield -- and the volatility that goes in decides the answer: the backtest has only the 20-day realised vol for each past day, so its "0.10 delta" is at realised vol. The market\'s delta uses implied vol, which sits above realised and is skewed, so the market\'s 0.10-delta strike lies further below spot.',
+    howToRead:
+      'Closer to 0 is further out of the money and cheaper; around 0.4-0.5 is near the money (a put struck exactly at spot is not exactly 0.50: typically 0.4 to 0.5, lower for long or very volatile options; above 0.5 only when the dividend yield beats the rate by more than half the variance, q > r + σ²/2, and then mostly on short-dated puts, since the e^(−qT) factor pulls long-dated ones back under). Read every delta here with its volatility: "0.10Δ at realised vol" is not the desk\'s 10-delta put.',
+    seeAlso: ['strike_rule', 'dividend_yield'],
+  },
+  strike_rule: {
+    id: 'strike_rule',
+    term: 'Strike rule',
+    category: 'option',
+    short:
+      'How each roll picks its strike: a fixed distance below spot, or a fixed delta. One holds the distance still and lets the option change; the other holds the option still and lets the distance change.',
+    formula: 'by distance: K = S · (1 − m/100);  by delta: K = S · exp(−d₁σ√T + (r − q + σ²/2)T),  d₁ = −N⁻¹(|Δ| e^(qT))',
+    intuition:
+      'A fixed distance is simple, but it confounds any comparison across regimes: in calm markets (12% vol) a 10%-below-spot 4-week put has a delta of 0.0006 -- a lottery ticket -- in a crisis (45% vol) 0.18, a near-the-money hedge. A verdict that a strategy "only worked in crises" may only be saying that the strike was reachable then. Picking by delta keeps the option comparable across regimes instead. Neither is free: under a delta rule a low target in high realised vol lands deeper than the flat-vol model can price (a 0.05-delta 4-week put is ~10.5% below spot at 25% vol), and the page counts those rolls beside the headline.',
+    howToRead:
+      'Compare a strategy under both rules before trusting a regime verdict. The ranking, the sweep grid, the Surface and the Regime view still screen by distance; only the Workspace backtest and the Bake-off can pick by delta.',
+    seeAlso: ['put_delta', 'oom_put', 'model_priced'],
   },
 
   // ---------------------------------------------------------------- result

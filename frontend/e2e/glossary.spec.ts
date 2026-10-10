@@ -6,6 +6,7 @@ import {
   CONCEPT_LIST,
 } from '../src/content/concepts'
 import { mockPutLabApi } from './fixtures/mock-api'
+import { putDelta } from './fixtures/putlab'
 
 // The glossary renders content/concepts.ts and nothing else.
 //
@@ -57,4 +58,17 @@ test('keeps the see-also links pointing at real entries', async ({ page }) => {
   for (const id of roi.seeAlso ?? []) {
     await expect(page.locator(`#${id}`)).toHaveCount(1)
   }
+})
+
+test('the at-the-money delta condition is the one the formula gives', () => {
+  // A put struck at spot has |Δ| = e^(-qT)·N(-d1), d1 = (r - q + σ²/2)√T/σ:
+  // past 0.50 needs d1 < 0, i.e. q > r + σ²/2 -- q merely above r is not enough.
+  const atm = (q: number, r: number, sigma: number, T: number) => -putDelta(100, 100, sigma, T, r, q)
+  expect(atm(0.05, 0.04, 0.2, 1 / 12)).toBeLessThan(0.5) // q > r, but under r + σ²/2 = 6%
+  expect(atm(0.065, 0.04, 0.2, 1 / 12)).toBeGreaterThan(0.5) // past it, short-dated
+  expect(atm(0.065, 0.04, 0.2, 1)).toBeLessThan(0.5) // past it, but e^(-qT) pulls a year back under
+  const text = CONCEPTS.put_delta!.howToRead
+  expect(text).toContain('q > r + σ²/2')
+  expect(text).toContain('short-dated')
+  expect(text).not.toContain('exceeds the rate')
 })

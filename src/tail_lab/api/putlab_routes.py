@@ -22,7 +22,7 @@ import logging
 import time
 from collections.abc import Callable, Mapping, Sequence
 from functools import lru_cache
-from typing import Any
+from typing import Any, Literal
 
 import pandas as pd
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -78,6 +78,7 @@ from tail_lab.research.backtest.model_plan import MEASURED_VOL_GAP, compute_mode
 from tail_lab.research.backtest.portfolio import PortfolioResult, run_portfolio
 from tail_lab.research.backtest.put_roll import (
     DEFAULT_RATE,
+    MODEL_PRICED_MAX_MONEYNESS_PCT,
     PutBacktestResult,
     annualized_return,
     compute_put_backtest,
@@ -86,7 +87,15 @@ from tail_lab.research.backtest.put_roll import (
 from tail_lab.research.backtest.ranking import BENCHMARK, UniverseRanking, rank_universe
 from tail_lab.research.backtest.regime_verdict import RegimeVerdict, compute_regime_verdict
 from tail_lab.research.backtest.roll_schedule import RollSchedule, build_roll_schedule
-from tail_lab.research.backtest.sweep import MODEL_PRICED_MAX_MONEYNESS_PCT, run_sweep
+from tail_lab.research.backtest.strike_preview import StrikePreview, preview_strikes
+from tail_lab.research.backtest.strike_rule import (
+    MAX_TARGET_DELTA,
+    MIN_TARGET_DELTA,
+    ByDelta,
+    ByMoneyness,
+    StrikeRule,
+)
+from tail_lab.research.backtest.sweep import run_sweep
 from tail_lab.research.cadence import resolve_cadence
 from tail_lab.research.data_quality import DataQualityReport, assess_asset_quality
 from tail_lab.research.dividends import dividend_lookup, dividend_snapshot_id
@@ -117,20 +126,20 @@ _WARM_SCREEN = (5.0, 4.0, 4.0)
 #: computed combo makes repeat/preset clicks instant server-side too. Keyed by
 #: the endpoint's params + resolved as_of (mirrors the leaderboard pattern).
 _BACKTEST_CACHE: dict[
-    tuple[str, float, float, float, float, str], tuple[float, PutBacktestResult]
+    tuple[str, float, StrikeRule, float, float, str], tuple[float, PutBacktestResult]
 ] = {}
 _BACKTEST_TTL_S = 120.0
 _SWEEP_CACHE: dict[tuple[str, float, float, str], tuple[float, SweepResponse]] = {}
 _SWEEP_TTL_S = 120.0
 _REGIME_VERDICT_CACHE: dict[
-    tuple[str, float, float, float, float, str], tuple[float, RegimeVerdict]
+    tuple[str, float, StrikeRule, float, float, str], tuple[float, RegimeVerdict]
 ] = {}
 _REGIME_VERDICT_TTL_S = 120.0
 
 #: Short-TTL memo of the (~35-backtest) metric bake-off, keyed by
 #: (moneyness, tenor, years, top_k, as_of).
 _METRIC_SCREEN_CACHE: dict[
-    tuple[float, float, float, int, str], tuple[float, MetricScreenComparison]
+    tuple[StrikeRule, float, float, int, str], tuple[float, MetricScreenComparison]
 ] = {}
 _METRIC_SCREEN_TTL_S = 120.0
 
@@ -147,6 +156,9 @@ _ACCURACY_TTL_S = 120.0
 #: is immutable for a given as_of, so memoize on (asset, m, tenor, as_of).
 _SURFACE_CACHE: dict[tuple[str, float, float, str], tuple[float, SurfaceResponse]] = {}
 _SURFACE_TTL_S = 120.0
+_PREVIEW_CACHE: dict[tuple[str, float, float, str], tuple[float, StrikePreview]] = {}
+#: As the Surface: both read one chain session that changes once a day.
+_PREVIEW_TTL_S = 120.0
 
 #: The Book blends three programs at eleven hedge ratios over two windows
 #: and three dividend yields -- a few seconds of pandas that depends only on
@@ -212,6 +224,24 @@ def _snapshot(store: LakeStore, dataset: str, as_of: dt.date) -> str | None:
         return None
 
 
+def _rule(
+    kind: Literal["moneyness", "delta"], moneyness_pct: float, target_delta: float
+) -> StrikeRule:
+    """The strike rule a request asks for. Only the active rule's parameter is
+    read OR validated: the UI keeps both values, so a leftover one always
+    arrives, and an out-of-range leftover must not refuse a valid request."""
+    if kind == "moneyness":
+        if not 0.0 < moneyness_pct < 100.0:
+            raise HTTPException(status_code=422, detail="moneyness_pct must be in (0, 100)")
+        return ByMoneyness(moneyness_pct)
+    if not MIN_TARGET_DELTA <= target_delta <= MAX_TARGET_DELTA:
+        raise HTTPException(
+            status_code=422,
+            detail=f"target_delta must be in [{MIN_TARGET_DELTA}, {MAX_TARGET_DELTA}]",
+        )
+    return ByDelta(target_delta)
+
+
 def _cited_dividend_snapshot(ranking: UniverseRanking) -> str | None:
     """The dividend snapshot a ranking cites in its own ``snapshot_ids``."""
     return next((s for s in ranking.snapshot_ids if s.startswith("tiingo_eod@")), None)
@@ -252,16 +282,27 @@ def _log_run(
 
 @router.get("/api/putlab/backtest")
 def putlab_backtest(
+    *,
     asset: str = Query(description="Underlying ticker, e.g. spy."),
     notional: float = Query(default=1000.0, gt=0, le=1_000_000),
-    moneyness_pct: float = Query(default=5.0, gt=0, lt=100),
+    moneyness_pct: float = Query(
+        default=5.0, description="Percent below spot for strike_rule=moneyness (0-100)."
+    ),
+    strike_rule: Literal["moneyness", "delta"] = Query(
+        default="moneyness", description="Pick strikes by distance below spot or by put delta."
+    ),
+    target_delta: float = Query(
+        default=0.10,
+        description="Absolute put delta for strike_rule=delta (model delta at realised vol).",
+    ),
     tenor_weeks: float = Query(default=4.0, gt=0, le=52),
     years: float = Query(default=4.0, gt=0, le=20, description="Lookback window."),
     as_of: dt.date | None = Query(default=None, description="Simulation date; defaults to today."),
     store: LakeStore = Depends(get_lake_store),
 ) -> PutBacktestResult:
     resolved = _resolve_as_of(as_of)
-    cache_key = (asset, notional, moneyness_pct, tenor_weeks, years, resolved.isoformat())
+    rule = _rule(strike_rule, moneyness_pct, target_delta)
+    cache_key = (asset, notional, rule, tenor_weeks, years, resolved.isoformat())
     hit = _BACKTEST_CACHE.get(cache_key)
     if hit is not None and hit[0] > time.monotonic():
         return hit[1]
@@ -271,7 +312,7 @@ def putlab_backtest(
             asset=asset,
             as_of=resolved,
             notional=notional,
-            moneyness_pct=moneyness_pct,
+            rule=rule,
             tenor_weeks=tenor_weeks,
             lookback_years=years,
         )
@@ -289,7 +330,9 @@ def putlab_backtest(
         asset=asset,
         as_of=resolved,
         params={
-            "moneyness_pct": moneyness_pct,
+            "moneyness_pct": rule.pct if isinstance(rule, ByMoneyness) else None,
+            "strike_rule": rule.kind,
+            "target_delta": rule.target if isinstance(rule, ByDelta) else None,
             "tenor_weeks": tenor_weeks,
             "years": years,
             "notional": notional,
@@ -391,16 +434,27 @@ def putlab_sweep(
 
 @router.get("/api/putlab/regime-verdict")
 def putlab_regime_verdict(
+    *,
     asset: str = Query(description="Underlying ticker, e.g. spy."),
     notional: float = Query(default=1000.0, gt=0, le=1_000_000),
-    moneyness_pct: float = Query(default=5.0, gt=0, lt=100),
+    moneyness_pct: float = Query(
+        default=5.0, description="Percent below spot for strike_rule=moneyness (0-100)."
+    ),
+    strike_rule: Literal["moneyness", "delta"] = Query(
+        default="moneyness", description="Pick strikes by distance below spot or by put delta."
+    ),
+    target_delta: float = Query(
+        default=0.10,
+        description="Absolute put delta for strike_rule=delta (model delta at realised vol).",
+    ),
     tenor_weeks: float = Query(default=4.0, gt=0, le=52),
     years: float = Query(default=4.0, gt=0, le=20),
     as_of: dt.date | None = Query(default=None),
     store: LakeStore = Depends(get_lake_store),
 ) -> RegimeVerdict:
     resolved = _resolve_as_of(as_of)
-    cache_key = (asset, notional, moneyness_pct, tenor_weeks, years, resolved.isoformat())
+    rule = _rule(strike_rule, moneyness_pct, target_delta)
+    cache_key = (asset, notional, rule, tenor_weeks, years, resolved.isoformat())
     hit = _REGIME_VERDICT_CACHE.get(cache_key)
     if hit is not None and hit[0] > time.monotonic():
         return hit[1]
@@ -410,7 +464,7 @@ def putlab_regime_verdict(
             asset=asset,
             as_of=resolved,
             notional=notional,
-            moneyness_pct=moneyness_pct,
+            rule=rule,
             tenor_weeks=tenor_weeks,
             years=years,
         )
@@ -426,7 +480,9 @@ def putlab_regime_verdict(
         asset=asset,
         as_of=resolved,
         params={
-            "moneyness_pct": moneyness_pct,
+            "moneyness_pct": rule.pct if isinstance(rule, ByMoneyness) else None,
+            "strike_rule": rule.kind,
+            "target_delta": rule.target if isinstance(rule, ByDelta) else None,
             "tenor_weeks": tenor_weeks,
             "years": years,
             "notional": notional,
@@ -856,7 +912,16 @@ def putlab_leaderboard(
 
 @router.get("/api/putlab/metric-screen")
 def putlab_metric_screen(
-    moneyness_pct: float = Query(default=10.0, gt=0, lt=100),
+    moneyness_pct: float = Query(
+        default=10.0, description="Percent below spot for strike_rule=moneyness (0-100)."
+    ),
+    strike_rule: Literal["moneyness", "delta"] = Query(
+        default="moneyness", description="Pick strikes by distance below spot or by put delta."
+    ),
+    target_delta: float = Query(
+        default=0.10,
+        description="Absolute put delta for strike_rule=delta (model delta at realised vol).",
+    ),
     tenor_weeks: float = Query(default=4.0, gt=0, le=52),
     years: float = Query(default=4.0, gt=0, le=20),
     top_k: int = Query(default=5, ge=2, le=15),
@@ -869,7 +934,8 @@ def putlab_metric_screen(
     resolved = _resolve_as_of(as_of)
     # ~35 backtests; deterministic given the immutable bronze, so a short TTL
     # cache makes repeat clicks instant (mirrors the leaderboard).
-    cache_key = (moneyness_pct, tenor_weeks, years, top_k, resolved.isoformat())
+    rule = _rule(strike_rule, moneyness_pct, target_delta)
+    cache_key = (rule, tenor_weeks, years, top_k, resolved.isoformat())
     hit = _METRIC_SCREEN_CACHE.get(cache_key)
     if hit is not None and hit[0] > time.monotonic():
         return hit[1]
@@ -878,7 +944,7 @@ def putlab_metric_screen(
             store,
             symbols=universe_symbols(),
             as_of=resolved,
-            moneyness_pct=moneyness_pct,
+            rule=rule,
             tenor_weeks=tenor_weeks,
             years=years,
             top_k=top_k,
@@ -892,7 +958,9 @@ def putlab_metric_screen(
         "putlab.metric_screen",
         dividend_snapshot=dividend_snapshot_id(store, resolved),
         as_of=resolved,
-        moneyness_pct=moneyness_pct,
+        moneyness_pct=rule.pct if isinstance(rule, ByMoneyness) else None,
+        strike_rule=rule.kind,
+        target_delta=rule.target if isinstance(rule, ByDelta) else None,
         tenor_weeks=tenor_weeks,
         years=years,
         top_k=top_k,
@@ -979,6 +1047,69 @@ def putlab_surface(
     )
     _SURFACE_CACHE[cache_key] = (time.monotonic() + _SURFACE_TTL_S, response)
     return response
+
+
+@router.get("/api/putlab/strike-preview")
+def putlab_strike_preview(
+    asset: str = Query(description="Underlying ticker, e.g. spy."),
+    target_delta: float = Query(default=0.10, ge=MIN_TARGET_DELTA, le=MAX_TARGET_DELTA),
+    tenor_weeks: float = Query(default=4.0, gt=0, le=52),
+    as_of: dt.date | None = Query(default=None),
+    store: LakeStore = Depends(get_lake_store),
+) -> StrikePreview:
+    """Today's strike for a delta target, at realised vol (what the backtest
+    picks) beside the market's (our convention on the chain's implied vol).
+
+    Reads ``ohlcv_<asset>``, the ``tiingo_eod`` dividend basis and, when the
+    asset is collected, ``option_chain_snapshot`` (one session) -- never the
+    optionsDX panel (ADR 0027 §5). A missing chain is a status, not an error.
+    """
+    resolved = _resolve_as_of(as_of)
+    # One spelling of the name for the key AND the answer, so "SPY" after
+    # "spy" is served exactly what a fresh "SPY" would be.
+    asset = asset.lower()
+    cache_key = (asset, target_delta, tenor_weeks, resolved.isoformat())
+    hit = _PREVIEW_CACHE.get(cache_key)
+    if hit is not None and hit[0] > time.monotonic():
+        return hit[1]
+    try:
+        prices, realized_vol = load_asof_series(store, asset, resolved)
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=f"no price data for {asset}") from exc
+    try:
+        chain = store.read_bronze_as_of(OPTION_CHAIN_DATASET, resolved)
+    except LookupError:
+        chain = pd.DataFrame()
+    dividend = dividend_lookup(store, asset, resolved).lookup(resolved)
+    preview = preview_strikes(
+        chain,
+        prices,
+        realized_vol,
+        asset=asset,
+        target_delta=target_delta,
+        tenor_weeks=tenor_weeks,
+        r=DEFAULT_RATE,
+        q=dividend.q,
+        q_source=dividend.source,
+    )
+    log_event(
+        logger,
+        "api.putlab.strike_preview",
+        asset=asset,
+        as_of=resolved,
+        target_delta=target_delta,
+        tenor_weeks=tenor_weeks,
+        ohlcv_snapshot=_snapshot(store, dataset_id(asset), resolved),
+        chain_snapshot=_snapshot(store, OPTION_CHAIN_DATASET, resolved)
+        if not chain.empty
+        else None,
+        dividend_snapshot=dividend_snapshot_id(store, resolved),
+        model_strike=preview.model.strike if preview.model else None,
+        market_strike=preview.market.strike if preview.market else None,
+        market_status=preview.market_status,
+    )
+    _PREVIEW_CACHE[cache_key] = (time.monotonic() + _PREVIEW_TTL_S, preview)
+    return preview
 
 
 @router.get("/api/putlab/hedge-overlay")
