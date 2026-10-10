@@ -669,3 +669,17 @@ def test_three_of_four_quarterly_payments_are_scaled_to_a_year() -> None:
     assert got.source == "short_history" and got.per_year == 4
     assert got.annual == pytest.approx(2.65 * 3 * 4 / 3)
     assert got.q == pytest.approx(_q(2.65 * 4, 450.0))
+
+
+def test_a_carried_short_history_is_labelled_carried_then_stale() -> None:
+    # The data ends after a resumed payer's second payment: past the last row
+    # its scaled short_history yield is carried (and labelled so), then stale.
+    old = _third_fridays(range(1993, 1996), (2, 5, 8, 11))
+    new = ["2012-08-09", "2012-11-07"]
+    divs = {**dict.fromkeys(old, 0.12), **dict.fromkeys(new, 2.65)}
+    yields = DividendYields("x", _history("1993-01-04", "2012-12-31", 500.0, divs))
+    inside = yields.at(dt.date(2012, 12, 31))
+    assert inside.source == "short_history"
+    carried = yields.at(dt.date(2013, 1, 10))
+    assert (carried.source, carried.q, carried.annual) == ("carried", inside.q, inside.annual)
+    assert yields.at(dt.date(2013, 2, 15)).source == "stale"

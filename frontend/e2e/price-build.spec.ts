@@ -159,7 +159,7 @@ test('on the market path q is not used and says so', async ({ page }) => {
   // r enters no listed ask either.
   await expect(section.getByTestId('price-build-r')).toHaveText('not used: the premium is a real quote')
   // The contract is named: its listed expiry, not a model T.
-  await expect(section.getByTestId('price-build-t')).toHaveText(`to the listed expiry, ${BACKTEST.cycles.at(-1)!.expiry_date}`)
+  await expect(section.getByTestId('price-build-t')).toHaveText(`to the listed expiry (settled on the session of ${BACKTEST.cycles.at(-1)!.expiry_date})`)
 })
 
 test('on the model path the section says a model backtest is not Book evidence', async ({ page }) => {
@@ -248,7 +248,8 @@ test('an unknown q names every reason it can be unknown', async ({ page }) => {
   const section = await open(page)
   const why = section.getByTestId('price-build-dividends')
   await expect(why).toContainText('no dividend data for this name')
-  await expect(why).toContainText('a single dividend so far')
+  await expect(why).toContainText('a single dividend so far or since a long pause')
+  await expect(why).toContainText('no dividend data for this name or for this date')
   await expect(why).toContainText('a dividend the close cannot support')
 })
 

@@ -160,7 +160,7 @@ export function RankingStrip({ ranked, currentAsset, onSelect, snapshotIds, code
                     {r.q_source === 'none' ? (
                       <span
                         className="pl-tag pl-tag-bad"
-                        title="At least one roll priced at q = 0: no dividend data for it, a single dividend so far, or one the close cannot support"
+                        title="At least one roll priced at q = 0: no dividend data for it or its date, a single dividend so far or since a long pause, or one the close cannot support"
                       >
                         q = 0 rolls
                       </span>

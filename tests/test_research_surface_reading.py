@@ -191,3 +191,12 @@ def test_the_q_note_says_where_q_came_from_in_words(source: str, says: str) -> N
     assert says in note and f"({source})" not in note and "_" not in note.split(";")[0]
     if source in ("non_payer", "suspended"):
         assert "paid dividends" not in note
+
+
+def test_the_assumed_q_note_says_the_names_own_yield_could_not_be_measured() -> None:
+    # Not "no measured dividends": a first dividend or a resumed payer HAS
+    # dividends; what is missing is a yield that can be read from them.
+    from tail_lab.research.surface.reading import rate_note_for
+
+    note = rate_note_for("assumed")
+    assert "own yield could not be measured" in note and "WRONG for income names" in note

@@ -20,7 +20,7 @@ const SOURCE_TEXT: Record<DividendSource, string> = {
   carried: "measured on the data's last day and carried forward",
   stale: "measured, but carried more than three weeks past the data's last day \u2014 refresh Tiingo",
   unknown:
-    'unknown, so the roll was priced at q = 0: no dividend data for this name, a single dividend so far (no frequency to read), or a dividend the close cannot support',
+    'unknown, so the roll was priced at q = 0: no dividend data for this name or for this date, a single dividend so far or since a long pause (no frequency to read), or a dividend the close cannot support',
 }
 
 const pct = (x: number, digits = 2) => `${(x * 100).toFixed(digits)}%`
@@ -79,7 +79,7 @@ export function PriceBuild({ bt }: { bt: PutBacktestResponse }) {
         <dt>Time</dt>
         <dd data-testid="price-build-t">
           {last.t_years == null
-            ? `to the listed expiry, ${last.expiry_date}`
+            ? `to the listed expiry (settled on the session of ${last.expiry_date})`
             : `${last.t_years.toFixed(4)} years (trading days / 252)`}
         </dd>
         <dt>Rate r</dt>
