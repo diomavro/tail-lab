@@ -287,9 +287,11 @@ test.describe('How the strike is chosen', () => {
     await expect(section.getByTestId('strike-build-depth')).toContainText(
       `${deep} of these ${d.length} rolls struck deeper than 10%`,
     )
-    // ...and a shallower target that never goes past it says nothing.
-    await rail(page).getByRole('radiogroup', { name: 'Delta presets' }).getByText('0.10').click()
-    await expect(page.getByTestId('hero-sentence')).toContainText('0.10Δ')
+    // ...and a shallower target that never goes past it says nothing. (Not
+    // 0.10: roll 11's 38% vol puts even a 0.10Δ strike ~12% below spot.)
+    expect(backtestByDelta(0.2).beyond_model_depth_share).toBe(0)
+    await rail(page).getByRole('radiogroup', { name: 'Delta presets' }).getByText('0.20').click()
+    await expect(page.getByTestId('hero-sentence')).toContainText('0.20Δ')
     await expect(section.getByTestId('strike-build-depth')).toHaveCount(0)
   })
 
@@ -398,8 +400,9 @@ test('a delta run past the model’s depth warns at the headline, without openin
   const deep = d.filter((x) => x > 10).length
   await expect(page.getByTestId('hero-depth')).toContainText(`${deep} of these ${d.length} rolls`)
   await expect(page.getByTestId('strike-build')).not.toHaveAttribute('open', '')
-  await rail(page).getByRole('radiogroup', { name: 'Delta presets' }).getByText('0.10').click()
-  await expect(page.getByTestId('hero-sentence')).toContainText('0.10Δ')
+  expect(backtestByDelta(0.2).beyond_model_depth_share).toBe(0)
+  await rail(page).getByRole('radiogroup', { name: 'Delta presets' }).getByText('0.20').click()
+  await expect(page.getByTestId('hero-sentence')).toContainText('0.20Δ')
   await expect(page.getByTestId('hero-depth')).toHaveCount(0)
 })
 
