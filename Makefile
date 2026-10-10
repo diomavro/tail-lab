@@ -11,7 +11,7 @@ VENV := .venv
 PY := env -u PYTHONPATH $(VENV)/bin/python
 PIP := env -u PYTHONPATH $(VENV)/bin/pip
 
-.PHONY: setup lint format typecheck import-lint test check cov-floors ingest-vix ingest-vix-complex ingest-ohlcv ingest-cboe-strategy ingest-rates ingest-credit ingest-event-calendar ingest-option-quotes residual skew tail-alpha api frontend clean ingest-mpd ingest-options-expiry ingest-sp500-constituents ingest-vix-futures ingest-kaggle-spy kaggle-spy-vs-optionsdx
+.PHONY: setup lint format typecheck import-lint test check cov-floors ingest-vix ingest-vix-complex ingest-ohlcv ingest-cboe-strategy ingest-rates ingest-tiingo-eod ingest-credit ingest-event-calendar ingest-option-quotes residual skew tail-alpha api frontend clean ingest-mpd ingest-options-expiry ingest-sp500-constituents ingest-vix-futures ingest-kaggle-spy kaggle-spy-vs-optionsdx
 
 help:
 	@echo "Targets:"
@@ -28,6 +28,7 @@ help:
 	@echo "  ingest-options-expiry Live listed-expiry fetch (Cboe, Yahoo fallback) -> bronze for SYMBOL (default AAPL; network; not run in CI)"
 	@echo "  ingest-cboe-strategy  Live Cboe strategy-index fetch -> bronze (TICKERS=... ; network; not run in CI)"
 	@echo "  ingest-rates Live FRED rates fetch -> bronze (SERIES=... ; needs FRED_API_KEY; network; not run in CI)"
+	@echo "  ingest-tiingo-eod Live Tiingo EOD + dividends + splits for the universe -> bronze (needs TIINGO_API_KEY; ~95 min, throttled; runs scripts/weekly_tiingo_refresh.sh; not run in CI)"
 	@echo "  ingest-credit Live FRED credit-spread fetch -> bronze (SERIES=... ; needs FRED_API_KEY; network; not run in CI)"
 	@echo "  ingest-event-calendar  Live FOMC + earnings calendar fetch -> ONE bronze snapshot (keyless; network; not run in CI)"
 	@echo "  ingest-sp500-constituents  Live point-in-time S&P 500 membership fetch -> bronze (network; not run in CI)"
@@ -131,6 +132,12 @@ ingest-cboe-strategy:
 SERIES ?=
 ingest-rates:
 	env -u PYTHONPATH $(VENV)/bin/python -c "from tail_lab.ingestion.rates import ingest_rates; from tail_lab.config import get_lake_store, get_settings; from tail_lab.observability import configure_logging; configure_logging(); s = [x.upper() for x in '$(SERIES)'.split(',')] if '$(SERIES)' else None; r = ingest_rates(get_lake_store(), s, api_key=get_settings().fred_api_key); print(f'committed {r.valid_rows} rows for {len(r.series_ids)} series -> {r.bronze_path} ({r.quarantined_rows} quarantined)')"
+
+# Runs the weekly script rather than its own python one-liner: the script
+# holds the dataset's lock, and a manual run must share it (two writers double
+# a partition -- write_bronze has no compare-and-swap). See the script header.
+ingest-tiingo-eod:
+	TAIL_LAB_REPO=$(CURDIR) ./scripts/weekly_tiingo_refresh.sh; status=$$?; tail -n 20 .tiingo-refresh.log; exit $$status
 
 # Forward-collects TODAY's put wing from Cboe's public CDN. Unlike every other
 # ingest-* target this one cannot be caught up later: no free source serves a

@@ -181,6 +181,16 @@ and private dashboard; never republish raw vendor data (explicit
 restriction on ICE BofA OAS via FRED; standard no-redistribution terms at
 Sharadar/ORATS/Tiingo/optionsDX). Results/derived metrics are fine.
 
+**Tiingo, as used for `tiingo_eod` (2026-10-10).** Free tier, personal use:
+fine for Dio's own research and trading, not for anything commercial or
+republished -- re-check the terms before either. The raw rows stay in the lake;
+the page shows derived yields and, for the latest roll, the handful of
+dividend amounts behind one -- facts, not a republished price feed. Test
+fixtures are synthetic. Chosen over Nasdaq's keyless endpoint, which serves no
+dividend history at all for NYSE Arca ETFs (SPY, HYG, IWM, LQD:
+"Non-Nasdaq symbols not available", probed 2026-10-10), and over Yahoo, which
+429s from datacenter IPs and is research-only.
+
 ## 8. Open items to verify by hand
 
 - ORATS bulk-download/fair-use terms before subscribing (the plan assumes

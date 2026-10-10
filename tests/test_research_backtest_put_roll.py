@@ -662,3 +662,130 @@ def test_backtest_prices_off_raw_close_not_adjusted_close(tmp_path: Path) -> Non
     assert prices.iloc[0] == pytest.approx(100.0)
     # The adjusted series would have put every price at 50.0.
     assert not np.isclose(prices.to_numpy(), 50.0).any()
+
+
+# ---------- dividends ----------
+
+
+def test_one_unknown_roll_makes_the_whole_run_unmeasured() -> None:
+    # The hypothesis memory hashes on this summary: a run that priced even one
+    # roll at an unknown q = 0 must never be filed as dividend-measured.
+    from tail_lab.research.backtest.put_roll import PutRollCycle, summarise_q_source
+
+    def cycle(source: str | None) -> PutRollCycle:
+        return PutRollCycle(
+            entry_date=dt.date(2026, 1, 2),
+            expiry_date=dt.date(2026, 1, 30),
+            spot=100.0,
+            strike=95.0,
+            sigma=0.2,
+            q=0.0,
+            q_source=source,
+            premium=1.0,
+            contracts=1.0,
+            cost=0.0,
+            payoff=0.0,
+            net=-1.0,
+        )
+
+    real = ["measured", "non_payer", "suspended", "short_history", "carried", "stale"]
+    assert summarise_q_source([cycle(s) for s in real]) == "measured"
+    assert summarise_q_source([cycle(s) for s in real] + [cycle("unknown")]) == "none"
+
+
+def test_compute_put_backtest_merges_dividends_into_the_callers_basis(tmp_path: Path) -> None:
+    # A caller's pricer (or quotes) must survive: the dividend lookup is merged
+    # into the basis, never swapped in for it.
+    from tail_lab.research import dividends
+    from tail_lab.research.backtest.put_roll import PricingBasis
+    from tests.test_research_dividends import seed_tiingo_eod
+
+    dividends._memo.clear()
+    store = DeltaLakeStore(tmp_path)
+    day = dt.date(2026, 10, 9)
+    _write_ohlcv(store, day, np.linspace(100.0, 120.0, 400))
+    seed_tiingo_eod(store, ["spy"], day, annual_yield=0.06)
+    seen_q: list[float] = []
+
+    class _Recording(BlackScholesPricer):
+        def price_put(self, **kwargs: float) -> float:
+            seen_q.append(kwargs["q"])
+            return super().price_put(**kwargs)
+
+    result = compute_put_backtest(
+        store,
+        asset="spy",
+        as_of=day,
+        notional=1000.0,
+        moneyness_pct=5.0,
+        tenor_weeks=4.0,
+        lookback_years=1.0,
+        basis=PricingBasis(pricer=_Recording()),
+    )
+    assert seen_q and all(q > 0.05 for q in seen_q)  # the caller's pricer, with q
+    assert result.q_source == "measured"
+    assert result.dividend_snapshot is not None
+
+
+def test_each_roll_reports_the_time_it_was_priced_with() -> None:
+    # The Workspace prints T beside the premium; it must be the T the model
+    # used (trading days / 252), or a reader repricing by hand is ~10% off.
+    from tail_lab.research.backtest.put_roll import TRADING_DAYS_PER_WEEK
+
+    n = 400
+    idx = pd.bdate_range("2024-01-02", periods=n)
+    prices = pd.Series(np.linspace(100.0, 130.0, n), index=idx)
+    result = run_put_roll(
+        prices,
+        trailing_realized_vol(prices),
+        asset="spy",
+        as_of=idx[-1].date(),
+        notional=1000.0,
+        moneyness_pct=10.0,
+        tenor_weeks=4.0,
+        lookback_years=1.0,
+    )
+    expected = max(round(4.0 * TRADING_DAYS_PER_WEEK), 1) / 252.0
+    assert all(c.t_years == pytest.approx(expected) for c in result.cycles)
+    first = result.cycles[0]
+    repriced = BlackScholesPricer().price_put(
+        spot=first.spot,
+        strike=first.strike,
+        t_years=first.t_years,
+        r=DEFAULT_RATE,
+        sigma=first.sigma,
+        q=first.q,
+    )
+    assert max(repriced, first.spot * PREMIUM_FLOOR_FRAC) == pytest.approx(first.premium)
+
+
+def test_a_floored_premium_says_so() -> None:
+    # Deep OOM at a clamped 6% vol, Black-Scholes is ~1e-100: the premium is the
+    # spot x PREMIUM_FLOOR_FRAC floor, and the page must not present it as a
+    # model price a reader could reproduce.
+    n = 400
+    idx = pd.bdate_range("2024-01-02", periods=n)
+    prices = pd.Series(np.full(n, 100.0), index=idx)
+    result = run_put_roll(
+        prices,
+        trailing_realized_vol(prices),
+        asset="spy",
+        as_of=idx[-1].date(),
+        notional=1000.0,
+        moneyness_pct=30.0,
+        tenor_weeks=4.0,
+        lookback_years=1.0,
+    )
+    assert all(c.premium_floored for c in result.cycles)
+    assert all(c.premium == pytest.approx(c.spot * PREMIUM_FLOOR_FRAC) for c in result.cycles)
+    shallow = run_put_roll(
+        prices + np.linspace(0, 20, n),
+        trailing_realized_vol(prices + np.linspace(0, 20, n)),
+        asset="spy",
+        as_of=idx[-1].date(),
+        notional=1000.0,
+        moneyness_pct=1.0,
+        tenor_weeks=4.0,
+        lookback_years=1.0,
+    )
+    assert not any(c.premium_floored for c in shallow.cycles)

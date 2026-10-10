@@ -73,13 +73,30 @@ class MemoryRecordResponse(BaseModel):
     recorded: list[RecordedRegime]
 
 
-class MemoryPriorArt(BaseModel):
-    """What GET /api/putlab/memory knows about a rule — the aggregate verdict
-    and every stored per-regime outcome (empty ``outcomes`` => untested)."""
+class MemoryPriorArtSection(BaseModel):
+    """One dividend basis's record of a rule: its hash, aggregate verdict and
+    per-regime outcomes, with a note saying what basis it was priced on."""
 
     rule_hash: str
     verdict: str
     outcomes: list[RegimeOutcome]
+    note: str
+
+
+class MemoryPriorArt(BaseModel):
+    """What GET /api/putlab/memory knows about a rule.
+
+    The top level is the rule priced with **measured dividends** (empty
+    ``outcomes`` => no measured run recorded yet, ``verdict == "untested"``).
+    ``legacy`` is the same rule's record from runs priced without dividends
+    (every record before 2026-10, and any run that priced a roll at an unknown
+    q = 0) -- kept readable, never merged into the measured verdict, and
+    ``None`` when there is none."""
+
+    rule_hash: str
+    verdict: str
+    outcomes: list[RegimeOutcome]
+    legacy: MemoryPriorArtSection | None = None
 
 
 class FeedbackCreateRequest(BaseModel):

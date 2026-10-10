@@ -83,6 +83,13 @@ class LakeStore(ABC):
     filesystem path.
     """
 
+    @property
+    @abstractmethod
+    def location(self) -> str:
+        """Which lake this is (its root path or ``s3://`` URI). Snapshot ids
+        are unique within one lake, not across lakes, so an in-process cache
+        keyed on a snapshot id must also key on this."""
+
     @abstractmethod
     def write_bronze(self, dataset: str, ingest_date: dt.date, df: pd.DataFrame) -> str:
         """Commit a raw snapshot to bronze. Never overwrites an existing snapshot
@@ -234,6 +241,7 @@ class DeltaLakeStore(LakeStore):
         self._storage_options: dict[str, str] | None = (
             dict(storage_options) if storage_options is not None else None
         )
+        self._location = root_str.rstrip("/") if self._is_s3 else str(Path(root).resolve())
         # Bronze partitions are immutable, so a partition read is cached by its
         # resolved (dataset, snapshot_date) — self-invalidating: a new ingest
         # produces a new snapshot_date -> cache miss -> fresh read, while a
@@ -320,6 +328,10 @@ class DeltaLakeStore(LakeStore):
         return df.drop(columns=[_INGEST_DATE_COL]).reset_index(drop=True)
 
     # ---- LakeStore implementation ------------------------------------------
+
+    @property
+    def location(self) -> str:
+        return self._location
 
     def bronze_partition_exists(self, dataset: str, ingest_date: dt.date) -> bool:
         """Same predicate, same source, as ``write_bronze``'s own short-circuit

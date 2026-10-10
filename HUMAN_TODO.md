@@ -609,3 +609,21 @@ do.
       **Also blocked until this clears:** PR #109 cannot auto-merge (its five
       substantive gates passed before the outage; `agent-review` never ran),
       the daily agent cannot open PRs, and no green `main` commit can deploy.
+
+- [ ] **Approve and install the weekly Tiingo timer, then run the first
+      ingest** (added 2026-10-10 with `tiingo_eod`, `docs/DATA_CONTRACTS.md`
+      #14). Until it runs, every price in the app is exactly as before: each
+      roll prices at `q = 0` and says `q_source: unknown`. After the PR merges:
+
+      ```bash
+      cd ~/Documents/apps/tail-lab && git pull --ff-only
+      cp docs/systemd/tail-lab-tiingo.{service,timer} ~/.config/systemd/user/
+      systemctl --user daemon-reload && systemctl --user enable --now tail-lab-tiingo.timer
+      make ingest-tiingo-eod     # first run now: ~95 min, throttled to 45 requests/hour
+      ```
+
+      The key is already in `.env` (`TIINGO_API_KEY`). The run writes to the
+      production lake (Tigris), which is why it is yours to start. Using the same
+      key elsewhere during that hour can trip a 429 and fail the run; it is safe
+      to re-run (a failed fetch writes nothing). Failures alert as
+      `tail-lab-alert@tiingo`, never on the chain sweep's marker.

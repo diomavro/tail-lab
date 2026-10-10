@@ -19,7 +19,12 @@ from collections import defaultdict
 import pandas as pd
 from pydantic import BaseModel
 
-from tail_lab.contracts.hypothesis import RuleSpec, Verdict, verdict_from_passing_regimes
+from tail_lab.contracts.hypothesis import (
+    RuleSpec,
+    Verdict,
+    rule_spec_for,
+    verdict_from_passing_regimes,
+)
 from tail_lab.contracts.regime import REGIME_LABELS, RegimeLabel
 from tail_lab.lake.store import LakeStore
 from tail_lab.research.backtest.put_roll import PutRollCycle, compute_put_backtest
@@ -42,6 +47,9 @@ class RegimeVerdict(BaseModel):
 
     asset: str
     as_of: dt.date
+    #: The spec this verdict's outcomes are recorded under -- carried so the
+    #: memory recorder stores exactly this, never a second spec built apart.
+    rule_spec: RuleSpec
     rule_hash: str
     verdict: Verdict
     slices: list[RegimeSlice]
@@ -128,12 +136,18 @@ def compute_regime_verdict(
     )
     timeline = compute_regime_timeline(store, as_of=as_of)
     slices, verdict = regime_breakdown(result.cycles, timeline)
-    spec = RuleSpec(
+    spec = rule_spec_for(
         asset=asset,
         moneyness_pct=moneyness_pct,
         tenor_weeks=tenor_weeks,
-        lookback_years=round(years),
+        years=years,
+        q_source=result.q_source,
     )
     return RegimeVerdict(
-        asset=asset, as_of=as_of, rule_hash=spec.rule_hash(), verdict=verdict, slices=slices
+        asset=asset,
+        as_of=as_of,
+        rule_spec=spec,
+        rule_hash=spec.rule_hash(),
+        verdict=verdict,
+        slices=slices,
     )

@@ -65,6 +65,11 @@ export const CYCLES: PutBacktestCycle[] = Array.from({ length: 12 }, (_, i) => {
     spot,
     strike,
     sigma: Number((0.17 + i * 0.004).toFixed(4)),
+    // SPY's measured yield (~1.3%), read at each entry.
+    q: 0.01307,
+    q_source: 'measured',
+    t_years: 20 / 252,
+    premium_floored: false,
     premium,
     contracts,
     cost,
@@ -103,6 +108,26 @@ export const BACKTEST: PutBacktestResponse = {
   // ordinary case for a tail hedge, and the one the copy has to survive.
   benchmark_annualized: 0.1132,
   priced_from: 'model',
+  q_source: 'measured',
+  dividend_snapshot: 'tiingo_eod@2026-08-15#3c9a1f0e5d7b2a64',
+  // The latest roll's yield, laid out to be redone by hand at that roll's
+  // entry (2025-04-05, spot 494.40), from the four payments before it:
+  // q = -ln(1 - 6.42 / 494.40) = 0.01307.
+  dividend_basis: {
+    date: CYCLES[11]!.entry_date,
+    q: 0.01307,
+    source: 'measured',
+    age_days: 0,
+    close: CYCLES[11]!.spot,
+    annual: 6.42,
+    per_year: 4,
+    payments: [
+      { ex_date: '2024-06-21', cash: 1.6, adjusted: 1.6 },
+      { ex_date: '2024-09-20', cash: 1.75, adjusted: 1.75 },
+      { ex_date: '2024-12-20', cash: 1.53, adjusted: 1.53 },
+      { ex_date: '2025-03-21', cash: 1.54, adjusted: 1.54 },
+    ],
+  },
   hit_rate: 2 / 12,
   biggest_payoff_mult: 3.2,
   worst_bleed_streak: 7,
@@ -296,6 +321,8 @@ export const LEADERBOARD: PutLabLeaderboardResponse = {
       // The screen never passes real quotes in today (AGENT_TODO.md, "the
       // ranked screen is still model-priced"), so every row is "model".
       priced_from: 'model',
+      // EEM has no measured dividends here, so its row says it priced at q = 0.
+      q_source: asset === 'eem' ? ('none' as const) : ('measured' as const),
       best_annualized: bestAnn,
       best_moneyness_pct: bestM,
       best_tenor_weeks: bestT,
@@ -453,7 +480,8 @@ export const SURFACE_FITTED: SurfaceResponse = {
     "parameterisation": "fixed moneyness: each anchor is the listed strike nearest spot*(1 - m/100); this confounds regime comparisons (docs/PRIOR_ART.md \u00a71)",
     "r": 0.04,
     "q": 0.019,
-    "rate_note": "q is an index-like dividend yield and is WRONG for income names (HYG, TLT); anchor_iv, lambda_guard_ok and the Black-Scholes overlay depend on it",
+    "q_source": "assumed",
+    "rate_note": "q is an assumed index-like dividend yield (no measured dividends for this name) and is WRONG for income names (HYG, TLT); anchor_iv, lambda_guard_ok and the Black-Scholes overlay depend on it",
     "anchor_iv": 0.346693,
     "lambda_guard_ok": true,
     "anchors": {
@@ -1076,7 +1104,8 @@ export const SURFACE_REFUSED: SurfaceResponse = {
     "parameterisation": "fixed moneyness: each anchor is the listed strike nearest spot*(1 - m/100); this confounds regime comparisons (docs/PRIOR_ART.md \u00a71)",
     "r": 0.04,
     "q": 0.019,
-    "rate_note": "q is an index-like dividend yield and is WRONG for income names (HYG, TLT); anchor_iv, lambda_guard_ok and the Black-Scholes overlay depend on it",
+    "q_source": "assumed",
+    "rate_note": "q is an assumed index-like dividend yield (no measured dividends for this name) and is WRONG for income names (HYG, TLT); anchor_iv, lambda_guard_ok and the Black-Scholes overlay depend on it",
     "anchor_iv": null,
     "lambda_guard_ok": null,
     "anchors": {

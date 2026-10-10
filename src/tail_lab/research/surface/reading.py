@@ -41,10 +41,23 @@ PARAMETERISATION: Final = (
     "this confounds regime comparisons (docs/PRIOR_ART.md §1)"
 )
 LOG_BASIS_NOTE: Final = "dismissed -- docs/adr/0026 §5: log returns are not in RV_alpha"
-RATE_NOTE: Final = (
-    "q is an index-like dividend yield and is WRONG for income names (HYG, TLT); "
-    "anchor_iv, lambda_guard_ok and the Black-Scholes overlay depend on it"
-)
+_Q_DEPENDS: Final = "anchor_iv, lambda_guard_ok and the Black-Scholes overlay depend on it"
+
+
+def rate_note_for(q_source: str) -> str:
+    """What the reader must know about ``q`` for this reading.
+
+    ``"assumed"`` is the fallback when no measured yield exists for the name
+    (before the first Tiingo ingest, or a name it does not cover): the old flat
+    index-like 1.9%, which is wrong for income names. Every other source is the
+    name's own measured yield (`transforms/dividend_yield.py`).
+    """
+    if q_source == "assumed":
+        return (
+            "q is an assumed index-like dividend yield (no measured dividends for this name) "
+            f"and is WRONG for income names (HYG, TLT); {_Q_DEPENDS}"
+        )
+    return f"q is this name's own dividend yield from its paid dividends ({q_source}); {_Q_DEPENDS}"
 
 
 @dataclass(frozen=True)
@@ -103,6 +116,9 @@ class SurfaceReading:
     parameterisation: str
     r: float
     q: float
+    #: Where ``q`` came from: a ``transforms.dividend_yield`` source, or
+    #: ``"assumed"`` for the flat index-like fallback.
+    q_source: str
     rate_note: str
     anchor_iv: float | None
     lambda_guard_ok: bool | None
@@ -245,6 +261,7 @@ def read_surface(
     tenor_days: float,
     r: float,
     q: float,
+    q_source: str = "assumed",
 ) -> SurfaceReading | None:
     """Assemble the Surface for ``underlying`` from one session of chain quotes.
 
@@ -292,7 +309,8 @@ def read_surface(
         parameterisation=PARAMETERISATION,
         r=r,
         q=q,
-        rate_note=RATE_NOTE,
+        q_source=q_source,
+        rate_note=rate_note_for(q_source),
         anchor_iv=anchor_iv,
         lambda_guard_ok=guard,
         anchors=anchors,

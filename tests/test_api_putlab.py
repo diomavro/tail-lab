@@ -4,8 +4,9 @@ through the real HTTP path with a seeded in-memory-ish Delta store."""
 from __future__ import annotations
 
 import datetime as dt
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from pathlib import Path
+from typing import Any
 
 import numpy as np
 import pandas as pd
@@ -86,9 +87,18 @@ def test_backtest_returns_full_result(client: TestClient) -> None:
     assert body["total_premium"] == pytest.approx(body["n_cycles"] * 1000)
     # A cycle carries the premium it was filled at and its realized payoff.
     # `quote_basis` rides along so the mark-to-market lookup can find the same
-    # contract again on a split-adjusted name (1.0 on the model path).
+    # contract again on a split-adjusted name (1.0 on the model path). `q` and
+    # `q_source` are the dividend yield the roll was priced with and where it came
+    # from -- this test lake has no Tiingo snapshot, so every roll says "unknown".
     first = body["cycles"][0]
+    assert first["q"] == 0.0
+    assert first["q_source"] == "unknown"
+    assert body["q_source"] == "none"
     assert set(first) == {
+        "q",
+        "q_source",
+        "t_years",
+        "premium_floored",
         "entry_date",
         "expiry_date",
         "spot",
@@ -1119,3 +1129,202 @@ def test_model_plan_logs_its_404s_with_inputs(
         )
     line = next(r.getMessage() for r in caplog.records if "refused_404=" in r.getMessage())
     assert "book_plan_model" in line and "put_share=0.3" in line
+
+
+# --- Dividend yields reach every pricing path (docs/DATA_CONTRACTS.md #14) ---
+#
+# Each test runs a route on the seeded lake with no Tiingo snapshot (every roll
+# priced at an unknown q = 0), then seeds a 6% payer and runs it again. A path
+# that forgot to pass the lookup would return the identical body both times --
+# exactly the headline-measured / sibling-at-zero split this guards against.
+
+
+def _clear_putlab_caches() -> None:
+    from tail_lab.research import dividends
+
+    for cache in (
+        putlab_routes._LEADERBOARD_CACHE,
+        putlab_routes._METRIC_SCREEN_CACHE,
+        putlab_routes._BACKTEST_CACHE,
+        putlab_routes._SWEEP_CACHE,
+        putlab_routes._REGIME_VERDICT_CACHE,
+        putlab_routes._SURFACE_CACHE,
+    ):
+        cache.clear()
+    dividends._memo.clear()
+
+
+def _before_and_after_dividends(
+    call: Callable[[], dict[str, Any]], day: dt.date | None = None
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    from tests.test_research_dividends import seed_tiingo_eod
+
+    _clear_putlab_caches()
+    before = call()
+    store = app.dependency_overrides[putlab_get_lake_store]()
+    seed_tiingo_eod(store, ["spy"], day or dt.datetime.now(dt.UTC).date(), annual_yield=0.06)
+    _clear_putlab_caches()
+    return before, call()
+
+
+def test_backtest_prices_every_roll_with_the_measured_yield(
+    client: TestClient, caplog: pytest.LogCaptureFixture
+) -> None:
+    params = {"asset": "spy", "notional": 1000, "moneyness_pct": 5, "tenor_weeks": 4, "years": 1}
+    before, after = _before_and_after_dividends(
+        lambda: client.get("/api/putlab/backtest", params=params).json()
+    )
+    assert before["q_source"] == "none" and before["dividend_snapshot"] is None
+    assert after["q_source"] == "measured"
+    assert after["dividend_snapshot"].startswith("tiingo_eod@")
+    assert all(c["q_source"] == "measured" and c["q"] > 0.05 for c in after["cycles"])
+    # Same spot, strike and vol: a dividend lowers the forward, so the put is dearer.
+    assert after["cycles"][0]["premium"] > before["cycles"][0]["premium"]
+    # The Workspace lays the latest roll's yield out to be redone by hand:
+    # q = -ln(1 - sum(adjusted) / close), from the four quarterly payments.
+    basis = after["dividend_basis"]
+    assert basis["source"] == "measured" and len(basis["payments"]) == 4
+    total = sum(p["adjusted"] for p in basis["payments"])
+    assert basis["q"] == pytest.approx(-np.log1p(-total / basis["close"]))
+    assert before["dividend_basis"]["source"] == "unknown"
+    # The structured run line names the dividend snapshot it priced with (§f).
+    lines = [r.getMessage() for r in caplog.records if "event=putlab.backtest " in r.getMessage()]
+    assert any("dividend_snapshot=tiingo_eod@" in m and "q_source=measured" in m for m in lines)
+
+
+def test_sweep_cells_price_on_the_same_dividend_basis(client: TestClient) -> None:
+    params = {"asset": "spy", "notional": 1000, "years": 1}
+    before, after = _before_and_after_dividends(
+        lambda: client.get("/api/putlab/sweep", params=params).json()
+    )
+    assert before["cells"] != after["cells"]
+
+
+def test_portfolio_prices_with_dividends_and_cites_the_snapshot(client: TestClient) -> None:
+    body = {
+        "legs": [{"asset": "spy", "moneyness_pct": 5, "tenor_weeks": 4, "weight": 1}],
+        "notional": 10000,
+        "years": 1,
+    }
+    before, after = _before_and_after_dividends(
+        lambda: client.post("/api/putlab/portfolio", json=body).json()
+    )
+    assert before["legs"] != after["legs"]
+    assert any(s.startswith("tiingo_eod@") for s in after["snapshot_ids"])
+
+
+def test_leaderboard_rows_price_with_dividends_and_say_so(client: TestClient) -> None:
+    params = {"moneyness_pct": 5, "tenor_weeks": 4, "years": 1}
+    before, after = _before_and_after_dividends(
+        lambda: client.get("/api/putlab/leaderboard", params=params).json()
+    )
+    (row_before,) = [r for r in before["ranked"] if r["asset"] == "spy"]
+    (row_after,) = [r for r in after["ranked"] if r["asset"] == "spy"]
+    assert (row_before["q_source"], row_after["q_source"]) == ("none", "measured")
+    assert row_before["roi_on_premium"] != row_after["roi_on_premium"]
+    # The best cell is picked by the ranking's own sweep: it must be on the same basis.
+    assert row_before["best_annualized"] != row_after["best_annualized"]
+    # ...and every best_* figure comes from a re-roll at that cell: same basis too.
+    assert row_before["best_roi_on_premium"] != row_after["best_roi_on_premium"]
+    assert any(s.startswith("tiingo_eod@") for s in after["snapshot_ids"])
+
+
+def test_roll_schedule_quotes_the_premium_with_dividends(client: TestClient) -> None:
+    params = {"moneyness_pct": 5, "tenor_weeks": 4, "years": 1, "top_k": 1}
+    before, after = _before_and_after_dividends(
+        lambda: client.get("/api/putlab/roll-schedule", params=params).json()
+    )
+    leg_before, leg_after = before["legs"][0], after["legs"][0]
+    assert leg_after["model_premium"] > leg_before["model_premium"]
+
+
+def test_surface_uses_the_names_own_yield_and_says_where_it_came_from(
+    client: TestClient,
+) -> None:
+    store = app.dependency_overrides[putlab_get_lake_store]()
+    today = dt.datetime.now(dt.UTC).date()
+    _seed_chain(store, today)
+    params = {"asset": "spy", "moneyness_pct": 7, "as_of": today.isoformat()}
+    # Seed on the same frozen day the request reads, so a run straddling UTC
+    # midnight cannot date the snapshot after as_of.
+    before, after = _before_and_after_dividends(
+        lambda: client.get("/api/putlab/surface", params=params).json()["surface"], day=today
+    )
+    # Without a measured yield: the old flat fallback, labelled as assumed.
+    assert (before["q"], before["q_source"]) == (0.019, "assumed")
+    assert "assumed" in before["rate_note"]
+    # "carried" on a weekend or holiday: the seeded history ends on the last
+    # business day and the surface reads today.
+    assert after["q_source"] in {"measured", "carried"}
+    assert after["q"] == pytest.approx(-np.log1p(-0.06))
+    assert "own dividend yield" in after["rate_note"]
+
+
+def test_metric_screen_baskets_price_with_dividends(client: TestClient) -> None:
+    params = {"moneyness_pct": 10, "tenor_weeks": 4, "years": 1, "top_k": 2}
+    before, after = _before_and_after_dividends(
+        lambda: client.get("/api/putlab/metric-screen", params=params).json()
+    )
+    assert before["baseline_roi"] != after["baseline_roi"]
+    assert before["entries"] != after["entries"]
+
+
+def test_every_pricing_route_logs_the_dividend_snapshot_it_priced_with(
+    client: TestClient, caplog: pytest.LogCaptureFixture
+) -> None:
+    # docs/STANDARDS.md §f: the structured run line, not just the response,
+    # must name the data version -- including the dividend basis.
+    from tests.test_research_dividends import seed_tiingo_eod
+
+    store = app.dependency_overrides[putlab_get_lake_store]()
+    today = dt.datetime.now(dt.UTC).date()
+    _seed_chain(store, today)
+    seed_tiingo_eod(store, ["spy"], today)
+    _clear_putlab_caches()
+    grid = {"moneyness_pct": 5, "tenor_weeks": 4, "years": 1}
+    client.get("/api/putlab/leaderboard", params=grid)
+    client.get("/api/putlab/roll-schedule", params={**grid, "top_k": 1})
+    client.get("/api/putlab/metric-screen", params={**grid, "top_k": 2})
+    client.post(
+        "/api/putlab/portfolio",
+        json={"legs": [{"asset": "spy", **grid, "weight": 1}], "notional": 1000, "years": 1},
+    )
+    client.get(
+        "/api/putlab/surface",
+        params={"asset": "spy", "moneyness_pct": 7, "as_of": today.isoformat()},
+    )
+    lines = [r.getMessage() for r in caplog.records]
+    for event, field in [
+        ("putlab.leaderboard", "dividend_snapshot"),
+        ("putlab.roll_schedule", "ranking_dividend_snapshot"),
+        ("putlab.roll_schedule", "premium_dividend_snapshot"),
+        ("putlab.metric_screen", "dividend_snapshot"),
+        ("putlab.portfolio", "dividend_snapshot"),
+        ("api.putlab.surface", "dividend_snapshot"),
+    ]:
+        assert any(f"event={event} " in m and f"{field}=tiingo_eod@" in m for m in lines), (
+            event,
+            field,
+        )
+
+
+def test_a_memoised_ranking_never_logs_a_snapshot_it_did_not_price_with(
+    client: TestClient, caplog: pytest.LogCaptureFixture
+) -> None:
+    # The leaderboard can serve the memo's copy priced before a Tiingo ingest:
+    # its log must cite what that ranking used (none), not a fresh read.
+    from tests.test_research_dividends import seed_tiingo_eod
+
+    _clear_putlab_caches()
+    grid = {"moneyness_pct": 5, "tenor_weeks": 4, "years": 1}
+    client.get("/api/putlab/leaderboard", params=grid)
+    seed_tiingo_eod(
+        app.dependency_overrides[putlab_get_lake_store](), ["spy"], dt.datetime.now(dt.UTC).date()
+    )
+    caplog.clear()
+    served = client.get("/api/putlab/leaderboard", params=grid).json()
+    assert not any(s.startswith("tiingo_eod@") for s in served["snapshot_ids"])
+    lines = [
+        r.getMessage() for r in caplog.records if "event=putlab.leaderboard " in r.getMessage()
+    ]
+    assert lines and not any("dividend_snapshot=tiingo_eod@" in m for m in lines)

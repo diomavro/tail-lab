@@ -1,0 +1,21 @@
+# Install: cp docs/systemd/tail-lab-tiingo.{service,timer} ~/.config/systemd/user/
+#          systemctl --user daemon-reload && systemctl --user enable --now tail-lab-tiingo.timer
+# (HUMAN_TODO.md: approve and install. Not installed by any script or agent.)
+[Unit]
+Description=tail-lab weekly Tiingo EOD + dividends + splits refresh (docs/DATA_CONTRACTS.md #14)
+Documentation=file:///home/dio/Documents/apps/tail-lab/scripts/weekly_tiingo_refresh.sh
+# Routed to its own alert context: the chain's would overwrite a real chain
+# alert with a remedy that is wrong for this job (scripts/chain_sweep_alert.sh).
+OnFailure=tail-lab-alert@tiingo.service
+# Orders this after the chain units when both are queued together (After=
+# alone starts nothing); the Saturday schedule is what keeps them apart.
+After=tail-lab-chain.service tail-lab-chain-verify.service
+
+[Service]
+Type=oneshot
+ExecStart=/home/dio/Documents/apps/tail-lab/scripts/weekly_tiingo_refresh.sh
+# Type=oneshot defaults TimeoutStartSec to INFINITY: a hung run would never
+# fail, so OnFailure= would never fire. Sized from the throttle, not a happy
+# path: 70 symbols at one request per 80 s is ~95 min, plus up to two 300 s
+# 429 backoffs and the 300 s lock wait -- 3h clears it.
+TimeoutStartSec=3h

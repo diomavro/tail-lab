@@ -73,6 +73,19 @@ case "$CONTEXT" in
     TOAST_BODY="One or more bronze sources did not refresh. They serve history on demand, so a re-run recovers them."
     LOGS="$REPO/.daily-refresh.log"
     ;;
+  tiingo)
+    # The weekly Tiingo EOD/dividends refresh (scripts/weekly_tiingo_refresh.sh).
+    # Its own marker: written to the chain's, it would overwrite a genuine
+    # chain alert -- the very misrouting described above.
+    MARKER="$REPO/.tiingo-refresh-FAILED"
+    FALLBACK="$HOME/.tiingo-refresh-FAILED"
+    HEADLINE="tail-lab weekly Tiingo refresh FAILED at $WHEN"
+    REMEDY="./scripts/weekly_tiingo_refresh.sh"
+    URGENCY="normal"
+    TOAST_TITLE="tail-lab: Tiingo refresh failed"
+    TOAST_BODY="Dividends and splits did not refresh. Tiingo serves history on demand, so a re-run recovers them."
+    LOGS="$REPO/.tiingo-refresh.log"
+    ;;
   budget)
     # GitHub's own "Included usage alerts" (90%/100% of plan allowance) are a
     # UI-only toggle -- there is no API for them, and the billing usage
@@ -134,6 +147,13 @@ render() {
       echo "These sources all serve history on demand, so nothing is lost --"
       echo "a re-run recovers them. This is NOT the option-chain sweep, and it"
       echo "is NOT time-critical. Do not run the chain sweep because of this."
+      ;;
+    tiingo)
+      echo "Tiingo serves history on demand, so nothing is lost -- a re-run"
+      echo "recovers the whole history. Until then every price uses the last"
+      echo "dividend yields, carried with their age (flagged stale after 21"
+      echo "days). The run takes ~95 minutes (45 requests/hour). This is NOT the"
+      echo "option-chain sweep. Do not run the chain sweep because of this."
       ;;
     budget)
       echo "Billed Actions minutes are above 80% of the monthly allowance."

@@ -189,6 +189,7 @@ def build_roll_schedule(
     lookback_years: float = 0.0,
     pricer: OptionPricer | None = None,
     sizing_mode: SizingMode | None = None,
+    q_by_asset: Mapping[str, float] | None = None,
 ) -> RollSchedule:
     """Assemble the top ``top_k`` strategies into placeable order intent.
 
@@ -205,6 +206,10 @@ def build_roll_schedule(
     number an executor reads to be a concrete cash figure, never a live
     formula -- see ``research/backtest/sizing.py``. Leaving it ``None`` (the
     default) uses ``notional`` for every leg exactly as before.
+
+    ``q_by_asset`` is each name's dividend yield on ``as_of``
+    (``research/dividends.py``), so the quoted premium is priced on the same
+    basis as the backtest that ranked it; a name it omits prices at ``q = 0``.
     """
     pricer = pricer or BlackScholesPricer()
 
@@ -237,7 +242,12 @@ def build_roll_schedule(
             clamped = float(min(max(sigma, REALIZED_VOL_FLOOR), REALIZED_VOL_CAP))
             t_years = max(round(tenor * TRADING_DAYS_PER_WEEK), 1) / 252.0
             model_premium = pricer.price_put(
-                spot=r.spot, strike=strike, t_years=t_years, r=SCHEDULE_RATE, sigma=clamped
+                spot=r.spot,
+                strike=strike,
+                t_years=t_years,
+                r=SCHEDULE_RATE,
+                sigma=clamped,
+                q=(q_by_asset or {}).get(r.asset, 0.0),
             )
             below_tick = model_premium < MIN_TRADEABLE_PREMIUM
             if model_premium > 0 and not below_tick:

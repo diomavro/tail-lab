@@ -48,6 +48,13 @@ class RuleSpec(BaseModel):
     moneyness_pct: float
     tenor_weeks: float
     lookback_years: int
+    #: The dividend basis the rule was priced on. ``"none"`` is every record
+    #: made before measured dividends existed, and any run that priced a roll at
+    #: an unknown q = 0; ``"measured"`` is a run where every roll had a real
+    #: basis (`PutBacktestResult.q_source`). Defaulted and left out of the hash
+    #: at its default, so every pre-existing record keeps its ``rule_hash`` and
+    #: q-aware runs land under new ones instead of overwriting q = 0 evidence.
+    dividends: Literal["none", "measured"] = "none"
 
     @field_validator("asset")
     @classmethod
@@ -63,9 +70,33 @@ class RuleSpec(BaseModel):
         """A stable, human-readable id for this rule — ``h-<8 hex>`` of the
         canonical spec. Deterministic across processes (no salting), and
         formatting-independent because the fields are already canonical."""
-        canonical = json.dumps(self.model_dump(), sort_keys=True, separators=(",", ":"))
+        canonical = json.dumps(
+            self.model_dump(exclude_defaults=True), sort_keys=True, separators=(",", ":")
+        )
         digest = hashlib.sha256(canonical.encode("utf-8")).hexdigest()
         return f"h-{digest[:8]}"
+
+
+def rule_spec_for(
+    *,
+    asset: str,
+    moneyness_pct: float,
+    tenor_weeks: float,
+    years: float,
+    q_source: str | None,
+) -> RuleSpec:
+    """The one place a run becomes a :class:`RuleSpec`: the regime verdict, the
+    memory recorder and the memory reader all build it here, so the hash a
+    verdict reports is the hash its outcomes are stored under. ``q_source`` is
+    the run's ``PutBacktestResult.q_source`` (``"measured"`` or anything else,
+    which records as ``"none"``)."""
+    return RuleSpec(
+        asset=asset,
+        moneyness_pct=moneyness_pct,
+        tenor_weeks=tenor_weeks,
+        lookback_years=round(years),
+        dividends="measured" if q_source == "measured" else "none",
+    )
 
 
 def verdict_from_passing_regimes(passing: AbstractSet[RegimeLabel]) -> Verdict:

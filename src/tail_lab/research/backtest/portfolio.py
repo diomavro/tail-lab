@@ -34,6 +34,7 @@ from tail_lab.contracts.options_calendar import cadence_for
 from tail_lab.lake.store import LakeStore
 from tail_lab.research.backtest.put_roll import (
     EquityPoint,
+    PricingBasis,
     PutBacktestResult,
     PutRollCycle,
     annualized_return,
@@ -42,6 +43,7 @@ from tail_lab.research.backtest.put_roll import (
 )
 from tail_lab.research.backtest.regime_verdict import regime_breakdown
 from tail_lab.research.backtest.sizing import SizingMode
+from tail_lab.research.dividends import dividend_lookup, dividend_snapshot_id
 from tail_lab.research.regimes.timeline import VIX_DATASET, compute_regime_timeline
 
 
@@ -187,6 +189,7 @@ def run_portfolio(
                 moneyness_pct=leg.moneyness_pct,
                 tenor_weeks=leg.tenor_weeks,
                 lookback_years=years,
+                basis=PricingBasis(dividends=dividend_lookup(store, leg.asset, as_of).lookup),
             )
         except LookupError:
             continue  # skip a leg with no data / too short a window
@@ -273,5 +276,7 @@ def run_portfolio(
         verdict=combined_verdict,
         legs=leg_results,
         equity_curve=combined_curve,
-        snapshot_ids=snapshot_ids,
+        # The dividend snapshot every leg priced with, once (absent before the
+        # first Tiingo ingest, when every q was an unknown 0).
+        snapshot_ids=snapshot_ids + [d for d in [dividend_snapshot_id(store, as_of)] if d],
     )

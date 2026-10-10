@@ -113,6 +113,12 @@ export function RankingStrip({ ranked, currentAsset, onSelect, snapshotIds, code
                 <th>At</th>
                 <th className="num">Hit</th>
                 <th className="num">Verdict</th>
+                <th
+                  className="num"
+                  title="Whether every roll was priced with the name's own dividend yield, or some at an unknown q = 0"
+                >
+                  q
+                </th>
                 <th className="num" title="Whether this row's ROI came from the pricing model or a real listed quote">
                   Basis
                 </th>
@@ -149,6 +155,17 @@ export function RankingStrip({ ranked, currentAsset, onSelect, snapshotIds, code
                   <td className="num dim">{Math.round(r.hit_rate * 100)}%</td>
                   <td className="num">
                     <span className={VERDICT_TAG[r.verdict]}>{r.verdict.replace('_', ' ')}</span>
+                  </td>
+                  <td className="num" data-testid={`q-source-${r.asset}`}>
+                    {r.q_source === 'none' ? (
+                      <span className="pl-tag pl-tag-bad" title="Some rolls priced at q = 0: no dividend data">
+                        q = 0
+                      </span>
+                    ) : r.q_source === 'measured' ? (
+                      <span className="pl-tag pl-tag-mute">measured</span>
+                    ) : (
+                      '—'
+                    )}
                   </td>
                   <td className="num">
                     <span className={BASIS_TAG[r.priced_from]}>{BASIS_LABEL[r.priced_from]}</span>

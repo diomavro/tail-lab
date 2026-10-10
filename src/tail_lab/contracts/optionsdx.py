@@ -44,10 +44,10 @@ catch it: the engine is behaving correctly on the rows it was given
 check is what makes that a finding rather than an assumption.
 
 **The binding constraint is now the PRICE series, not this panel.** Bronze
-OHLCV is a rolling five-year Tiingo window (2021-08 .. 2026-08), and this panel
-ends 2023-12, so a roll backtest that needs both has only ~589 overlapping
-trading days -- about a third of a default four-year window. Any consumer
-joining the two must report the span it actually traded.
+OHLCV is Nasdaq's ~10-year split-adjusted history (``ohlcv_spy`` 2016-10-10
+onward, measured 2026-10-10), and this panel ends 2023-12, so a roll backtest
+that needs both has 1,818 overlapping trading days. Any consumer joining the
+two must report the span it actually traded.
 
 **Two joins that are silently wrong.** The panel's ``spot`` is as-traded; the
 OHLCV ``close`` is split-adjusted. Measured 2026-09-09, panel/ohlcv median:

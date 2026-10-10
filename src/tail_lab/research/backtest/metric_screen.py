@@ -56,6 +56,7 @@ from tail_lab.lake.store import LakeStore
 from tail_lab.research.backtest.multiple_testing import benjamini_hochberg
 from tail_lab.research.backtest.portfolio import _max_drawdown, _scaled
 from tail_lab.research.backtest.put_roll import (
+    PricingBasis,
     PutBacktestResult,
     PutRollCycle,
     annualized_return,
@@ -69,6 +70,7 @@ from tail_lab.research.backtest.ranking import (
     _returns,
 )
 from tail_lab.research.backtest.regime_verdict import RegimeSlice, regime_breakdown
+from tail_lab.research.dividends import dividend_lookup
 from tail_lab.research.metrics.co_kurtosis import co_kurtosis
 from tail_lab.research.metrics.co_skewness import co_skewness
 from tail_lab.research.metrics.downside_beta import downside_beta
@@ -391,6 +393,7 @@ def compare_metric_screens(
                 moneyness_pct=moneyness_pct,
                 tenor_weeks=tenor_weeks,
                 lookback_years=years,
+                basis=PricingBasis(dividends=dividend_lookup(store, symbol, as_of).lookup),
             )
         except LookupError:
             continue  # no data / too short a window for this name -> skip

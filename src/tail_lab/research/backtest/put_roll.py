@@ -10,8 +10,10 @@ calls the pure engine.
 Every premium is a **model price**, not a real historical quote
 (``docs/adr/0004``); the underlying path is real. Point-in-time safety: the
 IV proxy at an entry date uses only trailing prices (no future leakage into
-the premium), and ``compute_put_backtest`` reads only the bronze snapshot
-known on or before ``as_of`` (``LakeStore.read_bronze_as_of``).
+the premium), and ``compute_put_backtest`` reads only the bronze snapshots
+known on or before ``as_of`` (``LakeStore.read_bronze_as_of``): the OHLCV path,
+and ``tiingo_eod`` for each entry's dividend yield (``research/dividends.py``),
+which reads only rows dated on or before that entry.
 
 **Market-priced rolls.** Passing ``basis=PricingBasis(quotes=...)`` switches
 every leg in the run from the model above to a real listed contract fetched
@@ -29,7 +31,7 @@ from __future__ import annotations
 import bisect
 import datetime as dt
 from collections.abc import Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import TYPE_CHECKING, Literal
 
 import numpy as np
@@ -41,6 +43,7 @@ from tail_lab.lake.store import LakeStore
 from tail_lab.research.backtest.brokerage import COMMISSION_PER_CONTRACT, roll_cost
 from tail_lab.research.backtest.growth import time_average_growth
 from tail_lab.research.backtest.sizing import SizingMode, WealthFraction
+from tail_lab.research.dividends import UNKNOWN, DividendLookup, dividend_lookup
 
 # quote_fills -> marks -> roll_schedule -> put_roll (roll_schedule imports REALIZED_VOL_CAP/
 # REALIZED_VOL_FLOOR/TRADING_DAYS_PER_WEEK from here), so a top-level import of QuoteSource
@@ -92,10 +95,19 @@ class PricingBasis:
     This replaces the old ``pricer: OptionPricer | None`` parameter
     one-for-one so ``run_put_roll``'s keyword-only argument count does not
     grow past the ``max-args = 13`` ratchet in ``pyproject.toml``.
+
+    ``dividends`` is the underlying's point-in-time dividend yield
+    (``research/dividends.py``). ``None`` prices at ``q = 0`` labelled
+    ``unknown`` -- the pre-2026-10 behaviour, which under-priced every put on an
+    income name (HYG's median delta error was 0.197, `make greeks-check`). It
+    is a callable, so the dataclass is never hashed or used as a cache key.
+    The model path prices with it; the market path's premium is a real quote
+    and does not use it.
     """
 
     pricer: OptionPricer | None = None
     quotes: QuoteSource | None = None
+    dividends: DividendLookup | None = None
 
 
 class PutRollCycle(BaseModel):
@@ -105,12 +117,25 @@ class PutRollCycle(BaseModel):
     expiry_date: dt.date
     spot: float
     strike: float
+    #: Years to expiry the premium was priced with: trading days / 252 on the
+    #: model path (``None`` on the market path, which fills a listed expiry).
+    t_years: float | None = None
     #: IV proxy (clamped realized-vol) at entry. Used to price the premium on
     #: the model path; on the market path (``PricingBasis.quotes`` set) the
     #: premium comes from a real quote instead, and this is kept only as the
     #: vol-regime context for that entry, not an input to the price.
     sigma: float
+    #: Continuous dividend yield the model priced this roll with (0.0 on the
+    #: market path, whose premium is a real quote) and where it came from, taken
+    #: at the entry date (`transforms/dividend_yield.py`). On the market path
+    #: ``q`` is 0.0 and ``q_source`` is ``None``: q was not used.
+    q: float = 0.0
+    q_source: str | None = None
     premium: float  # model price of one put at entry (the real ask, on the market path)
+    #: True when Black-Scholes gave less than ``spot * PREMIUM_FLOOR_FRAC`` and
+    #: the premium is that floor, not a model price -- so it cannot be
+    #: reproduced from the other inputs (model path only).
+    premium_floored: bool = False
     contracts: float  # notional / premium
     cost: float  # entry brokerage (commission + bid-ask half-spread) for this roll
     #: Quote-panel basis this leg was resolved under (1.0 on the model path).
@@ -138,6 +163,33 @@ class AnnualizedPoint(BaseModel):
 class PricePoint(BaseModel):
     date: dt.date
     price: float
+
+
+class DividendPaymentView(BaseModel):
+    """One dividend summed into ``q``: ``cash`` paid per share on ``ex_date``,
+    ``adjusted`` that cash on the pricing date's share basis (after splits)."""
+
+    ex_date: dt.date
+    cash: float
+    adjusted: float
+
+
+class DividendBasisView(BaseModel):
+    """The dividend yield behind the latest roll, laid out so a reader can
+    redo it: ``q = -ln(1 - sum(adjusted) / close)``."""
+
+    date: dt.date
+    q: float
+    source: str
+    #: Days the value was carried past the data's last row (0 = current).
+    age_days: int
+    #: The as-traded close ``q`` was computed against (``None`` if unknown).
+    close: float | None
+    #: ``D`` as used -- the payments' sum, scaled to a year for short_history --
+    #: and ``N``, the payments a year it stands for (0 when not measured).
+    annual: float
+    per_year: int
+    payments: list[DividendPaymentView]
 
 
 class PutBacktestResult(BaseModel):
@@ -213,6 +265,18 @@ class PutBacktestResult(BaseModel):
     #: window, whenever n_cycles_skipped > 0 (see run_put_roll's callsite).
     traded_start: dt.date | None = None
     traded_end: dt.date | None = None
+    #: The run's dividend basis, summarised by one rule: ``"measured"`` iff no
+    #: roll priced from an ``unknown`` yield (non-payer, suspended, short
+    #: history, carried and stale are all real bases), else ``"none"``.
+    #: ``None`` on the market path, whose premiums are real quotes. This is the
+    #: value the hypothesis memory hashes on (`contracts/hypothesis.py`), so a
+    #: run that priced any roll at an unknown q=0 is never filed as measured.
+    q_source: Literal["measured", "none"] | None = None
+    #: The ``tiingo_eod`` snapshot the yields came from (``None`` without one).
+    dividend_snapshot: str | None = None
+    #: The yield behind the latest roll, with the payments it was built from
+    #: (``None`` on the market path or before ``compute_put_backtest`` fills it).
+    dividend_basis: DividendBasisView | None = None
     equity_curve: list[EquityPoint]  # realized, one point per expiry (+ a seed)
     mtm_curve: list[EquityPoint]  # daily mark-to-model cum P&L, aligned with price_path
     price_path: list[PricePoint]  # underlying over the traded window (for the tape)
@@ -388,6 +452,11 @@ class _CycleFacts:
     net: float
     #: Quote-panel basis (1.0 on the model path); see PutRollCycle.quote_basis.
     quote_basis: float = 1.0
+    #: Dividend yield and its source at entry (model path only).
+    q: float = 0.0
+    q_source: str | None = None
+    t_years: float | None = None
+    premium_floored: bool = False
 
 
 def _record_cycle(
@@ -425,7 +494,11 @@ def _record_cycle(
             spot=float(facts.spot),
             strike=float(facts.strike),
             sigma=facts.sigma,
+            q=facts.q,
+            q_source=facts.q_source,
+            t_years=facts.t_years,
             premium=float(facts.premium),
+            premium_floored=facts.premium_floored,
             contracts=float(facts.contracts),
             cost=float(facts.cost),
             payoff=float(facts.payoff),
@@ -448,7 +521,7 @@ def _roll_model_cycles(
     first_entry: int,
     n: int,
     tenor_days: int,
-    pricer: OptionPricer,
+    basis: PricingBasis,
     rate: float,
     notional: float,
     moneyness_pct: float,
@@ -456,9 +529,11 @@ def _roll_model_cycles(
     commission_per_contract: float,
     spread_scale: float,
 ) -> _CycleAccumulation:
-    """The model-priced roll loop — behaviour unchanged from before
-    ``PricingBasis`` existed, only moved out of ``run_put_roll`` (see
-    ``_CycleAccumulation``'s docstring for why)."""
+    """The model-priced roll loop, moved out of ``run_put_roll`` (see
+    ``_CycleAccumulation``'s docstring for why). Each entry is priced with the
+    underlying's dividend yield on that date when ``basis.dividends`` is set,
+    else at ``q = 0`` labelled ``unknown``."""
+    pricer = basis.pricer or BlackScholesPricer()
     t_years = tenor_days / 252.0
     acc = _CycleAccumulation(last_expiry_idx=first_entry)
     i = first_entry
@@ -470,8 +545,11 @@ def _roll_model_cycles(
         sigma = float(min(max(sigma, REALIZED_VOL_FLOOR), REALIZED_VOL_CAP))
         spot = px[i]
         strike = spot * (1.0 - moneyness_pct / 100.0)
-        premium = pricer.price_put(spot=spot, strike=strike, t_years=t_years, r=rate, sigma=sigma)
-        premium = max(premium, spot * PREMIUM_FLOOR_FRAC)
+        dividend = basis.dividends(dates[i]) if basis.dividends is not None else UNKNOWN
+        model_premium = pricer.price_put(
+            spot=spot, strike=strike, t_years=t_years, r=rate, sigma=sigma, q=dividend.q
+        )
+        premium = max(model_premium, spot * PREMIUM_FLOOR_FRAC)
         contracts = notional / premium
         cost = roll_cost(
             contracts,
@@ -498,6 +576,10 @@ def _roll_model_cycles(
                 cost=cost,
                 payoff=payoff,
                 net=net,
+                q=dividend.q,
+                q_source=dividend.source,
+                t_years=t_years,
+                premium_floored=model_premium < spot * PREMIUM_FLOOR_FRAC,
             ),
             notional=notional,
         )
@@ -714,7 +796,7 @@ def run_put_roll(
             first_entry=first_entry,
             n=n,
             tenor_days=tenor_days,
-            pricer=pricer,
+            basis=basis,
             rate=rate,
             notional=notional,
             moneyness_pct=moneyness_pct,
@@ -795,7 +877,7 @@ def run_put_roll(
     # This used to be conditional on `n_cycles_skipped > 0`, which tests the
     # wrong thing: the commonest truncation is not a skipped cycle, it is the
     # price series simply being shorter than the window asked for. Bronze OHLCV
-    # is a rolling ~5-year Tiingo window while `/api/putlab/backtest` accepts
+    # is Nasdaq's ~10-year history while `/api/putlab/backtest` accepts
     # `years` up to 20, so that case is not exotic -- it is what any long
     # lookback does today. Measured on real SPY 5% / 12 weeks, where all three
     # runs trade the SAME 20 cycles over the SAME 4.79 years:
@@ -846,7 +928,14 @@ def run_put_roll(
         n_cycles_skipped=n_cycles_skipped,
         traded_start=traded_start,
         traded_end=traded_end,
+        q_source=None if quotes is not None else summarise_q_source(cycles),
     )
+
+
+def summarise_q_source(cycles: Sequence[PutRollCycle]) -> Literal["measured", "none"]:
+    """``"measured"`` iff no roll priced from an ``unknown`` yield; see
+    :attr:`PutBacktestResult.q_source`."""
+    return "none" if any(c.q_source == "unknown" for c in cycles) else "measured"
 
 
 def _mark_to_market_curve(
@@ -1001,8 +1090,10 @@ def _mark_open_leg(
             open_mark_pos,
         )  # intrinsic at expiry (guards T=0)
     sigma = float(min(max(realized_vol[k], REALIZED_VOL_FLOOR), REALIZED_VOL_CAP))
+    # The entry's dividend yield: q moves slowly, and re-reading it daily
+    # would only re-label a mark the entry already priced.
     mark = pricer.price_put(
-        spot=float(px[k]), strike=cyc.strike, t_years=t_years, r=rate, sigma=sigma
+        spot=float(px[k]), strike=cyc.strike, t_years=t_years, r=rate, sigma=sigma, q=cyc.q
     )
     return mark, open_mark, open_mark_pos
 
@@ -1095,6 +1186,9 @@ def compute_put_backtest(
     """
     budget = sizing_mode.resolve(n_legs=1) if sizing_mode is not None else notional
     prices, realized_vol_proxy = load_asof_series(store, asset, as_of)
+    dividends = dividend_lookup(store, asset, as_of)
+    # Merge, never replace: a caller's quotes/pricer must survive.
+    basis = replace(basis or PricingBasis(), dividends=dividends.lookup)
     result = run_put_roll(
         prices,
         realized_vol_proxy,
@@ -1116,4 +1210,25 @@ def compute_put_backtest(
             wealth=sizing_mode.wealth,
         )
         result = result.model_copy(update={"time_average_growth": growth})
-    return result
+    latest = dividends.lookup(result.cycles[-1].entry_date)
+    basis_view = DividendBasisView(
+        date=result.cycles[-1].entry_date,
+        q=latest.q,
+        source=latest.source,
+        age_days=latest.age_days,
+        close=latest.close,
+        annual=latest.annual,
+        per_year=latest.per_year,
+        payments=[
+            DividendPaymentView(ex_date=p.ex_date, cash=p.cash, adjusted=p.adjusted)
+            for p in latest.payments
+        ],
+    )
+    # A market-priced run used real quotes, not q: it cites no dividend basis.
+    market = result.priced_from == "market"
+    return result.model_copy(
+        update={
+            "dividend_snapshot": None if market else dividends.snapshot_id,
+            "dividend_basis": None if market else basis_view,
+        }
+    )

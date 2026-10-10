@@ -4,7 +4,8 @@ Date: 2026-08-19
 
 ## Status
 
-Accepted
+Accepted. **Amended 2026-10-10** (below): a rule's identity now includes the
+dividend basis it was priced on.
 
 ## Context
 
@@ -69,3 +70,41 @@ nothing is ever pruned from the retrieval path.
   scale; revisit if it ever matters.
 - A new `memory` node in the layer contract (`pyproject.toml`); the read/serve
   ban on importing `ingestion` is unaffected.
+
+## Amendment — 2026-10-10: the dividend basis is part of a rule
+
+**Context.** Until October 2026 every Put Lab backtest priced every name at
+`q = 0`, which under-priced puts on dividend payers (HYG's delta was off by
+0.197 against the exchange's own). Measured dividends now price every Put Lab
+model-priced path (`docs/DATA_CONTRACTS.md` #14). A verdict priced at `q = 0`
+and one priced at the measured `q` are not the same experiment: merging them
+under one `rule_hash` would let a re-run on the new prices silently overwrite,
+and `run_count`-bump, evidence gathered on the old ones.
+
+**Decision.** `RuleSpec` gains `dividends: "none" | "measured"`, defaulted to
+`"none"` and hashed only when `"measured"` (`model_dump(exclude_defaults=True)`),
+so every record made before this keeps its `rule_hash` (pinned by a test). A
+run is `"measured"` iff **no roll priced from an unknown yield**
+(`PutBacktestResult.q_source`); one roll at an unknown `q = 0` files the whole
+run under the old hash. One helper, `rule_spec_for`, builds every spec, and
+`RegimeVerdict` carries the spec the recorder stores, so the reported and
+stored hashes cannot diverge. `GET /api/putlab/memory` returns the measured
+record at the top level and the `"none"` record as a separate `legacy`
+section ("priced without dividends") — never merged into one verdict.
+
+**Consequences.**
+
+- §1's "a rule is asset, moneyness, tenor, lookback" now reads: *plus the
+  dividend basis it was priced on.*
+- Evidence for dividend-measured rules accrues from zero; the top-level verdict
+  reads `untested` for every rule until a measured run is recorded, while the
+  old evidence stays readable as `legacy`.
+- Before the first Tiingo ingest, and for any symbol or window touching an
+  unknown yield, runs keep filing under the old hashes. That includes a name
+  that only recently started paying: between its first and second dividend
+  its yield is `unknown`, so a run whose window covers that stretch files as
+  `"none"` for as long as the window reaches back (META and GOOGL, which began
+  paying in 2024, do so for several years of lookback).
+- The memory `run_id` also names the dividend snapshot, so a re-record after a
+  new weekly ingest is a different run.
+

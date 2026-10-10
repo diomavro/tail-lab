@@ -770,9 +770,11 @@ would catch it because the engine is correct on the rows it is given
 makes that a finding rather than an assumption.
 
 **The binding constraint is now the price series, not this panel.** Bronze OHLCV
-is a rolling five-year Tiingo window (2021-08 .. 2026-08) and this panel ends
-2023-12, so a consumer needing both has **~589 overlapping trading days** — about
-a third of a default four-year window.
+is Nasdaq's ~10-year split-adjusted history (measured 2026-10-10: `ohlcv_spy`
+2016-10-10 .. 2026-10-08) and this panel ends 2023-12, so a consumer needing both
+has **1,818 overlapping trading days**. (This line used to say "a rolling
+five-year Tiingo window, ~589 days"; the OHLCV source is Nasdaq, and Tiingo now
+feeds #14, not OHLCV.)
 
 **Two joins that are silently wrong.** The panel's `spot` is as-traded; the OHLCV
 `close` is split-adjusted. Panel/OHLCV median: spy 1.0000, qqq 1.0000, tsla
@@ -991,3 +993,104 @@ float, every exact two-cent gap counted as a disagreement (36.9% vs 31.2% on
 the 0-120 band).
 The 114 optionsDX-only keys sit on two dates (2023-02-16, 2023-04-20) — a real
 vendor difference worth a look, not an artefact.
+
+---
+
+## 14. `tiingo_eod` — as-traded closes, dividends and splits (Tiingo)
+
+**Status: built 2026-10-10 (PR "tiingo_eod dividends"); first ingest is a human
+action** (`HUMAN_TODO.md`: approve the weekly timer). Until it runs, every price
+in the app is unchanged: each roll reads `q = 0` labelled `unknown`.
+
+**Why it exists.** Every option price needs the underlying's dividend yield
+`q`, and nothing in the lake carried a dividend: the roll backtest priced every
+name at `q = 0`, which under-priced puts on income names worst (HYG's delta was
+off by 0.197 against the exchange's own). Nasdaq's keyless dividend endpoint
+serves no history at all for NYSE Arca ETFs (SPY, HYG, IWM, LQD — probed
+2026-10-10), so the source is Tiingo (free, keyed, personal use —
+`docs/DATA_SOURCING.md` §7).
+
+**Shape — `TiingoEodSchema`** (`contracts/tiingo_eod.py`), keyed
+`(symbol, trade_date)`:
+
+| column | meaning |
+|---|---|
+| `symbol` | lower-case universe ticker |
+| `trade_date` | the session |
+| `close` | **as traded** — not split-adjusted |
+| `adj_close` | Tiingo's dividend-and-split-adjusted close (a total-return index: `adj_t/adj_{t-1} = (close_t + div_t)/close_{t-1}`, verified to 3.7e-12 over 8,482 SPY rows) |
+| `div_cash` | cash dividend per share paid **on this ex-date**, as paid; 0 otherwise |
+| `split_factor` | split effective this day (4:1 = 4.0); 1.0 otherwise |
+
+**One dataset, all symbols.** The whole universe (`universe_symbols()`, 70
+names) lands in one partition per run, following the chain sweep's precedent
+rather than the per-symbol `ohlcv_<sym>` layout: an as-of read takes exactly one
+partition, so a per-symbol write would let one failed symbol hide the rest.
+Each weekly partition re-states the full history from 1993 (~400k rows,
+≈20 MB/yr of Tigris growth).
+
+**Write policy** (`ingestion/tiingo_eod.py`): a **failed fetch aborts the whole
+write** (a partition missing a symbol would hide its history); an **invalid row
+is quarantined** (`tiingo_eod__quarantine`) and its symbol is **withheld** from
+the valid partition, so readers see it absent (`q` unknown) rather than a
+silently wrong yield; a run on a day whose partition exists is a logged no-op.
+
+**Budget.** Free tier ≈ 50 requests/hour; one request per symbol returns its
+whole history, and the adapter spaces them 80 s apart (45/hour), so a run takes
+~95 minutes. Scheduled weekly (`docs/systemd/tail-lab-tiingo.timer`, Saturday
+10:00 UTC) through `scripts/weekly_tiingo_refresh.sh`, which holds the
+dataset's own lock (`.tiingo-refresh.lock`).
+
+**From rows to `q`** — `transforms/dividend_yield.py`, read through
+`research/dividends.py` (one projected read per snapshot, memoised on the
+lake and snapshot id, built once per key even under concurrent requests):
+
+* the **indicated annual dividend**: the last `N` payments of the current
+  *run* (payments since the last gap longer than 3× the seed period — a
+  suspension), `N` = the run's mean gap over its payments in the last 700
+  days (at least its last two), snapped to 1, 2, 4 or 12 a year, each payment
+  divided by the splits after its ex-date; then
+  `q = -ln(1 - D / close)` against the same day's as-traded close. No
+  calendar window: every 365-day variant miscounted around ex-dates.
+* labelled sources: `measured`, `non_payer`, `suspended` (last payment older
+  than twice the period), `short_history` (scaled to a year), `carried` /
+  `stale` (past the data's last row; stale after 21 days), `unknown` (priced at
+  `q = 0`).
+* **Point-in-time.** A backfill lands as one partition dated today, so the
+  as-of model does not guard history here: the row filter does — `q` at date
+  `t` reads only rows dated on or before `t` (tested). Dividing by the same
+  dataset's as-traded close keeps the ratio on one share basis without
+  reconciling against bronze OHLCV, whose closes are split-adjusted as of
+  their fetch date.
+* **Disclosed limits:** a cut lags up to `N` payments; Tiingo does not flag
+  specials, which inflate `q` for `N` payments; a frequency change biases `q`
+  both ways for up to a year (TSM 2019-20); a special distorts `q` in either
+  direction -- a large one inflates `D`, a small one displaces a regular payment
+  and deflates it -- and depending on where it falls can raise `N` itself (a
+  semiannual payer with one special reads `N = 4` for weeks of the next year)
+  until it ages out; and a continuous yield
+  spreads an annual payer's dividend across every short option (FXI's delta
+  error grew).
+
+**Consumers.** `compute_put_backtest`, the ranking
+(all three of its pricing calls), the portfolio, the metric screen, the sweep,
+the roll schedule, the Surface (which falls back to its old assumed 1.9%,
+labelled, when a name has no measured yield) and `scripts/greeks_check.py`.
+Each result cites the snapshot (`dividend_snapshot` or `snapshot_ids`). **Not
+yet:** the Book (`hedge_overlay`, `contribution_plan`, `model_plan`),
+`index_replication` and `skew` still use the flat 1.9% `DEFAULT_DIVIDEND_YIELD`.
+
+---
+
+## 15. `options_expiry_<symbol>` — listed expiration dates
+
+**Status: built 2026-08-30; populated by the daily refresh for the 24
+chain-sweep symbols.** One row per `(symbol, expiration_date)` the underlying's
+chain lists as of the ingest date (`contracts/options_expiry.py`), one dataset
+per symbol like `ohlcv_<sym>`. Fetched from Cboe's delayed-quote chain with a
+Yahoo fallback (`ingestion/options_expiry.py`, `make ingest-options-expiry
+SYMBOL=…`). `transforms/options_expiry.classify_cadence` turns it into the
+listing-cadence label `/api/putlab/cadence` serves; without a partition the
+route falls back to the static catalogue in `contracts/options_calendar.py`
+(`docs/DATA_FLOW.md` §3.1). This section was missing from this file until
+2026-10-10, though the dataset predates it.

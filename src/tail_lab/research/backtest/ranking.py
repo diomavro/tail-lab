@@ -38,6 +38,7 @@ from tail_lab.contracts.ohlcv import dataset_id
 from tail_lab.contracts.options_calendar import cadence_for
 from tail_lab.lake.store import LakeStore
 from tail_lab.research.backtest.put_roll import (
+    PricingBasis,
     load_asof_series,
     run_put_roll,
 )
@@ -48,6 +49,7 @@ from tail_lab.research.backtest.sweep import (
     best_point,
     run_sweep,
 )
+from tail_lab.research.dividends import dividend_lookup, dividend_snapshot_id
 from tail_lab.research.metrics.co_kurtosis import co_kurtosis
 from tail_lab.research.metrics.co_skewness import co_skewness
 from tail_lab.research.metrics.downside_beta import downside_beta
@@ -104,6 +106,9 @@ class RankedAsset(BaseModel):
     asset: str
     name: str
     spot: float
+    #: The dividend basis the backtest priced with: "measured" iff no roll used
+    #: an unknown yield (see `PutBacktestResult.q_source`).
+    q_source: Literal["measured", "none"] | None = None
     # fragility (vs SPY); None if too little overlapping history to estimate
     downside_beta: float | None
     co_skewness: float | None
@@ -266,6 +271,10 @@ def _vol_beta_for(
 
 
 def _rank_one(symbol: str, ctx: _RankContext) -> RankedAsset | None:
+    # One dividend basis for all three pricing calls below, so the headline,
+    # the cell-picking sweep and the best-cell re-roll never disagree on q.
+    dividends = dividend_lookup(ctx.store, symbol, ctx.as_of).lookup
+    basis = PricingBasis(dividends=dividends)
     try:
         prices, realized_vol_proxy = load_asof_series(ctx.store, symbol, ctx.as_of)
         result = run_put_roll(
@@ -277,6 +286,7 @@ def _rank_one(symbol: str, ctx: _RankContext) -> RankedAsset | None:
             moneyness_pct=ctx.moneyness_pct,
             tenor_weeks=ctx.tenor_weeks,
             lookback_years=ctx.years,
+            basis=basis,
         )
     except LookupError:
         return None  # no data / too short a window for this name -> skip
@@ -300,6 +310,7 @@ def _rank_one(symbol: str, ctx: _RankContext) -> RankedAsset | None:
             notional=ctx.notional,
             years=ctx.years,
             moneyness_grid=MODEL_PRICED_SWEEP_MONEYNESS,
+            dividends=dividends,
         )
     )
     db, cs, ck, tb, dc = _fragility(prices, ctx.bench_ret, ctx.lookback_days)
@@ -320,6 +331,7 @@ def _rank_one(symbol: str, ctx: _RankContext) -> RankedAsset | None:
                 moneyness_pct=best.moneyness_pct,
                 tenor_weeks=best.tenor_weeks,
                 lookback_years=ctx.years,
+                basis=basis,
                 include_curves=False,
             )
             _, best_verdict = regime_breakdown(best_run.cycles, ctx.timeline)
@@ -338,6 +350,7 @@ def _rank_one(symbol: str, ctx: _RankContext) -> RankedAsset | None:
         fragility_score=None,  # filled in cross-sectionally below
         roi_on_premium=result.roi_on_premium,
         annualized_return=result.annualized_return,
+        q_source=result.q_source,
         verdict=verdict,
         hit_rate=result.hit_rate,
         biggest_payoff_mult=result.biggest_payoff_mult,
@@ -429,6 +442,11 @@ def rank_universe(
         snap = store.bronze_snapshot_id(dataset_id(row.asset), as_of)
         if snap not in snapshot_ids:
             snapshot_ids.append(snap)
+    # The dividend snapshot every name was priced with (absent before the first
+    # Tiingo ingest, when every q was an unknown 0).
+    dividend_snapshot = dividend_snapshot_id(store, as_of)
+    if dividend_snapshot is not None:
+        snapshot_ids.append(dividend_snapshot)
     return UniverseRanking(
         as_of=as_of,
         moneyness_pct=moneyness_pct,

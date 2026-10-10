@@ -128,6 +128,7 @@ account, no API key, no money — the constitution's free-data-first rule.
 | **Nasdaq** historical | `ohlcv_<symbol>` | daily | ✅ | Yahoo | `make ingest-ohlcv SYMBOL=…` |
 | **Cboe** delayed quote chain | `options_expiry_<symbol>` | daily | ✅ | Yahoo (cookie+crumb) | `make ingest-options-expiry SYMBOL=…` |
 | **FRED** — ALFRED vintage history | `credit` (HY + IG OAS) | daily | 🔑 `FRED_API_KEY` | none | `make ingest-credit` |
+| **Tiingo** daily prices | `tiingo_eod` — as-traded close, dividends, splits, whole universe, 1993→ | weekly (Sat) | 🔑 `TIINGO_API_KEY` | none | `make ingest-tiingo-eod` (`scripts/weekly_tiingo_refresh.sh`) |
 | **Local vendor file** — lambdaclass `data-v1` | `option_quotes` (42,131 real SPY quotes, 2008→2025) | one-shot | ✅ (manual download) | none | `make ingest-option-quotes` |
 | **Static catalogue** | screening universe, options-cadence fallback | n/a | ✅ | n/a | none — it is code |
 
@@ -230,6 +231,7 @@ free source here has already degraded at least once: Yahoo went from "works" to
 | **OHLCV (Nasdaq + Yahoo both)** | **everything** — no price path, no backtest, no ranking | the Regime tab | the backtest 404s loudly |
 | **Cboe chains + Yahoo** | nothing yet — no production partition exists to lose (§3.1) | everything, including the cadence panel (fallback to the static catalogue) | n/a |
 | **FRED credit** | nothing yet — no production partition exists to lose (§3.2) | everything, including the Regime tab (fallback to the VIX-only label) | n/a |
+| **Tiingo `tiingo_eod`** | nothing breaks: every price keeps the last yields, **carried** with their age and flagged `stale` after 21 days; a symbol never fetched (or withheld for a bad row) prices at q = 0 labelled `unknown`. Before the first ingest every roll is `unknown` — the old q = 0 prices | everything; the Surface falls back to its old assumed 1.9% yield, labelled | `tail-lab-alert@tiingo` on a failed weekly run; every result's `q_source` / `dividend_snapshot` |
 | **`option_quotes`** (licence-limited) | `make skew` only | **everything** — by construction | raises `LookupError` |
 
 **The asymmetry is deliberate.** The licence-limited source is the one whose

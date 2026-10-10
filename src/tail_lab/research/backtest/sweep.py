@@ -22,7 +22,8 @@ from collections.abc import Sequence
 import pandas as pd
 from pydantic import BaseModel
 
-from tail_lab.research.backtest.put_roll import annualized_return, run_put_roll
+from tail_lab.research.backtest.put_roll import PricingBasis, annualized_return, run_put_roll
+from tail_lab.research.dividends import DividendLookup
 
 #: The heatmap axes — one place, so the sweep endpoint, the ranking, and the
 #: frontend grid all agree. Moneyness in % out-of-the-money, tenor in weeks.
@@ -100,6 +101,7 @@ def run_sweep(
     years: float,
     moneyness_grid: Sequence[float] = SWEEP_MONEYNESS,
     tenor_grid: Sequence[float] = SWEEP_TENORS_WEEKS,
+    dividends: DividendLookup | None = None,
 ) -> list[SweepPoint]:
     """Every cell of the grid, rolled over one already-loaded price path.
 
@@ -108,7 +110,12 @@ def run_sweep(
     re-reading per cell. A tenor too long for the available window yields no
     cell rather than failing the whole grid, so a short history degrades to a
     smaller heatmap instead of an error.
+
+    ``dividends`` is the underlying's yield lookup (``research/dividends.py``);
+    the caller holding the store passes it so every cell prices on the same
+    dividend basis as the headline backtest. ``None`` prices at ``q = 0``.
     """
+    basis = PricingBasis(dividends=dividends)
     points: list[SweepPoint] = []
     for tenor in tenor_grid:
         for moneyness in moneyness_grid:
@@ -122,6 +129,7 @@ def run_sweep(
                     moneyness_pct=moneyness,
                     tenor_weeks=tenor,
                     lookback_years=years,
+                    basis=basis,
                     # Nothing here plots a per-day curve; see run_put_roll's docstring.
                     include_curves=False,
                 )

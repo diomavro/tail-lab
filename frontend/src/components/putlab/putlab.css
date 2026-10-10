@@ -1174,6 +1174,20 @@
 .pl-surface-disclosures details > :not(summary) { margin-top: var(--space-3); }
 .pl-surface-caveat { color: var(--ink-70); }
 .pl-surface-caveat p + p { margin-top: var(--space-2); }
+
+/* "How the price is built" (PriceBuild.tsx): a derivation, collapsed. */
+.pl-explain { color: var(--ink-70); max-width: 72ch; }
+.pl-explain summary { cursor: pointer; color: var(--cyan-2); }
+.pl-explain > :not(summary) { margin-top: var(--space-3); }
+.pl-explain-inputs {
+  display: grid;
+  grid-template-columns: max-content minmax(0, 1fr);
+  gap: 4px var(--space-4);
+  font-size: 14px;
+}
+.pl-explain-inputs dt { color: var(--ink-70); }
+.pl-explain-inputs dd { margin: 0; color: var(--ink); font-variant-numeric: tabular-nums; }
+.pl-explain-formula { font-size: 13.5px; color: var(--cyan-2); overflow-wrap: anywhere; }
 .is-narrow .pl-ladder-table { font-size: 12px; }
 
 /* --------------------------------------------------------------- book --- */
