@@ -33,6 +33,13 @@ from tail_lab.research.backtest.hedge_overlay import (
     run_overlay_window,
     total_return_levels,
 )
+from tail_lab.research.backtest.index_leg import (
+    AssumedYieldTag,
+    IndexLeg,
+    LegTag,
+    assumed_leg,
+    measured_leg,
+)
 from tail_lab.research.backtest.index_replication import (
     DAYS_PER_YEAR,
     DEFAULT_DIVIDEND_YIELD,
@@ -138,13 +145,25 @@ def test_blending_misaligned_legs_is_a_caller_bug() -> None:
 def _window(program: pd.Series, equity: pd.Series, *, dividend_yield: float = 0.0) -> OverlayWindow:
     return run_overlay_window(
         program,
-        equity,
+        assumed_leg(equity, dividend_yield=dividend_yield),
         key="t",
         label="t",
         start=program.index[0].date(),
         end=program.index[-1].date(),
-        dividend_yield=dividend_yield,
     )
+
+
+def _evaluate(program: pd.Series, equity: pd.Series, *, dividend_yield: float) -> list[float]:
+    """Growth at every hedge ratio, the equity leg built at one flat yield."""
+    return [
+        p.cagr
+        for p in evaluate_window(
+            program,
+            total_return_levels(equity, dividend_yield=dividend_yield),
+            start=program.index[0].date(),
+            end=program.index[-1].date(),
+        ).points
+    ]
 
 
 def test_the_paradox_holds_at_exactly_the_analytic_optimum() -> None:
@@ -265,21 +284,17 @@ def test_each_sensitivity_row_is_the_verdict_at_its_own_yield() -> None:
     index = _monthly()
     program = pd.Series([1.08 if i % 2 else 1.0 for i in range(len(index))], index=index)
     window = _window(program, _flat(index), dividend_yield=0.019)
-    assert [s.dividend_yield for s in window.sensitivity] == list(SENSITIVITY_YIELDS)
-    assert [s.best_weight for s in window.sensitivity] == [0.3, 0.2, 0.2]
-    for row in window.sensitivity:
-        cagrs = [
-            p.cagr
-            for p in evaluate_window(
-                program,
-                _flat(index),
-                start=index[0].date(),
-                end=index[-1].date(),
-                dividend_yield=row.dividend_yield,
-            ).points
-        ]
+    keys = [r.key for r in window.legs]
+    assert all(isinstance(k, AssumedYieldTag) for k in keys)
+    assert [k.dividend_yield for k in keys if isinstance(k, AssumedYieldTag)] == list(
+        SENSITIVITY_YIELDS
+    )
+    assert [s.best_weight for s in window.legs] == [0.3, 0.2, 0.2]
+    for row in window.legs:
+        assert isinstance(row.key, AssumedYieldTag)
+        cagrs = _evaluate(program, _flat(index), dividend_yield=row.key.dividend_yield)
         assert row.margin == pytest.approx(max(cagrs[1:-1]) - max(cagrs[0], cagrs[-1]))
-    assert len({round(r.margin, 9) for r in window.sensitivity}) == len(SENSITIVITY_YIELDS)
+    assert len({round(r.margin, 9) for r in window.legs}) == len(SENSITIVITY_YIELDS)
 
 
 def test_each_sensitivity_row_reads_its_own_margin_not_the_headline() -> None:
@@ -289,8 +304,8 @@ def test_each_sensitivity_row_reads_its_own_margin_not_the_headline() -> None:
     index = _monthly()
     program = pd.Series([1.06 if i % 2 else 1.0 for i in range(len(index))], index=index)
     window = _window(program, _flat(index), dividend_yield=0.019)
-    assert [s.outcome for s in window.sensitivity] == ["holds", "inconclusive", "fails"]
-    assert all(s.outcome == outcome(s.margin) for s in window.sensitivity)
+    assert [s.outcome for s in window.legs] == ["holds", "inconclusive", "fails"]
+    assert all(s.outcome == outcome(s.margin) for s in window.legs)
 
 
 def test_only_the_hedged_programs_can_be_blended() -> None:
@@ -319,16 +334,7 @@ def test_the_assumed_yield_is_credited_to_the_unhedged_leg_only() -> None:
     index = _monthly()
     years = (index[-1] - index[0]).days / DAYS_PER_YEAR
     by_yield = {
-        q: {
-            p.weight: p.cagr
-            for p in evaluate_window(
-                _pump(index),
-                _flat(index),
-                start=index[0].date(),
-                end=index[-1].date(),
-                dividend_yield=q,
-            ).points
-        }
+        q: dict(zip(WEIGHTS, _evaluate(_pump(index), _flat(index), dividend_yield=q), strict=True))
         for q in (0.0, 0.03)
     }
     assert by_yield[0.03][1.0] == pytest.approx(by_yield[0.0][1.0])
@@ -354,12 +360,11 @@ def test_any_shortfall_against_the_window_is_flagged_as_clipped(
 ) -> None:
     window = run_overlay_window(
         _pump(_monthly(program_n, program_start)),
-        _flat(_monthly(spx_n, spx_start)),
+        assumed_leg(_flat(_monthly(spx_n, spx_start)), dividend_yield=0.0),
         key="cole",
         label="t",
         start=COLE_WINDOW[0],
         end=COLE_WINDOW[1],
-        dividend_yield=0.0,
     )
     assert window.clipped
 
@@ -380,7 +385,7 @@ def test_clipping_tolerates_a_long_weekend_at_either_end_but_not_more(
     )
     level = pd.Series(np.linspace(100, 150, len(index)), index=index)
     window = run_overlay_window(
-        level, level, key="t", label="t", start=start, end=end, dividend_yield=0.0
+        level, assumed_leg(level, dividend_yield=0.0), key="t", label="t", start=start, end=end
     )
     assert window.clipped is clipped
     # Both spans travel with the result, so the page can say how short it is.
@@ -424,13 +429,7 @@ def test_an_as_of_inside_the_letters_window_clips_it_and_reads_nothing_later() -
 def test_too_short_an_overlap_raises_with_the_reason() -> None:
     index = _monthly(10)
     with pytest.raises(LookupError, match="common trading days"):
-        evaluate_window(
-            _pump(index),
-            _flat(index),
-            start=index[0].date(),
-            end=index[-1].date(),
-            dividend_yield=0.0,
-        )
+        evaluate_window(_pump(index), _flat(index), start=index[0].date(), end=index[-1].date())
 
 
 # ------------------------------------------------------------ lake orchestration
@@ -531,3 +530,86 @@ def test_a_bug_is_not_dressed_up_as_missing_data(monkeypatch: pytest.MonkeyPatch
     level = pd.Series(np.linspace(100, 200, len(index)), index=index)
     with pytest.raises(KeyError, match="a programming bug"):
         run_hedge_overlay(level, {"PPUT": level}, as_of=dt.date(2017, 12, 29))
+
+
+# ------------------------------------------------------------ measured legs and sizing
+
+
+def _measured(
+    start: str = "1998-01-02", end: str = "2012-12-31", rates_from: str | None = "1990-01-02"
+) -> tuple[pd.Series, pd.Series, IndexLeg]:
+    from tests.test_research_backtest_index_leg import rates_rows, spy_rows
+
+    index = pd.bdate_range(start, end)
+    rng = np.random.default_rng(9)
+    spx = pd.Series(1000 * np.cumprod(1 + rng.normal(0.0003, 0.01, len(index))), index=index)
+    program = spx * (1 - 0.00005) ** np.arange(len(index))
+    rates = (
+        None
+        if rates_from is None
+        else rates_rows(pd.bdate_range(rates_from, end), first_vintage="2005-06-28", value=3.0)
+    )
+    leg = measured_leg(spy_rows(index), spx, rates, as_of=index[-1].date(), snapshot_ids={})
+    return spx, program, leg
+
+
+def test_measured_windows_carry_both_legs_and_the_headline_reads_the_base() -> None:
+    spx, program, leg = _measured()
+    result = run_hedge_overlay(spx, {"PPUT": program}, as_of=dt.date(2012, 12, 31), leg=leg)
+    for w in result.programs[0].windows:
+        assert [r.key for r in w.legs] == [LegTag(leg="base"), LegTag(leg="conservative")]
+        base = w.legs[0]
+        assert (base.best_weight, base.margin, base.outcome) == (
+            w.best_weight,
+            w.margin,
+            w.outcome,
+        )
+        assert set(w.sizing.margin_by_leg) == {"base", "conservative"}
+        # A program that bleeds 0.5bp a day against the index: hold none.
+        assert w.sizing.recommended_ratio == 0.0
+    assert result.dividend.source == "measured" and result.dividend_yield is None
+
+
+def test_without_bills_the_size_is_withheld_not_gated_on_one_leg() -> None:
+    spx, program, leg = _measured(rates_from=None)
+    result = run_hedge_overlay(spx, {"PPUT": program}, as_of=dt.date(2012, 12, 31), leg=leg)
+    for w in result.programs[0].windows:
+        assert [r.key for r in w.legs] == [LegTag(leg="base")]
+        assert w.sizing.recommended_ratio is None
+        assert w.sizing.reason == "sizing needs T-bills for the cash-drag check"
+
+
+def test_bills_starting_inside_a_window_withhold_that_window_only() -> None:
+    """Windows before the T-bill record withhold the size the same way;
+    a window inside it is sized."""
+    spx, program, leg = _measured(rates_from="2004-06-01")
+    result = run_hedge_overlay(spx, {"PPUT": program}, as_of=dt.date(2012, 12, 31), leg=leg)
+    cole, full = result.programs[0].windows
+    assert full.sizing.recommended_ratio is None
+    assert "T-bill history starts 2004-06-02" in full.sizing.reason
+    assert [r.key for r in full.legs] == [LegTag(leg="base")]
+    assert cole.sizing.recommended_ratio == 0.0
+    assert len(cole.legs) == 2
+
+
+def test_the_fallback_names_why_it_recommends_no_size() -> None:
+    index = pd.bdate_range("2004-01-02", "2017-12-29")
+    level = pd.Series(np.linspace(100, 200, len(index)), index=index)
+    result = run_hedge_overlay(level, {"PPUT": level * 0.9}, as_of=dt.date(2017, 12, 29))
+    for w in result.programs[0].windows:
+        assert w.sizing.recommended_ratio is None
+        assert w.sizing.reason == "sizing needs measured dividends"
+        assert all(isinstance(r.key, AssumedYieldTag) for r in w.legs)
+        assert set(w.sizing.margin_by_leg) == {"assumed"}
+    assert result.dividend.source == "assumed" and result.dividend_yield == DEFAULT_DIVIDEND_YIELD
+
+
+def test_the_sizing_curve_reconciles_with_the_rodman_points() -> None:
+    """Every number shown must reconcile: g(0) on the size is the 0% point's
+    CAGR on the chart, and the grid w* is the chart's best growth point."""
+    spx, program, leg = _measured()
+    result = run_hedge_overlay(spx, {"PPUT": program}, as_of=dt.date(2012, 12, 31), leg=leg)
+    for w in result.programs[0].windows:
+        assert w.sizing.g0 == pytest.approx(w.points[0].cagr, rel=1e-10)
+        assert w.sizing.curve[-1].cagr == pytest.approx(w.points[-1].cagr, rel=1e-10)
+        assert w.sizing.w_star_grid == max(w.points, key=lambda p: p.cagr).weight

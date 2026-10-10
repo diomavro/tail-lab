@@ -15,6 +15,7 @@ import { ModelPlan } from './ModelPlan'
 import {
   DEFAULT_MODEL_PLAN,
   DEFAULT_REAL_PLAN,
+  legSource,
   type BookMode,
   type LumpMetric,
   type PlanSource,
@@ -92,13 +93,29 @@ export function OverlayView({ narrow }: { narrow: boolean }) {
             <p className="pl-lede" data-testid="accounting">
               Accounting: self-financed — the hedge's premium is paid from the book (docs/adr/0027).
             </p>
-            <p className="pl-caveat">
-              In sample, one history. The S&P 500 leg's dividends are an assumed flat yield
-              {state.status === 'ready' ? ` (${pct(state.data.overlay.dividend_yield)})` : ''}, not measured; a low
-              guess understates the unhedged leg against every hedged one, so each growth verdict is re-run at
-              other yields below. Every test shares one S&amp;P 500 history, so they are not independent. CAGR / vol
-              nets no risk-free rate and tends to favour any mix that lowers volatility; growth is
-              the test that sizes a hedge.
+            <p className="pl-caveat" data-testid="dividend-caveat">
+              In sample, one history.{' '}
+              {state.status === 'ready' && state.data.overlay.dividend.source === 'measured' ? (
+                <>
+                  The S&amp;P 500 leg is {legSource(state.data.overlay.dividend)}. SPY&rsquo;s total return still
+                  understates the index&rsquo;s (SPY holds dividends as cash until it pays them), which flatters a
+                  hedge
+                  {state.data.overlay.dividend.conservative_from != null
+                    ? ', so each growth verdict is re-run on a conservative leg that adds that drag back, and a size must clear both.'
+                    : '. Adding that drag back needs T-bill rates, which this lake does not have, so there is no conservative leg and no size is recommended.'}
+                </>
+              ) : (
+                <>
+                  The S&amp;P 500 leg&rsquo;s dividends are an assumed flat yield
+                  {state.status === 'ready' && state.data.overlay.dividend_yield != null
+                    ? ` (${pct(state.data.overlay.dividend_yield)})`
+                    : ''}
+                  , not measured; a low guess understates the unhedged leg against every hedged one, so each growth
+                  verdict is re-run at other yields below.
+                </>
+              )}{' '}
+              Every test shares one S&amp;P 500 history, so they are not independent. CAGR / vol nets no risk-free
+              rate and tends to favour any mix that lowers volatility; growth is the test that sizes a hedge.
             </p>
           </>
         )}

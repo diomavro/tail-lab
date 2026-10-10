@@ -6,7 +6,7 @@ import {
   type BookPlanResponse,
   type ComparatorOption,
 } from '../../../api/client'
-import { COMPARATOR_BUTTONS, pct, usd, useDebounced } from './planFormat'
+import { COMPARATOR_BUTTONS, legSource, pct, usd, useDebounced } from './planFormat'
 import { PlanVerdict } from './PlanVerdict'
 
 /* The Book in contributions mode (docs/adr/0027 §3), priced from real quotes.
@@ -80,12 +80,32 @@ export function BookPlan({
         Cboe's real-quote prices; the other puts the same cash into the comparator. Amounts are in US dollars, the
         indices' currency; a euro investor's result also carries the EUR/USD move.
       </p>
-      {plan && (
-        <p className="pl-caveat" data-testid="dividend-caveat">
-          The S&P 500 — in the hedged book, and as a comparator — earns an assumed {pct(plan.dividend_yield)} dividend
-          yield, not a measured one; the dividend-yield rows below show how much that assumption moves it.
-        </p>
-      )}
+      {plan &&
+        (plan.dividend.source === 'measured' ? (
+          <p className="pl-caveat" data-testid="dividend-caveat">
+            The S&P 500 — in the hedged book, and as a comparator — is {legSource(plan.dividend)}. SPY&rsquo;s total
+            return understates the index&rsquo;s, which flatters the hedge.{' '}
+            {plan.legs.some((y) => y.key.kind === 'leg' && y.key.leg === 'conservative')
+              ? 'The conservative row below adds SPY’s dividend cash drag back. It usually narrows the hedge’s edge, but not always: the drag turns negative when equities trail T-bills, which is when hedges win, so its share of starts led can be higher.'
+              : plan.dividend.conservative_from == null
+                ? 'There is no conservative row: adding SPY’s dividend cash drag back needs T-bill rates, which this lake does not have.'
+                : // A refused plan has no rows at all, whatever the T-bills cover;
+                  // only a plan that ran dropped the conservative row, and it
+                  // drops it only when the leg is missing on a plan date.
+                  plan.refusal == null && plan.legs.length > 0
+                  ? `There is no conservative row: T-bill rates start ${plan.dividend.conservative_from}, after this plan's history begins.`
+                  : ''}
+          </p>
+        ) : (
+          <p className="pl-caveat" data-testid="dividend-caveat">
+            The S&P 500 — in the hedged book, and as a comparator — earns an assumed {pct(plan.dividend_yield ?? 0)}{' '}
+            dividend yield, not a measured one; the dividend-yield rows below show how much that assumption moves it.
+          </p>
+        ))}
+      <p className="pl-note" data-testid="plan-sizing-link">
+        This plan tests the hedge ratio you choose; it recommends none. How much to hold is answered in lump-sum mode,
+        under &ldquo;How much to hold&rdquo;.
+      </p>
       {state.status === 'loading' && <p className="pl-lede">Running every start month…</p>}
       {state.status === 'ready' && settled !== params && (
         <p className="pl-updating" role="status" data-testid="updating">
@@ -100,9 +120,10 @@ export function BookPlan({
       )}
       {state.status === 'ready' && (
         <>
-          <PlanVerdict rolling={state.data.plan.rolling} window={state.data.plan.window} byYield={state.data.plan.by_yield} narrow={narrow} />
+          <PlanVerdict rolling={state.data.plan.rolling} window={state.data.plan.window} legs={state.data.plan.legs} narrow={narrow} />
           <p className="pl-micro">
-            Cboe snapshot {state.data.cboe_snapshot ?? 'unknown'} · rates {state.data.rates_snapshot ?? 'none'} · code{' '}
+            Cboe snapshot {state.data.cboe_snapshot ?? 'unknown'} · rates {state.data.rates_snapshot ?? 'none'} · Tiingo{' '}
+            {state.data.tiingo_snapshot ?? 'none'} · code{' '}
             {state.data.code_sha} · as of {state.data.plan.as_of}
           </p>
         </>

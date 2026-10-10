@@ -36,7 +36,7 @@ test('headlines the rolling-start verdict, then one window, from real data', asy
       '−2.26pp to −0.51pp; worst −3.35pp, best +1.35pp.',
   )
   await expect(page.getByTestId('plan-by-yield')).toHaveText(
-    'Share of starts led, by assumed S&P dividend yield: at 1.4%, 7%; at 1.9%, 5%; at 2.4%, 2%.',
+    'Share of starts led, by assumed S&P dividend yield: at 1.4%, 6.9%; at 1.9%, 4.7%; at 2.4%, 2.5%.',
   )
   await page.getByText('The plan in numbers').click()
   const rows = page.getByRole('table').locator('tbody tr')
@@ -44,7 +44,7 @@ test('headlines the rolling-start verdict, then one window, from real data', asy
   await expect(rows.nth(1).locator('td')).toHaveText([
     'S&P 500 total return (1.9% assumed yield)',
     '$70,000',
-    '$183,424',
+    '$183,423',
     '16.06%',
     '−33.8%',
   ])
@@ -65,7 +65,7 @@ test('draws the verdict: the share led, the gap’s spread, and each arm against
   const arms = page.getByTestId('plan-arm')
   await expect(arms).toHaveCount(2)
   await expect(arms.first()).toContainText('$163,460 · IRR 14.18%')
-  await expect(arms.last()).toContainText('$183,424 · IRR 16.06%')
+  await expect(arms.last()).toContainText('$183,423 · IRR 16.06%')
   await expect(arms.first()).toContainText('Paid in $70,000 · worst drawdown')
 })
 
@@ -156,7 +156,7 @@ test('the window title and provenance are the payload\'s own', async ({ page }) 
   await openPlan(page)
   await expect(page.getByRole('heading', { name: /^One window/ })).toHaveText('One window, 2016-10-03 to 2026-10-01')
   await expect(page.getByText(/^Cboe snapshot/)).toHaveText(
-    'Cboe snapshot cboe_strategy@2026-10-02 · rates none · code e2e0000 · as of 2026-10-02',
+    'Cboe snapshot cboe_strategy@2026-10-02 · rates none · Tiingo none · code e2e0000 · as of 2026-10-02',
   )
 })
 
@@ -180,7 +180,7 @@ test('T-bills are disabled with the reason until rates exist', async ({ page }) 
 test('a refused comparator renders its refusal instead of a verdict', async ({ page }) => {
   const refused: BookPlanResponse = {
     ...BOOK_PLAN,
-    plan: { ...BOOK_PLAN.plan, comparator: 'PUT', window: null, rolling: null, by_yield: [], refusal: 'history is shorter than one 10-year plan' },
+    plan: { ...BOOK_PLAN.plan, comparator: 'PUT', window: null, rolling: null, legs: [], refusal: 'history is shorter than one 10-year plan' },
   }
   await openPlan(page, refused)
   await expect(page.getByTestId('plan-refusal')).toHaveText('history is shorter than one 10-year plan.')
@@ -204,8 +204,8 @@ test('the picker lists the other Cboe indices and marks the unavailable ones', a
   // toBeDisabled() reads an <option> inside a <select> as enabled even with
   // the attribute set, so assert the attribute itself.
   await expect(picker.locator('option', { hasText: /^PUT$/ })).not.toHaveAttribute('disabled')
-  await expect(picker.locator('option', { hasText: 'CLLZ' })).toHaveAttribute('disabled', '')
-  await expect(picker.locator('option', { hasText: 'CLLZ' })).toContainText('(unavailable)')
+  await expect(picker.locator('option', { hasText: 'CLLR' })).toHaveAttribute('disabled', '')
+  await expect(picker.locator('option', { hasText: 'CLLR' })).toContainText('(unavailable)')
 })
 
 test('changing a control re-runs the plan with that input', async ({ page }) => {
@@ -590,7 +590,7 @@ test('a typed starting amount past the limit is clamped too', async ({ page }) =
 test('a history refusal on an available button comparator is shown, not swallowed', async ({ page }) => {
   await openPlan(page, {
     ...BOOK_PLAN,
-    plan: { ...BOOK_PLAN.plan, window: null, rolling: null, by_yield: [], refusal: 'history is shorter than one 20-year plan' },
+    plan: { ...BOOK_PLAN.plan, window: null, rolling: null, legs: [], refusal: 'history is shorter than one 20-year plan' },
   })
   await expect(page.getByTestId('plan-refusal')).toHaveText('history is shorter than one 20-year plan.')
 })
@@ -665,7 +665,7 @@ test('an arm that ended below what was paid in shows the tick in ink, past its f
 
 test('by-yield bars are drawn in proportion to the shares they print', async ({ page }) => {
   await openPlan(page)
-  const by = BOOK_PLAN.plan.by_yield
+  const by = BOOK_PLAN.plan.legs
   const w = await page.locator('.pl-plan-yield-track > span').evaluateAll((els) => els.map((e) => parseFloat((e as HTMLElement).style.width)))
   const scale = Math.max(0.1, ...by.map((y) => y.share_ahead))
   by.forEach((y, k) => expect(w[k]).toBeCloseTo((y.share_ahead / scale) * 100, 3))

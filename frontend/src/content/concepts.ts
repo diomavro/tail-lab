@@ -238,7 +238,7 @@ export const CONCEPTS: Record<string, Concept> = {
       'A fixed distance is simple, but it confounds any comparison across regimes: in calm markets (12% vol) a 10%-below-spot 4-week put has a delta of 0.0006 -- a lottery ticket -- in a crisis (45% vol) 0.18, a near-the-money hedge. A verdict that a strategy "only worked in crises" may only be saying that the strike was reachable then. Picking by delta keeps the option comparable across regimes instead. Neither is free: under a delta rule a low target in high realised vol lands deeper than the flat-vol model can price (a 0.05-delta 4-week put is ~10.5% below spot at 25% vol), and the page counts those rolls beside the headline.',
     howToRead:
       'Compare a strategy under both rules before trusting a regime verdict. The ranking, the sweep grid, the Surface and the Regime view still screen by distance; only the Workspace backtest and the Bake-off can pick by delta.',
-    seeAlso: ['put_delta', 'oom_put', 'model_priced'],
+    seeAlso: ['put_delta', 'oom_put', 'model_priced', 'time_average_growth'],
   },
 
   // ---------------------------------------------------------------- result
@@ -450,6 +450,33 @@ export const CONCEPTS: Record<string, Concept> = {
     howToRead:
       'A combined drawdown clearly less deep than the sum of the legs means the mix genuinely diversifies the carry cost; if they are nearly equal the legs are bleeding in lockstep and you gained little by combining them.',
     seeAlso: ['bleed', 'verdict', 'rolling'],
+  },
+  time_average_growth: {
+    id: 'time_average_growth',
+    term: 'Time-average growth',
+    category: 'portfolio',
+    short:
+      'How fast one book actually compounds over time -- the yardstick a hedge is sized on, because a hedge that loses money most years can still make the whole book grow faster.',
+    formula:
+      'g(w) = (1/T) · Σₘ ln(w · pₘ + (1 − w) · eₘ);   pₘ, eₘ = month m gross returns of the program and the index;   T = the window in years;   CAGR = e^g − 1',
+    intuition:
+      'An average return across many investors is not what one investor gets: one investor lives through one sequence, and losses compound. Time-average growth is the rate one book compounds at along its own path. That is where a hedge can earn its keep: it costs a little every month, but by cutting the book\'s worst months it can raise the growth of the WHOLE book even while losing money on its own. The Book holds w in a Cboe hedge program and the rest in the S&P 500, rebalanced monthly, with the premium paid from the book; because g is a sum of logs of lines in w it is concave, so it has exactly one best hedge ratio, w*.',
+    howToRead:
+      'Read the curve, not a single return: if growth falls from the first step of the hedge ratio, the honest size is none. A peak inside 0-100% is the growth-optimal ratio, full Kelly; the Book holds half of it only when the gain over no hedge at that peak clears 1bp a year on both index legs -- a peak too shallow to clear it (VXTH over its full history) is still held at none.',
+    seeAlso: ['fractional_kelly', 'diversification', 'strike_rule'],
+  },
+  fractional_kelly: {
+    id: 'fractional_kelly',
+    term: 'Fractional (half) Kelly',
+    category: 'portfolio',
+    short:
+      'Holding half of the growth-optimal size: one history estimates that optimum, and full Kelly is notoriously sensitive to the error.',
+    formula: 'hold = w*/2  when g(w*) − g(0) > 1bp/yr on both index legs;  0 otherwise;  0.5 when w* = 1',
+    intuition:
+      'Full Kelly, w*, is the ratio that maximises growth on the history it was measured on. Measured on one history, it is an estimate. Near the optimum the growth curve is close to symmetric, so half of w* gives up only about a quarter of the gain over no hedge (exactly a quarter when the curve is a parabola; the page shows the measured share) while halving the exposure to estimation error -- and an overestimated w* is the dangerous one: past the break-even, about 2w* on a near-parabolic curve, holding more of the hedge grows the book slower than holding none. The Book only sizes where w* beats NO hedge by more than 1bp a year on both its base and its conservative S&P 500 leg -- otherwise the answer is none, with the margin named.',
+    howToRead:
+      'The table shows w* beside the size held and the reason for the haircut. "None (0%)" is an answer, not a gap; "withheld" means an input (measured dividends, T-bills) is missing, not that the hedge failed.',
+    seeAlso: ['time_average_growth', 'in_sample'],
   },
 
   // ---------------------------------------------------------------- context

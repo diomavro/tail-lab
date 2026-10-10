@@ -866,16 +866,25 @@ def test_hedge_overlay_carries_its_snapshot_and_logs_each_verdict(
         "best_weight",
         "best_weight_risk_adjusted",
         "outcome_risk_adjusted",
-        "sensitivity",
+        "legs",
+        "recommended",
+        "sizing_reason",
+        "w_star",
+        "w_star_grid",
+        "margins",
     ):
         assert f" PPUT_full_{field}=" in line, field
-    # Each sensitivity entry carries yield, outcome and margin.
-    sens = line.split(" PPUT_full_sensitivity=")[1].split()[0].split(",")
-    assert [e.split(":")[0] for e in sens] == ["0.014", "0.019", "0.024"]
-    assert all(e.split(":")[1] in {"holds", "inconclusive", "fails"} for e in sens)
-    margins = [float(e.split(":")[2]) for e in sens]
+    # No tiingo_eod in this lake: the assumed fallback, labelled, and no size.
+    assert "dividend_source=assumed" in line and "tiingo_snapshot=none" in line
+    assert "PPUT_full_recommended=withheld" in line
+    assert body["tiingo_snapshot"] is None and body["rates_snapshot"] is None
+    # Each leg entry carries its name, outcome and margin.
+    legs = line.split(" PPUT_full_legs=")[1].split()[0].split(",")
+    assert [e.split(":")[0] for e in legs] == ["q0.014", "q0.019", "q0.024"]
+    assert all(e.split(":")[1] in {"holds", "inconclusive", "fails"} for e in legs)
+    margins = [float(e.split(":")[2]) for e in legs]
     assert margins == pytest.approx(
-        [r["margin"] for r in body["overlay"]["programs"][0]["windows"][-1]["sensitivity"]],
+        [r["margin"] for r in body["overlay"]["programs"][0]["windows"][-1]["legs"]],
         abs=1e-6,
     )
     # 400 days of history cannot cover 2005-2016: the refusal is logged too.
@@ -883,6 +892,66 @@ def test_hedge_overlay_carries_its_snapshot_and_logs_each_verdict(
     assert "VXTH_missing=" in line
     assert "cole" in body["overlay"]["programs"][0]["unavailable"]
     assert putlab_routes._OVERLAY_CACHE
+
+
+def _seed_dividends(store: DeltaLakeStore, ingest_date: dt.date, *, rates: bool) -> None:
+    """SPY's Tiingo rows on the Cboe calendar (and DGS3MO, optionally), so
+    the Book runs on the measured index leg."""
+    from tests.test_research_backtest_index_leg import rates_rows, spy_rows
+
+    dates = pd.bdate_range(end=ingest_date, periods=400)
+    store.write_bronze("tiingo_eod", ingest_date, spy_rows(dates))
+    if rates:
+        obs = pd.bdate_range(end=ingest_date, periods=800)
+        store.write_bronze(
+            "rates", ingest_date, rates_rows(obs, first_vintage="2005-06-28", value=2.0)
+        )
+
+
+def test_hedge_overlay_on_measured_dividends_cites_them_and_sizes_the_hedge(
+    client: TestClient, caplog: pytest.LogCaptureFixture
+) -> None:
+    store = app.dependency_overrides[putlab_get_lake_store]()
+    today = dt.datetime.now(dt.UTC).date()
+    _seed_cboe(store, today)
+    _seed_dividends(store, today, rates=True)
+    with caplog.at_level("INFO", logger="tail_lab"):
+        resp = client.get("/api/putlab/hedge-overlay")
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["tiingo_snapshot"].startswith("tiingo_eod@")
+    assert body["rates_snapshot"].startswith("rates@")
+    overlay = body["overlay"]
+    assert overlay["dividend_yield"] is None and overlay["dividend"]["source"] == "measured"
+    full = overlay["programs"][0]["windows"][-1]
+    assert [r["key"] for r in full["legs"]] == [
+        {"kind": "leg", "leg": "base"},
+        {"kind": "leg", "leg": "conservative"},
+    ]
+    assert full["sizing"]["recommended_ratio"] is not None
+    line = next(r.getMessage() for r in caplog.records if "hedge_overlay" in r.getMessage())
+    assert "dividend_source=measured" in line and "dividend_yield=measured" in line
+    assert f"tiingo_snapshot={body['tiingo_snapshot']}" in line
+    assert " PPUT_full_legs=base:" in line and ",conservative:" in line
+    assert "PPUT_full_recommended=withheld" not in line
+
+
+def test_hedge_overlay_without_rates_withholds_the_size_and_says_why(
+    client: TestClient, caplog: pytest.LogCaptureFixture
+) -> None:
+    store = app.dependency_overrides[putlab_get_lake_store]()
+    today = dt.datetime.now(dt.UTC).date()
+    _seed_cboe(store, today)
+    _seed_dividends(store, today, rates=False)
+    with caplog.at_level("INFO", logger="tail_lab"):
+        body = client.get("/api/putlab/hedge-overlay").json()
+    full = body["overlay"]["programs"][0]["windows"][-1]
+    assert body["rates_snapshot"] is None
+    assert full["sizing"]["recommended_ratio"] is None
+    assert full["sizing"]["reason"] == "sizing needs T-bills for the cash-drag check"
+    line = next(r.getMessage() for r in caplog.records if "hedge_overlay" in r.getMessage())
+    assert "PPUT_full_recommended=withheld" in line
+    assert "conservative_reason=" in line
 
 
 @pytest.mark.parametrize("error", [KeyError("store bug"), ValueError("corrupt parquet")])
@@ -968,7 +1037,7 @@ def test_book_plan_carries_provenance_and_logs_the_verdict(
     assert resp.status_code == 200
     body = resp.json()
     assert body["cboe_snapshot"]
-    assert body["rates_snapshot"] is None
+    assert body["rates_snapshot"] is None and body["tiingo_snapshot"] is None
     plan = body["plan"]
     assert plan["refusal"] is None and plan["rolling"]["n_starts"] > 0
     line = next(r.getMessage() for r in caplog.records if "book_plan" in r.getMessage())
@@ -979,10 +1048,31 @@ def test_book_plan_carries_provenance_and_logs_the_verdict(
         "comparator=spx",
         "hedged_irr=",
         "share_ahead=",
-        "by_yield=0.014:",
+        "legs=q0.014:",
+        "tiingo_snapshot=none",
+        "dividend_source=assumed",
+        "dividend_yield=0.019",
     ):
         assert field in line, field
     assert putlab_routes._PLAN_CACHE
+
+
+def test_book_plan_on_measured_dividends_cites_tiingo_and_logs_both_legs(
+    client: TestClient, caplog: pytest.LogCaptureFixture
+) -> None:
+    store = app.dependency_overrides[putlab_get_lake_store]()
+    today = dt.datetime.now(dt.UTC).date()
+    _seed_cboe(store, today)
+    _seed_dividends(store, today, rates=True)
+    with caplog.at_level("INFO", logger="tail_lab"):
+        resp = client.get(
+            "/api/putlab/book-plan", params={"horizon_years": 1, "monthly": 100, "e0": 1000}
+        )
+    body = resp.json()
+    assert body["tiingo_snapshot"].startswith("tiingo_eod@")
+    assert [y["key"]["leg"] for y in body["plan"]["legs"]] == ["base", "conservative"]
+    line = next(r.getMessage() for r in caplog.records if "book_plan" in r.getMessage())
+    assert "dividend_source=measured" in line and "legs=base:" in line
 
 
 def test_book_plan_refuses_t_bills_inside_a_200_until_rates_exist(client: TestClient) -> None:

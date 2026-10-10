@@ -22,10 +22,15 @@ sense the letter means, when some interior ``w`` grows faster than both
 absent: it is a quoted price of tail protection, not a return series, and
 blending a price level is meaningless.
 
-**The dividend leg is assumed, not measured.** The programs reinvest real
-dividends; ``SPXT`` is not served free (HTTP 403), so the unhedged leg is SPX
-price plus a flat yield. Too low a yield flatters every blend, so the verdict
-is re-run across :data:`SENSITIVITY_YIELDS` and shown beside the headline.
+**The unhedged leg** comes from :func:`~index_leg.build_index_leg`: SPY's
+measured total return, fee-adjusted, in two named legs (base and
+conservative) when ``tiingo_eod`` holds SPY -- windows then start no earlier
+than SPY's 1993 listing -- else the labelled flat-yield fallback, re-run at
+each assumed yield. The headline verdict reads the base (or default-yield)
+leg; every leg's verdict is served beside it as ``legs``.
+
+**How much to hold** is :mod:`hedge_sizing`'s answer per program and window,
+served as ``OverlayWindow.sizing``.
 """
 
 from __future__ import annotations
@@ -42,10 +47,29 @@ from pydantic import BaseModel
 from tail_lab.contracts.cboe_strategy import DATASET as CBOE_STRATEGY_DATASET
 from tail_lab.contracts.cboe_strategy import STRATEGY_INDEX_CATALOGUE
 from tail_lab.lake.store import LakeStore
+from tail_lab.research.backtest.hedge_sizing import (
+    MIN_MARGIN as MIN_MARGIN,
+)
+from tail_lab.research.backtest.hedge_sizing import (
+    SizingAnswer,
+    SizingInputs,
+    rebalance_points,
+    segments,
+    size,
+)
+from tail_lab.research.backtest.index_leg import (
+    DividendBasis,
+    IndexLeg,
+    LegKey,
+    assumed_leg,
+    build_index_leg,
+)
+from tail_lab.research.backtest.index_leg import (
+    total_return_levels as total_return_levels,
+)
 from tail_lab.research.backtest.index_replication import (
     DAYS_PER_YEAR,
     DEFAULT_DIVIDEND_YIELD,
-    SENSITIVITY_YIELDS,
     UNDERLYING_SYMBOL,
     series_from,
 )
@@ -63,12 +87,12 @@ COLE_WINDOW: tuple[dt.date, dt.date] = (dt.date(2005, 1, 3), dt.date(2016, 3, 31
 #: Trading days per year, for annualising daily volatility.
 TRADING_DAYS = 252
 
-#: A margin within this of zero, either side, is ``inconclusive``: 1bp/yr of
+#: ``MIN_MARGIN`` (imported from ``hedge_sizing``, which gates on it too): a
+#: margin within it of zero, either side, is ``inconclusive`` -- 1bp/yr of
 #: growth, and the same absolute amount of CAGR-per-vol on the risk-adjusted
 #: test. Symmetric on purpose -- a 0.1bp loss is no more a verdict than a
 #: 0.1bp win, and on every real window a 0.5pp change in the assumed dividend
 #: yield moves the margin by more than 5bp.
-MIN_MARGIN = 1e-4
 
 #: How far a window's data may fall short of the span asked for before it is
 #: flagged ``clipped``: a long weekend plus a holiday, not a missing feed.
@@ -101,10 +125,11 @@ class WeightPoint(BaseModel):
     cagr_per_vol: float | None  # risk-adjusted; no risk-free rate is netted
 
 
-class SensitivityPoint(BaseModel):
-    """The growth verdict re-run at one alternative dividend yield."""
+class OverlayLegRow(BaseModel):
+    """The growth verdict re-run on one index leg: a measured leg (base or
+    conservative) or, in the fallback, one assumed dividend yield."""
 
-    dividend_yield: float
+    key: LegKey
     best_weight: float
     margin: float
     outcome: Outcome
@@ -135,7 +160,11 @@ class OverlayWindow(BaseModel):
     #: ``None`` when any mix has zero volatility and the ratio is undefined.
     best_weight_risk_adjusted: float | None
     outcome_risk_adjusted: Outcome | None
-    sensitivity: list[SensitivityPoint]
+    #: The verdict on every leg: base + conservative when measured (base only
+    #: without T-bills for this window), each assumed yield in the fallback.
+    legs: list[OverlayLegRow]
+    #: How much of the book to hold in this program over this window.
+    sizing: SizingAnswer
 
 
 class ProgramOverlay(BaseModel):
@@ -154,24 +183,13 @@ class HedgeOverlayResult(BaseModel):
     """The whole test, as of one date."""
 
     as_of: dt.date
-    dividend_yield: float
+    #: The assumed flat yield in the fallback; ``None`` when measured.
+    dividend_yield: float | None
+    dividend: DividendBasis
     weights: list[float]
     programs: list[ProgramOverlay]
     #: Programs the test wanted but the snapshot lacks, with the reason.
     missing: dict[str, str]
-
-
-def total_return_levels(price: pd.Series, *, dividend_yield: float) -> pd.Series:
-    """S&P 500 price levels turned into a total-return index, from a flat yield.
-
-    The yield accrues by calendar days between observations, so a weekend
-    earns its three days, and compounds to exactly ``dividend_yield`` a year
-    on a flat price. Rebased to 1.0 on the first date.
-    """
-    gaps = price.index.to_series().diff().dt.days.fillna(0).to_numpy(dtype=float)
-    growth = (price / price.shift(1)).fillna(1.0).to_numpy(dtype=float)
-    growth = growth + (1.0 + dividend_yield) ** (gaps / DAYS_PER_YEAR) - 1.0
-    return pd.Series(np.cumprod(growth), index=price.index)
 
 
 def blend_nav(program: pd.Series, equity: pd.Series, *, weight: float) -> pd.Series:
@@ -183,10 +201,9 @@ def blend_nav(program: pd.Series, equity: pd.Series, *, weight: float) -> pd.Ser
     """
     if not program.index.equals(equity.index):
         raise ValueError("program and equity must share one date index")
-    months = pd.DatetimeIndex(program.index).to_period("M")
     last = len(program) - 1
     # Rebalance days: the first date, then the first date of each new month.
-    resets = [0, *(np.flatnonzero(months[1:] != months[:-1]) + 1)]
+    resets = rebalance_points(pd.DatetimeIndex(program.index))
     prog = program.to_numpy(dtype=float)
     eq = equity.to_numpy(dtype=float)
     nav = np.empty(len(program))
@@ -245,42 +262,95 @@ class _Window(BaseModel):
     points: list[WeightPoint]
 
 
-def evaluate_window(
-    program: pd.Series,
-    spx: pd.Series,
-    *,
-    start: dt.date,
-    end: dt.date,
-    dividend_yield: float,
-) -> _Window:
-    """Every hedge ratio over the common trading days in ``[start, end]``."""
-    common = program.index.intersection(spx.index)
+def common_days(
+    program: pd.Series, equity: pd.Series, *, start: dt.date, end: dt.date
+) -> pd.DatetimeIndex:
+    """The two legs' shared trading days in ``[start, end]``; refused when too
+    few to carry a monthly-rebalanced test."""
+    common = program.index.intersection(equity.index)
     common = common[(common >= pd.Timestamp(start)) & (common <= pd.Timestamp(end))]
     if len(common) < MIN_DAYS:
         raise OverlayDataMissing(f"only {len(common)} common trading days in {start}..{end}")
+    return pd.DatetimeIndex(common)
+
+
+def evaluate_window(
+    program: pd.Series, equity: pd.Series, *, start: dt.date, end: dt.date
+) -> _Window:
+    """Every hedge ratio over the common trading days in ``[start, end]``.
+
+    ``equity`` is the index leg's total-return levels (an :class:`IndexLeg`
+    series), never a price."""
+    common = common_days(program, equity, start=start, end=end)
     prog = program.loc[common]
-    equity = total_return_levels(spx.loc[common], dividend_yield=dividend_yield)
+    eq = equity.loc[common]
     years = (common[-1] - common[0]).days / DAYS_PER_YEAR
     return _Window(
         start=common[0].date(),
         end=common[-1].date(),
         years=years,
-        points=[_point(blend_nav(prog, equity, weight=w), weight=w, years=years) for w in WEIGHTS],
+        points=[_point(blend_nav(prog, eq, weight=w), weight=w, years=years) for w in WEIGHTS],
+    )
+
+
+def _leg_rows(
+    program: pd.Series, leg: IndexLeg, window: _Window, common: pd.DatetimeIndex
+) -> list[OverlayLegRow]:
+    """The verdict on every leg, on the headline's calendar. A leg with no
+    value on some of those days (the conservative leg before T-bills are
+    known) is left out, never run on a shorter window."""
+    rows: list[OverlayLegRow] = []
+    for key, levels in leg.rows:
+        on = levels.reindex(common)
+        if on.isna().any():
+            continue
+        alt = evaluate_window(program.loc[common], on, start=window.start, end=window.end)
+        w, m = _verdict([p.cagr for p in alt.points])
+        rows.append(OverlayLegRow(key=key, best_weight=WEIGHTS[w], margin=m, outcome=outcome(m)))
+    return rows
+
+
+def _sizing(
+    program: pd.Series, leg: IndexLeg, window: _Window, common: pd.DatetimeIndex
+) -> SizingAnswer:
+    """``hedge_sizing.size`` on this window's legs, with the reason it is
+    withheld when the inputs are degraded."""
+    measured = leg.basis.source == "measured"
+    cons = leg.conservative
+    cons_on = None if cons is None else cons.reindex(common)
+    cons_ok = cons_on is not None and not cons_on.isna().any()
+    withheld: str | None = None
+    if not measured:
+        withheld = "sizing needs measured dividends"
+    elif not cons_ok:
+        withheld = "sizing needs T-bills for the cash-drag check"
+        if leg.basis.conservative_from is not None:
+            withheld += f" (T-bill history starts {leg.basis.conservative_from})"
+    prog = program.loc[common]
+    grid_best = WEIGHTS[int(np.argmax([p.cagr for p in window.points]))]
+    return size(
+        SizingInputs(
+            base=segments(prog, leg.headline.loc[common]),
+            conservative=segments(prog, cons_on) if cons_ok and cons_on is not None else None,
+            grid_best=grid_best,
+            withheld=withheld,
+            base_leg_name="base" if measured else "assumed",
+        )
     )
 
 
 def run_overlay_window(
     program: pd.Series,
-    spx: pd.Series,
+    leg: IndexLeg,
     *,
     key: str,
     label: str,
     start: dt.date,
     end: dt.date,
-    dividend_yield: float,
 ) -> OverlayWindow:
-    """One program over one window, with its dividend-yield sensitivity."""
-    window = evaluate_window(program, spx, start=start, end=end, dividend_yield=dividend_yield)
+    """One program over one window, with every leg's verdict and the size."""
+    window = evaluate_window(program, leg.headline, start=start, end=end)
+    common = common_days(program, leg.headline, start=start, end=end)
     best, margin = _verdict([p.cagr for p in window.points])
     ratios = [p.cagr_per_vol for p in window.points]
     best_rv: float | None = None
@@ -288,17 +358,6 @@ def run_overlay_window(
     if all(r is not None for r in ratios):
         i, m = _verdict([r for r in ratios if r is not None])
         best_rv, outcome_rv = WEIGHTS[i], outcome(m)
-    sensitivity = []
-    for q in SENSITIVITY_YIELDS:
-        alt = (
-            window
-            if q == dividend_yield
-            else evaluate_window(program, spx, start=start, end=end, dividend_yield=q)
-        )
-        w, m = _verdict([p.cagr for p in alt.points])
-        sensitivity.append(
-            SensitivityPoint(dividend_yield=q, best_weight=WEIGHTS[w], margin=m, outcome=outcome(m))
-        )
     return OverlayWindow(
         key=key,
         label=label,
@@ -315,7 +374,8 @@ def run_overlay_window(
         outcome=outcome(margin),
         best_weight_risk_adjusted=best_rv,
         outcome_risk_adjusted=outcome_rv,
-        sensitivity=sensitivity,
+        legs=_leg_rows(program, leg, window, common),
+        sizing=_sizing(program, leg, window, common),
     )
 
 
@@ -324,6 +384,7 @@ def run_hedge_overlay(
     programs: Mapping[str, pd.Series],
     *,
     as_of: dt.date,
+    leg: IndexLeg | None = None,
     dividend_yield: float = DEFAULT_DIVIDEND_YIELD,
 ) -> HedgeOverlayResult:
     """The test over the letter's window and over each program's full history.
@@ -331,6 +392,12 @@ def run_hedge_overlay(
     Every series is cut at ``as_of`` first, so no window can read past it; an
     ``as_of`` before the letter's window ends shows up as that window
     ``clipped``, never as a shorter test wearing the letter's label.
+
+    ``leg`` is the index leg (:func:`~index_leg.build_index_leg`); without one
+    the flat-yield fallback is built on ``spx`` at ``dividend_yield``. A
+    measured leg starts at SPY's listing, so "full history" is asked for from
+    the later of the program's first date and the leg's -- that clamp is the
+    requested start, so ``clipped`` stays truthful.
     """
     unknown = sorted(set(programs) - set(OVERLAY_PROGRAMS))
     if unknown:
@@ -338,6 +405,8 @@ def run_hedge_overlay(
         raise ValueError(f"not a hedged S&P 500 program: {unknown}; use {OVERLAY_PROGRAMS}")
     cutoff = pd.Timestamp(as_of)
     spx = spx[spx.index <= cutoff]
+    leg = (leg or assumed_leg(spx, dividend_yield=dividend_yield)).cut(as_of)
+    leg_first = leg.basis.first_date if leg.basis.source == "measured" else None
     out: list[ProgramOverlay] = []
     missing = {s: "not in the Cboe snapshot" for s in OVERLAY_PROGRAMS if s not in programs}
     for symbol, full_levels in programs.items():
@@ -348,22 +417,14 @@ def run_hedge_overlay(
         first = levels.index[0].date()
         spans = (
             ("cole", "The letter's window (2005 to Mar 2016)", *COLE_WINDOW),
-            ("full", "Full history", first, as_of),
+            ("full", "Full history", max(first, leg_first or first), as_of),
         )
         windows: list[OverlayWindow] = []
         unavailable: dict[str, str] = {}
         for key, label, start, end in spans:
             try:
                 windows.append(
-                    run_overlay_window(
-                        levels,
-                        spx,
-                        key=key,
-                        label=label,
-                        start=start,
-                        end=end,
-                        dividend_yield=dividend_yield,
-                    )
+                    run_overlay_window(levels, leg, key=key, label=label, start=start, end=end)
                 )
             except OverlayDataMissing as exc:
                 unavailable[key] = str(exc)
@@ -378,7 +439,8 @@ def run_hedge_overlay(
         )
     return HedgeOverlayResult(
         as_of=as_of,
-        dividend_yield=dividend_yield,
+        dividend_yield=leg.basis.assumed_yield,
+        dividend=leg.basis,
         weights=list(WEIGHTS),
         programs=out,
         missing=missing,
@@ -412,4 +474,5 @@ def compute_hedge_overlay(store: LakeStore, *, as_of: dt.date) -> HedgeOverlayRe
     if spx is None:
         raise OverlayDataMissing(f"no {UNDERLYING_SYMBOL} rows in the snapshot known as of {as_of}")
     programs = {s: p for s in OVERLAY_PROGRAMS if (p := series(s)) is not None}
-    return run_hedge_overlay(spx, programs, as_of=as_of)
+    leg = build_index_leg(store, as_of, spx=spx)
+    return run_hedge_overlay(spx, programs, as_of=as_of, leg=leg)

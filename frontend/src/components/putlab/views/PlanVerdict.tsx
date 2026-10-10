@@ -1,10 +1,10 @@
-import type { PlanArm, PlanWindow, RollingSummary } from '../../../api/client'
+import type { PlanArm, PlanLegRow, PlanWindow, RollingSummary } from '../../../api/client'
 import type { Label } from '../chart'
 import { ChartLabels } from '../ChartLabels'
-import { pct, pp, share, usd } from './planFormat'
+import { legName, pct, pp, share, usd } from './planFormat'
 
 /* The rolling-start verdict and one window's two arms, drawn. Shared by both
- * sources; ``byYield`` is the real-quote source's dividend sensitivity. The
+ * sources; ``legs`` is the real-quote source's per-index-leg rerun. The
  * sentences and the arms table the charts replace stay one click away, in
  * "The plan in numbers", for a reader who wants the figures rather than the
  * marks (and for a keyboard, which cannot hover a chart). */
@@ -101,12 +101,12 @@ function ArmBar({ arm, max, ddMax, hedged }: { arm: PlanArm; max: number; ddMax:
 export function PlanVerdict({
   rolling: r,
   window: w,
-  byYield,
+  legs,
   narrow,
 }: {
   rolling: RollingSummary | null
   window: PlanWindow | null
-  byYield?: { dividend_yield: number; share_ahead: number }[]
+  legs?: PlanLegRow[]
   narrow: boolean
 }) {
   if (r == null || w == null) return null
@@ -117,7 +117,13 @@ export function PlanVerdict({
   // bar silently full at -85%.
   const ddMax = Math.max(0.6, Math.abs(w.hedged.max_drawdown), Math.abs(w.comparator.max_drawdown))
   // 0 to 10% of starts unless a share runs past it: never a bar cut at the edge.
-  const yieldScale = Math.max(0.1, ...(byYield ?? []).map((y) => y.share_ahead))
+  const yieldScale = Math.max(0.1, ...(legs ?? []).map((y) => y.share_ahead))
+  const measured = (legs ?? []).some((y) => y.key.kind === 'leg')
+  const byWhat = measured ? 'by index leg' : 'by assumed S&P dividend yield'
+  // One decimal: the legs differ by fractions of a point, and whole percents
+  // would print two different shares as the same number.
+  const legShare = (x: number) => (x > 0 && x < 1 ? pct(x, 1) : share(x))
+  const rowName = (y: PlanLegRow) => (y.key.kind === 'assumed_yield' ? pct(y.key.dividend_yield) : legName(y.key))
   const startsText = r.n_starts === 1 ? `the one monthly start` : `${r.n_starts} monthly starts`
   return (
     <>
@@ -157,16 +163,16 @@ export function PlanVerdict({
           worst and best.
         </p>
         <GapStrip r={r} narrow={narrow} />
-        {byYield && byYield.length > 0 && (
+        {legs && legs.length > 0 && (
           <div className="pl-plan-yield">
-            <div className="pl-kicker">Share of starts led, by assumed S&amp;P dividend yield</div>
-            {byYield.map((y) => (
-              <div className="pl-plan-yield-row" key={y.dividend_yield}>
-                <span className="dim">{pct(y.dividend_yield)}</span>
+            <div className="pl-kicker">Share of starts led, {byWhat}</div>
+            {legs.map((y) => (
+              <div className="pl-plan-yield-row" key={rowName(y)}>
+                <span className="dim">{rowName(y)}</span>
                 <span className="pl-plan-yield-track">
                   <span style={{ width: `${(y.share_ahead / yieldScale) * 100}%` }} />
                 </span>
-                <strong>{share(y.share_ahead)}</strong>
+                <strong>{legShare(y.share_ahead)}</strong>
               </div>
             ))}
           </div>
@@ -194,10 +200,13 @@ export function PlanVerdict({
           1bp in {share(r.share_inconclusive)}. Median gap {pp(r.median_gap)}/yr; 10th to 90th percentile{' '}
           {pp(r.p10_gap)} to {pp(r.p90_gap)}; worst {pp(r.worst_gap)}, best {pp(r.best_gap)}.
         </p>
-        {byYield && (
+        {legs && (
           <p data-testid="plan-by-yield">
-            Share of starts led, by assumed S&P dividend yield:{' '}
-            {byYield.map((y) => `at ${pct(y.dividend_yield)}, ${share(y.share_ahead)}`).join('; ')}.
+            Share of starts led, {byWhat}:{' '}
+            {legs
+              .map((y) => `${y.key.kind === 'assumed_yield' ? `at ${rowName(y)}` : rowName(y)}, ${legShare(y.share_ahead)}`)
+              .join('; ')}
+            .
           </p>
         )}
         <div className="pl-scroll">

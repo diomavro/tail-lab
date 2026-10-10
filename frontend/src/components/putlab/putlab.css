@@ -1263,11 +1263,44 @@
 /* n-600, not ink-45: the better end is what every verdict is read against,
    so it must clear 3:1 on both sheets. */
 .pl-c-parity { stroke: var(--pl-n-600); stroke-width: 1; stroke-dasharray: 3 3; fill: none; }
-.pl-lump-legend .pl-key-dash { border-top-color: var(--pl-n-600); }
+.pl-lump-legend .pl-key-dash,
+.pl-hold .pl-key-dash { border-top-color: var(--pl-n-600); }
 .pl-c-cursor { stroke: var(--cyan); stroke-width: 1; fill: none; }
 .pl-c-thin { stroke-width: 1.8; }
 .pl-c-best { fill: var(--paper); stroke: var(--ink); stroke-width: 2; }
 .pl-c-hover { fill: var(--cyan); }
+
+/* How much to hold */
+.pl-hold { display: flex; flex-direction: column; gap: var(--space-4); }
+.pl-hold-charts {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 240px), 1fr));
+  gap: var(--space-4) var(--space-6);
+}
+.pl-hold-chart { margin: 0; min-width: 0; }
+.pl-hold-mark { fill: var(--paper); stroke: var(--ink); stroke-width: 1.6; }
+.pl-hold-mark.is-star { fill: var(--cyan); stroke: var(--ink); }
+.pl-hold-mark.is-half { fill: var(--ink); }
+.pl-hold-mark.is-even { stroke: var(--mag); }
+.pl-hold-key { width: 9px; height: 9px; border-radius: 50%; border: 1.6px solid var(--ink); }
+.pl-hold-key.is-zero { background: var(--paper); }
+/* On a phone the table becomes one card per row: the reason gets the full
+   width instead of a 95px column that wraps seven lines off-screen. */
+@media (max-width: 600px) {
+  .pl-hold-table thead { display: none; }
+  .pl-hold-table, .pl-hold-table tbody, .pl-hold-table tr, .pl-hold-table td { display: block; width: 100%; }
+  .pl-hold-table tr { padding: var(--space-2) 0; border-bottom: 1px solid var(--rule); }
+  .pl-hold-table td { border: 0; padding: 2px 0; text-align: left; }
+  .pl-hold-table td.num { text-align: left; }
+  .pl-hold-table td::before { content: attr(data-label) ": "; color: var(--ink-70); }
+}
+.pl-hold-key.is-half { background: var(--ink); }
+.pl-hold-key.is-star { background: var(--cyan); }
+.pl-hold-key.is-even { border-color: var(--mag); }
+.pl-hold-numbers summary { cursor: pointer; color: var(--cyan-2); font-size: 13px; }
+.pl-hold-num { margin-top: var(--space-3); font-size: 13px; line-height: 1.5; }
+.pl-hold-num h4 { font-size: 13px; margin: 0 0 var(--space-1); }
+.pl-hold-num p { margin: 0 0 var(--space-2); }
 
 /* Monthly */
 .pl-plan-share { display: flex; flex-direction: column; gap: var(--space-3); }

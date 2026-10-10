@@ -67,7 +67,11 @@ test('real data: PPUT fails on growth, and the unhedged row is marked best', asy
 
 test('real data: one section per window, one panel per program, the span actually covered', async ({ page }) => {
   await openBook(page)
-  await expect(page.getByRole('heading', { level: 3 })).toHaveText(["The letter's window (2005 to Mar 2016)", 'Full history'])
+  await expect(page.getByRole('heading', { level: 3 })).toHaveText([
+    "The letter's window (2005 to Mar 2016)",
+    'Full history',
+    'How much to hold ⓘ',
+  ])
   await expect(page.locator('.pl-panel')).toHaveCount(6)
   // VXTH starts 2006: the panel shows what the data cover, not what was asked.
   const vxth = region(page, /^VXTH The letter's window/)
@@ -161,7 +165,7 @@ test('real data: a win under a basis point is too close to call, never "trails"'
   await openBook(page)
   const panel = region(page, /^VXTH Full history/)
   await expect(panel.getByTestId('verdict')).toHaveText(
-    '10% hedged beats both ends, but only by 0.005pp/yr, under the 1bp/yr threshold.',
+    '10% hedged beats both ends, but only by 0.006pp/yr, under the 1bp/yr threshold.',
   )
   await expect(panel.getByTestId('panel-tag')).toHaveClass(/pl-tag-mute/)
 })
@@ -174,9 +178,9 @@ test('real data: each verdict is re-run at every assumed dividend yield, with it
   expect((await sens.boundingBox())!.width).toBeGreaterThan(100)
   await expect(region(page, /^VXTH Full history/).getByTestId('sensitivity')).toHaveText(
     'Best interior mix vs the better end, by assumed dividend yield: ' +
-      'at 1.4%, paradox holds (best mix 20% hedged, +0.082pp/yr); ' +
-      'at 1.9%, too close to call (best mix 10% hedged, +0.005pp/yr); ' +
-      'at 2.4%, paradox fails (best is an end, −0.050pp/yr).',
+      'at 1.4%, paradox holds (best mix 20% hedged, +0.084pp/yr); ' +
+      'at 1.9%, too close to call (best mix 10% hedged, +0.006pp/yr); ' +
+      'at 2.4%, paradox fails (best is an end, −0.049pp/yr).',
   )
 })
 
@@ -282,8 +286,8 @@ test('a server failure is reported as a failure, not as an empty lake', async ({
 })
 
 test('a sensitivity row won by the fully hedged end says so', async ({ page }) => {
-  const sensitivity = PPUT_COLE.sensitivity.map((r) => ({ ...r, best_weight: 1, margin: -0.002, outcome: 'fails' as const }))
-  await openBook(page, variant({ sensitivity }))
+  const legs = PPUT_COLE.legs.map((r) => ({ ...r, best_weight: 1, margin: -0.002, outcome: 'fails' as const }))
+  await openBook(page, variant({ legs }))
   await expect(region(page, COLE).getByTestId('sensitivity')).toContainText('at 1.4%, paradox fails (best is an end, −0.200pp/yr)')
 })
 
@@ -341,7 +345,7 @@ test('each dividend-yield dot is coloured by its own outcome', async ({ page }) 
   await openBook(page)
   const dots = region(page, /^VXTH Full history/).locator('.pl-sens-dot')
   const want = { holds: /is-holds/, inconclusive: /is-close/, fails: /is-fails/ }
-  const sens = VXTH!.windows[1]!.sensitivity
+  const sens = VXTH!.windows[1]!.legs
   for (let k = 0; k < sens.length; k++) await expect(dots.nth(k)).toHaveClass(want[sens[k]!.outcome])
 })
 

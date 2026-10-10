@@ -31,3 +31,8 @@ Point-in-time correctness ranks above feature completeness:
 Backtest results mean what they claim to mean, at the cost of real
 discipline: no read may bypass `asof.py`, and no new dataset or backtest
 path merges without its point-in-time field or adversarial test.
+
+**One stated exception** (2026-10-10): the Book's conservative index leg reads
+`DGS3MO` at its *latest* vintage for dates before its first ALFRED vintage
+(2005-06-28), where no point-in-time value exists; bounded below 0.01bp/yr of
+margin. See `docs/adr/0027`'s amendment.

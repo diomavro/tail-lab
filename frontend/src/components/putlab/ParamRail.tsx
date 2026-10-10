@@ -197,6 +197,13 @@ export function ParamRail({ tab, tabLabel, controls, onChange, universe, dataQua
                       if (Number.isFinite(v) && v >= 100 && v <= 100000) onChange({ notional: v })
                     }}
                   />
+                  {/* The Book sizes hedges; this budget only scales a standalone put. */}
+                  <span className="pl-note" data-testid="notional-note">
+                    Standalone · fixed premium, not a size recommendation
+                  </span>
+                  <span className="pl-note" data-testid="notional-book">
+                    The Book sizes Cboe&rsquo;s fixed-strike programs, not this strategy.
+                  </span>
                 </div>
               )}
               {has('strike') && byDelta && (
