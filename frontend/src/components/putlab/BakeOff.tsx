@@ -8,7 +8,7 @@ import {
 } from '../../api/client'
 import { ConceptInfo } from './ConceptInfo'
 import { fmtDollar, fmtFixed, fmtPct } from './format'
-import type { PutLabControls } from './types'
+import { deltaLabel, type PutLabControls } from './types'
 import { StandaloneNote } from './StandaloneNote'
 
 /* The metric bake-off — the panel the API already served and nothing called.
@@ -82,7 +82,9 @@ export function BakeOff({ controls }: { controls: PutLabControls }) {
   const run = () => {
     setState({ status: 'loading' })
     fetchMetricScreen({
+      strike_rule: controls.strike_rule,
       moneyness_pct: controls.moneyness_pct,
+      target_delta: controls.target_delta,
       tenor_weeks: controls.tenor_weeks,
       years: controls.years,
       top_k: topK,
@@ -146,7 +148,10 @@ export function BakeOff({ controls }: { controls: PutLabControls }) {
           {state.status === 'loading' ? 'Screening…' : 'Run the bake-off'}
         </button>
         <span className="pl-micro">
-          {controls.moneyness_pct}% OOM · {controls.tenor_weeks}wk · {controls.years}y
+          {controls.strike_rule === 'delta'
+            ? deltaLabel(controls.target_delta)
+            : `${controls.moneyness_pct}% OOM`}{' '}
+          · {controls.tenor_weeks}wk · {controls.years}y
         </span>
       </div>
 
@@ -164,6 +169,13 @@ export function BakeOff({ controls }: { controls: PutLabControls }) {
 
       {data && winner && (
         <>
+          <p className="pl-note" data-testid="bake-rule">
+            Screened at{' '}
+            {data.strike_rule === 'delta' && data.target_delta != null
+              ? `${deltaLabel(data.target_delta)}: every roll's strike is solved from its own 20-day realised vol, so the distance below spot moves with the market`
+              : `${data.moneyness_pct}% below spot on every roll`}
+            .
+          </p>
           <p className="pl-bake-verdict">
             {winner.roi_on_premium > data.baseline_roi ? (
               <>

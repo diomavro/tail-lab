@@ -68,7 +68,7 @@ CONTRACT_MULTIPLIER = 100
 #: could be bought.
 #:
 #: Note where this bites: 6% OOM is comfortably inside
-#: ``sweep.MODEL_PRICED_MAX_MONEYNESS_PCT``. That bound (docs/adr/0018) is a
+#: ``put_roll.MODEL_PRICED_MAX_MONEYNESS_PCT``. That bound (docs/adr/0018) is a
 #: function of moneyness alone, calibrated on ~30-day SPY quotes, and a
 #: two-week tenor collapses the premium far harder than the same strike at a
 #: month. The bound wants to be a function of moneyness AND tenor — of how many

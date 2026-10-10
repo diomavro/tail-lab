@@ -45,11 +45,27 @@ export function MemoryTeaser({ verdict }: { verdict: ResourceState<RegimeVerdict
     <section aria-label="Regime verdict">
       <div className="pl-section-head">
         <h3>Did this only work in one regime?</h3>
-        {data && copy && <span className={copy.tag} title={data.rule_hash}>{copy.label}</span>}
+        {data && copy && (
+          <span
+            className={copy.tag}
+            title={
+              data.rule_hash ??
+              'Not recorded: hypothesis memory keeps moneyness rules only, so a delta verdict has no stored history yet.'
+            }
+          >
+            {copy.label}
+          </span>
+        )}
       </div>
 
       {data && copy ? (
         <>
+          {data.rule_hash == null && (
+            <p className="pl-note" data-testid="verdict-not-recorded">
+              Not recorded: hypothesis memory keeps moneyness rules only, so this delta verdict has no stored history
+              yet (docs/adr/0029).
+            </p>
+          )}
           <p className="pl-note" style={{ marginBottom: 14 }}>
             Split by the regime each roll was <em>entered</em> in — {copy.note}
           </p>

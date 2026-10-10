@@ -15,6 +15,7 @@ from tail_lab.lake.store import DeltaLakeStore
 from tail_lab.research.backtest.put_roll import annualized_return
 from tail_lab.research.backtest.ranking import rank_universe
 from tail_lab.research.backtest.sizing import FixedPremium, WealthFraction
+from tail_lab.research.backtest.strike_rule import ByMoneyness
 
 
 def _seed_symbol(
@@ -275,7 +276,7 @@ def test_the_best_cells_stats_all_describe_the_best_cell(tmp_path: Path) -> None
         asset="wild",
         as_of=ingest,
         notional=1000.0,
-        moneyness_pct=row.best_moneyness_pct,
+        rule=ByMoneyness(row.best_moneyness_pct),
         tenor_weeks=row.best_tenor_weeks,
         lookback_years=1.0,
         include_curves=False,
@@ -296,7 +297,7 @@ def test_the_best_cells_stats_all_describe_the_best_cell(tmp_path: Path) -> None
         asset="wild",
         as_of=ingest,
         notional=1000.0,
-        moneyness_pct=2.0,
+        rule=ByMoneyness(2.0),
         tenor_weeks=1.0,
         lookback_years=1.0,
         include_curves=False,

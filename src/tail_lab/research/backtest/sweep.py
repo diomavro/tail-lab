@@ -22,44 +22,25 @@ from collections.abc import Sequence
 import pandas as pd
 from pydantic import BaseModel
 
-from tail_lab.research.backtest.put_roll import PricingBasis, annualized_return, run_put_roll
+from tail_lab.research.backtest.put_roll import (
+    MODEL_PRICED_MAX_MONEYNESS_PCT as MODEL_PRICED_MAX_MONEYNESS_PCT,
+)
+from tail_lab.research.backtest.put_roll import (
+    PricingBasis,
+    annualized_return,
+    run_put_roll,
+)
+from tail_lab.research.backtest.strike_rule import ByMoneyness
 from tail_lab.research.dividends import DividendLookup
 
 #: The heatmap axes — one place, so the sweep endpoint, the ranking, and the
 #: frontend grid all agree. Moneyness in % out-of-the-money, tenor in weeks.
 #: Deliberately reaches past what the pricer can handle: seeing the deep tail
 #: is the point of a tail-hedge lab, and hiding it would be its own kind of lie.
-#: What the depth costs is handled by MODEL_PRICED_MAX_MONEYNESS_PCT below.
+#: What the depth costs is handled by MODEL_PRICED_MAX_MONEYNESS_PCT (defined in
+#: put_roll, where every model-priced roll reports against it; re-exported above).
 SWEEP_MONEYNESS: tuple[float, ...] = (2, 4, 6, 8, 10, 12, 15, 18, 22, 26, 30)
 SWEEP_TENORS_WEEKS: tuple[float, ...] = (1, 2, 4, 8, 12)
-
-#: The strike depth past which this platform's premium is not a price.
-#:
-#: ``docs/MODEL_RESIDUAL.md`` priced the same puts twice over real historical
-#: quotes — once by our Black-Scholes-at-VIX model, once by the market — and
-#: measured the median market/model premium ratio by depth:
-#:
-#:     5% OTM   1.42x        15% OTM     180x
-#:     10% OTM  7.38x        20% OTM  21,663x
-#:
-#: Past ~10% the flat-vol model does not merely misprice the option, it reports
-#: that it is nearly free. Because every backtest here fixes the premium
-#: *budget* rather than the contract count, a premium rounded to nothing buys
-#: an absurd number of contracts and inflates any payoff by the same factor. So
-#: 10% is where the ratio is still within one order of magnitude, and it is the
-#: deepest strike whose return is a measurement rather than an artefact.
-#:
-#: This is NOT ``accuracy.applicability``. That asks "does the measured
-#: residual of a published Cboe program describe this run" (a distance in
-#: parameter space). This asks "is the model's premium a price at all at this
-#: depth" (a property of the pricer). A run can be `indicative` and still
-#: model-priced, or `direct` and — were the reference deeper — not.
-#:
-#: Raising this is not a config tweak: it is a claim about the pricer, and the
-#: thing that would justify it is the skew-aware ``OptionPricer`` queued in
-#: ``AGENT_TODO.md``, which has an exact calibration target (+2.2 vol points at
-#: 5%, +7.2 at 10%, +18.2 at 20%). See ``docs/adr/0018``.
-MODEL_PRICED_MAX_MONEYNESS_PCT: float = 10.0
 
 
 def is_model_priced(moneyness_pct: float) -> bool:
@@ -126,7 +107,7 @@ def run_sweep(
                     asset=asset,
                     as_of=as_of,
                     notional=notional,
-                    moneyness_pct=moneyness,
+                    rule=ByMoneyness(moneyness),
                     tenor_weeks=tenor,
                     lookback_years=years,
                     basis=basis,

@@ -11,7 +11,7 @@ VENV := .venv
 PY := env -u PYTHONPATH $(VENV)/bin/python
 PIP := env -u PYTHONPATH $(VENV)/bin/pip
 
-.PHONY: setup lint format typecheck import-lint test check cov-floors ingest-vix ingest-vix-complex ingest-ohlcv ingest-cboe-strategy ingest-rates ingest-tiingo-eod ingest-credit ingest-event-calendar ingest-option-quotes residual skew tail-alpha api frontend clean ingest-mpd ingest-options-expiry ingest-sp500-constituents ingest-vix-futures ingest-kaggle-spy kaggle-spy-vs-optionsdx
+.PHONY: setup lint format typecheck import-lint test check cov-floors ingest-vix ingest-vix-complex ingest-ohlcv ingest-cboe-strategy ingest-rates ingest-tiingo-eod ingest-credit ingest-event-calendar ingest-option-quotes residual skew tail-alpha api frontend clean ingest-mpd ingest-options-expiry ingest-sp500-constituents ingest-vix-futures ingest-kaggle-spy kaggle-spy-vs-optionsdx delta-strike-gap
 
 help:
 	@echo "Targets:"
@@ -39,6 +39,7 @@ help:
 	@echo "  ingest-optionsdx  Hand-downloaded optionsDX chains -> bronze (OPTIONSDX_SYMBOL=vix; local corpus, no network)"
 	@echo "  ingest-kaggle-spy  Hand-downloaded Kaggle SPY year -> data/vendor parquet (YEAR=2023; OFFLINE cross-check, never served)"
 	@echo "  kaggle-spy-vs-optionsdx  2023 vendor-disagreement report, Kaggle vs optionsDX (read-only; skips if either is absent)"
+	@echo "  delta-strike-gap  Model (realised-vol) vs market (implied-vol) delta strikes from the optionsDX corpus (SYMBOLS='spy qqq' by default; read-only, offline; docs/adr/0029)"
 	@echo "  api          Run FastAPI on :8000 with auto-reload"
 	@echo "  frontend     Run the Vite dev server"
 	@echo "  clean        Remove caches and build artifacts"
@@ -183,6 +184,12 @@ ingest-kaggle-spy:
 # absent.
 kaggle-spy-vs-optionsdx:
 	env -u PYTHONPATH $(VENV)/bin/python scripts/kaggle_spy_vs_optionsdx.py --year $(YEAR)
+
+# Read-only, offline: how far the backtest's "delta at realised vol" strike sits
+# from the market's (our delta on the vendor IV), by regime, with the targets the
+# panel cannot reach. Prints only; skips if the corpus is absent. docs/adr/0029.
+delta-strike-gap:
+	env -u PYTHONPATH $(VENV)/bin/python scripts/delta_strike_gap.py $(SYMBOLS)
 
 ingest-credit:
 	env -u PYTHONPATH $(VENV)/bin/python -c "from tail_lab.ingestion.credit import ingest_credit; from tail_lab.config import get_lake_store, get_settings; from tail_lab.observability import configure_logging; configure_logging(); s = [x.upper() for x in '$(SERIES)'.split(',')] if '$(SERIES)' else None; r = ingest_credit(get_lake_store(), s, api_key=get_settings().fred_api_key); print(f'committed {r.valid_rows} rows for {len(r.series_ids)} series -> {r.bronze_path} ({r.quarantined_rows} quarantined)')"

@@ -31,7 +31,7 @@ import './putlab.css'
 import { RAIL } from './rail'
 import { TAB_LABEL } from './tabs'
 import { TabNav } from './TabNav'
-import { PUTLAB_DEFAULT_CONTROLS, PUTLAB_OOM_PRESETS, PUTLAB_TENORS, type PutLabControls } from './types'
+import { deltaLabel, PUTLAB_DEFAULT_CONTROLS, PUTLAB_OOM_PRESETS, PUTLAB_TENORS, type PutLabControls } from './types'
 import { BakeOffView } from './views/BakeOffView'
 import { GlossaryView } from './views/GlossaryView'
 import { PortfolioView } from './views/PortfolioView'
@@ -195,8 +195,18 @@ function prefetchCombo(
   tenor_weeks: number,
   signal: AbortSignal,
 ): void {
+  // Moneyness only: the primary key's strike slot holds the bare percentage in
+  // moneyness mode (strikeSlot), and the prefetch never runs in delta mode.
   const key = JSON.stringify([asset, notional, moneyness_pct, tenor_weeks, years])
-  const params = { asset, notional, moneyness_pct, tenor_weeks, years }
+  const params = {
+    asset,
+    notional,
+    strike_rule: 'moneyness' as const,
+    moneyness_pct,
+    target_delta: PUTLAB_DEFAULT_CONTROLS.target_delta,
+    tenor_weeks,
+    years,
+  }
   if (!BACKTEST_CACHE.has(key)) {
     fetchPutBacktest(params, signal)
       .then((d) => cachePut(BACKTEST_CACHE, key, d))
@@ -273,14 +283,13 @@ export function PutLab() {
   // the sweep (grid is identical, only the highlighted cell moves client-side),
   // cadence, and data-quality untouched.
   const onWorkspace = tab === 'workspace'
+  // The strike as the backtest reads it: the bare percentage in moneyness mode
+  // (so a prefetched combo is a hit), a tagged delta otherwise -- 0.1 and 10
+  // must never share a cache slot.
+  const strikeSlot: number | string =
+    controls.strike_rule === 'delta' ? `delta:${controls.target_delta}` : controls.moneyness_pct
   const btKey = onWorkspace
-    ? JSON.stringify([
-        controls.asset,
-        controls.notional,
-        controls.moneyness_pct,
-        controls.tenor_weeks,
-        controls.years,
-      ])
+    ? JSON.stringify([controls.asset, controls.notional, strikeSlot, controls.tenor_weeks, controls.years])
     : null
   const sweepKey = onWorkspace ? JSON.stringify([controls.asset, controls.notional, controls.years]) : null
   // The accuracy companion. Keyed on the same axes as the backtest minus
@@ -321,7 +330,9 @@ export function PutLab() {
   const btParams = {
     asset: controls.asset,
     notional: controls.notional,
+    strike_rule: controls.strike_rule,
     moneyness_pct: controls.moneyness_pct,
+    target_delta: controls.target_delta,
     tenor_weeks: controls.tenor_weeks,
     years: controls.years,
   }
@@ -388,7 +399,9 @@ export function PutLab() {
   // current OOM (~8 combos, cache-skipping repeats), not a full grid. Sweep is
   // deliberately not prefetched -- it doesn't vary with OOM%/tenor.
   useEffect(() => {
-    if (!onWorkspace) return
+    // The presets are moneyness presets: in delta mode they would warm reads
+    // the page is not going to show.
+    if (!onWorkspace || controls.strike_rule === 'delta') return
     const controller = new AbortController()
     const handle = window.setTimeout(() => {
       const combos: [number, number][] = [
@@ -406,6 +419,7 @@ export function PutLab() {
     }
   }, [
     onWorkspace,
+    controls.strike_rule,
     controls.asset,
     controls.notional,
     controls.years,
@@ -418,7 +432,9 @@ export function PutLab() {
    *  opening at the previously selected strike would show a different (usually
    *  worse) number than the row the reader just clicked. */
   const selectAsset = (asset: string, best?: { moneyness_pct: number; tenor_weeks: number }) => {
-    update(best ? { asset, ...best } : { asset })
+    // A row's best cell is a moneyness cell, so landing on it switches the
+    // rule back -- otherwise the page would open on a different strike.
+    update(best ? { asset, ...best, strike_rule: 'moneyness' } : { asset })
     setTab('workspace')
   }
 
@@ -467,16 +483,21 @@ export function PutLab() {
       }
     } else if (btHere) {
       rows.push({ k: 'Spot', v: fmtPrice(btHere.spot) })
+      const last = btHere.cycles[btHere.cycles.length - 1]
       rows.push({
         k: 'Strike',
-        v: `${fmtPrice(btHere.spot * (1 - controls.moneyness_pct / 100))} (${controls.moneyness_pct}% OOM)`,
+        // The run's own rule, never the rail's: for one debounce they differ.
+        v:
+          btHere.strike_rule === 'delta' && btHere.target_delta != null
+            ? `${deltaLabel(btHere.target_delta)} · latest roll K ${last ? fmtPrice(last.strike) : '—'}`
+            : `${fmtPrice(btHere.spot * (1 - (btHere.moneyness_pct ?? 0) / 100))} (${btHere.moneyness_pct}% OOM)`,
       })
       rows.push({ k: 'r', v: `${(btHere.rate * 100).toFixed(2)}%` })
     }
     if (regimes) rows.push({ k: 'Regime', v: regimes.current })
     if (vix) rows.push({ k: 'VIX', v: vix.close.toFixed(1) })
     return rows
-  }, [tab, namesAsset, universe, controls.asset, controls.moneyness_pct, btHere, sv, regimes, vix])
+  }, [tab, namesAsset, universe, controls.asset, btHere, sv, regimes, vix])
 
   const railSections = RAIL[tab]
 

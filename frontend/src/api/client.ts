@@ -62,10 +62,34 @@ export interface PutBacktestCycle {
   /** True when Black-Scholes gave less than spot x 0.0001 and the premium is
    *  that floor, not a model price. */
   premium_floored: boolean
+  /** How far below spot this roll's strike sat, and its delta at entry under
+   *  the platform's convention (dividend-adjusted Black-Scholes, the roll's
+   *  own realised vol). Null on the market path. One is the rule's target;
+   *  the other is what that rule let move. */
+  entry_moneyness_pct: number | null
+  entry_delta: number | null
   contracts: number
   cost: number
   payoff: number
   net: number
+}
+
+/** How a strike is chosen (docs/adr/0029). */
+export type StrikeRuleKind = 'moneyness' | 'delta'
+
+/** The strike rule as every rule-aware route takes it. */
+export interface StrikeRuleParams {
+  strike_rule: StrikeRuleKind
+  moneyness_pct: number
+  target_delta: number
+}
+
+/** Query entries for the rule: only the active rule's own parameter, so a
+ *  leftover value never reaches the server (which ignores it anyway). */
+function ruleQuery(p: StrikeRuleParams): Record<string, string> {
+  return p.strike_rule === 'delta'
+    ? { strike_rule: 'delta', target_delta: String(p.target_delta) }
+    : { moneyness_pct: String(p.moneyness_pct) }
 }
 
 /** Where a dividend yield came from. "unknown" is priced at q = 0. */
@@ -118,7 +142,13 @@ export interface PutBacktestResponse {
   asset: string
   as_of: string
   notional: number
-  moneyness_pct: number
+  /** Null under a delta rule: the distance moves every roll. */
+  moneyness_pct: number | null
+  strike_rule: StrikeRuleKind
+  target_delta: number | null
+  /** Share of rolls whose strike landed deeper than the model can price
+   *  (model_priced_max_moneyness_pct, docs/adr/0018); null on the market path. */
+  beyond_model_depth_share: number | null
   tenor_weeks: number
   lookback_years: number
   rate: number
@@ -159,10 +189,9 @@ export interface PricePoint {
   price: number
 }
 
-export interface PutBacktestParams {
+export interface PutBacktestParams extends StrikeRuleParams {
   asset: string
   notional: number
-  moneyness_pct: number
   tenor_weeks: number
   years: number
 }
@@ -174,7 +203,7 @@ export async function fetchPutBacktest(
   const qs = new URLSearchParams({
     asset: params.asset,
     notional: String(params.notional),
-    moneyness_pct: String(params.moneyness_pct),
+    ...ruleQuery(params),
     tenor_weeks: String(params.tenor_weeks),
     years: String(params.years),
   })
@@ -393,7 +422,9 @@ export interface RegimeSlice {
 export interface RegimeVerdictResponse {
   asset: string
   as_of: string
-  rule_hash: string
+  /** Null under a delta rule: hypothesis memory records moneyness rules only
+   *  (docs/adr/0029), so a delta verdict has no stored identity. */
+  rule_hash: string | null
   verdict: Verdict
   slices: RegimeSlice[]
 }
@@ -405,7 +436,7 @@ export async function fetchRegimeVerdict(
   const qs = new URLSearchParams({
     asset: params.asset,
     notional: String(params.notional),
-    moneyness_pct: String(params.moneyness_pct),
+    ...ruleQuery(params),
     tenor_weeks: String(params.tenor_weeks),
     years: String(params.years),
   })
@@ -530,7 +561,9 @@ export interface MetricScreenEntry {
 
 export interface MetricScreenComparison {
   as_of: string
-  moneyness_pct: number
+  moneyness_pct: number | null
+  strike_rule: StrikeRuleKind
+  target_delta: number | null
   tenor_weeks: number
   lookback_years: number
   top_k: number
@@ -544,8 +577,7 @@ export interface MetricScreenComparison {
   entries: MetricScreenEntry[]
 }
 
-export interface MetricScreenParams {
-  moneyness_pct: number
+export interface MetricScreenParams extends StrikeRuleParams {
   tenor_weeks: number
   years: number
   top_k: number
@@ -556,7 +588,7 @@ export async function fetchMetricScreen(
   signal?: AbortSignal,
 ): Promise<MetricScreenComparison> {
   const qs = new URLSearchParams({
-    moneyness_pct: String(params.moneyness_pct),
+    ...ruleQuery(params),
     tenor_weeks: String(params.tenor_weeks),
     years: String(params.years),
     top_k: String(params.top_k),
@@ -566,6 +598,61 @@ export async function fetchMetricScreen(
     throw new ApiError(`GET /api/putlab/metric-screen failed: ${resp.status}`, resp.status)
   }
   return (await resp.json()) as MetricScreenComparison
+}
+
+// --- Strike preview (research/backtest/strike_preview.py, docs/adr/0029) ---
+
+/** The strike the backtest picks today: the target delta at realised vol. */
+export interface ModelStrike {
+  vol_date: string
+  spot: number
+  sigma: number
+  t_years: number
+  strike: number
+  moneyness_pct: number
+}
+
+/** The listed put whose delta, on its own implied vol, is nearest the target. */
+export interface MarketStrike {
+  session: string
+  expiration: string
+  spot: number
+  t_years: number
+  strike: number
+  iv: number
+  delta: number
+  moneyness_pct: number
+}
+
+export interface StrikePreview {
+  asset: string
+  target_delta: number
+  tenor_weeks: number
+  /** The date q was read as of: today's yield, not necessarily the latest roll's. */
+  as_of: string
+  r: number
+  q: number
+  q_source: string
+  model: ModelStrike | null
+  market: MarketStrike | null
+  market_status: 'quoted' | 'not_collected' | 'no_expiry' | 'no_iv'
+  market_is_older: boolean
+}
+
+export async function fetchStrikePreview(
+  params: { asset: string; target_delta: number; tenor_weeks: number },
+  signal?: AbortSignal,
+): Promise<StrikePreview> {
+  const qs = new URLSearchParams({
+    asset: params.asset,
+    target_delta: String(params.target_delta),
+    tenor_weeks: String(params.tenor_weeks),
+  })
+  const resp = await fetch(`/api/putlab/strike-preview?${qs.toString()}`, { signal })
+  if (!resp.ok) {
+    throw new ApiError(`GET /api/putlab/strike-preview failed: ${resp.status}`, resp.status)
+  }
+  return (await resp.json()) as StrikePreview
 }
 
 // --- Portfolio of mixed puts (research/backtest/portfolio.py) ---

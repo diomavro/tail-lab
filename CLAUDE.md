@@ -103,13 +103,21 @@ them.
   Bake-off, Prior Art, Carry Budget, Regime. Code layers keep their plumbing
   names; anything a human reads takes a desk word or argues for a new one in an
   ADR. "Leaderboard", "dashboard" and "panel" are not desk words.
-- **Strikes are picked by fixed moneyness, and that confounds regime comparisons**
-  (`docs/PRIOR_ART.md` §1). `put_roll.py` uses `spot * (1 - moneyness_pct/100)`;
-  at our own regime bands a "10% OOM 4-week put" is 0.05-delta in calm and
-  17.6-delta in crisis. Anything comparing across regimes — the Bake-off, §4 Q4,
-  `docs/adr/0015`'s `confirmed` verdict — is partly measuring whether the strike
-  was reachable. Delta-based selection is queued; until it lands, say which
-  parameterisation a result used.
+- **A strike is picked by moneyness OR by delta, and only two surfaces offer delta**
+  (`docs/adr/0029`, `research/backtest/strike_rule.py`). Fixed moneyness
+  confounds regime comparisons (`docs/PRIOR_ART.md` §1: a "10% OOM 4-week put"
+  has delta 0.0006 in calm, 0.18 in crisis -- PRIOR_ART's "0.05" and "17.6"
+  are desk points); `ByDelta` holds the option
+  instead. Three traps: (1) the served delta is **at realised vol** — the only
+  vol every past day has — so "0.10Δ" sits much closer to spot than the
+  market's 10-delta put (`make delta-strike-gap` measures the gap; label it,
+  never write a bare "10Δ"); (2) only `/backtest`, `/regime-verdict` and
+  `/metric-screen` (Workspace, Bake-off) take a delta — the ranking, sweep,
+  Surface, roll schedule, accuracy and **hypothesis memory** are moneyness-only,
+  and a delta verdict has `rule_hash = None`; (3) a low-delta rule can land deeper
+  than `MODEL_PRICED_MAX_MONEYNESS_PCT` (now in `put_roll.py`) when realised
+  vol is high, where the premium is not a price — `beyond_model_depth_share` counts it. The
+  market (quotes) path refuses a delta rule. Say which rule a result used.
 - **optionsDX coverage is complete; the PRICE series is what limits you**
   (`docs/DATA_CONTRACTS.md` #12). Real 2010-2023 EOD chains in
   `data/vendor/optionsdx/` (gitignored, licence-limited, absent on CI).

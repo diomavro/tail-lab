@@ -31,6 +31,7 @@ from tail_lab.research.backtest.put_roll import (
     run_put_roll,
 )
 from tail_lab.research.backtest.quote_fills import Fill, OptionsDxQuoteSource
+from tail_lab.research.backtest.strike_rule import ByMoneyness
 
 
 def _build(px: list[float]) -> tuple[pd.Series, pd.Series, list[dt.date]]:
@@ -121,7 +122,7 @@ def test_a_pinned_market_cycle_settles_at_hand_derived_numbers() -> None:
         asset="TEST",
         as_of=dates[-1],
         notional=1000.0,
-        moneyness_pct=10.0,
+        rule=ByMoneyness(10.0),
         tenor_weeks=2.0,
         lookback_years=5.0,
         basis=PricingBasis(quotes=source),
@@ -207,7 +208,7 @@ def test_a_source_that_fills_only_half_never_falls_back_to_the_model() -> None:
         asset="TEST",
         as_of=dates[-1],
         notional=1000.0,
-        moneyness_pct=10.0,
+        rule=ByMoneyness(10.0),
         tenor_weeks=1.0,
         lookback_years=5.0,
         basis=PricingBasis(quotes=source),
@@ -263,7 +264,7 @@ def test_realized_expiry_beats_the_naive_i_plus_tenor_days_settlement() -> None:
         asset="TEST",
         as_of=dates[-1],
         notional=1000.0,
-        moneyness_pct=10.0,
+        rule=ByMoneyness(10.0),
         tenor_weeks=2.0,
         lookback_years=5.0,
         basis=PricingBasis(quotes=source),
@@ -314,7 +315,7 @@ def test_spread_scale_is_ignored_on_the_market_path() -> None:
         asset="TEST",
         as_of=dates[-1],
         notional=1000.0,
-        moneyness_pct=10.0,
+        rule=ByMoneyness(10.0),
         tenor_weeks=2.0,
         lookback_years=5.0,
     )
@@ -372,7 +373,7 @@ def test_annualization_uses_the_traded_span_not_the_nominal_window() -> None:
         asset="TEST",
         as_of=dates[-1],
         notional=1000.0,
-        moneyness_pct=10.0,
+        rule=ByMoneyness(10.0),
         tenor_weeks=1.0,
         lookback_years=2.0,
         basis=PricingBasis(quotes=source),
@@ -445,7 +446,7 @@ def test_adversarial_marks_never_read_a_quote_outside_the_cycles_own_window() ->
         asset="TEST",
         as_of=dates[-1],
         notional=1000.0,
-        moneyness_pct=10.0,
+        rule=ByMoneyness(10.0),
         tenor_weeks=1.0,
         lookback_years=5.0,
         basis=PricingBasis(quotes=source),
@@ -562,7 +563,7 @@ def test_mtm_market_path_marks_at_the_bid_and_carries_forward() -> None:
         asset="TEST",
         as_of=dates[-1],
         notional=1000.0,
-        moneyness_pct=10.0,
+        rule=ByMoneyness(10.0),
         tenor_weeks=1.0,
         lookback_years=5.0,
         basis=PricingBasis(quotes=source),
@@ -627,7 +628,7 @@ def test_a_fill_expiring_on_its_own_entry_day_cannot_hang_the_roll() -> None:
             asset="SPY",
             as_of=idx[-1].date(),
             notional=1000.0,
-            moneyness_pct=10.0,
+            rule=ByMoneyness(10.0),
             tenor_weeks=0.05,
             lookback_years=0.4,
             basis=PricingBasis(quotes=_ZeroDteSource()),
@@ -682,7 +683,7 @@ def test_a_market_priced_backtest_cites_no_dividend_basis(tmp_path: Path) -> Non
         asset="test",
         as_of=dates[-1],
         notional=1000.0,
-        moneyness_pct=10.0,
+        rule=ByMoneyness(10.0),
         tenor_weeks=2.0,
         lookback_years=5.0,
         basis=PricingBasis(quotes=source),

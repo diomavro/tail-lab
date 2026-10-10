@@ -1187,11 +1187,6 @@
 }
 .pl-explain-inputs dt { color: var(--ink-70); }
 .pl-explain-inputs dd { margin: 0; color: var(--ink); font-variant-numeric: tabular-nums; }
-.pl-explain .pl-table thead th {
-  /* The shared header grey is too faint (2.6:1) for a table a reader must
-     reconcile figure by figure; this one meets AA. */
-  color: var(--ink-70);
-}
 .pl-explain .pl-table th.pl-explain-rowhead {
   /* A row header that reads like its row: a date, not a column title. */
   font-size: 13px;
@@ -1318,3 +1313,31 @@
    the section's direct children (--space-3). Scoped under .putlab-root to beat
    its `p { margin: 0 }` reset. */
 .putlab-root .pl-explain-stack > * + * { margin-top: var(--space-3); }
+
+/* "How the strike is chosen": one dot per roll, coloured by entry regime. */
+.pl-figure { margin: var(--space-2) 0; }
+.pl-figure svg { width: 100%; height: auto; display: block; }
+.pl-figure .pl-grid { stroke: var(--rule); stroke-width: 1; }
+.pl-figure .pl-axis { font-size: 11px; fill: var(--ink-70); }
+.pl-dot-calm { fill: var(--cyan); }
+.pl-dot-elevated { fill: var(--warn-fill); stroke: var(--ink-70); stroke-width: 1.5; }
+.pl-dot-crisis { fill: var(--mag); }
+.pl-dot-none { fill: none; stroke: var(--ink-70); stroke-width: 1.5; }
+.pl-dot-key {
+  display: inline-block;
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  vertical-align: -1px;
+}
+.pl-dot-key.pl-dot-calm { background: var(--cyan); }
+.pl-dot-key.pl-dot-elevated { background: var(--warn-fill); box-shadow: inset 0 0 0 1px var(--ink-70); }
+.pl-dot-key.pl-dot-crisis { background: var(--mag); }
+.pl-dot-key.pl-dot-none { background: none; box-shadow: inset 0 0 0 1.5px var(--ink-70); }
+
+/* Explanation tables are read on a phone too: their labels wrap rather than
+   push the figures off the screen. Their labels ARE the reading (which vol,
+   which row), so they take --ink-70, AA on paper in both themes (5.8:1 light,
+   9.5:1 dark), not the table default --ink-45 (2.6:1 on light paper). Row
+   headers (.pl-explain-rowhead, above) read in full --ink on top of this. */
+.pl-explain .pl-table th { white-space: normal; color: var(--ink-70); }

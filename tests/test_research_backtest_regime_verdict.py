@@ -18,6 +18,7 @@ from tail_lab.research.backtest.regime_verdict import (
     compute_regime_verdict,
     regime_breakdown,
 )
+from tail_lab.research.backtest.strike_rule import ByMoneyness
 
 
 def _cycle(entry: dt.date, net: float, notional: float = 1000.0) -> PutRollCycle:
@@ -124,7 +125,7 @@ def test_compute_regime_verdict_end_to_end(tmp_path: Path) -> None:
         asset="spy",
         as_of=ingest,
         notional=1000.0,
-        moneyness_pct=5.0,
+        rule=ByMoneyness(5.0),
         tenor_weeks=4.0,
         years=1.0,
     )
@@ -168,7 +169,7 @@ def test_compute_regime_verdict_missing_vix_raises(tmp_path: Path) -> None:
             asset="spy",
             as_of=ingest,
             notional=1000.0,
-            moneyness_pct=5.0,
+            rule=ByMoneyness(5.0),
             tenor_weeks=4.0,
             years=1.0,
         )

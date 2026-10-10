@@ -42,7 +42,16 @@ function measuredOn(basis: DividendBasis): string {
   return d.toISOString().slice(0, 10)
 }
 
-export function PriceBuild({ bt }: { bt: PutBacktestResponse }) {
+export function PriceBuild({
+  bt,
+  open,
+  onToggle,
+}: {
+  bt: PutBacktestResponse
+  /** Held by the Workspace so a re-run never closes it (see StrikeBuild). */
+  open: boolean
+  onToggle: (open: boolean) => void
+}) {
   const last = bt.cycles[bt.cycles.length - 1]
   if (!last) return null
   const basis = bt.dividend_basis
@@ -50,7 +59,12 @@ export function PriceBuild({ bt }: { bt: PutBacktestResponse }) {
   // A market run's premium is a listed ask: nothing below is a model price.
   const market = bt.priced_from === 'market'
   return (
-    <details className="pl-explain" data-testid="price-build">
+    <details
+      className="pl-explain"
+      data-testid="price-build"
+      open={open}
+      onToggle={(e) => onToggle(e.currentTarget.open)}
+    >
       <summary>How the price is built</summary>
       {market ? (
         <p data-testid="price-build-market">
@@ -115,9 +129,11 @@ export function PriceBuild({ bt }: { bt: PutBacktestResponse }) {
         put&rsquo;s delta. Across a year of rolls it nets out; roll by roll it does not.
         </p>
       )}
-      <p className="pl-note">
-        Next: the strike itself is a fixed distance below spot here, which reaches very different deltas in calm and
-        crisis. Whether any of this earns a place in a portfolio is the Book&rsquo;s question &mdash; and there only
+      <p className="pl-note" data-testid="price-build-next">
+        {bt.strike_rule === 'delta'
+          ? 'Next: the strike itself is set by the delta target at realised vol, so its distance below spot moves roll by roll — see “How the strike is chosen”. '
+          : 'Next: the strike itself is a fixed distance below spot here, which reaches very different deltas in calm and crisis. '}
+        Whether any of this earns a place in a portfolio is the Book&rsquo;s question &mdash; and there only
         Cboe&rsquo;s real-quote programs count as evidence
         {market ? '' : ', never a model-priced backtest like this one'} (ADR 0027).
       </p>

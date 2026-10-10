@@ -43,6 +43,7 @@ from tail_lab.lake.store import LakeStore
 from tail_lab.research.backtest.brokerage import COMMISSION_PER_CONTRACT, roll_cost
 from tail_lab.research.backtest.growth import time_average_growth
 from tail_lab.research.backtest.sizing import SizingMode, WealthFraction
+from tail_lab.research.backtest.strike_rule import ByDelta, ByMoneyness, StrikeRule, put_delta
 from tail_lab.research.dividends import UNKNOWN, DividendLookup, dividend_lookup
 
 # quote_fills -> marks -> roll_schedule -> put_roll (roll_schedule imports REALIZED_VOL_CAP/
@@ -74,6 +75,34 @@ TRADING_DAYS_PER_WEEK = 5
 #: and is never floored (quote_fills's own liquidity guard already refuses
 #: the pennies this floor was accidentally protecting against).
 PREMIUM_FLOOR_FRAC = 1e-4
+
+#: The strike depth past which this platform's premium is not a price.
+#:
+#: ``docs/MODEL_RESIDUAL.md`` priced the same puts twice over real historical
+#: quotes — once by our Black-Scholes-at-VIX model, once by the market — and
+#: measured the median market/model premium ratio by depth:
+#:
+#:     5% OTM   1.42x        15% OTM     180x
+#:     10% OTM  7.38x        20% OTM  21,663x
+#:
+#: Past ~10% the flat-vol model does not merely misprice the option, it reports
+#: that it is nearly free. Because every backtest here fixes the premium
+#: *budget* rather than the contract count, a premium rounded to nothing buys
+#: an absurd number of contracts and inflates any payoff by the same factor. So
+#: 10% is where the ratio is still within one order of magnitude, and it is the
+#: deepest strike whose return is a measurement rather than an artefact.
+#:
+#: This is NOT ``accuracy.applicability``. That asks "does the measured
+#: residual of a published Cboe program describe this run" (a distance in
+#: parameter space). This asks "is the model's premium a price at all at this
+#: depth" (a property of the pricer). A run can be `indicative` and still
+#: model-priced, or `direct` and — were the reference deeper — not.
+#:
+#: Raising this is not a config tweak: it is a claim about the pricer, and the
+#: thing that would justify it is the skew-aware ``OptionPricer`` queued in
+#: ``AGENT_TODO.md``, which has an exact calibration target (+2.2 vol points at
+#: 5%, +7.2 at 10%, +18.2 at 20%). See ``docs/adr/0018``.
+MODEL_PRICED_MAX_MONEYNESS_PCT: float = 10.0
 #: Don't annualize the running return-on-premium until at least this much of the
 #: window has elapsed. Annualizing a two-week ROI raises ``(1+roi)`` to the 26th
 #: power, which explodes a small early loss/gain into a nonsense yearly rate;
@@ -136,6 +165,12 @@ class PutRollCycle(BaseModel):
     #: the premium is that floor, not a model price -- so it cannot be
     #: reproduced from the other inputs (model path only).
     premium_floored: bool = False
+    #: Where the strike landed, both ways round (model path): its distance
+    #: below spot in percent, and its put delta at the volatility and q it was
+    #: priced with. Under a moneyness rule the first is fixed and the second
+    #: drifts with the regime; under a delta rule the reverse.
+    entry_moneyness_pct: float | None = None
+    entry_delta: float | None = None
     contracts: float  # notional / premium
     cost: float  # entry brokerage (commission + bid-ask half-spread) for this roll
     #: Quote-panel basis this leg was resolved under (1.0 on the model path).
@@ -199,7 +234,12 @@ class PutBacktestResult(BaseModel):
     as_of: dt.date
     spot: float  # latest underlying price, for showing the strike in real $
     notional: float
-    moneyness_pct: float
+    #: The moneyness rule's percent below spot; ``None`` under a delta rule,
+    #: whose strike moves every roll (see ``cycles[*].entry_moneyness_pct``).
+    moneyness_pct: float | None
+    strike_rule: Literal["moneyness", "delta"] = "moneyness"
+    #: The delta rule's target (absolute put delta); ``None`` under moneyness.
+    target_delta: float | None = None
     tenor_weeks: float
     lookback_years: float
     rate: float
@@ -274,6 +314,11 @@ class PutBacktestResult(BaseModel):
     q_source: Literal["measured", "none"] | None = None
     #: The ``tiingo_eod`` snapshot the yields came from (``None`` without one).
     dividend_snapshot: str | None = None
+    #: Share of model-priced rolls whose strike landed deeper than
+    #: MODEL_PRICED_MAX_MONEYNESS_PCT -- where the premium is not a price
+    #: (docs/adr/0018). A delta rule can land there in high vol without asking
+    #: to; ``None`` on the market path.
+    beyond_model_depth_share: float | None = None
     #: The yield behind the latest roll, with the payments it was built from
     #: (``None`` on the market path or before ``compute_put_backtest`` fills it).
     dividend_basis: DividendBasisView | None = None
@@ -457,6 +502,8 @@ class _CycleFacts:
     q_source: str | None = None
     t_years: float | None = None
     premium_floored: bool = False
+    entry_moneyness_pct: float | None = None
+    entry_delta: float | None = None
 
 
 def _record_cycle(
@@ -499,6 +546,8 @@ def _record_cycle(
             t_years=facts.t_years,
             premium=float(facts.premium),
             premium_floored=facts.premium_floored,
+            entry_moneyness_pct=facts.entry_moneyness_pct,
+            entry_delta=facts.entry_delta,
             contracts=float(facts.contracts),
             cost=float(facts.cost),
             payoff=float(facts.payoff),
@@ -524,7 +573,7 @@ def _roll_model_cycles(
     basis: PricingBasis,
     rate: float,
     notional: float,
-    moneyness_pct: float,
+    rule: StrikeRule,
     tenor_weeks: float,
     commission_per_contract: float,
     spread_scale: float,
@@ -544,8 +593,12 @@ def _roll_model_cycles(
             continue
         sigma = float(min(max(sigma, REALIZED_VOL_FLOOR), REALIZED_VOL_CAP))
         spot = px[i]
-        strike = spot * (1.0 - moneyness_pct / 100.0)
         dividend = basis.dividends(dates[i]) if basis.dividends is not None else UNKNOWN
+        strike = rule.strike(spot=spot, sigma=sigma, t_years=t_years, r=rate, q=dividend.q)
+        # The rule's own pct when it has one: recomputing it as (1 - K/S) * 100
+        # adds float noise (10% reads 10.000000000000002) to the costs and the
+        # depth check, and a moneyness run must stay identical to before.
+        moneyness_pct = rule.pct if isinstance(rule, ByMoneyness) else (1.0 - strike / spot) * 100.0
         model_premium = pricer.price_put(
             spot=spot, strike=strike, t_years=t_years, r=rate, sigma=sigma, q=dividend.q
         )
@@ -580,6 +633,10 @@ def _roll_model_cycles(
                 q_source=dividend.source,
                 t_years=t_years,
                 premium_floored=model_premium < spot * PREMIUM_FLOOR_FRAC,
+                entry_moneyness_pct=moneyness_pct,
+                entry_delta=put_delta(
+                    spot=spot, strike=strike, sigma=sigma, t_years=t_years, r=rate, q=dividend.q
+                ),
             ),
             notional=notional,
         )
@@ -596,7 +653,7 @@ def _roll_market_cycles(
     n: int,
     quotes: QuoteSource,
     notional: float,
-    moneyness_pct: float,
+    rule: ByMoneyness,
     tenor_weeks: float,
     commission_per_contract: float,
 ) -> _CycleAccumulation:
@@ -619,7 +676,7 @@ def _roll_market_cycles(
         fill = quotes.fill(
             entry_date=entry_date,
             spot=float(spot),
-            moneyness_pct=moneyness_pct,
+            moneyness_pct=rule.pct,
             tenor_weeks=tenor_weeks,
         )
         if fill is None:
@@ -662,7 +719,7 @@ def _roll_market_cycles(
             contracts,
             notional,
             tenor_weeks,
-            moneyness_pct,
+            rule.pct,
             commission_per_contract=commission_per_contract,
             spread_scale=0.0,  # the ask already prices the spread -- see run_put_roll's docstring
         )
@@ -698,7 +755,7 @@ def run_put_roll(
     asset: str,
     as_of: dt.date,
     notional: float,
-    moneyness_pct: float,
+    rule: StrikeRule,
     tenor_weeks: float,
     lookback_years: float,
     rate: float = DEFAULT_RATE,
@@ -709,8 +766,8 @@ def run_put_roll(
 ) -> PutBacktestResult:
     """Roll a fixed-``notional`` OOM-put strategy through ``prices``.
 
-    At each entry the strategy spends ``notional`` on puts struck
-    ``moneyness_pct`` percent below spot, expiring ``tenor_weeks`` weeks out,
+    At each entry the strategy spends ``notional`` on puts struck by ``rule``
+    (a fixed distance below spot, or a target delta -- :mod:`.strike_rule`), expiring ``tenor_weeks`` weeks out,
     priced at ``realized_vol_proxy`` for that date; at expiry it collects the intrinsic
     payoff, then re-enters (non-overlapping rolls). ``prices`` and ``realized_vol_proxy``
     must share the same date index.
@@ -760,8 +817,9 @@ def run_put_roll(
     """
     if not prices.index.equals(realized_vol_proxy.index):
         raise ValueError("prices and realized_vol_proxy must share the same date index")
-    if notional <= 0 or tenor_weeks <= 0 or not 0 < moneyness_pct < 100:
-        raise ValueError("notional>0, tenor_weeks>0, and 0<moneyness_pct<100 required")
+    # The rule validates its own parameter (strike_rule.py).
+    if notional <= 0 or tenor_weeks <= 0:
+        raise ValueError("notional>0 and tenor_weeks>0 required")
 
     basis = basis or PricingBasis()
     pricer = basis.pricer or BlackScholesPricer()
@@ -776,6 +834,11 @@ def run_put_roll(
     dates = [d.date() if isinstance(d, pd.Timestamp) else d for d in prices.index]
 
     if quotes is not None:
+        if not isinstance(rule, ByMoneyness):
+            # Real quotes are filled by distance below spot only: a delta pick
+            # on them needs each session's implied vol and the name's q inside
+            # the quote source -- deferred (docs/adr/0029, AGENT_TODO.md).
+            raise ValueError("the market-priced path takes a moneyness rule, not a delta rule")
         acc = _roll_market_cycles(
             px=px,
             realized_vol=realized_vol,
@@ -784,7 +847,7 @@ def run_put_roll(
             n=n,
             quotes=quotes,
             notional=notional,
-            moneyness_pct=moneyness_pct,
+            rule=rule,
             tenor_weeks=tenor_weeks,
             commission_per_contract=commission_per_contract,
         )
@@ -799,7 +862,7 @@ def run_put_roll(
             basis=basis,
             rate=rate,
             notional=notional,
-            moneyness_pct=moneyness_pct,
+            rule=rule,
             tenor_weeks=tenor_weeks,
             commission_per_contract=commission_per_contract,
             spread_scale=spread_scale,
@@ -902,7 +965,10 @@ def run_put_roll(
         as_of=as_of,
         spot=float(px[-1]),
         notional=notional,
-        moneyness_pct=moneyness_pct,
+        moneyness_pct=rule.pct if isinstance(rule, ByMoneyness) else None,
+        strike_rule=rule.kind,
+        target_delta=rule.target if isinstance(rule, ByDelta) else None,
+        beyond_model_depth_share=_beyond_model_depth_share(cycles),
         tenor_weeks=tenor_weeks,
         lookback_years=lookback_years,
         rate=rate,
@@ -930,6 +996,13 @@ def run_put_roll(
         traded_end=traded_end,
         q_source=None if quotes is not None else summarise_q_source(cycles),
     )
+
+
+def _beyond_model_depth_share(cycles: Sequence[PutRollCycle]) -> float | None:
+    depths = [c.entry_moneyness_pct for c in cycles if c.entry_moneyness_pct is not None]
+    if not depths:
+        return None
+    return sum(d > MODEL_PRICED_MAX_MONEYNESS_PCT for d in depths) / len(depths)
 
 
 def summarise_q_source(cycles: Sequence[PutRollCycle]) -> Literal["measured", "none"]:
@@ -1157,7 +1230,7 @@ def compute_put_backtest(
     asset: str,
     as_of: dt.date,
     notional: float,
-    moneyness_pct: float,
+    rule: StrikeRule,
     tenor_weeks: float,
     lookback_years: float,
     rate: float = DEFAULT_RATE,
@@ -1195,7 +1268,7 @@ def compute_put_backtest(
         asset=asset,
         as_of=as_of,
         notional=budget,
-        moneyness_pct=moneyness_pct,
+        rule=rule,
         tenor_weeks=tenor_weeks,
         lookback_years=lookback_years,
         rate=rate,

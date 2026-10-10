@@ -13,12 +13,13 @@ import { fmtDollar, fmtFixed, fmtMult, fmtPct, fmtPrice } from '../format'
 import { Ledger } from '../Ledger'
 import { MemoryTeaser } from '../MemoryTeaser'
 import { PriceBuild } from '../PriceBuild'
+import { StrikeBuild } from '../StrikeBuild'
 import type { ResourceState } from '../PutLab'
 import { RankingStrip } from '../RankingStrip'
 import { StrategyTape } from '../StrategyTape'
 import { SweepGrid } from '../SweepGrid'
 import { StandaloneNote } from '../StandaloneNote'
-import type { PutLabControls } from '../types'
+import { deltaLabel, type PutLabControls } from '../types'
 
 /* Screen and Backtest, merged.
  *
@@ -69,9 +70,18 @@ export function WorkspaceView({
   regimeVerdict,
   onSelectAsset,
 }: Props) {
+  // Which explanations are open: kept here, above the Result that a re-run
+  // unmounts, so changing a control never closes what explains the change.
+  const [explainOpen, setExplainOpen] = useState({ price: false, strike: false })
   return (
     <div>
       <StandaloneNote />
+      {ranking.status === 'ready' && controls.strike_rule === 'delta' && (
+        <p className="pl-note" data-testid="rank-rule-note">
+          The ranking screens every name on a grid of distances below spot (each row&rsquo;s best cell), not by delta;
+          opening a row switches the strike back to distance.
+        </p>
+      )}
       {ranking.status === 'ready' && (
         <RankingStrip
           ranked={ranking.data.ranked}
@@ -100,6 +110,8 @@ export function WorkspaceView({
 
       {backtest.status === 'ready' && (
         <Result
+          explainOpen={explainOpen}
+          onExplain={(patch) => setExplainOpen((o) => ({ ...o, ...patch }))}
           bt={backtest.data}
           controls={controls}
           onChange={onChange}
@@ -114,6 +126,8 @@ export function WorkspaceView({
 }
 
 function Result({
+  explainOpen,
+  onExplain,
   bt,
   controls,
   onChange,
@@ -122,6 +136,8 @@ function Result({
   regimes,
   regimeVerdict,
 }: {
+  explainOpen: { price: boolean; strike: boolean }
+  onExplain: (patch: Partial<{ price: boolean; strike: boolean }>) => void
   bt: PutBacktestResponse
   controls: PutLabControls
   onChange: (patch: Partial<PutLabControls>) => void
@@ -131,9 +147,13 @@ function Result({
   regimeVerdict: ResourceState<RegimeVerdictResponse>
 }) {
   const [showLedger, setShowLedger] = useState(false)
+  const lastCycle = bt.cycles[bt.cycles.length - 1]
   const bench = bt.benchmark_annualized
   const spread = bench == null ? null : bt.annualized_return - bench
   const optimism = accuracy.status === 'ready' ? accuracy.data.model.expected_optimism : null
+  // accuracy.select_reference picks by strike AND tenor, so name the program it
+  // served rather than implying the one nearest the strike alone.
+  const reference = accuracy.status === 'ready' ? accuracy.data.model.reference : null
   const benchSymbol = sweep.status === 'ready' ? sweep.data.benchmark_symbol : 'benchmark'
   const bleedMonths = ((bt.worst_bleed_streak * controls.tenor_weeks) / 4.33).toFixed(0)
 
@@ -198,13 +218,33 @@ function Result({
               points per year, {bt.lookback_years}y rolled, gross of brokerage
             </span>
           </div>
-          <p className="pl-hero-sentence">
-            {bt.asset.toUpperCase()} at {fmtPrice(bt.spot)}, struck{' '}
-            {fmtPrice(bt.spot * (1 - controls.moneyness_pct / 100))} &mdash; {controls.moneyness_pct}%
-            out of the money. {bt.n_cycles} rolls, of which{' '}
+          <p className="pl-hero-sentence" data-testid="hero-sentence">
+            {bt.asset.toUpperCase()} at {fmtPrice(bt.spot)},{' '}
+            {bt.strike_rule === 'delta' && bt.target_delta != null && lastCycle ? (
+              <>
+                struck at {deltaLabel(bt.target_delta)} &mdash; the latest roll at {fmtPrice(lastCycle.strike)},{' '}
+                {(lastCycle.entry_moneyness_pct ?? 0) >= 0
+                  ? `${(lastCycle.entry_moneyness_pct ?? 0).toFixed(1)}% below`
+                  : `${(-(lastCycle.entry_moneyness_pct ?? 0)).toFixed(1)}% above`}{' '}
+                its entry spot.
+              </>
+            ) : (
+              <>
+                struck {fmtPrice(bt.spot * (1 - (bt.moneyness_pct ?? 0) / 100))} &mdash; {bt.moneyness_pct}% out of
+                the money.
+              </>
+            )}{' '}
+            {bt.n_cycles} rolls, of which{' '}
             {Math.round(bt.hit_rate * bt.n_cycles)} paid back, and the worst drought ran{' '}
             {bt.worst_bleed_streak} rolls.
           </p>
+          {bt.strike_rule === 'delta' && (bt.beyond_model_depth_share ?? 0) > 0 && (
+            <p className="pl-note pl-neg" data-testid="hero-depth">
+              {Math.round((bt.beyond_model_depth_share ?? 0) * bt.cycles.length)} of these {bt.cycles.length} rolls
+              struck deeper than the flat-vol model can price, so their payoffs &mdash; and this headline &mdash; are
+              inflated (see &ldquo;How the strike is chosen&rdquo;).
+            </p>
+          )}
         </div>
         <dl className="pl-brokenout">
           <div className="pl-kicker">Broken out</div>
@@ -217,7 +257,13 @@ function Result({
             <dd>{bench == null ? '—' : rate(bench)}</dd>
           </div>
           <div className="pl-brokenout-row">
-            <dt>Error bar</dt>
+            <dt data-testid="hero-error-bar">
+              Error bar
+              {controls.strike_rule === 'delta' &&
+                (reference
+                  ? ` (${reference}, nearest ${controls.moneyness_pct}% below spot and this tenor, not this delta)`
+                  : ' (read for a distance, not this delta)')}
+            </dt>
             <dd>{optimism == null ? '—' : rate(optimism)}</dd>
           </div>
         </dl>
@@ -237,7 +283,17 @@ function Result({
       </div>
 
       <section className="pl-section">
-        <PriceBuild bt={bt} />
+        <PriceBuild bt={bt} open={explainOpen.price} onToggle={(open) => onExplain({ price: open })} />
+      </section>
+
+      <section className="pl-section">
+        <StrikeBuild
+          bt={bt}
+          regimes={regimes?.segments ?? []}
+          modelPricedMaxMoneynessPct={sweep.status === 'ready' ? sweep.data.model_priced_max_moneyness_pct : null}
+          open={explainOpen.strike}
+          onToggle={(open) => onExplain({ strike: open })}
+        />
       </section>
 
       <section className="pl-section">
@@ -267,7 +323,9 @@ function Result({
           </div>
         </div>
         <p className="pl-note" style={{ marginBottom: 12 }}>
-          Every {controls.tenor_weeks} weeks the ladder resets {controls.moneyness_pct}% below spot.
+          {bt.strike_rule === 'delta' && bt.target_delta != null
+            ? `Every ${bt.tenor_weeks} weeks the ladder resets at ${deltaLabel(bt.target_delta)}, so its distance below spot moves with the market.`
+            : `Every ${bt.tenor_weeks} weeks the ladder resets ${bt.moneyness_pct}% below spot.`}
           The lower pane is cumulative P&amp;L on premium; the thin line is the annualized rate
           earned so far, converging on the headline. Bands are VIX regime &mdash; calm below 17,
           elevated to 28, crisis above.
@@ -290,16 +348,18 @@ function Result({
         <p className="pl-note" style={{ marginBottom: 14 }}>
           The whole grid, re-run at this premium and window. Density inside each band tracks
           magnitude; the band itself is the verdict. Click any cell to move the position there.
+          {controls.strike_rule === 'delta' &&
+            ' This is a grid of distances below spot, not deltas: a click switches the strike back to distance.'}
         </p>
         {sweep.status === 'ready' ? (
           <SweepGrid
             cells={sweep.data.cells}
-            moneynessPct={controls.moneyness_pct}
+            moneynessPct={controls.strike_rule === 'delta' ? Number.NaN : controls.moneyness_pct}
             tenorWeeks={controls.tenor_weeks}
             benchmarkSymbol={sweep.data.benchmark_symbol}
             benchmarkAnnualized={sweep.data.benchmark_annualized}
             modelPricedMaxMoneynessPct={sweep.data.model_priced_max_moneyness_pct}
-            onSelect={(m, t) => onChange({ moneyness_pct: m, tenor_weeks: t })}
+            onSelect={(m, t) => onChange({ strike_rule: 'moneyness', moneyness_pct: m, tenor_weeks: t })}
           />
         ) : sweep.status === 'error' ? (
           <p className="pl-status pl-status-error" role="alert">
@@ -318,6 +378,16 @@ function Result({
           a result's error is part of the result, and a collapsed panel is a
           filed one. */}
       <section className="pl-section">
+        {controls.strike_rule === 'delta' && (
+          <p className="pl-note" data-testid="accuracy-rule-note">
+            {reference && (
+              <>
+                Measured on {reference}, the program nearest {controls.moneyness_pct}% below spot and this tenor:{' '}
+              </>
+            )}
+            The error bar is read for a distance, not a delta.
+          </p>
+        )}
         <AccuracyPanel accuracy={accuracy} />
       </section>
 

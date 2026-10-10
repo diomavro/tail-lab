@@ -29,6 +29,7 @@ import type {
   SweepResponse,
   UniverseMember,
   VixStretchResponse,
+  StrikePreview,
 } from '../../src/api/client'
 
 export const NOTIONAL = 1000
@@ -43,6 +44,29 @@ export const PRICE_PATH: PricePoint[] = Array.from({ length: 240 }, (_, i) => ({
   date: iso(START + i * 6 * day),
   price: Number((320 * Math.exp(0.0022 * i) * (1 + 0.05 * Math.sin(i / 7))).toFixed(2)),
 }))
+
+// Standard normal CDF (Abramowitz-Stegun 7.1.26, |error| < 1.5e-7) -- enough
+// to keep the fixtures' deltas coherent with their own inputs.
+function normCdf(x: number): number {
+  const t = 1 / (1 + 0.3275911 * (Math.abs(x) / Math.SQRT2))
+  const y =
+    1 - ((((1.061405429 * t - 1.453152027) * t + 1.421413741) * t - 0.284496736) * t + 0.254829592) * t *
+      Math.exp(-(x * x) / 2)
+  return x >= 0 ? (1 + y) / 2 : (1 - y) / 2
+}
+
+/** The platform's put delta: -e^{-qT} N(-d1) (dividend-adjusted spot delta). */
+export function putDelta(S: number, K: number, sigma: number, T: number, r: number, q: number): number {
+  const d1 = (Math.log(S / K) + (r - q + (sigma * sigma) / 2) * T) / (sigma * Math.sqrt(T))
+  return -Math.exp(-q * T) * normCdf(-d1)
+}
+
+/** Black-Scholes put, as research/option_pricer.py prices it -- the reader's check. */
+export function bsPut(S: number, K: number, T: number, r: number, sigma: number, q: number): number {
+  const d1 = (Math.log(S / K) + (r - q + (sigma * sigma) / 2) * T) / (sigma * Math.sqrt(T))
+  const d2 = d1 - sigma * Math.sqrt(T)
+  return K * Math.exp(-r * T) * normCdf(-d2) - S * Math.exp(-q * T) * normCdf(-d1)
+}
 
 // 12 rolls. `payoff` is the cash the put returned; `cost` is what the contracts
 // actually filled at, which is NOT the per-roll budget (NOTIONAL) -- that gap is
@@ -59,19 +83,23 @@ export const CYCLES: PutBacktestCycle[] = Array.from({ length: 12 }, (_, i) => {
   const premium = i === 11 ? 10.28 : Number((8.2 + i * 0.11).toFixed(2))
   const contracts = Math.max(1, Math.floor(NOTIONAL / (premium * 100)))
   const cost = Number((contracts * premium * 100).toFixed(2))
+  // Roll 11's vol is solved so its 10.28 premium IS the Black-Scholes price of
+  // its displayed inputs (the Workspace prints them for a reader to check).
+  const sigma = i === 11 ? 0.38245 : Number((0.17 + i * 0.004).toFixed(4))
   return {
     entry_date: iso(START + i * 108 * day),
     expiry_date: iso(START + (i * 108 + 28) * day),
     spot,
     strike,
-    // Roll 11's vol is solved so its 10.28 premium IS the Black-Scholes price of
-    // its displayed inputs (the Workspace prints them for a reader to check).
-    sigma: i === 11 ? 0.38245 : Number((0.17 + i * 0.004).toFixed(4)),
+    sigma,
     // SPY's measured yield (~1.3%), read at each entry.
     q: 0.01307,
     q_source: 'measured',
     t_years: 20 / 252,
     premium_floored: false,
+    // A 5% rule: the distance is fixed and the delta is what moves.
+    entry_moneyness_pct: Number(((1 - strike / spot) * 100).toFixed(4)),
+    entry_delta: putDelta(spot, strike, sigma, 20 / 252, 0.0421, 0.01307),
     premium,
     contracts,
     cost,
@@ -95,6 +123,9 @@ export const BACKTEST: PutBacktestResponse = {
   as_of: '2026-08-21',
   notional: NOTIONAL,
   moneyness_pct: 5,
+  strike_rule: 'moneyness',
+  target_delta: null,
+  beyond_model_depth_share: 0,
   tenor_weeks: 4,
   lookback_years: 4,
   rate: 0.0421,
@@ -378,6 +409,8 @@ const screenEntry = (
 export const METRIC_SCREEN_WINNER: MetricScreenComparison = {
   as_of: '2026-08-21',
   moneyness_pct: 5,
+  strike_rule: 'moneyness',
+  target_delta: null,
   tenor_weeks: 4,
   lookback_years: 4,
   top_k: 5,
@@ -1671,3 +1704,97 @@ export const SURFACE_REFUSED: SurfaceResponse = {
     "alpha_gap_reason": "no realised alpha: no Karamata region to gate on: need at least 31 observations to claim an onset supported by 30, got 25"
   }
 }
+
+// --- Strike by delta (docs/adr/0029) ---
+
+/** K for a put delta of -target: d1 = -N^-1(target e^{qT}), by bisection. */
+export function strikeForDelta(S: number, target: number, sigma: number, T: number, r: number, q: number): number {
+  const scaled = target * Math.exp(q * T)
+  let lo = -10
+  let hi = 10
+  for (let k = 0; k < 100; k++) {
+    const mid = (lo + hi) / 2
+    if (normCdf(mid) < scaled) lo = mid
+    else hi = mid
+  }
+  const d1 = -(lo + hi) / 2
+  return S * Math.exp(-d1 * sigma * Math.sqrt(T) + (r - q + (sigma * sigma) / 2) * T)
+}
+
+/** The same 12 rolls struck at a fixed delta: the distance now moves with
+ *  each roll's vol, and every entry delta IS the target. The latest roll --
+ *  the one "How the price is built" takes apart -- is repriced at its new
+ *  strike, so its premium is still the Black-Scholes price of what is shown. */
+export function backtestByDelta(target: number): PutBacktestResponse {
+  const cycles = CYCLES.map((c, i) => {
+    const strike = Number(strikeForDelta(c.spot, target, c.sigma, c.t_years!, BACKTEST.rate, c.q).toFixed(2))
+    const latest = i === CYCLES.length - 1
+    const premium = latest ? Number(bsPut(c.spot, strike, c.t_years!, BACKTEST.rate, c.sigma, c.q).toFixed(2)) : c.premium
+    const contracts = Math.max(1, Math.floor(NOTIONAL / (premium * 100)))
+    return {
+      ...c,
+      strike,
+      entry_moneyness_pct: Number(((1 - strike / c.spot) * 100).toFixed(4)),
+      entry_delta: -target,
+      premium,
+      contracts,
+      cost: Number((contracts * premium * 100).toFixed(2)),
+    }
+  })
+  return {
+    ...BACKTEST,
+    moneyness_pct: null,
+    strike_rule: 'delta',
+    target_delta: target,
+    // Computed from the rolls, as the backend does (put_roll._beyond_model_depth_share).
+    beyond_model_depth_share: cycles.filter((c) => c.entry_moneyness_pct > MODEL_PRICED_MAX).length / cycles.length,
+    cycles,
+  }
+}
+
+/** Today's strike two ways for any target, coherent under the convention:
+ *  the model side at 9% realised vol (calm), the market side the listed
+ *  whole-dollar strike whose delta at a 19.1% implied vol is nearest. */
+export function strikePreview(target: number): StrikePreview {
+  const spot = 512.4
+  const r = 0.0421
+  const q = 0.01307
+  const model = Number(strikeForDelta(spot, target, 0.09, 20 / 252, r, q).toFixed(2))
+  const tMarket = 28 / 365
+  let best = 400
+  for (let k = 400; k <= 512; k++) {
+    if (Math.abs(putDelta(spot, k, 0.191, tMarket, r, q) + target) < Math.abs(putDelta(spot, best, 0.191, tMarket, r, q) + target)) best = k
+  }
+  return {
+    asset: 'spy',
+    target_delta: target,
+    tenor_weeks: 4,
+    as_of: '2026-08-21',
+    r,
+    q,
+    q_source: 'measured',
+    model: {
+      vol_date: '2026-08-21',
+      spot,
+      sigma: 0.09,
+      t_years: 20 / 252,
+      strike: model,
+      moneyness_pct: Number(((1 - model / spot) * 100).toFixed(4)),
+    },
+    market: {
+      session: '2026-08-21',
+      expiration: '2026-09-18',
+      spot,
+      t_years: tMarket,
+      strike: best,
+      iv: 0.191,
+      delta: Number(putDelta(spot, best, 0.191, tMarket, r, q).toFixed(4)),
+      moneyness_pct: Number(((1 - best / spot) * 100).toFixed(4)),
+    },
+    market_status: 'quoted',
+    market_is_older: false,
+  }
+}
+
+// At 0.10: the model strike $497.33 (2.9% below spot), the market's $481 (6.1%).
+export const STRIKE_PREVIEW: StrikePreview = strikePreview(0.1)

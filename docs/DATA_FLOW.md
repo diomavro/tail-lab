@@ -83,7 +83,7 @@ Screen tab's deeper "is the screen any good?" question moved to its own
 
 | Page / tab | The question it answers | Endpoints | Datasets read |
 |---|---|---|---|
-| **Workspace** | Which name, and what would that hedge have done? | `/api/putlab/leaderboard` (the ranking strip), `/backtest`, `/sweep`, `/regime-verdict`, **`/accuracy`** | `ohlcv_*` (whole screening universe + `ohlcv_spy` as benchmark), `vix`, `cboe_strategy` |
+| **Workspace** | Which name, and what would that hedge have done? | `/api/putlab/leaderboard` (the ranking strip), `/backtest`, `/sweep`, `/regime-verdict`, **`/accuracy`**, `/strike-preview` ("How the strike is chosen": today's delta strike at realised vol beside the market's on the chain's IV) | `ohlcv_*` (whole screening universe + `ohlcv_spy` as benchmark), `vix`, `cboe_strategy`, `tiingo_eod` (q), `option_chain_snapshot` (the preview's market row only) |
 | **Recommendations** | Of every name's *best* strategy, which are the best? | `/api/putlab/leaderboard` (same read as the ranking strip — one strike x tenor sweep per name, bounded to the priced band per `docs/adr/0018`) | `ohlcv_*`, `vix` |
 | **Portfolio** | What does a blend of legs do? | `/api/putlab/portfolio`, `/api/putlab/leaderboard` | `ohlcv_*` |
 | **Book** | How much of the book should carry the hedge? (Rodman's Paradox: does any mix out-grow both 0% and 100% hedged?) | `/api/putlab/hedge-overlay` (lump sum: one read per as-of date; 404 with no Cboe snapshot) and `/api/putlab/book-plan` (monthly contributions, `docs/adr/0027` §3: IRR per arm, rolling starts, comparators) and `/api/putlab/book-plan/model` (the opt-in model source: $X/month on S&P 500 puts priced by Black-Scholes at the VIX plus the measured skew gap) | `cboe_strategy` (`SPX` + `PPUT`, `PPUT3M`, `VXTH`, and the other Cboe indices as comparators); `rates` (`DGS3MO`, T-bill comparator only — disabled with the reason until ingested); `vix` (model source only) |
@@ -92,6 +92,17 @@ Screen tab's deeper "is the screen any good?" question moved to its own
 | **Glossary** | — (renders `content/concepts.ts`, no network) | none | none |
 | **Roll schedule** (export, not a tab) | What would I actually place? | `/api/putlab/roll-schedule` (the ranking's read, reused from cache) | `ohlcv_*`, `vix` |
 | **Control rail** (the tabs that read it: `rail.ts`, `docs/adr/0028`) | What position am I asking about, and where did the data come from? | `/api/putlab/universe`, `/cadence`, `/data-quality` | `ohlcv_<asset>`, the options calendar |
+
+**A strike rule travels with the request on three routes only.** `/backtest`,
+`/regime-verdict` and `/metric-screen` take `strike_rule=delta&target_delta=…`
+(`docs/adr/0029`), and `/strike-preview` takes a `target_delta` of its own;
+every other route — the ranking, sweep, Surface, accuracy,
+roll schedule and hypothesis memory — reads `moneyness_pct` alone. So on the
+Workspace in delta mode the headline, tape, ledger and regime verdict are by
+delta while the ranking strip, sweep grid and accuracy panel beside them are
+by distance, and the page says so beside each. A delta backtest's strikes are
+solved from realised vol; the market's delta strike appears only in
+`/strike-preview`, from one Cboe chain session.
 
 **The accuracy panel is the densest node in the graph.** It renders under every
 backtest result and, alone in the app, reads *four* datasets at once — the

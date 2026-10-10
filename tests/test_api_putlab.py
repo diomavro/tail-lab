@@ -63,6 +63,7 @@ def client(tmp_path: Path) -> Iterator[TestClient]:
     putlab_routes._ACCURACY_CACHE.clear()
     putlab_routes._REPLICATION_CACHE.clear()
     putlab_routes._SURFACE_CACHE.clear()
+    putlab_routes._PREVIEW_CACHE.clear()
     putlab_routes._OVERLAY_CACHE.clear()
     putlab_routes._PLAN_CACHE.clear()
     app.dependency_overrides[putlab_get_lake_store] = lambda: store
@@ -99,6 +100,8 @@ def test_backtest_returns_full_result(client: TestClient) -> None:
         "q_source",
         "t_years",
         "premium_floored",
+        "entry_moneyness_pct",
+        "entry_delta",
         "entry_date",
         "expiry_date",
         "spot",
@@ -1350,3 +1353,278 @@ def test_a_memoised_ranking_never_logs_a_snapshot_it_did_not_price_with(
         r.getMessage() for r in caplog.records if "event=putlab.leaderboard " in r.getMessage()
     ]
     assert lines and not any("dividend_snapshot=tiingo_eod@" in m for m in lines)
+
+
+# --- strike rule: by delta (docs/adr/0029) ---
+
+
+def test_backtest_by_delta_serves_the_rule_and_lands_on_the_target(client: TestClient) -> None:
+    body = client.get(
+        "/api/putlab/backtest",
+        params={"asset": "spy", "strike_rule": "delta", "target_delta": 0.15, "years": 1},
+    ).json()
+    assert (body["strike_rule"], body["target_delta"], body["moneyness_pct"]) == (
+        "delta",
+        0.15,
+        None,
+    )
+    assert all(c["entry_delta"] == pytest.approx(-0.15, abs=1e-9) for c in body["cycles"])
+    assert body["beyond_model_depth_share"] is not None
+
+
+def test_a_leftover_moneyness_never_splits_or_changes_a_delta_answer(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # The UI keeps both values, so one always arrives: in delta mode it is
+    # ignored -- one compute, one cache entry -- and even an out-of-range
+    # leftover never refuses the request.
+    calls = {"n": 0}
+    real = putlab_routes.compute_put_backtest
+
+    def counted(*args: object, **kwargs: object) -> object:
+        calls["n"] += 1
+        return real(*args, **kwargs)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(putlab_routes, "compute_put_backtest", counted)
+    a = {
+        "asset": "spy",
+        "strike_rule": "delta",
+        "target_delta": 0.10,
+        "years": 1,
+        "moneyness_pct": 5,
+    }
+    first = client.get("/api/putlab/backtest", params=a).json()
+    second = client.get("/api/putlab/backtest", params={**a, "moneyness_pct": 20}).json()
+    third = client.get("/api/putlab/backtest", params={**a, "moneyness_pct": 400})
+    assert third.status_code == 200
+    assert first["cycles"] == second["cycles"] == third.json()["cycles"]
+    assert calls["n"] == 1
+
+
+def test_a_moneyness_and_a_delta_request_never_share_a_cache_entry(client: TestClient) -> None:
+    # 10% below spot and 0.10 delta are different rules with numerically
+    # similar parameters: the cache must keep them apart.
+    m = client.get(
+        "/api/putlab/backtest", params={"asset": "spy", "moneyness_pct": 10, "years": 1}
+    ).json()
+    d = client.get(
+        "/api/putlab/backtest",
+        params={"asset": "spy", "strike_rule": "delta", "target_delta": 0.10, "years": 1},
+    ).json()
+    assert (m["strike_rule"], d["strike_rule"]) == ("moneyness", "delta")
+    assert [c["strike"] for c in m["cycles"]] != [c["strike"] for c in d["cycles"]]
+
+
+def test_metric_screen_cache_keys_on_the_rule(client: TestClient) -> None:
+    base = {"tenor_weeks": 4, "years": 1, "top_k": 2, "moneyness_pct": 10}
+    m = client.get("/api/putlab/metric-screen", params=base).json()
+    d = client.get(
+        "/api/putlab/metric-screen", params={**base, "strike_rule": "delta", "target_delta": 0.1}
+    ).json()
+    assert (m["strike_rule"], d["strike_rule"]) == ("moneyness", "delta")
+
+
+def test_strike_preview_cache_keys_on_the_target(client: TestClient) -> None:
+    ten = client.get(
+        "/api/putlab/strike-preview", params={"asset": "spy", "target_delta": 0.10}
+    ).json()
+    twenty = client.get(
+        "/api/putlab/strike-preview", params={"asset": "spy", "target_delta": 0.20}
+    ).json()
+    assert ten["model"]["strike"] < twenty["model"]["strike"]
+
+
+def test_only_the_active_rules_parameter_is_validated(client: TestClient) -> None:
+    bad_moneyness = client.get(
+        "/api/putlab/backtest", params={"asset": "spy", "moneyness_pct": 400}
+    )
+    assert bad_moneyness.status_code == 422
+    leftover_delta = client.get(
+        "/api/putlab/backtest",
+        params={"asset": "spy", "moneyness_pct": 5, "target_delta": 9, "years": 1},
+    )
+    assert leftover_delta.status_code == 200
+
+
+@pytest.mark.parametrize("bad", [0.0, 0.005, 0.6])
+def test_a_target_delta_outside_the_hedge_range_is_rejected(client: TestClient, bad: float) -> None:
+    resp = client.get(
+        "/api/putlab/backtest", params={"asset": "spy", "strike_rule": "delta", "target_delta": bad}
+    )
+    assert resp.status_code == 422
+
+
+def test_a_delta_regime_verdict_has_no_memory_identity(client: TestClient) -> None:
+    body = client.get(
+        "/api/putlab/regime-verdict",
+        params={"asset": "spy", "strike_rule": "delta", "target_delta": 0.10, "years": 1},
+    ).json()
+    # Memory records moneyness rules only: a delta verdict carries no hash.
+    assert body["rule_hash"] is None and body["rule_spec"] is None
+    moneyness = client.get("/api/putlab/regime-verdict", params={"asset": "spy", "years": 1}).json()
+    assert moneyness["rule_hash"].startswith("h-")
+
+
+def test_metric_screen_by_delta_states_its_rule(client: TestClient) -> None:
+    body = client.get(
+        "/api/putlab/metric-screen",
+        params={
+            "strike_rule": "delta",
+            "target_delta": 0.10,
+            "tenor_weeks": 4,
+            "years": 1,
+            "top_k": 2,
+        },
+    ).json()
+    assert (body["strike_rule"], body["target_delta"], body["moneyness_pct"]) == (
+        "delta",
+        0.10,
+        None,
+    )
+
+
+def test_strike_preview_shows_the_model_and_the_market_strike(client: TestClient) -> None:
+    store = app.dependency_overrides[putlab_get_lake_store]()
+    today = dt.datetime.now(dt.UTC).date()
+    _seed_chain(store, today)
+    body = client.get(
+        "/api/putlab/strike-preview",
+        params={"asset": "spy", "target_delta": 0.10, "tenor_weeks": 4, "as_of": today.isoformat()},
+    ).json()
+    assert body["market_status"] == "quoted"
+    model, market = body["model"], body["market"]
+    # Each side lands on its target under the one convention, on its own vol.
+    from tail_lab.research.backtest.strike_rule import put_delta
+
+    assert put_delta(
+        spot=model["spot"],
+        strike=model["strike"],
+        sigma=model["sigma"],
+        t_years=model["t_years"],
+        r=body["r"],
+        q=body["q"],
+    ) == pytest.approx(-0.10, abs=1e-9)
+    assert market["iv"] == 0.25 and market["delta"] == pytest.approx(-0.10, abs=0.03)
+    assert market["expiration"] == (today + dt.timedelta(days=30)).isoformat()
+
+
+def test_strike_preview_without_a_chain_says_not_collected(client: TestClient) -> None:
+    body = client.get("/api/putlab/strike-preview", params={"asset": "spy"}).json()
+    assert body["model"] is not None
+    assert body["market"] is None and body["market_status"] == "not_collected"
+
+
+def test_strike_preview_answers_the_same_whatever_the_case_of_the_name(client: TestClient) -> None:
+    lower = client.get("/api/putlab/strike-preview", params={"asset": "spy"}).json()
+    upper = client.get("/api/putlab/strike-preview", params={"asset": "SPY"}).json()
+    assert lower == upper and upper["asset"] == "spy"
+
+
+@pytest.mark.parametrize("route", ["/api/putlab/backtest", "/api/putlab/regime-verdict"])
+def test_two_delta_targets_never_share_a_cache_entry(client: TestClient, route: str) -> None:
+    base = {"asset": "spy", "strike_rule": "delta", "years": 1}
+    ten = client.get(route, params={**base, "target_delta": 0.10}).json()
+    thirty = client.get(route, params={**base, "target_delta": 0.30}).json()
+    if route.endswith("backtest"):
+        assert ten["target_delta"] == 0.10 and thirty["target_delta"] == 0.30
+        assert [c["strike"] for c in ten["cycles"]] != [c["strike"] for c in thirty["cycles"]]
+    else:
+        assert ten["slices"] != thirty["slices"]
+
+
+def test_metric_screen_never_shares_an_entry_between_two_targets_of_one_rule(
+    client: TestClient,
+) -> None:
+    base = {"tenor_weeks": 4, "years": 1, "top_k": 2}
+    d10 = client.get(
+        "/api/putlab/metric-screen", params={**base, "strike_rule": "delta", "target_delta": 0.1}
+    ).json()
+    d30 = client.get(
+        "/api/putlab/metric-screen", params={**base, "strike_rule": "delta", "target_delta": 0.3}
+    ).json()
+    assert (d10["target_delta"], d30["target_delta"]) == (0.1, 0.3)
+    m5 = client.get("/api/putlab/metric-screen", params={**base, "moneyness_pct": 5}).json()
+    m10 = client.get("/api/putlab/metric-screen", params={**base, "moneyness_pct": 10}).json()
+    assert (m5["moneyness_pct"], m10["moneyness_pct"]) == (5, 10)
+
+
+def test_strike_preview_cache_keys_on_the_tenor(client: TestClient) -> None:
+    four = client.get(
+        "/api/putlab/strike-preview", params={"asset": "spy", "tenor_weeks": 4}
+    ).json()
+    twelve = client.get(
+        "/api/putlab/strike-preview", params={"asset": "spy", "tenor_weeks": 12}
+    ).json()
+    assert (four["tenor_weeks"], twelve["tenor_weeks"]) == (4, 12)
+    assert four["model"]["t_years"] != twelve["model"]["t_years"]
+
+
+def test_strike_preview_strikes_on_the_measured_yield_and_the_backtests_rate(
+    client: TestClient,
+) -> None:
+    # The page says the preview uses "the same q and r" as the backtest: a
+    # preview struck at q = 0 or r = 0 would put a different strike beside the
+    # backtest's and still look plausible, so pin both against the lookups.
+    from tail_lab.research import dividends
+    from tail_lab.research.backtest.put_roll import DEFAULT_RATE
+    from tail_lab.research.backtest.strike_rule import ByDelta
+    from tests.test_research_dividends import seed_tiingo_eod
+
+    store = app.dependency_overrides[putlab_get_lake_store]()
+    today = dt.datetime.now(dt.UTC).date()
+    seed_tiingo_eod(store, ["spy"], today, annual_yield=0.06)
+    dividends._memo.clear()
+    expected = dividends.dividend_lookup(store, "spy", today).lookup(today)
+    # "carried" on a weekend (the seed ends on the last business day).
+    assert expected.source in ("measured", "carried") and expected.q > 0.05
+    body = client.get(
+        "/api/putlab/strike-preview",
+        params={"asset": "spy", "target_delta": 0.10, "as_of": today.isoformat()},
+    ).json()
+    assert (body["q"], body["q_source"], body["r"]) == (
+        expected.q,
+        expected.source,
+        DEFAULT_RATE,
+    )
+    assert body["as_of"] == today.isoformat()
+    model = body["model"]
+    assert model["strike"] == pytest.approx(
+        ByDelta(0.10).strike(
+            spot=model["spot"],
+            sigma=model["sigma"],
+            t_years=model["t_years"],
+            r=DEFAULT_RATE,
+            q=expected.q,
+        ),
+        rel=1e-12,
+    )
+
+
+@pytest.mark.parametrize(
+    ("route", "extra"),
+    [
+        ("/api/putlab/strike-preview", {}),
+        ("/api/putlab/backtest", {"strike_rule": "delta", "years": 1}),
+        ("/api/putlab/regime-verdict", {"strike_rule": "delta", "years": 1}),
+        ("/api/putlab/metric-screen", {"strike_rule": "delta", "years": 1, "top_k": 2}),
+    ],
+)
+def test_a_delta_no_strike_can_reach_is_refused_not_a_server_error(
+    client: TestClient, route: str, extra: dict[str, Any]
+) -> None:
+    # A yield of ~161% (D = 80% of the close) over a 26-week roll caps a put's
+    # |delta| at e^(-qT) ~ 0.44: no strike has delta -0.50, and the rule says so. That is the request's inputs, not a
+    # fault -- a 422 naming the cause, never a 500.
+    from tail_lab.research import dividends
+    from tests.test_research_dividends import seed_tiingo_eod
+
+    store = app.dependency_overrides[putlab_get_lake_store]()
+    today = dt.datetime.now(dt.UTC).date()
+    seed_tiingo_eod(store, ["spy"], today, annual_yield=0.8)
+    dividends._memo.clear()
+    resp = TestClient(app, raise_server_exceptions=False).get(
+        route,
+        params={"asset": "spy", "target_delta": 0.5, "tenor_weeks": 26, **extra},
+    )
+    assert resp.status_code == 422, resp.text
+    assert "no strike has put delta" in resp.json()["detail"]

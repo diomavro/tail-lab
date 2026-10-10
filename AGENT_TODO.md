@@ -161,24 +161,19 @@ a large one strictly in order.
       re-measured it is 6.9:1 for `claude[bot]` against 5.2:1 for `diomavro`.
       Keep the number in ONE place.
 
-- [ ] **Select strikes by DELTA, and score them by convexity ratio.**
-      `docs/PRIOR_ART.md` §11. `put_roll.py` picks strikes as
-      `spot * (1 - moneyness_pct/100)`, which §1 established confounds every
-      cross-regime comparison. `lambdaclass/options_portfolio_backtester`
-      (MIT) has the selector written — `find_target_put(deltas, dtes, asks,
-      target_delta, dte_min, dte_max)` at `target_delta=-0.10`, `dte 14-60` —
-      and it runs on the SAME optionsDX panel in `data/vendor/optionsdx/`, so
-      its results are reproducible here rather than merely suggestive.
-      Two parts: (a) `StrikeRule.ByDelta(target)` reading the `delta` Cboe
-      already publishes on every contract, carrying an explicit delta
-      convention (QuantLib's `BlackDeltaCalculator` makes `DeltaType` a
-      required constructor argument for a reason — spot vs forward vs
-      premium-adjusted are different strikes); (b) `convexity_ratio =
-      tail_payoff / annual_cost` as a `RankedAsset` field and Screen column,
-      which is simultaneously a ranking and `docs/adr/0021`'s missing Carry
-      Budget. Do NOT copy their two defects: the tie-break has no liquidity
-      filter, and `annual_cost` hardcodes 12 rolls/yr regardless of the
-      14-60 DTE band. Serves `docs/END_STATE.md` §4 Q4.
+- [ ] **Score strikes by convexity ratio** (part (b) of the old "select strikes by
+      DELTA" item; part (a) is done — `docs/adr/0029`). `docs/PRIOR_ART.md`
+      §11. `convexity_ratio = tail_payoff / annual_cost` as a `RankedAsset`
+      field and Screen column, which is simultaneously a ranking and
+      `docs/adr/0021`'s missing Carry Budget. Do NOT copy
+      `options_portfolio_backtester`'s two defects: the tie-break has no
+      liquidity filter, and `annual_cost` hardcodes 12 rolls/yr regardless of
+      the 14-60 DTE band. **Delta selection itself is built**:
+      `research/backtest/strike_rule.py` (`ByMoneyness | ByDelta`), with ONE
+      convention — dividend-adjusted Black–Scholes spot delta — applied to
+      realised vol in the served backtest and to the vendor's IV for any
+      market strike. The vendor's own `delta` column is deliberately NOT used
+      (ADR 0029 says why); do not rebuild a selector on it.
 
 - [ ] **Add a walk-forward split to the Bake-off, and test the 45-50% cliff.**
       `docs/PRIOR_ART.md` §12. Every Bake-off verdict here is in-sample.
@@ -2796,28 +2791,40 @@ From reading nautilus_trader, hftbacktest and kalshimarketmaker. Ordered by
 severity: the first is a possible correctness problem in results already
 published, the rest are capability.
 
-- [ ] **Delta-based strike selection, alongside moneyness** (`docs/PRIOR_ART.md`
-      §1 — read it before starting; the numbers are the argument). Priced at
-      our own regime bands, a "10% OOM 4-week put" is a **0.05-delta** contract
-      in calm (VIX 12) and a **17.6-delta** contract in crisis (VIX 45) — a
-      350x spread, premium 0.00% vs 1.26% of notional. Every cross-regime
-      comparison we make therefore partly measures whether the strike was
-      reachable at all, which is mechanical. Add a `StrikeSelection` seam to
-      `research/backtest/put_roll.py` with two implementations — `ByMoneyness`
-      (today's, unchanged and still the default) and `ByDelta(target,
-      tolerance)` — mirroring the `OptionPricer` pluggability of
-      `docs/adr/0004`. **Use the stored Cboe `delta` (`docs/adr/0020`), not a
-      model delta** — `docs/PRIOR_ART.md` §6: our pricer is flat-vol, so a model
-      delta is a sticky-strike delta on a smile that does not exist, and would
-      import the same flat-vol error this item exists to remove. Cboe's is
-      computed off the real smile. Only the pre-collection backtest needs a
-      model delta, and it must state the sticky-strike assumption where its
-      results appear. Then re-run the Bake-off and the
-      regime verdicts under both and **report whether the conclusions move** —
-      that comparison is the deliverable, not the feature. If they move,
-      `docs/adr/0015`'s `regime_only` vs `confirmed` needs an ADR, because a
-      rule_hash carrying `moneyness_pct` has been treating two very different
-      contracts as one rule.
+- [x] **Delta-based strike selection, alongside moneyness.** **Done
+      2026-10-10, `docs/adr/0029`.** Built as `StrikeRule = ByMoneyness |
+      ByDelta` in `research/backtest/strike_rule.py`; `/backtest`,
+      `/regime-verdict` and `/metric-screen` take it, and the Workspace and
+      Bake-off offer it. It departs from this item in one place, on purpose:
+      it does **not** read the stored Cboe `delta`. The served backtest needs a
+      delta on every past day and has no smile for any of them, so its delta
+      is the model's at **realised** vol — labelled "0.10Δ at realised vol"
+      everywhere, never a bare "10Δ". The market's delta strike is our same
+      formula on the exchange's IV (`/api/putlab/strike-preview`, and
+      `make delta-strike-gap` over optionsDX), which answers `docs/PRIOR_ART.md`
+      §6's sticky-strike objection by measuring the gap instead of hiding it.
+      The comparison under both rules is in ADR 0029's Results section.
+- [ ] **An optionsDX mode for `make greeks-check`.** Score our delta on the
+      vendor's `P_IV` against optionsDX `P_DELTA` over the corpus, the way the
+      chain mode scores Cboe's. Planning measured a median 0.004 (5-6%
+      relative) on 3-20-delta SPY puts, unexplained by r, q or day count — the
+      number `docs/adr/0029` rests its "no vendor delta" choice on, so it should
+      be reproducible by a make target rather than quoted.
+- [ ] **Record delta-rule verdicts in hypothesis memory.** `docs/adr/0029`
+      left memory moneyness-only: a delta verdict has `rule_hash = None`.
+      Needs a `RuleSpec` field for the rule (default moneyness, excluded from
+      the hash so old records keep theirs) and the two sweep scripts
+      (`daily-verdict-sweep.yml`, `local_verdict_sweep.sh`) taught to record
+      delta rules. ADR 0015 governs the verdicts; amend it, do not bypass it.
+- [ ] **Market-delta backtests on the quotes path.** `run_put_roll` refuses
+      a delta rule with a `QuoteSource` (`docs/adr/0029`): the protocol's
+      `fill` takes a moneyness. Extending it means `fill(..., rule)` across both
+      implementers, the production caller and the test fakes, with a guard on
+      how far a snapped strike may sit from its target delta.
+- [ ] **Re-ingest optionsDX with a 0.40 moneyness floor.** The panel keeps
+      moneyness 0.60-1.02 (`contracts/optionsdx`), and in crisis months a
+      low-delta target lies below it — `make delta-strike-gap` counts those
+      days as unreachable rather than rounding them to the panel's edge.
 - [x] **Greeks on the pricer.** **Done 2026-08-27.** `PutGreeks` (delta,
       gamma, vega, theta, rho, itm_prob) with nautilus's conventions — vega per
       **vol point**, theta per **calendar day**. Validated three ways: against
