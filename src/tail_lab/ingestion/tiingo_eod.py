@@ -129,9 +129,7 @@ def tiingo_getter(
         if not resp.content:
             # A requests fault, so retry_transient treats it as the blip it is
             # -- the same as a truncated body below.
-            raise requests.exceptions.ContentDecodingError(
-                f"Tiingo returned an empty 200 body for {symbol}"
-            )
+            raise requests.exceptions.ContentDecodingError("Tiingo returned an empty 200 body")
         # Parsed INSIDE the retried call: a truncated or HTML 200 raises
         # requests' JSONDecodeError, which retry_transient treats as a blip --
         # as every sibling adapter does -- rather than killing a 95-minute run.

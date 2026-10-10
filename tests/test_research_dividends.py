@@ -253,3 +253,27 @@ def test_a_re_requested_snapshot_reuses_its_build_lock(tmp_path: Path) -> None:
     assert key not in dividends._memo
     dividend_lookup(stores[0], "hyg", DAY)  # re-requested
     assert dividends._build_locks[key] is first
+
+
+def test_the_memo_keeps_the_previous_snapshot_for_an_older_as_of(tmp_path: Path) -> None:
+    # Two entries: after a weekly ingest, a request as of last week must still
+    # hit the memo, not rebuild a ~60 MB table (dividends._MEMO_MAX).
+    _clear_memo()
+    store = DeltaLakeStore(tmp_path)
+    week1, week2 = dt.date(2026, 10, 3), dt.date(2026, 10, 10)
+    seed_tiingo_eod(store, ["spy"], week1)
+    seed_tiingo_eod(store, ["spy"], week2)
+    dividend_lookup(store, "spy", week1)
+    dividend_lookup(store, "spy", week2)
+    assert len(dividends._memo) == 2
+    builds: list[str] = []
+    real = store.read_bronze_columns_as_of
+
+    def counted(*args: object, **kwargs: object) -> pd.DataFrame:
+        builds.append("read")
+        return real(*args, **kwargs)  # type: ignore[arg-type]
+
+    store.read_bronze_columns_as_of = counted  # type: ignore[method-assign]
+    dividend_lookup(store, "spy", week1)
+    dividend_lookup(store, "spy", week2)
+    assert builds == []

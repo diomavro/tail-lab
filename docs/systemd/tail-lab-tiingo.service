@@ -16,6 +16,8 @@ Type=oneshot
 ExecStart=/home/dio/Documents/apps/tail-lab/scripts/weekly_tiingo_refresh.sh
 # Type=oneshot defaults TimeoutStartSec to INFINITY: a hung run would never
 # fail, so OnFailure= would never fire. Sized from the throttle, not a happy
-# path: 70 symbols at one request per 80 s is ~95 min, plus up to two 300 s
-# 429 backoffs and the 300 s lock wait -- 3h clears it.
+# path: 70 symbols at one request per 80 s is ~92 min, plus the 300 s lock
+# wait, leaves ~80 min for retries -- about 16 of the 300 s backoffs across the
+# run. A run that needs more fails red and writes nothing; the next Saturday
+# (or a manual run) retries it whole.
 TimeoutStartSec=3h

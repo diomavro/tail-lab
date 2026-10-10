@@ -317,6 +317,24 @@ def test_a_split_on_a_payments_own_ex_date_does_not_divide_that_payment() -> Non
     assert got.q == pytest.approx(_q(0.5 * 4, 50.0))
 
 
+def test_a_split_on_the_pricing_date_rebases_every_payment_that_day() -> None:
+    # A 4:1 split effective today: today's close is post-split, so every
+    # payment in D must be too -- else D is 4x too large against S (q ~ 17%).
+    ex = _third_fridays(range(2021, 2023), (3, 6, 9, 12))
+    split_day = "2022-10-03"
+    frame = _history(
+        "2021-01-04",
+        "2022-12-30",
+        100.0,
+        dict.fromkeys(ex, 1.0),
+        splits={split_day: 4.0},
+        close_by_date={split_day: 25.0},
+    )
+    got = DividendYields("x", frame).at(dt.date.fromisoformat(split_day))
+    assert [p.adjusted for p in got.payments] == pytest.approx([0.25] * 4)
+    assert got.q == pytest.approx(_q(1.0, 25.0))
+
+
 def test_a_dividend_exactly_equal_to_the_close_is_unknown() -> None:
     ex = _third_fridays(range(2021, 2023), (3, 6, 9, 12))
     yields = DividendYields("x", _history("2021-01-04", "2022-12-30", 4.0, dict.fromkeys(ex, 1.0)))
@@ -408,7 +426,10 @@ def test_a_lone_resumed_payment_is_judged_on_the_snapped_seed_period() -> None:
     old = _third_fridays(range(2012, 2015), (3, 6, 9, 12))
     divs = {**dict.fromkeys(old, 0.5), "2019-03-15": 0.5}
     yields = DividendYields("x", _history("2012-01-02", "2019-12-31", 40.0, divs))
-    assert yields.at(dt.date(2019, 7, 1)).source == "unknown"  # 108 days: under 2 x 91
+    lone = yields.at(dt.date(2019, 7, 1))
+    assert lone.source == "unknown"  # 108 days: under 2 x 91
+    # Unknown carries no close: there is no D for it to be the S of.
+    assert (lone.q, lone.close, lone.payments) == (0.0, None, ())
     assert yields.at(dt.date(2019, 9, 2)).source == "unknown"  # 171 days: still under 182
     assert yields.at(dt.date(2019, 10, 1)).source == "suspended"  # 200 days: over
 
@@ -543,8 +564,9 @@ def test_the_bounded_session_cache_clears_without_changing_an_answer(
 
 def test_stale_means_three_weeks_as_every_doc_and_the_timer_promise() -> None:
     # docs/DATA_FLOW.md, docs/DATA_CONTRACTS.md #14 and the Tiingo timer all
-    # say a carried yield turns "stale" after 21 days -- three missed weekly
-    # runs. The constant is pinned by value so a change has to touch them too.
+    # say a carried yield turns "stale" after 21 days -- two missed weekly
+    # runs (it flips at midnight on day 22, before that Saturday's run). The
+    # constant is pinned by value so a change has to touch them too.
     assert CARRY_STALE_DAYS == 21
     for doc in (
         "docs/DATA_FLOW.md",

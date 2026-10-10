@@ -253,6 +253,8 @@ def test_a_body_that_never_parses_fails_with_the_real_fault_not_a_typeerror(
     assert "SECRET" not in str(info.value)
     # The line that ends a 95-minute run names the symbol and what came back.
     assert "for spy" in str(info.value)
+    if not body:
+        assert "returned an empty 200 body" in str(info.value)
     if body:
         assert body.decode() in str(info.value)
 
@@ -267,6 +269,17 @@ def test_a_refused_fetch_reports_the_body_the_server_sent(monkeypatch: pytest.Mo
         tiingo_getter("SECRET", throttle_s=0.0, sleep=lambda s: None)("zzz", {})
     assert "Ticker not found" in str(info.value) and "for zzz" in str(info.value)
     assert "SECRET" not in str(info.value)
+
+
+def test_the_key_is_redacted_from_an_echoed_body_too(monkeypatch: pytest.MonkeyPatch) -> None:
+    # Some error pages echo the request URL -- token and all -- in the body.
+    echoed = b'{"detail":"bad request /prices?token=SECRET"}'
+    monkeypatch.setattr(
+        tiingo_eod.requests, "get", lambda url, params, timeout: _response(400, echoed)
+    )
+    with pytest.raises(requests.exceptions.HTTPError) as info:
+        tiingo_getter("SECRET", throttle_s=0.0, sleep=lambda s: None)("spy", {})
+    assert "SECRET" not in str(info.value) and "<redacted>" in str(info.value)
 
 
 def test_the_run_log_counts_dividends_and_splits(
