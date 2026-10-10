@@ -20,6 +20,7 @@ from tail_lab.research.backtest.contribution_plan import (
     BILL_SERIES,
     COMPARATOR_KEYS,
     OTHER_CBOE_COMPARATORS,
+    BookPlanResult,
     Comparator,
     PlanRequest,
     _window_bounds,
@@ -27,15 +28,16 @@ from tail_lab.research.backtest.contribution_plan import (
     comparator_levels,
     compute_book_plan,
     dense_tail,
+    leg_shares,
     month_starts,
     rolling_gaps,
     run_book_plan,
     run_window,
     summarize,
     xirr,
-    yield_shares,
 )
 from tail_lab.research.backtest.hedge_overlay import MIN_MARGIN, OverlayDataMissing
+from tail_lab.research.backtest.index_leg import AssumedYieldTag, LegTag, assumed_leg, measured_leg
 from tail_lab.research.backtest.index_replication import DAYS_PER_YEAR, SENSITIVITY_YIELDS
 
 
@@ -289,9 +291,9 @@ def test_a_cboe_comparator_with_no_shared_history_is_refused() -> None:
     with pytest.raises(OverlayDataMissing, match="shares no history"):
         comparator_levels(
             "PUT",
-            spx=_grow(dates, 0.0),
+            index_tr=_grow(dates, 0.0),
+            index_label="S&P 500",
             dates=dates,
-            dividend_yield=0.0,
             rates=None,
             cboe={"PUT": later},
         )
@@ -301,7 +303,12 @@ def test_an_unknown_comparator_is_a_caller_bug() -> None:
     dates = _days("2000-01-03", "2000-03-31")
     with pytest.raises(ValueError, match="unknown comparator"):
         comparator_levels(
-            "QQQ", spx=_grow(dates, 0.0), dates=dates, dividend_yield=0.0, rates=None, cboe={}
+            "QQQ",
+            index_tr=_grow(dates, 0.0),
+            index_label="S&P 500",
+            dates=dates,
+            rates=None,
+            cboe={},
         )
 
 
@@ -348,7 +355,9 @@ def test_the_plan_runs_window_rolling_and_yield_sensitivity() -> None:
     assert r.rolling.share_behind == 1.0
     # Default window: the most recent full ten years.
     assert (r.window.end - r.window.start).days / DAYS_PER_YEAR == pytest.approx(10, abs=0.02)
-    assert [y.dividend_yield for y in r.by_yield] == list(SENSITIVITY_YIELDS)
+    assert [y.key for y in r.legs] == [
+        AssumedYieldTag(dividend_yield=q) for q in SENSITIVITY_YIELDS
+    ]
 
 
 def test_the_assumed_yield_moves_the_spx_comparator_in_the_sensitivity() -> None:
@@ -363,7 +372,7 @@ def test_the_assumed_yield_moves_the_spx_comparator_in_the_sensitivity() -> None
         PlanRequest("PPUT", 0.5, 10_000.0, 500.0, "spx", 10),
         as_of=dt.date(2015, 12, 31),
     )
-    gaps = [y.median_gap for y in r.by_yield]
+    gaps = [y.median_gap for y in r.legs]
     assert gaps == sorted(gaps, reverse=True)
     assert len(set(gaps)) == 3
 
@@ -703,13 +712,9 @@ def test_the_spx_comparator_carries_the_assumed_dividend_yield() -> None:
     """A flat S&P price plus a 3% yield is a 3% total return; a price-only
     comparator would flip every verdict against it."""
     index = _days("2000-01-03", "2009-12-31")
+    leg = assumed_leg(pd.Series(100.0, index=index), dividend_yield=0.03)
     c = comparator_levels(
-        "spx",
-        spx=pd.Series(100.0, index=index),
-        dates=index,
-        dividend_yield=0.03,
-        rates=None,
-        cboe={},
+        "spx", index_tr=leg.headline, index_label="S&P 500", dates=index, rates=None, cboe={}
     )
     years = (index[-1] - index[0]).days / DAYS_PER_YEAR
     assert c.levels.iloc[-1] ** (1 / years) - 1 == pytest.approx(0.03, abs=1e-9)
@@ -794,12 +799,12 @@ def _const_market() -> tuple[pd.Series, pd.Series, pd.DatetimeIndex]:
     return _grow(index, 0.05) * 100, pd.Series(100.0, index=index), index
 
 
-def test_yield_sensitivity_never_swaps_a_non_spx_comparator_for_the_spx() -> None:
+def test_leg_sensitivity_never_swaps_a_non_spx_comparator_for_the_spx() -> None:
     program, spx, index = _const_market()
     cash = Comparator("cash", "Cash", pd.Series(1.0, index=index))
-    out = yield_shares(
+    out = leg_shares(
         program,
-        spx,
+        assumed_leg(spx),
         cash,
         index,
         hedge_ratio=1.0,
@@ -812,12 +817,12 @@ def test_yield_sensitivity_never_swaps_a_non_spx_comparator_for_the_spx() -> Non
     assert [y.share_ahead for y in out] == [1.0, 1.0, 1.0]
 
 
-def test_yield_sensitivity_moves_the_hedged_arms_equity_leg() -> None:
+def test_leg_sensitivity_moves_the_hedged_arms_equity_leg() -> None:
     program, spx, index = _const_market()
     cash = Comparator("cash", "Cash", pd.Series(1.0, index=index))
-    out = yield_shares(
+    out = leg_shares(
         program,
-        spx,
+        assumed_leg(spx),
         cash,
         index,
         hedge_ratio=0.5,
@@ -830,14 +835,14 @@ def test_yield_sensitivity_moves_the_hedged_arms_equity_leg() -> None:
     assert medians == sorted(medians) and len(set(medians)) == 3
 
 
-def test_yield_sensitivity_uses_the_one_basis_point_band() -> None:
+def test_leg_sensitivity_uses_the_one_basis_point_band() -> None:
     index = _days("1995-01-02", "2010-12-31")
     program = _grow(index, 0.00005)  # 0.5bp/yr over a flat book: inside the band
     spx = pd.Series(100.0, index=index)
     cash = Comparator("cash", "Cash", pd.Series(1.0, index=index))
-    out = yield_shares(
+    out = leg_shares(
         program,
-        spx,
+        assumed_leg(spx),
         cash,
         index,
         hedge_ratio=1.0,
@@ -864,3 +869,132 @@ def test_a_comparator_frozen_inside_the_last_month_is_a_refusal_not_a_crash() ->
     )
     assert r.window is None
     assert r.refusal is not None and "no full month of history shared with PPUT" in r.refusal
+
+
+# ------------------------------------------------------------ the measured index leg
+
+
+def _measured_plan(
+    *, rates_from: str | None = "1990-01-02", comparator: str = "spx", hedge_ratio: float = 0.5
+) -> BookPlanResult:
+    from tests.test_research_backtest_index_leg import rates_rows, spy_history
+
+    spx, cboe = _market("1995-01-02", "2015-12-31")
+    index = pd.DatetimeIndex(spx.index)
+    rates = (
+        None
+        if rates_from is None
+        else rates_rows(
+            pd.bdate_range(rates_from, "2015-12-31"), first_vintage="2005-06-28", value=3.0
+        )
+    )
+    as_of = dt.date(2015, 12, 31)
+    leg = measured_leg(spy_history(index), spx, rates, as_of=as_of, snapshot_ids={})
+    return run_book_plan(
+        spx,
+        cboe,
+        rates,
+        PlanRequest("PPUT", hedge_ratio, 10_000.0, 500.0, comparator, 5),
+        as_of=as_of,
+        leg=leg,
+    )
+
+
+def test_a_measured_plan_has_a_base_and_a_conservative_row_and_names_its_leg() -> None:
+    r = _measured_plan()
+    assert [y.key for y in r.legs] == [LegTag(leg="base"), LegTag(leg="conservative")]
+    assert r.dividend_yield is None and r.dividend.source == "measured"
+    spx = next(o for o in r.comparators if o.key == "spx")
+    assert spx.available
+    assert r.window is not None
+    assert r.window.comparator.label == "S&P 500 total return — SPY, fee-adjusted"
+    # The headline rolling share is the base row's.
+    assert r.rolling is not None and r.legs[0].share_ahead == r.rolling.share_ahead
+
+
+def test_without_rates_the_plan_shows_the_base_row_only() -> None:
+    r = _measured_plan(rates_from=None)
+    assert [y.key for y in r.legs] == [LegTag(leg="base")]
+
+
+def test_bills_that_start_inside_the_plan_leave_the_conservative_row_out() -> None:
+    """The conservative leg is blank before T-bills are known; a row computed
+    on it would run on a shorter history than the headline (or on NaN), so it
+    is left out and the page shows the base row only."""
+    r = _measured_plan(rates_from="2004-06-01")
+    assert [y.key for y in r.legs] == [LegTag(leg="base")]
+    assert all(not np.isnan(y.share_ahead) for y in r.legs)
+
+
+def test_each_row_rebuilds_the_spx_comparator_on_its_own_leg() -> None:
+    """At 0% hedged the book IS the index: on every leg the hedged arm and a
+    rebuilt S&P comparator are the same series, so no start leads or trails.
+    A row that kept the base comparator would show the cash drag as a gap."""
+    r = _measured_plan(hedge_ratio=0.0)
+    assert len(r.legs) == 2
+    for row in r.legs:
+        assert row.share_ahead == 0.0
+        assert row.median_gap == pytest.approx(0.0, abs=1e-12)
+
+
+@pytest.mark.parametrize("comparator", ["cash", "PUT"])
+def test_only_the_spx_comparator_is_rebuilt_per_leg(comparator: str) -> None:
+    """Cash and another Cboe program do not depend on the S&P's dividends, so
+    every row keeps the headline's comparator: at 0% hedged the book is the
+    index, which out-grows both here, so every row reads the headline's
+    share ahead. Rebuilding the comparator on the row's own leg would compare
+    the index with itself and read 0."""
+    r = _measured_plan(comparator=comparator, hedge_ratio=0.0)
+    assert r.rolling is not None and r.rolling.share_ahead > 0.0
+    assert [y.key for y in r.legs] == [LegTag(leg="base"), LegTag(leg="conservative")]
+    for row in r.legs:
+        assert row.share_ahead == r.rolling.share_ahead
+
+
+def test_the_overlay_and_the_plan_read_the_same_index_leg(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """One builder, two consumers: the 1993 clamp, the window-end extension
+    and the degraded-input rule can only agree if both pages get the same
+    levels."""
+    from tail_lab.research.backtest import contribution_plan, hedge_overlay
+    from tests.test_research_backtest_index_leg import rates_rows, seed_spy
+
+    store = DeltaLakeStore(tmp_path)
+    ingest = dt.date(2015, 12, 31)
+    index = _days("2000-01-03", "2015-12-31")
+    seed_spy(store, ingest, index)
+    store.write_bronze("rates", ingest, rates_rows(index, first_vintage="2005-06-28", value=2.0))
+    spx, cboe = _market("2000-01-03", "2015-12-31")
+    store.write_bronze(
+        "cboe_strategy",
+        ingest,
+        pd.concat(
+            [
+                pd.DataFrame({"index_symbol": k, "trade_date": v.index, "close": v.to_numpy()})
+                for k, v in {"SPX": spx, **cboe}.items()
+            ],
+            ignore_index=True,
+        ),
+    )
+    seen: list[pd.Series] = []
+    real_overlay, real_plan = hedge_overlay.run_hedge_overlay, contribution_plan.run_book_plan
+
+    def spy_overlay(*a: object, **kw: object) -> object:
+        seen.append(kw["leg"].headline)  # type: ignore[attr-defined]
+        return real_overlay(*a, **kw)  # type: ignore[arg-type]
+
+    def spy_plan(*a: object, **kw: object) -> object:
+        seen.append(kw["leg"].headline)  # type: ignore[attr-defined]
+        return real_plan(*a, **kw)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(hedge_overlay, "run_hedge_overlay", spy_overlay)
+    monkeypatch.setattr(contribution_plan, "run_book_plan", spy_plan)
+    overlay = hedge_overlay.compute_hedge_overlay(store, as_of=ingest)
+    plan = contribution_plan.compute_book_plan(
+        store, PlanRequest("PPUT", 0.5, 1_000.0, 100.0, "spx", 5), as_of=ingest
+    )
+    assert len(seen) == 2
+    pd.testing.assert_series_equal(seen[0], seen[1])
+    assert overlay.dividend == plan.dividend
+    assert plan.dividend.source == "measured"

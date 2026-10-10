@@ -4,8 +4,10 @@
 Every pricing entry point that holds the store -- a single backtest, the
 universe ranking, a portfolio, the metric screen, the sweep, the roll
 schedule, the Surface -- asks :func:`dividend_lookup` for a symbol and passes
-the returned callable down to the pure pricing code. One reader, so the
-headline and its siblings can never price on different dividend bases.
+the returned callable down to the pure pricing code. The Book's index leg
+asks :func:`index_history` for SPY's rows (it needs ``adj_close``) and SPY's
+yields, from the same memoised snapshot. One reader, so the headline and its
+siblings can never price on different dividend bases.
 
 Reading cost: one projected bronze read per snapshot, then every symbol's
 :class:`~tail_lab.transforms.dividend_yield.DividendYields` is built once and
@@ -25,6 +27,8 @@ import threading
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 
+import pandas as pd
+
 from tail_lab.contracts.tiingo_eod import DATASET
 from tail_lab.lake.store import LakeStore
 from tail_lab.transforms.dividend_yield import (
@@ -34,11 +38,14 @@ from tail_lab.transforms.dividend_yield import (
 )
 
 __all__ = [
+    "INDEX_SYMBOL",
     "UNKNOWN",
     "DividendLookup",
+    "IndexHistory",
     "SymbolDividends",
     "dividend_lookup",
     "dividend_snapshot_id",
+    "index_history",
 ]
 
 #: ``q`` on a date for one symbol.
@@ -46,7 +53,10 @@ DividendLookup = Callable[[dt.date], DividendYield]
 
 UNKNOWN = DividendYield(0.0, "unknown", 0, (), None)
 
-_COLUMNS = ["symbol", "trade_date", "close", "div_cash", "split_factor"]
+#: The symbol the Book's unhedged S&P 500 leg is built from.
+INDEX_SYMBOL = "spy"
+
+_COLUMNS = ["symbol", "trade_date", "close", "adj_close", "div_cash", "split_factor"]
 #: Two, not more: only the newest snapshot serves today's prices, and each
 #: holds a ~60 MB table plus its session cache on a 1 GB VM. The second
 #: covers a request for an as_of before the latest weekly ingest.
@@ -60,7 +70,33 @@ _build_locks: dict[tuple[str, str], threading.Lock] = {}
 #: Keyed on (lake location, snapshot id): a snapshot id is unique within one
 #: lake only -- its digest is column statistics, and two lakes (tests, or a
 #: scratch lake beside production) can share one.
-_memo: dict[tuple[str, str], Mapping[str, DividendYields]] = {}
+_memo: dict[tuple[str, str], _Snapshot] = {}
+
+
+@dataclass(frozen=True)
+class IndexHistory:
+    """SPY's Tiingo rows (``trade_date``, ``close``, ``adj_close``,
+    ``div_cash``, ``split_factor``) and its yields, from one snapshot.
+    ``rows`` is shared by every caller of the memo: never mutate it."""
+
+    rows: pd.DataFrame
+    yields: DividendYields
+    snapshot_id: str | None
+
+    @classmethod
+    def from_rows(cls, rows: pd.DataFrame, snapshot_id: str | None = None) -> IndexHistory:
+        """Rows already in hand (tests, and the memo's own build)."""
+        return cls(rows, DividendYields(INDEX_SYMBOL, rows), snapshot_id)
+
+
+@dataclass(frozen=True)
+class _Snapshot:
+    """What one ``tiingo_eod`` snapshot memoises: every symbol's yields
+    (built without ``adj_close``), plus SPY's rows, ``adj_close`` included,
+    for the Book (small: one symbol's ~8,500 sessions, under 0.5 MB)."""
+
+    yields: Mapping[str, DividendYields]
+    index_rows: pd.DataFrame
 
 
 @dataclass(frozen=True)
@@ -81,7 +117,18 @@ def _unknown(_day: dt.date) -> DividendYield:
     return UNKNOWN
 
 
-def _read(store: LakeStore, as_of: dt.date) -> tuple[Mapping[str, DividendYields], str] | None:
+def _build(frame: pd.DataFrame) -> _Snapshot:
+    """``frame`` is this build's own fresh read (the store returns a copy),
+    and is consumed: only SPY's rows keep ``adj_close``. Each symbol's yields
+    hold numpy views of its float block, so building them on a frame still
+    carrying ``adj_close`` kept every symbol's copy alive in the memo (+27%);
+    dropping it in place, not via a copy, also keeps the build's peak down."""
+    rows = frame[frame["symbol"] == INDEX_SYMBOL].reset_index(drop=True)
+    del frame["adj_close"]
+    return _Snapshot(build_dividend_yields(frame), rows)
+
+
+def _read(store: LakeStore, as_of: dt.date) -> tuple[_Snapshot, str] | None:
     try:
         snapshot_id = store.bronze_snapshot_id(DATASET, as_of)
     except KeyError:
@@ -105,7 +152,7 @@ def _read(store: LakeStore, as_of: dt.date) -> tuple[Mapping[str, DividendYields
                 cached = _memo.get(key)
             if cached is None:
                 frame = store.read_bronze_columns_as_of(DATASET, as_of, _COLUMNS)
-                cached = build_dividend_yields(frame)
+                cached = _build(frame)
                 with _lock:
                     if len(_memo) >= _MEMO_MAX:
                         _memo.pop(next(iter(_memo)))
@@ -128,8 +175,22 @@ def dividend_lookup(store: LakeStore, symbol: str, as_of: dt.date) -> SymbolDivi
     found = _read(store, as_of)
     if found is None:
         return SymbolDividends(_unknown, None)
-    yields, snapshot_id = found
-    series = yields.get(symbol.lower())
+    snapshot, snapshot_id = found
+    series = snapshot.yields.get(symbol.lower())
     if series is None:
         return SymbolDividends(_unknown, snapshot_id)
     return SymbolDividends(series.at, snapshot_id)
+
+
+def index_history(store: LakeStore, as_of: dt.date) -> IndexHistory | None:
+    """SPY's rows and yields from the ``tiingo_eod`` snapshot known on
+    ``as_of`` -- the Book's index leg reads ``tiingo_eod`` only through here.
+    ``None`` when no snapshot is known; empty ``rows`` when it lacks SPY."""
+    found = _read(store, as_of)
+    if found is None:
+        return None
+    snapshot, snapshot_id = found
+    yields = snapshot.yields.get(INDEX_SYMBOL)
+    if yields is None:
+        yields = DividendYields(INDEX_SYMBOL, snapshot.index_rows)
+    return IndexHistory(snapshot.index_rows, yields, snapshot_id)

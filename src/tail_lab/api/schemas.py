@@ -218,21 +218,29 @@ class SurfaceResponse(BaseModel):
 
 
 class HedgeOverlayResponse(BaseModel):
-    """The Book's hedge-ratio test with its provenance: the one Cboe strategy snapshot
-    every program and the S&P 500 leg were read from."""
+    """The Book's hedge-ratio test and sizing with its provenance: the Cboe
+    strategy snapshot every program was read from, the ``tiingo_eod``
+    snapshot SPY's total return (the index leg) came from, and the ``rates``
+    snapshot behind the conservative leg's T-bills -- each ``None`` when the
+    lake has none (the Book then says what it could not do)."""
 
     cboe_snapshot: str | None
+    tiingo_snapshot: str | None
+    rates_snapshot: str | None
     code_sha: str
     overlay: HedgeOverlayResult
 
 
 class BookPlanResponse(BaseModel):
     """The Book's contributions plan with its provenance: the Cboe snapshot
-    every series was read from, and the rates snapshot (``None`` when there
-    is none, which only disables the T-bill comparator)."""
+    every series was read from; the rates snapshot (``None`` when there is
+    none, which disables the T-bill comparator AND withholds the conservative
+    leg's row); and the ``tiingo_eod`` snapshot behind the measured index leg
+    (``None``: the plan falls back to the labelled assumed yield)."""
 
     cboe_snapshot: str | None
     rates_snapshot: str | None
+    tiingo_snapshot: str | None
     code_sha: str
     plan: BookPlanResult
 

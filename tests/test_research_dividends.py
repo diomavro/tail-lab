@@ -277,3 +277,29 @@ def test_the_memo_keeps_the_previous_snapshot_for_an_older_as_of(tmp_path: Path)
     dividend_lookup(store, "spy", week1)
     dividend_lookup(store, "spy", week2)
     assert builds == []
+
+
+def test_only_spys_rows_keep_adj_close_in_the_memo(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Only the Book's SPY leg reads ``adj_close``. The yields hold views of
+    the frame they are built from, so building every symbol's yields on a
+    frame that still carries it kept ~70 symbols' copies alive in a memo
+    sized for a 1 GB VM (measured +27%)."""
+    _clear_memo()
+    store = DeltaLakeStore(tmp_path)
+    seed_tiingo_eod(store, ["spy", "aapl"], DAY)
+    built_on: list[list[str]] = []
+    real = dividends.build_dividend_yields
+
+    def spying(frame: pd.DataFrame) -> object:
+        built_on.append(list(frame.columns))
+        return real(frame)
+
+    monkeypatch.setattr(dividends, "build_dividend_yields", spying)
+    history = dividends.index_history(store, DAY)
+    assert history is not None
+    assert "adj_close" in history.rows.columns
+    assert set(history.rows["symbol"]) == {"spy"}
+    assert built_on and all("adj_close" not in cols for cols in built_on)
+    assert dividend_lookup(store, "aapl", DAY).lookup(DAY).source == "measured"

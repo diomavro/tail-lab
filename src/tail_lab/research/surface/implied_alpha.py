@@ -26,13 +26,13 @@ one after seeing real output is exactly the selection the rule forbids.
 from __future__ import annotations
 
 import math
-from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Final
 
 import pandas as pd
 
 from tail_lab.research.backtest.marks import MAX_RELATIVE_SPREAD, MIN_OPEN_INTEREST
+from tail_lab.research.optimise import golden_section
 from tail_lab.research.surface.ladder import Anchor
 from tail_lab.research.surface.paretan import anchor_l_put, put_ratio
 
@@ -99,7 +99,6 @@ EDGE_TOLERANCE: Final = 1e-4
 REFUSED_UNDERLYINGS: Final = frozenset({"VIX"})
 
 _REQUIRED_COLUMNS: Final = ("strike", "bid", "ask", "quote_date", "expiration")
-_INVERSE_PHI: Final = (math.sqrt(5.0) - 1.0) / 2.0
 
 
 @dataclass(frozen=True)
@@ -159,7 +158,7 @@ def fit_implied_alpha(
     def sse(alpha: float) -> float:
         return _sum_squared_log_miss(anchor, strikes, mids, alpha)
 
-    alpha = _golden_section(sse, alpha_lo, hi)
+    alpha = golden_section(sse, alpha_lo, hi, ALPHA_TOLERANCE)
     rmse = math.sqrt(sse(alpha) / len(strikes))
     if alpha - alpha_lo < EDGE_TOLERANCE or hi - alpha < EDGE_TOLERANCE:
         return refuse(
@@ -293,21 +292,3 @@ def _sum_squared_log_miss(
             return math.inf
         total += (math.log(anchor.price * ratio) - math.log(mid)) ** 2
     return total
-
-
-def _golden_section(f: Callable[[float], float], lo: float, hi: float) -> float:
-    """Minimise a unimodal ``f`` on ``[lo, hi]`` to ``ALPHA_TOLERANCE``.
-    Deterministic: the same inputs give bit-identical output."""
-    c = hi - _INVERSE_PHI * (hi - lo)
-    d = lo + _INVERSE_PHI * (hi - lo)
-    fc, fd = f(c), f(d)
-    while hi - lo > ALPHA_TOLERANCE:
-        if fc <= fd:
-            hi, d, fd = d, c, fc
-            c = hi - _INVERSE_PHI * (hi - lo)
-            fc = f(c)
-        else:
-            lo, c, fc = c, d, fd
-            d = lo + _INVERSE_PHI * (hi - lo)
-            fd = f(d)
-    return 0.5 * (lo + hi)

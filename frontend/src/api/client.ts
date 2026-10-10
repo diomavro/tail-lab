@@ -906,11 +906,76 @@ export interface OverlayWeightPoint {
   cagr_per_vol: number | null
 }
 
-export interface OverlaySensitivityPoint {
-  dividend_yield: number
+/** Which index leg a per-leg row was computed on: a measured leg (base =
+ *  SPY total return + dated fee add-back; conservative = base + SPY's
+ *  dividend cash drag) or, in the fallback, one assumed flat yield.
+ *  Mirrors research/backtest/index_leg.LegKey. */
+export type LegKey =
+  | { kind: 'leg'; leg: 'base' | 'conservative' }
+  | { kind: 'assumed_yield'; dividend_yield: number }
+
+/** The growth verdict re-run on one index leg. */
+export interface OverlayLegRow {
+  key: LegKey
   best_weight: number
   margin: number
   outcome: OverlayOutcome
+}
+
+export interface DividendSpan {
+  start: string
+  end: string
+  source: 'spy_total_return' | 'spx_price_only' | 'assumed_yield'
+  days: number
+}
+
+export interface FeeRow {
+  effective: string
+  annual_fee: number
+  citation: string
+}
+
+/** What the Book's index leg is made of (index_leg.DividendBasis; renamed
+ *  here because DividendBasis already names a roll's q basis above). */
+export interface BookDividendBasis {
+  source: 'measured' | 'assumed'
+  assumed_yield: number | null
+  assumed_reason: string | null
+  spans: DividendSpan[]
+  first_date: string | null
+  fee_table_version: string | null
+  fees: FeeRow[]
+  unextended_gap_days: number
+  unextended_reason: 'missed_runs' | 'no_spx_anchor' | null
+  conservative_from: string | null
+  conservative_reason: string | null
+  bill_point_in_time_from: string | null
+  snapshot_ids: Record<string, string>
+}
+
+/** How much of the book to hold in one program over one window
+ *  (hedge_sizing.SizingAnswer). Growth figures and margins are CAGR. */
+export interface SizingAnswer {
+  /** null: withheld (degraded inputs); 0: the hedge earns no place. */
+  recommended_ratio: number | null
+  reason: string
+  /** w* at the cap of 1 (the backend's own test): 50% is a cap, never half-Kelly. */
+  at_cap: boolean
+  w_star_grid: number
+  w_star: number
+  g0: number
+  g_star: number
+  g_half: number
+  half_keeps: number | null
+  break_even: number | null
+  break_even_status: 'found' | 'beyond_1' | 'none'
+  naive_kelly: number | null
+  /** Keys: 'base', 'conservative', or 'assumed' in the fallback. */
+  margin_by_leg: Record<string, number>
+  grid_note: string | null
+  halves: { start: string; end: string; w_star: number }[]
+  decisive_months: { month: string; w_star_without: number; delta: number }[]
+  curve: { weight: number; cagr: number }[]
 }
 
 /** holds / fails: the best interior mix beats / trails the better end by more
@@ -932,7 +997,8 @@ export interface OverlayWindow {
   outcome: OverlayOutcome
   best_weight_risk_adjusted: number | null
   outcome_risk_adjusted: OverlayOutcome | null
-  sensitivity: OverlaySensitivityPoint[]
+  legs: OverlayLegRow[]
+  sizing: SizingAnswer
 }
 
 export interface ProgramOverlay {
@@ -945,10 +1011,14 @@ export interface ProgramOverlay {
 
 export interface HedgeOverlayResponse {
   cboe_snapshot: string | null
+  tiingo_snapshot: string | null
+  rates_snapshot: string | null
   code_sha: string
   overlay: {
     as_of: string
-    dividend_yield: number
+    /** The assumed flat yield in the fallback; null when measured. */
+    dividend_yield: number | null
+    dividend: BookDividendBasis
     weights: number[]
     programs: ProgramOverlay[]
     missing: Record<string, string>
@@ -1033,9 +1103,17 @@ export interface ComparatorOption {
   reason: string | null
 }
 
+/** The rolling share re-run on one index leg. */
+export interface PlanLegRow {
+  key: LegKey
+  share_ahead: number
+  median_gap: number
+}
+
 export interface BookPlanResponse {
   cboe_snapshot: string | null
   rates_snapshot: string | null
+  tiingo_snapshot: string | null
   code_sha: string
   plan: {
     as_of: string
@@ -1044,12 +1122,14 @@ export interface BookPlanResponse {
     e0: number
     monthly: number
     horizon_years: number
-    dividend_yield: number
+    /** The assumed flat yield in the fallback; null when measured. */
+    dividend_yield: number | null
+    dividend: BookDividendBasis
     comparator: string
     comparators: ComparatorOption[]
     window: PlanWindow | null
     rolling: RollingSummary | null
-    by_yield: { dividend_yield: number; share_ahead: number; median_gap: number }[]
+    legs: PlanLegRow[]
     refusal: string | null
   }
 }

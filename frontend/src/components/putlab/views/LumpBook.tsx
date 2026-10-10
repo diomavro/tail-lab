@@ -1,9 +1,17 @@
 import { useState, type KeyboardEvent, type PointerEvent } from 'react'
-import type { HedgeOverlayResponse, OverlayOutcome, OverlayWindow, ProgramOverlay } from '../../../api/client'
+import type {
+  BookDividendBasis,
+  HedgeOverlayResponse,
+  OverlayLegRow,
+  OverlayOutcome,
+  OverlayWindow,
+  ProgramOverlay,
+} from '../../../api/client'
 import { dots, poly, type Label, type Pt } from '../chart'
 import { ChartLabels } from '../ChartLabels'
 import { fmtFixed } from '../format'
-import { inWords, type LumpMetric } from './planFormat'
+import { HoldSize } from './HoldSize'
+import { inWords, legName, type LumpMetric } from './planFormat'
 
 /* The Book, lump sum: one panel per program and window, the growth (or CAGR
  * per unit of vol) of every hedge ratio from 0% to 100% hedged. The verdict is
@@ -115,9 +123,32 @@ const Y1 = 124
 
 const SENS_COLOR: Record<OverlayOutcome, string> = { holds: 'is-holds', inconclusive: 'is-close', fails: 'is-fails' }
 
-function Panel({ prog, w, metric }: { prog: ProgramOverlay; w: OverlayWindow; metric: LumpMetric }) {
+/** The dot's short label: the assumed yield, or which measured leg. */
+const legDot = (r: OverlayLegRow) =>
+  r.key.kind === 'assumed_yield' ? pct(r.key.dividend_yield) : r.key.leg === 'base' ? 'base' : 'conservative'
+
+/** One leg's verdict in words, for the printed sensitivity line. */
+const legPhrase = (r: OverlayLegRow) => {
+  const best = r.best_weight === 0 || r.best_weight === 1 ? 'is an end' : `mix ${hedged(r.best_weight)}`
+  const name = r.key.kind === 'assumed_yield' ? `at ${pct(r.key.dividend_yield)}` : legName(r.key)
+  return `${name}, ${TAG[r.outcome].text.toLowerCase()} (best ${best}, ${pp(r.margin)})`
+}
+
+function Panel({
+  prog,
+  w,
+  metric,
+  basis,
+}: {
+  prog: ProgramOverlay
+  w: OverlayWindow
+  metric: LumpMetric
+  basis: BookDividendBasis
+}) {
   const [hover, setHover] = useState<number | null>(null)
   const growth = metric === 'growth'
+  const measured = w.legs.some((r) => r.key.kind === 'leg')
+  const legsDisagree = new Set(w.legs.filter((r) => r.key.kind === 'leg').map((r) => r.outcome)).size > 1
   const pts = w.points
   const value = (i: number) => (growth ? pts[i]!.cagr : pts[i]!.cagr_per_vol)
   const vals = pts.map((_, i) => value(i)).filter((v): v is number => v != null && Number.isFinite(v))
@@ -202,6 +233,12 @@ function Panel({ prog, w, metric }: { prog: ProgramOverlay; w: OverlayWindow; me
           <span className="pl-panel-span">
             {w.start} to {w.end}
           </span>
+          {w.key === 'full' && basis.source === 'measured' && basis.first_date && prog.first_date < basis.first_date && (
+            <span className="pl-panel-desc" data-testid="panel-measured-from">
+              measured from {basis.first_date.slice(0, 7)} (SPY&rsquo;s listing); {prog.index_symbol}&rsquo;s own history starts{' '}
+              {prog.first_date}
+            </span>
+          )}
         </div>
         <span className={tag.cls} data-testid="panel-tag">
           {tag.text}
@@ -249,29 +286,30 @@ function Panel({ prog, w, metric }: { prog: ProgramOverlay; w: OverlayWindow; me
       </p>
       {growth && (
         <div className="pl-panel-sens">
-          <span className="dim" aria-hidden="true">At dividend yield</span>
-          {w.sensitivity.map((s) => (
+          <span className="dim" aria-hidden="true">
+            {measured ? 'By index leg' : 'At dividend yield'}
+          </span>
+          {w.legs.map((s) => (
             <span
-              key={s.dividend_yield}
+              key={legDot(s)}
               aria-hidden="true"
               title={`${TAG[s.outcome].text} · best ${s.best_weight === 0 || s.best_weight === 1 ? 'is an end' : hedged(s.best_weight)} · ${pp(s.margin)}`}
             >
               <i className={`pl-sens-dot ${SENS_COLOR[s.outcome]}`} />
-              {pct(s.dividend_yield)}
+              {legDot(s)}
             </span>
           ))}
           {/* The dots say it at a glance by colour; this says it in words, for
               anyone who cannot tell the colours apart or hover a title. */}
           <span className="pl-panel-sens-text" data-testid="sensitivity">
-            Best interior mix vs the better end, by assumed dividend yield:{' '}
-            {w.sensitivity
-              .map(
-                (s) =>
-                  `at ${pct(s.dividend_yield)}, ${TAG[s.outcome].text.toLowerCase()} (best ${s.best_weight === 0 || s.best_weight === 1 ? 'is an end' : `mix ${hedged(s.best_weight)}`}, ${pp(s.margin)})`,
-              )
-              .join('; ')}
-            .
+            Best interior mix vs the better end, {measured ? 'by index leg' : 'by assumed dividend yield'}:{' '}
+            {w.legs.map(legPhrase).join('; ')}.
           </span>
+          {legsDisagree && (
+            <span className="pl-caveat pl-panel-sens-text" data-testid="legs-disagree">
+              The base and conservative legs disagree here; the verdict above reads the base leg.
+            </span>
+          )}
         </div>
       )}
       <details className="pl-panel-numbers">
@@ -331,7 +369,11 @@ export function LumpBook({ data, metric }: { data: HedgeOverlayResponse; metric:
         <section key={key} className="pl-lump-window" aria-label={label}>
           <h3>{label}</h3>
           <div className="pl-panels">
-            {programs.flatMap((p) => p.windows.filter((w) => w.key === key).map((w) => <Panel key={p.index_symbol} prog={p} w={w} metric={metric} />))}
+            {programs.flatMap((p) =>
+              p.windows
+                .filter((w) => w.key === key)
+                .map((w) => <Panel key={p.index_symbol} prog={p} w={w} metric={metric} basis={data.overlay.dividend} />),
+            )}
           </div>
         </section>
       ))}
@@ -357,8 +399,11 @@ export function LumpBook({ data, metric }: { data: HedgeOverlayResponse; metric:
           </>
         )}
       </div>
+      <HoldSize data={data} />
       <p className="pl-micro">
         Cboe snapshot {data.cboe_snapshot ?? 'unknown'} · code {data.code_sha} · as of {data.overlay.as_of}
+        {data.tiingo_snapshot ? ` · Tiingo ${data.tiingo_snapshot}` : ''}
+        {data.rates_snapshot ? ` · rates ${data.rates_snapshot}` : ''}
       </p>
     </div>
   )

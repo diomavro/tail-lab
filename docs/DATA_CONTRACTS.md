@@ -172,9 +172,19 @@ Each series is then reconciled against FRED's snapshot at its newest
 vintage; for dates that disagree (a backfill or revision outside a
 batch's window) the revising vintages are found and re-fetched, and
 anything still disagreeing fails the run rather than commit an incomplete
-history. **Not
-yet run against prod.** First consumer:
-`research/backtest/contribution_plan.bill_levels` (DGS3MO first vintages).
+history. First consumers:
+`research/backtest/contribution_plan.bill_levels` (DGS3MO first vintages,
+the Book's T-bill comparator) and `research/backtest/index_leg` (the Book's
+conservative leg, below).
+
+**The one latest-vintage read.** ALFRED's DGS3MO vintages start 2005-06-28,
+but its observations reach 1981 (the 2005-06-28 vintage backfilled them). The
+Book's conservative index leg needs a T-bill rate from 1993, so before the
+first point-in-time day it reads the series' **latest** vintage
+(`index_leg.latest_vintage_rates`) -- a stated look-ahead exception to
+`docs/adr/0009`, recorded in `docs/adr/0027`'s amendment. Bound: revisions
+are basis-point-level and enter the margin only through the cash drag's
+`y/8` (y ≈ 2%), so under 0.01bp/yr. No other read of `rates` may do this.
 
 **Cadence.** Daily (FRED updates most series once per business day).
 
@@ -1076,9 +1086,17 @@ lake and snapshot id, built once per key even under concurrent requests):
 (all three of its pricing calls), the portfolio, the metric screen, the sweep,
 the roll schedule, the Surface (which falls back to its old assumed 1.9%,
 labelled, when a name has no measured yield) and `scripts/greeks_check.py`.
-Each result cites the snapshot (`dividend_snapshot` or `snapshot_ids`). **Not
-yet:** the Book (`hedge_overlay`, `contribution_plan`, `model_plan`),
-`index_replication` and `skew` still use the flat 1.9% `DEFAULT_DIVIDEND_YIELD`.
+Each result cites the snapshot (`dividend_snapshot` or `snapshot_ids`). The
+Book (`hedge_overlay`, `contribution_plan`) reads **SPY's rows only**, through
+`research/backtest/index_leg.build_index_leg`, which gets them (with
+`adj_close`) and SPY's yields from the same memoised snapshot via
+`research/dividends.index_history`: SPY's `adj_close` total return
+(verified dividend-reinvested) plus SPY's dated expense ratio, as the S&P 500
+total-return proxy; without SPY rows it falls back to the flat 1.9%, labelled,
+and recommends no size (its responses cite `tiingo_snapshot`). **Not yet:**
+`model_plan`, `index_replication` and `skew` still use the flat 1.9%
+`DEFAULT_DIVIDEND_YIELD` (`skew` on purpose: it calibrates ADR 0027's model
+gaps).
 
 ---
 

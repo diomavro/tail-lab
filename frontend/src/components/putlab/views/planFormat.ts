@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import type { BookPlanParams, ModelPlanParams } from '../../../api/client'
+import type { BookDividendBasis, BookPlanParams, LegKey, ModelPlanParams } from '../../../api/client'
 import { fmtFixed } from '../format'
 
 // Formatters and the input debounce shared by the Book's two plan sources.
@@ -71,3 +71,41 @@ export const DEFAULT_MODEL_PLAN: ModelPlanParams = {
 /** Small counts in words, as a sentence reads them ("one of six tests"). */
 const WORDS = ['none', 'one', 'two', 'three', 'four', 'five', 'six', 'seven', 'eight', 'nine', 'ten']
 export const inWords = (n: number): string => WORDS[n] ?? String(n)
+
+// ---- The Book's index leg (research/backtest/index_leg). One wording for
+// every place a per-leg row or the leg's source is named.
+
+/** A per-leg row's name: the measured legs by what they add back, the
+ *  fallback rows by their assumed yield. */
+export function legName(key: LegKey): string {
+  if (key.kind === 'assumed_yield') return `at ${pct(key.dividend_yield)} assumed`
+  return key.leg === 'base' ? 'base leg' : 'conservative leg'
+}
+
+/** A margin in basis points a year, signed, at the precision the 1bp bar needs. */
+export const bp = (x: number) => `${x >= 0 ? '+' : '−'}${Math.abs(x * 1e4).toFixed(2)}bp/yr`
+
+/** The reason the API serves when the lake has no T-bills to build the
+ *  conservative leg from (``index_leg._NO_BILLS``). Every other reason -- SPY's
+ *  ``y`` unmeasured, say -- is shown as served, never as missing T-bills. */
+export const NO_BILLS_REASON = 'sizing needs T-bills for the cash-drag check'
+
+/** One sentence naming what the S&P 500 leg is built from. */
+export function legSource(d: BookDividendBasis): string {
+  if (d.source === 'assumed') {
+    return `an assumed flat ${pct(d.assumed_yield ?? 0)} dividend yield on S&P 500 price (${d.assumed_reason ?? 'measured dividends unavailable'})`
+  }
+  const ext = d.spans.find((s) => s.source === 'spx_price_only')
+  const tail = ext
+    ? `; its last ${ext.days} days (${ext.start} to ${ext.end}) carry on S&P 500 price alone, with no dividend accrual, because the weekly Tiingo feed trails`
+    : ''
+  const gap =
+    d.unextended_gap_days > 0
+      ? `; measured dividends trail the Cboe calendar by ${d.unextended_gap_days} days — ${
+          d.unextended_reason === 'no_spx_anchor'
+            ? 'the Cboe S&P 500 series lacks their last session to carry on from'
+            : 'two missed weekly runs'
+        } — so windows end where they do`
+      : ''
+  return `SPY total return, fee-adjusted, as the S&P 500 proxy (measured from ${d.first_date ?? 'unknown'}, SPY's listing)${tail}${gap}`
+}

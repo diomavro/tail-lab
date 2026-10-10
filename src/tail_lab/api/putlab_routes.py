@@ -47,6 +47,7 @@ from tail_lab.contracts.options_calendar import (
     universe_symbols,
 )
 from tail_lab.contracts.rates import DATASET as RATES_DATASET
+from tail_lab.contracts.tiingo_eod import DATASET as TIINGO_EOD_DATASET
 from tail_lab.lake.store import LakeStore
 from tail_lab.observability import log_event
 from tail_lab.research.accuracy import (
@@ -64,6 +65,8 @@ from tail_lab.research.backtest.hedge_overlay import (
     OverlayDataMissing,
     compute_hedge_overlay,
 )
+from tail_lab.research.backtest.hedge_sizing import SizingAnswer
+from tail_lab.research.backtest.index_leg import AssumedYieldTag, LegTag
 from tail_lab.research.backtest.index_replication import (
     DEFAULT_DIVIDEND_YIELD,
     IndexReplicationResult,
@@ -190,7 +193,8 @@ def _plan_outcome_fields(plan: Any) -> dict[str, object]:
     """The window and rolling fields both plan endpoints log."""
     w, r = plan.window, plan.rolling
     return {
-        "dividend_yield": plan.dividend_yield,
+        # None in the Book's measured mode: log_event would drop the key.
+        "dividend_yield": "measured" if plan.dividend_yield is None else plan.dividend_yield,
         "refusal": plan.refusal or "none",
         "window": f"{w.start}..{w.end}" if w else "none",
         "hedged_irr": w.hedged.irr if w else "none",
@@ -214,6 +218,28 @@ def get_lake_store() -> LakeStore:
 
 def _resolve_as_of(as_of: dt.date | None) -> dt.date:
     return as_of or dt.datetime.now(dt.UTC).date()
+
+
+def _leg_name(key: LegTag | AssumedYieldTag) -> str:
+    """A per-leg row's name on a log line: ``base``, ``conservative`` or
+    ``q0.014`` (an assumed yield, in the fallback)."""
+    return key.leg if isinstance(key, LegTag) else f"q{key.dividend_yield}"
+
+
+def _sizing_fields(sizing: SizingAnswer) -> list[tuple[str, object]]:
+    """The size the Book serves for one program and window, as log fields."""
+    return [
+        (
+            "recommended",
+            "withheld" if sizing.recommended_ratio is None else sizing.recommended_ratio,
+        ),
+        ("sizing_reason", sizing.reason),
+        ("w_star", sizing.w_star),
+        ("w_star_grid", sizing.w_star_grid),
+        ("g0", sizing.g0),
+        ("g_star", sizing.g_star),
+        ("margins", ",".join(f"{k}:{v:.6f}" for k, v in sizing.margin_by_leg.items())),
+    ]
 
 
 def _snapshot(store: LakeStore, dataset: str, as_of: dt.date) -> str | None:
@@ -1129,11 +1155,20 @@ def putlab_hedge_overlay(
     store: LakeStore = Depends(get_lake_store),
 ) -> HedgeOverlayResponse:
     """The Book: Rodman's Paradox, tested: S&P 500 total return blended with each hedged
-    Cboe program at every hedge ratio, and whether any mix out-grows both ends.
+    Cboe program at every hedge ratio, whether any mix out-grows both ends,
+    and how much of the book to hold.
 
-    Reads ONLY the ``cboe_strategy`` snapshot. 404 when the lake has none.
+    Reads the ``cboe_strategy`` snapshot (programs, and SPX for the window-end
+    extension or the assumed-yield fallback), ``tiingo_eod`` (SPY's total
+    return, the index leg) and ``rates`` (T-bills for the conservative leg);
+    the last two may be absent, which degrades the answer, never fails it.
+    404 only when there is no Cboe snapshot.
     """
     resolved = _resolve_as_of(as_of)
+    # Keyed on the date only, like every memo here (PR #157's policy): a new
+    # Tiingo or rates snapshot shows up within the TTL, and the response always
+    # names the snapshots it was built from, so a cached answer is never
+    # mislabelled -- it is at most one ingest old.
     key = resolved.isoformat()
     hit = _OVERLAY_CACHE.get(key)
     if hit is not None and hit[0] > time.monotonic():
@@ -1144,16 +1179,26 @@ def putlab_hedge_overlay(
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     response = HedgeOverlayResponse(
         cboe_snapshot=_snapshot(store, CBOE_STRATEGY_DATASET, resolved),
+        tiingo_snapshot=_snapshot(store, TIINGO_EOD_DATASET, resolved),
+        rates_snapshot=_snapshot(store, RATES_DATASET, resolved),
         code_sha=get_settings().code_sha,
         overlay=overlay,
     )
+    basis = overlay.dividend
     log_event(
         logger,
         "api.putlab.hedge_overlay",
         as_of=resolved,
         cboe_snapshot=response.cboe_snapshot,
+        tiingo_snapshot=response.tiingo_snapshot or "none",
+        rates_snapshot=response.rates_snapshot or "none",
         code_sha=response.code_sha,
-        dividend_yield=overlay.dividend_yield,
+        dividend_source=basis.source,
+        dividend_yield="measured" if overlay.dividend_yield is None else overlay.dividend_yield,
+        assumed_reason=basis.assumed_reason or "none",
+        conservative_reason=basis.conservative_reason or "none",
+        spans=",".join(f"{sp.source}:{sp.start}..{sp.end}:{sp.days}d" for sp in basis.spans),
+        unextended_gap_days=basis.unextended_gap_days,
         # Flat k=v fields, one set per program and window, so the log line
         # stays greppable: ``PPUT_cole_outcome=fails``.
         **{
@@ -1176,13 +1221,12 @@ def putlab_hedge_overlay(
                     if w.best_weight_risk_adjusted is None
                     else w.best_weight_risk_adjusted,
                 ),
-                # The verdict at each assumed yield: "0.014:holds:0.000819,...".
+                # The verdict on each leg: "base:fails:-0.002035,conservative:...".
                 (
-                    "sensitivity",
-                    ",".join(
-                        f"{r.dividend_yield}:{r.outcome}:{r.margin:.6f}" for r in w.sensitivity
-                    ),
+                    "legs",
+                    ",".join(f"{_leg_name(r.key)}:{r.outcome}:{r.margin:.6f}" for r in w.legs),
                 ),
+                *_sizing_fields(w.sizing),
             )
         },
         # A window the lake could not cover is a result too (refusals are values).
@@ -1246,6 +1290,7 @@ def putlab_book_plan(
     response = BookPlanResponse(
         cboe_snapshot=_snapshot(store, CBOE_STRATEGY_DATASET, resolved),
         rates_snapshot=_snapshot(store, RATES_DATASET, resolved),
+        tiingo_snapshot=_snapshot(store, TIINGO_EOD_DATASET, resolved),
         code_sha=get_settings().code_sha,
         plan=plan,
     )
@@ -1255,6 +1300,8 @@ def putlab_book_plan(
         as_of=resolved,
         cboe_snapshot=response.cboe_snapshot,
         rates_snapshot=response.rates_snapshot or "none",
+        tiingo_snapshot=response.tiingo_snapshot or "none",
+        dividend_source=plan.dividend.source,
         code_sha=response.code_sha,
         program=program,
         hedge_ratio=hedge_ratio,
@@ -1265,8 +1312,7 @@ def putlab_book_plan(
         start=start or "default",
         **_plan_outcome_fields(plan),
         window_outcome=plan.window.outcome if plan.window else "none",
-        by_yield=",".join(f"{y.dividend_yield}:{y.share_ahead:.4f}" for y in plan.by_yield)
-        or "none",
+        legs=",".join(f"{_leg_name(y.key)}:{y.share_ahead:.4f}" for y in plan.legs) or "none",
     )
     _plan_cache_put(key, response)
     return response

@@ -188,6 +188,14 @@ a large one strictly in order.
       estimate). Serves `docs/END_STATE.md` §4 Q4.
 
 - [ ] **Make `sizing.py` solve for growth-optimal size instead of a constant.**
+      **Narrowed 2026-10-10:** done for the Book's Cboe real-quote programs --
+      "How much to hold" (`research/backtest/hedge_sizing.py`, `docs/adr/0027`
+      amendment) solves `w*` exactly on the self-financed blend, with `g(0)`,
+      the break-even and a naive-Kelly contrast. Still OPEN: `sizing.py`
+      itself, the Workspace's fixed $1,000 premium budget (now labelled
+      "Standalone · fixed premium, not a size recommendation"), and
+      drawdown-constrained sizing (the `kelly_code` bound below). Do not build
+      a second Book sizer.
       `docs/PRIOR_ART.md` §14. `premium_budget_per_leg` is a hardcoded $1,000.
       `docs/END_STATE.md` §4 Q8 objects that `l* = (mu-r)/sigma^2` cannot
       transfer because a put's variance is mostly upside — and Riskfolio-Lib's
@@ -201,6 +209,14 @@ a large one strictly in order.
       bound — conservatism with a stated constraint rather than a folk factor.
       NOTE the constraint the README already imposes: evaluate the COMBINED
       portfolio, never the put book alone.
+
+- [ ] **Verify SPY's pre-2005 expense ratios against the SPDR annual reports.**
+      `research/backtest/index_leg.SPY_FEES` carries 0.20% for 1993-2005 as an
+      UNVERIFIED upper bound (only the 2005-10 and 2007-02 rows have a cited
+      source). Read the SPDR Trust's annual reports on SEC EDGAR, replace the
+      row(s) with cited figures, and bump `FEE_TABLE_VERSION`. Overstating is
+      the safe direction (it can only count against a hedge), so this changes
+      margins by at most ~1bp/yr on 1993-2005 windows.
 
 - [ ] **Replace `MODEL_PRICED_MAX_MONEYNESS_PCT` with a measured Durrleman
       boundary.** `docs/PRIOR_ART.md` §15 closes §7's open ask.
@@ -2712,7 +2728,13 @@ that nothing depends on a number the platform cannot yet compute honestly.
       items below is the natural next step and needs this ruin case handled
       exactly as it is here (a sweep must see `g` go to `None`/very negative
       near ruin, not crash) — no further plumbing needed to consume it.
-- [ ] **The leverage analytic Dio asked for: a `g(alpha)` sweep.** (**Naming:** here
+- [ ] **The leverage analytic Dio asked for: a `g(alpha)` sweep.** **Amended
+      2026-10-10: built in the Book, not under Carry** -- "How much to hold"
+      plots `g(w)` per Cboe program and window with markers at 0, break-even,
+      `w*/2` and `w*` (`docs/adr/0027` §4 keeps Carry for the bleed of
+      recommended positions). What stays open is the same sweep for a
+      Workspace strategy, which needs a real-quote source first (ORATS,
+      `HUMAN_TODO.md`); do NOT build a second Book sweep. (**Naming:** here
       `alpha` is the fraction of capital allocated to the hedge, NOT the Paretan
       tail index of the section above — in code call it `f` / `allocation`.) Sweep alpha
       across a grid, plot the time-average growth of the combined portfolio,
@@ -2724,7 +2746,9 @@ that nothing depends on a number the platform cannot yet compute honestly.
       trades against. Compute `alpha*` **numerically on the empirical payoff
       distribution** — the closed form `l* = (mu - r)/sigma^2` assumes
       lognormal symmetric returns and a long put is neither.
-- [ ] **Default to fractional Kelly, and say so on the surface.** Full Kelly is
+- [x] **Default to fractional Kelly, and say so on the surface.** Done
+      2026-10-10 in the Book: the table shows full-Kelly `w*` beside the
+      half-Kelly size held, with the haircut's reason named in the row. Full Kelly is
       notoriously sensitive to parameter error, and this platform's parameters
       are *known* to be wrong by measured amounts: a +1.34%/yr model residual
       (`docs/MODEL_RESIDUAL.md`) and a model premium off by up to 600x on a
@@ -2733,6 +2757,10 @@ that nothing depends on a number the platform cannot yet compute honestly.
       the haircut named where the number appears — "accuracy is surfaced, not
       filed" (README).
 - [ ] **Then, and only then, answer whether it really is higher than normal.**
+      **Amended 2026-10-10:** the naive (mean-variance) Kelly contrast is now
+      served in the Book beside each exact `w*` ("The sizing in numbers").
+      Any STANDALONE result stays on the Workspace (`docs/adr/0027` §2), never
+      the Book.
       The hypothesis: a variance penalty calibrated on symmetric outcomes
       over-penalises a payoff whose loss is bounded at the premium and whose
       variance is mostly upside, so `alpha*` may exceed what a naive Kelly

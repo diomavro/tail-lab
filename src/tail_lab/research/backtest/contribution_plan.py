@@ -16,8 +16,15 @@ first trading day of each month, so from any such day a plan grows exactly
 like the full-history NAV does from that day. Each start is therefore a
 cash-flow-weighted read of one NAV path, never a re-simulation.
 
-**Comparators** are total-return levels or nothing: the S&P 500 (price plus
-the assumed dividend yield, as in the lump-sum Book), cash at 0%, 3-month
+**The index leg** is the lump-sum Book's own (:func:`~index_leg.build_index_leg`):
+SPY's measured total return, fee-adjusted, when ``tiingo_eod`` holds SPY, else
+SPX price plus a labelled assumed yield. The hedged arm, the S&P 500
+comparator and every per-leg row read it, so the 1993 clamp, the window-end
+extension and the degraded-input rule are the overlay's exactly. The plan
+recommends no size: sizing is the lump-sum overlay's job.
+
+**Comparators** are total-return levels or nothing: the S&P 500 (the index
+leg above), cash at 0%, 3-month
 T-bills from the point-in-time ``rates`` dataset, or another Cboe strategy
 index (each is a real-quote, dividends-reinvested NAV). ``LTV`` is a quoted
 level and bronze OHLCV is split-adjusted only, so neither is offered.
@@ -25,7 +32,6 @@ level and bronze OHLCV is split-adjusted only, so neither is offered.
 
 from __future__ import annotations
 
-import bisect
 import datetime as dt
 import math
 from collections.abc import Sequence
@@ -48,18 +54,23 @@ from tail_lab.research.backtest.hedge_overlay import (
     OverlayDataMissing,
     blend_nav,
     outcome,
-    total_return_levels,
+)
+from tail_lab.research.backtest.index_leg import (
+    BILL_SERIES,
+    DividendBasis,
+    IndexLeg,
+    LegKey,
+    assumed_leg,
+    bill_rates_in_force,
+    build_index_leg,
+    compound,
 )
 from tail_lab.research.backtest.index_replication import (
     DAYS_PER_YEAR,
     DEFAULT_DIVIDEND_YIELD,
-    SENSITIVITY_YIELDS,
     UNDERLYING_SYMBOL,
     series_from,
 )
-
-#: The FRED series the T-bill comparator compounds: 3-month constant maturity.
-BILL_SERIES = "DGS3MO"
 
 #: Cboe indices offered as "something else": real-quote NAVs that are not a
 #: program being tested and not a price-only or quoted level.
@@ -118,10 +129,11 @@ class RollingSummary(BaseModel):
     best_gap: float
 
 
-class YieldShare(BaseModel):
-    """The rolling share re-run at one assumed S&P dividend yield."""
+class PlanLegRow(BaseModel):
+    """The rolling share re-run on one index leg: a measured leg (base or
+    conservative) or, in the fallback, one assumed S&P dividend yield."""
 
-    dividend_yield: float
+    key: LegKey
     share_ahead: float
     median_gap: float
 
@@ -286,43 +298,18 @@ def summarize(
 def bill_levels(rates: pd.DataFrame, dates: pd.DatetimeIndex) -> pd.Series:
     """A cash account earning the 3-month T-bill yield as known each day.
 
-    Point-in-time (``docs/adr/0009``): each observation's value is its FIRST
-    vintage, published on that vintage's date. The rate in force on day ``t``
-    is the **latest-dated observation before ``t`` among those already
-    published by ``t``** -- not the most recently published row, because FRED
-    publishes backfills in bulk (e.g. 2005-06-28, 2020-07-21) that would
-    otherwise drag a decades-old rate into the present. Interest over
-    ``(t-1, t]`` accrues at the rate in force on ``t-1``, compounding by
-    calendar days.
+    Point-in-time (``docs/adr/0009``): the rate in force on each day is
+    :func:`~index_leg.bill_rates_in_force`'s. Interest over ``(t-1, t]``
+    accrues at the rate in force on ``t-1``, compounding by calendar days.
 
     Returned on the tail of ``dates`` from the first day a rate is known
     (ALFRED's vintage history starts in 2005, so this narrows like a late
     Cboe index rather than refusing). Raises :class:`OverlayDataMissing`
     when the series is absent or never known on ``dates``.
     """
-    rows = rates[rates["series_id"] == BILL_SERIES]
-    if rows.empty:
+    if rates[rates["series_id"] == BILL_SERIES].empty:
         raise OverlayDataMissing(f"no {BILL_SERIES} in the rates dataset")
-    first = rows.sort_values(["obs_date", "vintage_date"]).drop_duplicates(
-        subset="obs_date", keep="first"
-    )
-    order = np.argsort(pd.to_datetime(first["vintage_date"]).to_numpy(), kind="stable")
-    published = pd.to_datetime(first["vintage_date"]).to_numpy()[order]
-    observed = pd.to_datetime(first["obs_date"]).to_numpy()[order]
-    values = first["value"].to_numpy(dtype=float)[order]
-
-    known_dates: list[np.datetime64] = []  # sorted obs dates published so far
-    value_of: dict[np.datetime64, float] = {}
-    in_force = np.full(len(dates), np.nan)
-    k = 0
-    for i, t in enumerate(dates.to_numpy()):
-        while k < len(published) and published[k] <= t:
-            bisect.insort(known_dates, observed[k])
-            value_of[observed[k]] = values[k]
-            k += 1
-        j = bisect.bisect_left(known_dates, t) - 1  # latest obs strictly before t
-        if j >= 0:
-            in_force[i] = value_of[known_dates[j]]
+    in_force = bill_rates_in_force(rates, dates)
     known = np.flatnonzero(~np.isnan(in_force))
     if len(known) < 2:
         raise OverlayDataMissing(f"{BILL_SERIES} is not known point-in-time on these dates")
@@ -331,7 +318,7 @@ def bill_levels(rates: pd.DataFrame, dates: pd.DatetimeIndex) -> pd.Series:
     rate = in_force[start:] / 100.0
     gaps = tail.to_series().diff().dt.days.fillna(0).to_numpy(dtype=float)
     growth = np.ones(len(tail))
-    growth[1:] = (1.0 + rate[:-1]) ** (gaps[1:] / DAYS_PER_YEAR)
+    growth[1:] = compound(rate[:-1], gaps[1:])
     return pd.Series(np.cumprod(growth), index=tail)
 
 
@@ -358,23 +345,21 @@ def dense_tail(levels: pd.Series) -> pd.Series:
 def comparator_levels(
     key: str,
     *,
-    spx: pd.Series,
+    index_tr: pd.Series,
+    index_label: str,
     dates: pd.DatetimeIndex,
-    dividend_yield: float,
     rates: pd.DataFrame | None,
     cboe: dict[str, pd.Series],
 ) -> Comparator:
     """Total-return levels for a comparator on ``dates``, or a refusal.
 
-    Raises :class:`OverlayDataMissing` with the reason a comparator cannot be
+    ``index_tr`` is the index leg's total-return levels (the S&P 500
+    comparator), ``index_label`` how the page names it. Raises
+    :class:`OverlayDataMissing` with the reason a comparator cannot be
     offered; ``ValueError`` for a key that is never a comparator.
     """
     if key == "spx":
-        return Comparator(
-            "spx",
-            f"S&P 500 total return ({dividend_yield:.1%} assumed yield)",
-            total_return_levels(spx.reindex(dates), dividend_yield=dividend_yield),
-        )
+        return Comparator("spx", index_label, index_tr.reindex(dates))
     if key == "cash":
         return Comparator("cash", "Cash at 0%", pd.Series(1.0, index=dates))
     if key == "bills":
@@ -421,21 +406,26 @@ def common_dates(*series: pd.Series) -> pd.DatetimeIndex:
 
 def hedged_levels(
     program: pd.Series,
-    spx: pd.Series,
+    index_tr: pd.Series,
     dates: pd.DatetimeIndex,
     *,
     hedge_ratio: float,
-    dividend_yield: float,
 ) -> pd.Series:
     """The self-financed hedged book: ``hedge_ratio`` in the program, the rest
-    in S&P 500 total return, rebalanced monthly."""
-    equity = total_return_levels(spx.loc[dates], dividend_yield=dividend_yield)
-    return blend_nav(program.loc[dates], equity, weight=hedge_ratio)
+    in the index leg's total return, rebalanced monthly."""
+    return blend_nav(program.loc[dates], index_tr.loc[dates], weight=hedge_ratio)
 
 
-def yield_shares(
+def index_label(leg: IndexLeg) -> str:
+    """How the page names the S&P 500 leg -- measured or assumed."""
+    if leg.basis.source == "measured":
+        return "S&P 500 total return — SPY, fee-adjusted"
+    return f"S&P 500 total return ({leg.basis.assumed_yield or 0.0:.1%} assumed yield)"
+
+
+def leg_shares(
     program: pd.Series,
-    spx: pd.Series,
+    leg: IndexLeg,
     comparator: Comparator,
     dates: pd.DatetimeIndex,
     *,
@@ -444,18 +434,24 @@ def yield_shares(
     e0: float,
     monthly: float,
     rebuild: bool,
-) -> list[YieldShare]:
-    """The rolling verdict at each assumed S&P yield. ``rebuild`` re-derives
-    the comparator too when it is the S&P (whose yield is the assumption)."""
-    out: list[YieldShare] = []
-    for q in SENSITIVITY_YIELDS:
-        h = hedged_levels(program, spx, dates, hedge_ratio=hedge_ratio, dividend_yield=q)
-        c = total_return_levels(spx.loc[dates], dividend_yield=q) if rebuild else comparator.levels
+) -> list[PlanLegRow]:
+    """The rolling verdict on each index leg. ``rebuild`` re-derives the
+    comparator on the row's leg too when it is the S&P 500 (whose dividends
+    the legs differ on). A leg with no value on some plan date (the
+    conservative leg before T-bills are known) is left out, never run on a
+    shorter history."""
+    out: list[PlanLegRow] = []
+    for key, levels in leg.rows:
+        on = levels.reindex(dates)
+        if on.isna().any():
+            continue
+        h = hedged_levels(program, on, dates, hedge_ratio=hedge_ratio)
+        c = on if rebuild else comparator.levels
         gaps, _ = rolling_gaps(h, c, horizon_years=horizon_years, e0=e0, monthly=monthly)
         g = np.asarray(gaps)
         out.append(
-            YieldShare(
-                dividend_yield=q,
+            PlanLegRow(
+                key=key,
                 share_ahead=float((g > MIN_MARGIN).sum() / len(g)) if len(g) else math.nan,
                 median_gap=float(np.median(g)) if len(g) else math.nan,
             )
@@ -485,14 +481,17 @@ class BookPlanResult(BaseModel):
     e0: float
     monthly: float
     horizon_years: int
-    dividend_yield: float
+    #: The assumed flat yield in the fallback; ``None`` when measured.
+    dividend_yield: float | None
+    dividend: DividendBasis
     comparator: str
     comparators: list[ComparatorOption]
     #: ``None`` with ``refusal`` set when the chosen comparator or history
     #: cannot answer; the options above still say what can.
     window: PlanWindow | None
     rolling: RollingSummary | None
-    by_yield: list[YieldShare]
+    #: The rolling share on every index leg (see ``hedge_overlay.OverlayLegRow``).
+    legs: list[PlanLegRow]
     refusal: str | None
 
 
@@ -541,9 +540,8 @@ def _window_bounds(
 def _comparator_options(
     wanted: str,
     *,
-    spx: pd.Series,
+    leg: IndexLeg,
     dates: pd.DatetimeIndex,
-    dividend_yield: float,
     rates: pd.DataFrame | None,
     cboe: dict[str, pd.Series],
 ) -> tuple[list[ComparatorOption], Comparator | None, str | None]:
@@ -555,7 +553,12 @@ def _comparator_options(
     for key in COMPARATOR_KEYS:
         try:
             c = comparator_levels(
-                key, spx=spx, dates=dates, dividend_yield=dividend_yield, rates=rates, cboe=cboe
+                key,
+                index_tr=leg.headline,
+                index_label=index_label(leg),
+                dates=dates,
+                rates=rates,
+                cboe=cboe,
             )
         except OverlayDataMissing as exc:
             options.append(
@@ -578,9 +581,13 @@ def run_book_plan(
     request: PlanRequest,
     *,
     as_of: dt.date,
+    leg: IndexLeg | None = None,
     dividend_yield: float = DEFAULT_DIVIDEND_YIELD,
 ) -> BookPlanResult:
-    """Every series is cut at ``as_of`` first; no read passes it."""
+    """Every series is cut at ``as_of`` first; no read passes it.
+
+    ``leg`` is the index leg (:func:`~index_leg.build_index_leg`); without one
+    the flat-yield fallback is built on ``spx`` at ``dividend_yield``."""
     if request.program not in OVERLAY_PROGRAMS:
         raise ValueError(f"not a hedged S&P 500 program: {request.program}")
     if not 0.0 <= request.hedge_ratio <= 1.0:
@@ -589,19 +596,15 @@ def run_book_plan(
         raise ValueError(f"unknown comparator {request.comparator!r}")
     cutoff = pd.Timestamp(as_of)
     spx = spx[spx.index <= cutoff]
+    leg = (leg or assumed_leg(spx, dividend_yield=dividend_yield)).cut(as_of)
     cboe = {k: v[v.index <= cutoff] for k, v in cboe.items()}
     program = cboe.get(request.program)
     if program is None or program.empty:
         raise OverlayDataMissing(f"{request.program} is not in the Cboe snapshot")
-    dates = common_dates(program, spx)
+    dates = common_dates(program, leg.headline)
 
     options, chosen, refusal = _comparator_options(
-        request.comparator,
-        spx=spx,
-        dates=dates,
-        dividend_yield=dividend_yield,
-        rates=rates,
-        cboe=cboe,
+        request.comparator, leg=leg, dates=dates, rates=rates, cboe=cboe
     )
 
     base = {
@@ -611,12 +614,13 @@ def run_book_plan(
         "e0": request.e0,
         "monthly": request.monthly,
         "horizon_years": request.horizon_years,
-        "dividend_yield": dividend_yield,
+        "dividend_yield": leg.basis.assumed_yield,
+        "dividend": leg.basis,
         "comparator": request.comparator,
         "comparators": options,
     }
     if chosen is None:
-        return BookPlanResult(**base, window=None, rolling=None, by_yield=[], refusal=refusal)
+        return BookPlanResult(**base, window=None, rolling=None, legs=[], refusal=refusal)
 
     # Every comparator's levels already sit on (a subset of) the program's
     # dates; the plan runs on exactly those, from the first observed month
@@ -629,13 +633,11 @@ def run_book_plan(
             **base,
             window=None,
             rolling=None,
-            by_yield=[],
+            legs=[],
             refusal=f"{chosen.label}: no full month of history shared with {request.program}",
         )
     chosen = Comparator(chosen.key, chosen.label, chosen.levels.loc[dates])
-    hedged = hedged_levels(
-        program, spx, dates, hedge_ratio=request.hedge_ratio, dividend_yield=dividend_yield
-    )
+    hedged = hedged_levels(program, leg.headline, dates, hedge_ratio=request.hedge_ratio)
     hedged_label = f"{request.hedge_ratio:.0%} hedged with {request.program}"
     try:
         lo, hi = _window_bounds(dates, horizon_years=request.horizon_years, start=request.start)
@@ -658,10 +660,10 @@ def run_book_plan(
         )
         rolling = summarize(gaps, begun, request.horizon_years)
     except OverlayDataMissing as exc:
-        return BookPlanResult(**base, window=None, rolling=None, by_yield=[], refusal=str(exc))
-    by_yield = yield_shares(
+        return BookPlanResult(**base, window=None, rolling=None, legs=[], refusal=str(exc))
+    legs = leg_shares(
         program,
-        spx,
+        leg,
         chosen,
         dates,
         hedge_ratio=request.hedge_ratio,
@@ -670,14 +672,17 @@ def run_book_plan(
         monthly=request.monthly,
         rebuild=chosen.key == "spx",
     )
-    return BookPlanResult(**base, window=window, rolling=rolling, by_yield=by_yield, refusal=None)
+    return BookPlanResult(**base, window=window, rolling=rolling, legs=legs, refusal=None)
 
 
 def compute_book_plan(store: LakeStore, request: PlanRequest, *, as_of: dt.date) -> BookPlanResult:
     """Read the Cboe snapshot (and ``rates``, if any) point-in-time and run.
 
     Raises :class:`OverlayDataMissing` with no Cboe snapshot or no SPX in it.
-    A missing ``rates`` dataset only disables the T-bill comparator.
+    The index leg is :func:`~index_leg.build_index_leg`'s. A missing ``rates``
+    dataset disables the T-bill comparator and withholds the conservative
+    leg's row; a missing ``tiingo_eod`` falls back to the labelled assumed
+    yield.
     """
     try:
         bronze = store.read_bronze_as_of(CBOE_STRATEGY_DATASET, as_of)
@@ -700,4 +705,5 @@ def compute_book_plan(store: LakeStore, request: PlanRequest, *, as_of: dt.date)
         raise
     except LookupError:
         rates = None
-    return run_book_plan(spx, cboe, rates, request, as_of=as_of)
+    leg = build_index_leg(store, as_of, spx=spx)
+    return run_book_plan(spx, cboe, rates, request, as_of=as_of, leg=leg)

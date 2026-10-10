@@ -141,3 +141,65 @@ uncertain for anything that will drive trades. A licensed real-quote source
 * New dependencies and datasets are judged as if the platform trades:
   Riskfolio-Lib was rejected on the same day for pulling a Commons-Clause
   dependency (`vectorbt`).
+
+## Amendment, 2026-10-10: the unhedged leg is measured, and the Book says how much to hold
+
+**Status: Proposed** -- for Dio's merge (this file is guarded).
+
+**The unhedged leg's source.** The S&P 500 leg was SPX price plus a flat 1.9%
+yield. It is now **SPY's measured total return** from `tiingo_eod`'s
+`adj_close` (verified dividend-reinvested), **grossed up by SPY's dated expense
+ratio** (`index_leg.SPY_FEES`: 0.0945% from 2007-02-01, 0.10% from 2005-10-01;
+the 1993-2005 row, 0.20%, is an unverified upper bound, set high because a
+larger add-back can only count against the hedge), labelled "SPY total return,
+fee-adjusted, as the S&P 500 proxy". One builder
+(`research/backtest/index_leg.build_index_leg`) serves the lump sum and the
+contributions plan. SPY's total return still understates SPX's gross total
+return -- SPY is a unit trust and holds dividends as cash until it pays them --
+which flatters a hedge; a constant add-back `k` to the index moves a blend's
+margin by about `-w*k`, so the leg with the larger add-back always binds. Hence
+two named legs: **base** (SPY TR + fee) and **conservative** (base + the cash
+drag `y/8 x (equity - T-bill)`, `y` the trailing twelve-month mean of the
+measured SPY yield -- point-in-time, where the plan said a calendar-year mean;
+months with no measured reading (`unknown`, and SPY's pre-first-dividend
+`non_payer`) are left out, the months before SPY's first measured reading
+(1993-06) take that reading -- a stated look-ahead exception to ADR 0009,
+entering only through `y/8`; measured bound: the leg's full-history CAGR
+differs by +0.023bp/yr from `y = 0` there and -0.006bp/yr from `y = 3%` --
+and a later stretch with no measured reading leaves the conservative leg
+unbuilt, so the size is withheld rather than gated on `y = 0`).
+Without `tiingo_eod` the old flat yield remains, labelled assumed.
+
+**The window start.** A measured leg exists only from SPY's listing
+(1993-01-29), so PPUT's "full history" runs from 1993-01-29 (SPY's first Tiingo row), not 1986; that clamp
+is the window's *requested* start, so it is not flagged clipped, and the page
+says so beside PPUT's own first date. The letter's 2005-2016 window is
+unaffected. A weekly feed trailing the Cboe calendar by up to 14 days is
+extended on SPX price alone (no dividend accrual, day count shown); more is two
+missed runs, and the window is left clipped.
+
+**T-bills before 2005.** The conservative leg needs `DGS3MO` from 1993. ALFRED
+vintages start 2005-06-28; before that the leg reads the series at its
+**latest vintage** -- a stated look-ahead exception to `docs/adr/0009`, not a
+claim that the values were never revised. Bound: revisions are
+basis-point-level and enter only through `y/8`, so under 0.01bp/yr of margin.
+
+**How much to hold** (`research/backtest/hedge_sizing.py`). Per program and
+window: `w*` = the growth-optimal hedge ratio on the base leg (golden section
+on `[0, 1]`; growth is concave in `w`); the size is `w*/2` when
+`g(w*) - g(0) > 1bp/yr` (CAGR units, strict) on **both** legs, **0** otherwise
+with the reason and margin named, and 0.5 when `w*` is the cap of 1 (not
+called half-Kelly). Missing measured dividends or T-bills **withhold** the
+size rather than gate on a partial leg set. The criterion is §1's -- beats no
+hedge, self-financed -- not the Rodman test's "beats both ends". The Book
+sizes **Cboe's rule-based programs**, not the Workspace strategy (real
+quotes only, §5); no standalone result appears on the Book (§2).
+
+**Measured 2026-10-10** (Cboe through 2026-10-08; SPY from one Tiingo fetch;
+`rates` as ingested): PPUT and PPUT3M **0** in both windows -- growth falls at
+every step; VXTH 2006-2016 `w*` = 0.24, size **0.12** (base +4.2bp,
+conservative +4.0bp); VXTH full history `w*` = 0.053, size **0** (+0.57bp base,
++0.49bp conservative, under the bar). (The e2e fixture is the same computation
+through 2026-10-02: VXTH full history `w*` = 0.059, +0.69 / +0.61bp; the other
+answers are unchanged.) The production lake has no `tiingo_eod`
+yet, so until its first ingest the live page withholds every size.
