@@ -91,8 +91,9 @@ class IndexHistory:
 
 @dataclass(frozen=True)
 class _Snapshot:
-    """What one ``tiingo_eod`` snapshot memoises: every symbol's yields, plus
-    SPY's rows for the Book (small: one symbol's ~8,500 sessions)."""
+    """What one ``tiingo_eod`` snapshot memoises: every symbol's yields
+    (built without ``adj_close``), plus SPY's rows, ``adj_close`` included,
+    for the Book (small: one symbol's ~8,500 sessions, under 0.5 MB)."""
 
     yields: Mapping[str, DividendYields]
     index_rows: pd.DataFrame
@@ -117,9 +118,14 @@ def _unknown(_day: dt.date) -> DividendYield:
 
 
 def _build(frame: pd.DataFrame) -> _Snapshot:
-    yields = build_dividend_yields(frame)
+    """``frame`` is this build's own fresh read (the store returns a copy),
+    and is consumed: only SPY's rows keep ``adj_close``. Each symbol's yields
+    hold numpy views of its float block, so building them on a frame still
+    carrying ``adj_close`` kept every symbol's copy alive in the memo (+27%);
+    dropping it in place, not via a copy, also keeps the build's peak down."""
     rows = frame[frame["symbol"] == INDEX_SYMBOL].reset_index(drop=True)
-    return _Snapshot(yields, rows)
+    del frame["adj_close"]
+    return _Snapshot(build_dividend_yields(frame), rows)
 
 
 def _read(store: LakeStore, as_of: dt.date) -> tuple[_Snapshot, str] | None:

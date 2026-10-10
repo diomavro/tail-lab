@@ -27,8 +27,10 @@ legs come out (``docs/adr/0027`` amendment):
   dividend (the trust was already holding its constituents' dividends) --
   are left out, never averaged in as zero. Before SPY's first measured
   reading (1993-06, five months after listing) ``y`` takes that first
-  reading: a stated look-ahead exception to ``docs/adr/0009``, bounded by
-  those months and reaching the margin only through ``y/8``. If any later
+  reading: a stated look-ahead exception to ``docs/adr/0009``, reaching
+  the conservative leg only through ``y/8``. Bound, measured on the real
+  lake (2026-10-10): that leg's full-history CAGR differs by +0.020bp/yr
+  from ``y = 0`` in those months and by -0.005bp/yr from ``y = 3%``. If any later
   day has no measured reading in its trailing twelve months, ``y`` is
   unmeasured there and the conservative leg is not built (the Book then
   withholds its size, naming why) -- never a silent ``y = 0``.

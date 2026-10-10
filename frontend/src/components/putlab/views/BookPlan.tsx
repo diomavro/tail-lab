@@ -6,7 +6,7 @@ import {
   type BookPlanResponse,
   type ComparatorOption,
 } from '../../../api/client'
-import { COMPARATOR_BUTTONS, legSource, pct, usd, useDebounced } from './planFormat'
+import { COMPARATOR_BUTTONS, legSource, NO_BILLS_REASON, pct, usd, useDebounced } from './planFormat'
 import { PlanVerdict } from './PlanVerdict'
 
 /* The Book in contributions mode (docs/adr/0027 §3), priced from real quotes.
@@ -88,7 +88,9 @@ export function BookPlan({
             {plan.legs.some((y) => y.key.kind === 'leg' && y.key.leg === 'conservative')
               ? 'The conservative row below adds SPY’s dividend cash drag back. It usually narrows the hedge’s edge, but not always: the drag turns negative when equities trail T-bills, which is when hedges win, so its share of starts led can be higher.'
               : plan.dividend.conservative_from == null
-                ? 'There is no conservative row: adding SPY’s dividend cash drag back needs T-bill rates, which this lake does not have.'
+                ? plan.dividend.conservative_reason === NO_BILLS_REASON
+                  ? 'There is no conservative row: adding SPY’s dividend cash drag back needs T-bill rates, which this lake does not have.'
+                  : `There is no conservative row: SPY’s dividend cash drag cannot be added back here (${plan.dividend.conservative_reason ?? 'no reason served'}).`
                 : // A refused plan has no rows at all, whatever the T-bills cover;
                   // only a plan that ran dropped the conservative row, and it
                   // drops it only when the leg is missing on a plan date.

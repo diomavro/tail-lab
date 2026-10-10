@@ -163,7 +163,9 @@ drag `y/8 x (equity - T-bill)`, `y` the trailing twelve-month mean of the
 measured SPY yield -- point-in-time, where the plan said a calendar-year mean;
 months with no measured reading (`unknown`, and SPY's pre-first-dividend
 `non_payer`) are left out, the months before SPY's first measured reading
-(1993-06) take that reading -- a stated look-ahead exception to ADR 0009 --
+(1993-06) take that reading -- a stated look-ahead exception to ADR 0009,
+entering only through `y/8`; measured bound: the leg's full-history CAGR
+differs by +0.020bp/yr from `y = 0` there and -0.005bp/yr from `y = 3%` --
 and a later stretch with no measured reading leaves the conservative leg
 unbuilt, so the size is withheld rather than gated on `y = 0`).
 Without `tiingo_eod` the old flat yield remains, labelled assumed.

@@ -85,6 +85,11 @@ export function legName(key: LegKey): string {
 /** A margin in basis points a year, signed, at the precision the 1bp bar needs. */
 export const bp = (x: number) => `${x >= 0 ? '+' : '−'}${Math.abs(x * 1e4).toFixed(2)}bp/yr`
 
+/** The reason the API serves when the lake has no T-bills to build the
+ *  conservative leg from (``index_leg._NO_BILLS``). Every other reason -- SPY's
+ *  ``y`` unmeasured, say -- is shown as served, never as missing T-bills. */
+export const NO_BILLS_REASON = 'sizing needs T-bills for the cash-drag check'
+
 /** One sentence naming what the S&P 500 leg is built from. */
 export function legSource(d: BookDividendBasis): string {
   if (d.source === 'assumed') {

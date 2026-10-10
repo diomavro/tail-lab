@@ -16,6 +16,7 @@ import {
   DEFAULT_MODEL_PLAN,
   DEFAULT_REAL_PLAN,
   legSource,
+  NO_BILLS_REASON,
   type BookMode,
   type LumpMetric,
   type PlanSource,
@@ -102,7 +103,9 @@ export function OverlayView({ narrow }: { narrow: boolean }) {
                   hedge
                   {state.data.overlay.dividend.conservative_from != null
                     ? ', so each growth verdict is re-run on a conservative leg that adds that drag back, and a size must clear both.'
-                    : '. Adding that drag back needs T-bill rates, which this lake does not have, so there is no conservative leg and no size is recommended.'}
+                    : state.data.overlay.dividend.conservative_reason === NO_BILLS_REASON
+                      ? '. Adding that drag back needs T-bill rates, which this lake does not have, so there is no conservative leg and no size is recommended.'
+                      : `. That drag cannot be added back here (${state.data.overlay.dividend.conservative_reason ?? 'no reason served'}), so there is no conservative leg and no size is recommended.`}
                 </>
               ) : (
                 <>

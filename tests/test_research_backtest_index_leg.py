@@ -23,6 +23,8 @@ from tail_lab.lake.store import DeltaLakeStore
 from tail_lab.research import dividends
 from tail_lab.research.backtest.hedge_overlay import run_hedge_overlay
 from tail_lab.research.backtest.index_leg import (
+    _NO_BILLS,
+    _REAL_Q,
     CASH_DRAG_YEARS,
     MAX_EXTENSION_DAYS,
     SPY_LISTING,
@@ -508,6 +510,57 @@ def test_months_before_spys_first_dividend_are_not_averaged_in_as_zero() -> None
     assert y.tolist() == pytest.approx([q, q, q, q], rel=1e-12)
 
 
+def test_the_backfilled_months_take_the_first_measured_reading_not_a_later_one() -> None:
+    """The stated ADR 0009 exception backfills ``y`` with SPY's FIRST
+    measured reading -- the one closest to the months it fills, and the one
+    its bound was measured with. A rising price makes each month-end ``q``
+    different, so taking any later reading would move these months' ``y``."""
+    index = pd.bdate_range("2010-01-04", "2011-06-30")
+    spy = spy_history(index, daily=0.002)
+    ends = pd.Series(index, index=index).groupby(index.to_period("M")).max()
+    readings = [spy.yields.at(d.date()) for d in ends]
+    real = [i for i, r in enumerate(readings) if r.source in _REAL_Q]
+    first, second = readings[real[0]].q, readings[real[1]].q
+    assert abs(first - second) > 1e-4  # the readings genuinely differ
+    early = pd.DatetimeIndex(["2010-01-04", "2010-03-15", "2010-05-31"])
+    assert ends.iloc[real[0]] > early[-1]  # every early date is backfilled
+    assert _trailing_q(spy, early).tolist() == [first, first, first]
+
+
+def test_a_year_with_no_measured_yield_mid_history_withholds_the_size() -> None:
+    """Measured before and after, but no measured reading in a whole
+    trailing twelve months mid-history: ``y`` is unmeasured on those days,
+    and one unmeasured day is enough -- the leg is not built over a hole
+    and the size is withheld, never sized on the days that do have ``y``.
+    (A close so low the yield exceeds 100% reads ``unknown``.)"""
+    index = pd.bdate_range("2000-01-03", "2012-12-31")
+    rates = rates_rows(
+        pd.bdate_range("1999-01-04", "2012-12-31"), first_vintage="1999-01-04", value=3.0
+    )
+    whole = spy_rows(index)
+    holed = whole.copy()
+    hole = (holed["trade_date"] >= "2005-01-01") & (holed["trade_date"] <= "2006-03-31")
+    holed.loc[hole, "close"] = 0.5
+
+    # Control: the same history without the hole has its conservative leg.
+    control = measured_leg(
+        IndexHistory.from_rows(whole), _spx(index), rates, as_of=index[-1].date(), snapshot_ids={}
+    )
+    assert control.basis.conservative_reason is None
+    spy = IndexHistory.from_rows(holed)
+    y = _trailing_q(spy, index)
+    assert np.isnan(y).any() and not np.isnan(y).all()
+    assert not np.isnan(y[index > pd.Timestamp("2007-06-30")]).any()
+    leg = measured_leg(spy, _spx(index), rates, as_of=index[-1].date(), snapshot_ids={})
+    assert leg.conservative is None
+    assert leg.basis.conservative_reason == Y_UNMEASURED
+    program = pd.Series(np.cumprod(np.full(len(index), 1.0002)), index=index)
+    result = run_hedge_overlay(_spx(index), {"PPUT": program}, as_of=index[-1].date(), leg=leg)
+    for window in result.programs[0].windows:
+        assert window.sizing.recommended_ratio is None
+        assert window.sizing.reason == Y_UNMEASURED
+
+
 def test_a_full_history_from_spys_listing_still_gets_a_size() -> None:
     """The pre-dividend months must not withhold the whole full-history
     window: ``y`` starts from the first measured reading, so the
@@ -551,6 +604,14 @@ def test_an_unmeasured_y_withholds_the_size_and_says_why() -> None:
     for window in result.programs[0].windows:
         assert window.sizing.recommended_ratio is None
         assert window.sizing.reason == Y_UNMEASURED
+
+
+def test_the_page_knows_the_no_bills_reason_by_its_served_text() -> None:
+    """The Book's caveats say "needs T-bill rates" only for this exact served
+    reason and show any other (an unmeasured ``y``) as served; if the two
+    texts drift apart, a lake without T-bills would stop saying so."""
+    plan_format = Path(__file__).parents[1] / "frontend/src/components/putlab/views/planFormat.ts"
+    assert f"export const NO_BILLS_REASON = '{_NO_BILLS}'" in plan_format.read_text()
 
 
 def test_the_book_reads_spy_through_the_one_tiingo_reader(

@@ -449,6 +449,41 @@ test('without T-bills the Book caveat names no conservative leg it cannot build'
   const caveat = page.getByTestId('dividend-caveat')
   await expect(caveat).not.toContainText('re-run on a conservative leg')
   await expect(caveat).toContainText('there is no conservative leg and no size is recommended')
+  await expect(caveat).toContainText('needs T-bill rates, which this lake does not have')
+})
+
+// index_leg.Y_UNMEASURED: the lake HAS T-bills, but SPY's dividend yield is
+// unmeasured somewhere in the history, so the conservative leg is not built.
+// Blaming missing T-bills there would send a reader to ingest data the lake
+// already holds.
+const Y_UNMEASURED = "sizing needs SPY's measured dividend yield for the cash-drag check"
+
+function hedgeOverlayYUnmeasured(): HedgeOverlayResponse {
+  const m = hedgeOverlayWithoutRates()
+  return {
+    ...m,
+    rates_snapshot: HEDGE_OVERLAY_MEASURED.rates_snapshot,
+    overlay: {
+      ...m.overlay,
+      dividend: {
+        ...HEDGE_OVERLAY_MEASURED.overlay.dividend,
+        conservative_from: null,
+        conservative_reason: Y_UNMEASURED,
+      },
+      programs: m.overlay.programs.map((p) => ({
+        ...p,
+        windows: p.windows.map((w) => ({ ...w, sizing: { ...w.sizing, reason: Y_UNMEASURED } })),
+      })),
+    },
+  }
+}
+
+test('with T-bills but an unmeasured SPY yield, the Book caveat gives that reason, not T-bills', async ({ page }) => {
+  await openBook(page, hedgeOverlayYUnmeasured())
+  const caveat = page.getByTestId('dividend-caveat')
+  await expect(caveat).toContainText(`(${Y_UNMEASURED}), so there is no conservative leg and no size is recommended.`)
+  await expect(caveat).not.toContainText('T-bill rates')
+  await expect(caveat).not.toContainText('re-run on a conservative leg')
 })
 
 async function openPlan(page: Page, body: BookPlanResponse) {
@@ -466,6 +501,21 @@ test('the plan caveat matches the rows it shows', async ({ page }) => {
   const caveat = page.getByTestId('dividend-caveat')
   await expect(caveat).toContainText('There is no conservative row: adding SPY’s dividend cash drag back needs T-bill rates')
   await expect(caveat).not.toContainText('sizing')
+  await expect(caveat).not.toContainText('row below')
+})
+
+test('with T-bills but an unmeasured SPY yield, the plan caveat gives that reason, not T-bills', async ({ page }) => {
+  const m = bookPlanMeasuredWithoutRates()
+  await openPlan(page, {
+    ...m,
+    rates_snapshot: BOOK_PLAN_MEASURED.rates_snapshot,
+    plan: { ...m.plan, dividend: { ...BOOK_PLAN_MEASURED.plan.dividend, conservative_from: null, conservative_reason: Y_UNMEASURED } },
+  })
+  const caveat = page.getByTestId('dividend-caveat')
+  await expect(caveat).toContainText(
+    `There is no conservative row: SPY’s dividend cash drag cannot be added back here (${Y_UNMEASURED}).`,
+  )
+  await expect(caveat).not.toContainText('T-bill rates')
   await expect(caveat).not.toContainText('row below')
 })
 
