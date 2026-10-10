@@ -1,5 +1,5 @@
 import { expect, test, type Page } from '@playwright/test'
-import { BACKTEST, backtestByDelta, MODEL_PRICED_MAX, putDelta, STRIKE_PREVIEW } from './fixtures/putlab'
+import { ACCURACY, BACKTEST, backtestByDelta, MODEL_PRICED_MAX, putDelta, STRIKE_PREVIEW } from './fixtures/putlab'
 import { mockPutLabApi } from './fixtures/mock-api'
 
 // Strike by delta (docs/adr/0029). The switch lives only where the backtest
@@ -79,12 +79,35 @@ test('ranking, sweep and accuracy say they are still by distance', async ({ page
   await expect(page.getByTestId('hero-error-bar')).toHaveText('Error bar')
   await toDelta(page)
   await expect(page.getByTestId('rank-rule-note')).toContainText('not by delta')
-  await expect(page.getByTestId('accuracy-rule-note')).toContainText('nearest 5% below spot')
+  await expect(page.getByTestId('accuracy-rule-note')).toContainText(
+    'Measured on PPUT, the program nearest 5% below spot and this tenor',
+  )
   // The headline's error bar is the same distance-based measurement, so it says so there too.
   await expect(page.getByTestId('hero-error-bar')).toHaveText(
-    'Error bar (reference program nearest 5% below spot, not this delta)',
+    'Error bar (PPUT, nearest 5% below spot and this tenor, not this delta)',
   )
   await expect(page.locator('.pl-note').filter({ hasText: 'This is a grid of distances below spot' })).toBeVisible()
+})
+
+test('at a quarter the error bar names the program the server picked, not the 5% one', async ({ page }) => {
+  // select_reference weighs strike and tenor: 5% at 12 weeks is nearer PPUT3M
+  // (10%, 13 weeks) than PPUT (5%, 4.3 weeks), so the label must name PPUT3M.
+  await page.route(
+    (url) => url.pathname === '/api/putlab/accuracy',
+    (route) =>
+      route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({ ...ACCURACY, model: { ...ACCURACY.model, reference: 'PPUT3M' } }),
+      }),
+  )
+  await page.goto('/')
+  await rail(page).getByRole('radiogroup', { name: 'Held to expiry' }).getByText('1 quarter').click()
+  await toDelta(page)
+  await expect(page.getByTestId('hero-error-bar')).toHaveText(
+    'Error bar (PPUT3M, nearest 5% below spot and this tenor, not this delta)',
+  )
+  await expect(page.getByTestId('accuracy-rule-note')).toContainText('Measured on PPUT3M')
 })
 
 test('a sweep click switches the rule back to distance', async ({ page }) => {
