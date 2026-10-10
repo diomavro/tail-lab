@@ -30,8 +30,8 @@ export interface Concept {
 // display-ordered.
 /** Every reason a name's dividend yield can be "unknown" (and its roll priced
  *  at q = 0). One list, read by the glossary, the price build and the ranking's
- *  q = 0 note, so no copy can drop a cause; research/surface/reading.py
- *  `rate_note_for` carries the same list in Python. */
+ *  q = 0 note, so no copy can drop a cause; the docstring of
+ *  research/surface/reading.py `rate_note_for` names the same causes. */
 export const UNKNOWN_Q_CAUSES =
   'no dividend data for this name or for this date, a single dividend so far or since a long pause (no frequency to read), or a dividend the close cannot support'
 
