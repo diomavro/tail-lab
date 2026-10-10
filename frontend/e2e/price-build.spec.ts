@@ -40,7 +40,7 @@ test('redoes q from the payments: -ln(1 - D / S)', async ({ page }) => {
   const section = await open(page)
   // 1.60 + 1.75 + 1.53 + 1.54 = 6.42 against the roll's 494.40 close.
   await expect(section.getByTestId('price-build-formula')).toHaveText(
-    'q = −ln(1 − D / S) = −ln(1 − 6.42 / 494.40) = 1.31%',
+    'q = −ln(1 − D / S) = −ln(1 − 6.42 / 494.40) = 1.307%',
   )
   await expect(section.locator('tbody tr')).toHaveCount(4)
   await expect(section.locator('tbody th')).toHaveText(['2024-06-21', '2024-09-20', '2024-12-20', '2025-03-21'])
@@ -79,7 +79,7 @@ test('a carried yield says how old it is', async ({ page }) => {
 test('the ranking says which rows priced at an unknown q = 0', async ({ page }) => {
   await page.goto('/')
   await page.getByRole('button', { name: /All 7 names/ }).click()
-  await expect(page.getByTestId('q-source-eem')).toHaveText('some at q = 0')
+  await expect(page.getByTestId('q-source-eem')).toHaveText('q = 0 rolls')
   await expect(page.getByTestId('q-source-spy')).toHaveText('measured')
 })
 
@@ -179,5 +179,55 @@ test('every displayed input reprices to the displayed premium, to the cent', asy
   const sigma = num((await value('Volatility σ')).split(' ')[0]!) / 100
   const q = num(await value('Dividend yield q')) / 100
   const shown = num((await value('Premium')).split(' ')[0]!)
-  expect(Math.abs(bsPut(spot, strike, T, r, sigma, q) - shown)).toBeLessThan(0.01)
+  // Rounding hides at most this much: the displayed premium is to the cent, so
+  // half a cent is the whole budget, and every input is shown to 3 decimals.
+  expect(await value('Rate r')).toBe('4.210%')
+  expect(Math.abs(bsPut(spot, strike, T, r, sigma, q) - shown)).toBeLessThan(0.005)
+})
+
+
+test('one day of carry is "1 day", not "1 days"', async ({ page }) => {
+  await serveBacktest(page, {
+    ...BACKTEST,
+    dividend_basis: { ...BACKTEST.dividend_basis!, source: 'carried', age_days: 1 },
+  })
+  const section = await open(page)
+  await expect(section).toContainText('(1 day old)')
+  await expect(section.getByTestId('price-build-d')).toContainText("the data's last day, 1 day before")
+})
+
+test('an unknown q names every reason it can be unknown', async ({ page }) => {
+  // Not just "no data": a first-ever dividend has no frequency to read yet.
+  await serveBacktest(page, {
+    ...BACKTEST,
+    dividend_basis: { ...BACKTEST.dividend_basis!, source: 'unknown', payments: [] },
+  })
+  const section = await open(page)
+  const why = section.getByTestId('price-build-dividends')
+  await expect(why).toContainText('no dividend data for this name')
+  await expect(why).toContainText('a single dividend so far')
+  await expect(why).toContainText('a dividend the close cannot support')
+})
+
+test('the dividend table is legible: dates read as dates, headers meet AA', async ({ page }) => {
+  const section = await open(page)
+  const rowhead = section.locator('tbody th').first()
+  await expect(rowhead).toHaveCSS('text-transform', 'none')
+  await expect(rowhead).toHaveCSS('font-size', '13px')
+  const contrast = await section.locator('thead th').first().evaluate((el) => {
+    const rgb = (c: string) => (c.match(/[\d.]+/g) ?? []).slice(0, 3).map(Number)
+    const lum = ([r, g, b]: number[]) => {
+      const f = (v: number) => ((v /= 255) <= 0.03928 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4)
+      return 0.2126 * f(r!) + 0.7152 * f(g!) + 0.0722 * f(b!)
+    }
+    let bg: Element | null = el
+    let back = 'rgba(0, 0, 0, 0)'
+    while (bg && (back === 'rgba(0, 0, 0, 0)' || back === 'transparent')) {
+      back = getComputedStyle(bg).backgroundColor
+      bg = bg.parentElement
+    }
+    const [a, b] = [lum(rgb(getComputedStyle(el).color)), lum(rgb(back))]
+    return (Math.max(a, b) + 0.05) / (Math.min(a, b) + 0.05)
+  })
+  expect(contrast).toBeGreaterThanOrEqual(4.5)
 })

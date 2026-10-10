@@ -84,8 +84,8 @@ export function PriceBuild({ bt }: { bt: PutBacktestResponse }) {
         What a trailing yield cannot see: a cut shows up only as the next payments arrive (up to a year late), a
         special dividend moves q for up to a year &mdash; up if it is larger than a regular payment, down if smaller
         &mdash; and a dividend falling inside a short put&rsquo;s life is spread
-        across the year &mdash; a 21-day SPY put across an ex-date loses ~0.25% of spot to it, where q&middot;T gives
-        ~0.08%.
+        across the year &mdash; a 21-day SPY put across an ex-date loses a whole quarterly dividend (~0.3% of spot at q &asymp; 1.3%),
+        where q&middot;T, with T = 21/252, charges ~0.1%.
       </p>
       <p className="pl-note">
         Next: the strike itself is a fixed distance below spot here, which reaches very different deltas in calm and
@@ -111,7 +111,7 @@ function DividendDerivation({ basis }: { basis: DividendBasis }) {
         <>
           <p className="pl-explain-formula" data-testid="price-build-formula">
             q = &minus;ln(1 &minus; D / S) = &minus;ln(1 &minus; {basis.annual.toFixed(2)} / {basis.close.toFixed(2)}) ={' '}
-            {pct(basis.q)}
+            {pct(basis.q, 3)}
           </p>
           <p data-testid="price-build-d">
             {scaled ? (

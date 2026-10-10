@@ -162,7 +162,7 @@ export function RankingStrip({ ranked, currentAsset, onSelect, snapshotIds, code
                         className="pl-tag pl-tag-bad"
                         title="At least one roll priced at q = 0: no dividend data for it, a single dividend so far, or one the close cannot support"
                       >
-                        some at q = 0
+                        q = 0 rolls
                       </span>
                     ) : r.q_source === 'measured' ? (
                       <span className="pl-tag pl-tag-mute">measured</span>
