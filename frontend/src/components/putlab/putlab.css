@@ -1315,5 +1315,6 @@
 .pl-arm-dd-v { color: var(--mag-2); }
 
 /* The dividend derivation is a block of its own paragraphs: space them like
-   the section's direct children. */
-.pl-explain-stack > * + * { margin-top: var(--space-2); }
+   the section's direct children (--space-3). Scoped under .putlab-root to beat
+   its `p { margin: 0 }` reset. */
+.putlab-root .pl-explain-stack > * + * { margin-top: var(--space-3); }

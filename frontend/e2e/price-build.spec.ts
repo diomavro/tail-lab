@@ -40,7 +40,7 @@ test('redoes q from the payments: -ln(1 - D / S)', async ({ page }) => {
   const section = await open(page)
   // 1.60 + 1.75 + 1.53 + 1.54 = 6.42 against the roll's 494.40 close.
   await expect(section.getByTestId('price-build-formula')).toHaveText(
-    'q = −ln(1 − D / S) = −ln(1 − 6.4200 / 494.4000) = 1.307%',
+    'q = −ln(1 − D / S) = −ln(1 − 6.42 / 494.4) = 1.307%',
   )
   await expect(section.locator('tbody tr')).toHaveCount(4)
   await expect(section.locator('tbody th')).toHaveText(['2024-06-21', '2024-09-20', '2024-12-20', '2025-03-21'])
@@ -67,7 +67,7 @@ test('a carried yield says how old it is', async ({ page }) => {
     dividend_basis: { ...BACKTEST.dividend_basis!, source: 'carried', age_days: 6 },
   })
   const section = await open(page)
-  await expect(section).toContainText('(6 days old)')
+  await expect(section).toContainText("(as of the data's last day, 6 days earlier)")
   // The yield was measured 6 days before the roll: its share basis and its
   // close are that day's, and the page names it.
   await expect(section.getByTestId('price-build-d')).toContainText(
@@ -121,9 +121,9 @@ test('sums the split-adjusted dividends, not the cash paid', async ({ page }) =>
   }
   await serveBacktest(page, { ...BACKTEST, dividend_basis: basis })
   const section = await open(page)
-  await expect(section.getByTestId('price-build-formula')).toContainText('−ln(1 − 4.0000 / 494.4000)')
-  // The basis column shows the adjusted 1.0000, not the 4.0000 paid.
-  await expect(section.locator('tbody tr').first().locator('td').nth(1)).toHaveText('1.0000')
+  await expect(section.getByTestId('price-build-formula')).toContainText('−ln(1 − 4 / 494.4)')
+  // The basis column shows the adjusted 1, not the 4 paid.
+  await expect(section.locator('tbody tr').first().locator('td').nth(1)).toHaveText('1')
 })
 
 test('a short history states the scaling, so the arithmetic still closes', async ({ page }) => {
@@ -136,8 +136,8 @@ test('a short history states the scaling, so the arithmetic still closes', async
   }
   await serveBacktest(page, { ...BACKTEST, dividend_basis: basis })
   const section = await open(page)
-  await expect(section.getByTestId('price-build-formula')).toContainText('−ln(1 − 6.4000 / 494.4000)')
-  await expect(section.getByTestId('price-build-d')).toContainText('sum to 3.20, scaled by 4/2')
+  await expect(section.getByTestId('price-build-formula')).toContainText('−ln(1 − 6.4 / 494.4)')
+  await expect(section.getByTestId('price-build-d')).toContainText('sum to 3.2, scaled by 4/2')
 })
 
 test('on the market path q is not used and says so', async ({ page }) => {
@@ -199,7 +199,8 @@ test('every displayed input reprices to the displayed premium, to the cent', asy
   const q = num(await value('Dividend yield q')) / 100
   const shown = num((await value('Premium')).split(' ')[0]!)
   // Rounding hides at most this much: the displayed premium is to the cent, so
-  // half a cent is the whole budget, and every input is shown to 3 decimals.
+  // half a cent is the whole budget; the rates are shown to 3 decimals, spot and
+  // strike to the cent, T to 4 decimals.
   expect(await value('Rate r')).toBe('4.210%')
   expect(Math.abs(bsPut(spot, strike, T, r, sigma, q) - shown)).toBeLessThan(0.005)
 })
@@ -211,7 +212,7 @@ test('one day of carry is "1 day", not "1 days"', async ({ page }) => {
     dividend_basis: { ...BACKTEST.dividend_basis!, source: 'carried', age_days: 1 },
   })
   const section = await open(page)
-  await expect(section).toContainText('(1 day old)')
+  await expect(section).toContainText("(as of the data's last day, 1 day earlier)")
   await expect(section.getByTestId('price-build-d')).toContainText("the data's last day, 1 day before")
 })
 
@@ -240,7 +241,13 @@ for (const sheet of ['paper', 'plate'] as const) {
     await expect(rowhead).toHaveCSS('text-transform', 'none')
     await expect(rowhead).toHaveCSS('font-size', '13px')
     await expect(rowhead).toHaveCSS('font-weight', '400')
-    for (const target of [section.locator('thead th').first(), rowhead, cell]) {
+    for (const target of [
+      section.locator('thead th').first(),
+      rowhead,
+      cell,
+      section.getByTestId('price-build-formula'),
+      section.locator('summary'),
+    ]) {
       const contrast = await target.evaluate((el) => {
         const rgb = (c: string) => (c.match(/[\d.]+/g) ?? []).slice(0, 3).map(Number)
         const lum = ([r, g, b]: number[]) => {
@@ -283,9 +290,59 @@ test('a stale yield says how to refresh it; a current one claims no age', async 
   })
   let section = await open(page)
   await expect(section.getByTestId('price-build-dividends')).toContainText(
-    "carried more than three weeks past the data's last day -- refresh Tiingo (30 days old)",
+    "carried more than three weeks past the data's last day — refresh Tiingo (as of the data's last day, 30 days earlier)",
   )
   await serveBacktest(page, BACKTEST)
   section = await open(page)
-  await expect(section.getByTestId('price-build-dividends')).not.toContainText('old)')
+  await expect(section.getByTestId('price-build-dividends')).not.toContainText('earlier)')
+})
+
+test('the formula reproduces q to its last printed digit, even on a low-priced name', async ({ page }) => {
+  // EEM-like: D = 1.04003, S = 43.12. Any fixed rounding of D printed a sum
+  // that gave 2.441% beside a printed 2.442%.
+  const D = 1.04003
+  const S = 43.12
+  const q = -Math.log(1 - D / S)
+  await serveBacktest(page, {
+    ...BACKTEST,
+    dividend_basis: { ...BACKTEST.dividend_basis!, annual: D, close: S, q },
+  })
+  const section = await open(page)
+  const text = await section.getByTestId('price-build-formula').innerText()
+  const [, d, s, shown] = text.match(/−ln\(1 − ([\d.]+) \/ ([\d.]+)\) = ([\d.]+)%/)!
+  expect(((-Math.log(1 - Number(d) / Number(s))) * 100).toFixed(3)).toBe(shown)
+})
+
+test('the payments add up to the D the formula uses, after a split', async ({ page }) => {
+  // Four 0.37 payments before a 3:1 split: each 0.1233... on today's basis.
+  const payments = BACKTEST.dividend_basis!.payments.map((p) => ({ ...p, cash: 0.37, adjusted: 0.37 / 3 }))
+  const annual = payments.reduce((t, p) => t + p.adjusted, 0)
+  await serveBacktest(page, {
+    ...BACKTEST,
+    dividend_basis: { ...BACKTEST.dividend_basis!, payments, annual, close: 160, q: -Math.log(1 - annual / 160) },
+  })
+  const section = await open(page)
+  const cells = await section.locator('tbody tr td:nth-child(3)').allInnerTexts()
+  const d = (await section.getByTestId('price-build-formula').innerText()).match(/1 − ([\d.]+) \//)![1]!
+  expect(cells.reduce((t, c) => t + Number(c), 0)).toBeCloseTo(Number(d), 9)
+})
+
+test('a current yield names the day its share basis and close are from', async ({ page }) => {
+  const section = await open(page)
+  const day = BACKTEST.dividend_basis!.date
+  await expect(section.getByTestId('price-build-d')).toContainText(`each on the share basis of ${day}`)
+  await expect(section.getByTestId('price-build-d')).toContainText(`S is the as-traded close on ${day}.`)
+})
+
+test('the derivation paragraphs are spaced like the rest of the section', async ({ page }) => {
+  const section = await open(page)
+  const gap = await section.getByTestId('price-build-formula').evaluate((el) => getComputedStyle(el).marginTop)
+  expect(parseFloat(gap)).toBeGreaterThan(0)
+})
+
+test('the ex-date caveat gives both sides of the bias', async ({ page }) => {
+  const section = await open(page)
+  const caveat = section.locator('.pl-caveat').first()
+  await expect(caveat).toContainText('under-priced')
+  await expect(caveat).toContainText('over-priced by the same ~0.1%')
 })

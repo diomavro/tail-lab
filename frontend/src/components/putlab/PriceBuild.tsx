@@ -18,12 +18,18 @@ const SOURCE_TEXT: Record<DividendSource, string> = {
   suspended: 'a real zero: this name stopped paying (its last dividend is more than two periods old)',
   short_history: 'measured, but from fewer payments than a full year, scaled up to one',
   carried: "measured on the data's last day and carried forward",
-  stale: "measured, but carried more than three weeks past the data's last day -- refresh Tiingo",
+  stale: "measured, but carried more than three weeks past the data's last day \u2014 refresh Tiingo",
   unknown:
     'unknown, so the roll was priced at q = 0: no dividend data for this name, a single dividend so far (no frequency to read), or a dividend the close cannot support',
 }
 
 const pct = (x: number, digits = 2) => `${(x * 100).toFixed(digits)}%`
+/** A dividend figure exactly as the backend holds it (vendor cash has few
+ *  decimals; float noise beyond ten significant digits is dropped), so the
+ *  formula and the table can be redone to q's last printed digit -- any fixed
+ *  rounding missed it on low-priced names (EEM: 1.0400 / 43.12 -> 2.441%,
+ *  printed 2.442%). */
+const exact = (x: number) => String(Number(x.toPrecision(10)))
 const days = (n: number) => `${n} day${n === 1 ? '' : 's'}`
 
 /** The session q was measured on: the requested date, less any carry. */
@@ -84,8 +90,10 @@ export function PriceBuild({ bt }: { bt: PutBacktestResponse }) {
         What a trailing yield cannot see: a cut shows up only as the next payments arrive (up to a year late), a
         special dividend moves q for up to a year &mdash; up if it is larger than a regular payment, down if smaller
         &mdash; and a dividend falling inside a short put&rsquo;s life is spread across the year: the stock drops by a
-        whole quarterly dividend (~0.3% of spot at q &asymp; 1.3%) inside a 21-day SPY put that spans an ex-date, while
-        q&middot;T, with T = 21/252, prices in only ~0.1% of it &mdash; so that put is under-priced.
+        whole quarterly dividend (~0.3% of spot at q &asymp; 1.3%) inside a 21-day SPY put that spans an ex-date, where
+        q&middot;T, with T = 21/252, prices in ~0.1% of spot &mdash; so that put is under-priced, and the two in three
+        that span no ex-date are over-priced by the same ~0.1%. Across a year of rolls it nets out; roll by roll it
+        does not.
       </p>
       <p className="pl-note">
         Next: the strike itself is a fixed distance below spot here, which reaches very different deltas in calm and
@@ -99,7 +107,8 @@ export function PriceBuild({ bt }: { bt: PutBacktestResponse }) {
 function DividendDerivation({ basis }: { basis: DividendBasis }) {
   const total = basis.payments.reduce((s, p) => s + p.adjusted, 0)
   const scaled = basis.payments.length > 0 && basis.payments.length < basis.per_year
-  const carried = basis.age_days > 0 ? ` (${days(basis.age_days)} old)` : ''
+  // Any source can be carried past the data's last day -- a real zero too.
+  const carried = basis.age_days > 0 ? ` (as of the data's last day, ${days(basis.age_days)} earlier)` : ''
   const on = measuredOn(basis)
   return (
     <div data-testid="price-build-dividends" className="pl-explain-stack">
@@ -110,16 +119,14 @@ function DividendDerivation({ basis }: { basis: DividendBasis }) {
       {basis.payments.length > 0 && basis.close != null && (
         <>
           <p className="pl-explain-formula" data-testid="price-build-formula">
-            {/* D and S to 4 decimals, like the payments: q is shown to 3, and a
-                rounded D could not reproduce it (HYG: 4.68 vs 4.6789). */}
-            q = &minus;ln(1 &minus; D / S) = &minus;ln(1 &minus; {basis.annual.toFixed(4)} / {basis.close.toFixed(4)}) ={' '}
+            q = &minus;ln(1 &minus; D / S) = &minus;ln(1 &minus; {exact(basis.annual)} / {exact(basis.close)}) ={' '}
             {pct(basis.q, 3)}
           </p>
           <p data-testid="price-build-d">
             {scaled ? (
               <>
                 D is a full year from a short history: the {basis.payments.length} dividends below sum to{' '}
-                {total.toFixed(2)}, scaled by {basis.per_year}/{basis.payments.length} to the {basis.per_year} a year this
+                {exact(total)}, scaled by {basis.per_year}/{basis.payments.length} to the {basis.per_year} a year this
                 name pays.
               </>
             ) : (
@@ -147,8 +154,8 @@ function DividendDerivation({ basis }: { basis: DividendBasis }) {
                     <th scope="row" className="pl-explain-rowhead">
                       {p.ex_date}
                     </th>
-                    <td className="num">{p.cash.toFixed(4)}</td>
-                    <td className="num">{p.adjusted.toFixed(4)}</td>
+                    <td className="num">{exact(p.cash)}</td>
+                    <td className="num">{exact(p.adjusted)}</td>
                   </tr>
                 ))}
               </tbody>
