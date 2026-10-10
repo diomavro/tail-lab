@@ -58,15 +58,17 @@ _Q_SOURCE_WORDS = {
 def rate_note_for(q_source: str) -> str:
     """What the reader must know about ``q`` for this reading.
 
-    ``"assumed"`` is the fallback when no measured yield exists for the name
-    (before the first Tiingo ingest, or a name it does not cover): the old flat
-    index-like 1.9%, which is wrong for income names. Every other source comes
+    ``"assumed"`` is the fallback whenever the name's own yield is ``unknown``:
+    before the first Tiingo ingest, a name it does not cover, a date before the
+    name's data, a first-ever dividend (no frequency yet), or a dividend the
+    close cannot support. It is the old flat index-like 1.9% -- wrong for income
+    names, and not what the backtest uses there (q = 0, labelled unknown). Every other source comes
     from the name's own dividend record (`transforms/dividend_yield.py`): a
     measured yield, or a real zero for a name that never paid or stopped.
     """
     if q_source == "assumed":
         return (
-            "q is an assumed index-like dividend yield (no measured dividends for this name) "
+            "q is an assumed index-like dividend yield (this name's own yield could not be measured) "
             f"and is WRONG for income names (HYG, TLT); {_Q_DEPENDS}"
         )
     return f"q is {_Q_SOURCE_WORDS.get(q_source, q_source)}; {_Q_DEPENDS}"

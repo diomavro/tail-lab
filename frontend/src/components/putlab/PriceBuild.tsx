@@ -77,7 +77,11 @@ export function PriceBuild({ bt }: { bt: PutBacktestResponse }) {
           {fmtPrice(last.strike)} ({pct(moneyness, 1)} below spot)
         </dd>
         <dt>Time</dt>
-        <dd>{last.t_years == null ? 'to the listed expiry' : `${last.t_years.toFixed(4)} years (trading days / 252)`}</dd>
+        <dd data-testid="price-build-t">
+          {last.t_years == null
+            ? `to the listed expiry, ${last.expiry_date}`
+            : `${last.t_years.toFixed(4)} years (trading days / 252)`}
+        </dd>
         <dt>Rate r</dt>
         <dd data-testid="price-build-r">{market ? 'not used: the premium is a real quote' : pct(bt.rate, 3)}</dd>
         <dt>Volatility σ</dt>

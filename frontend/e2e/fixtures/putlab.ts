@@ -483,7 +483,7 @@ export const SURFACE_FITTED: SurfaceResponse = {
     "r": 0.04,
     "q": 0.019,
     "q_source": "assumed",
-    "rate_note": "q is an assumed index-like dividend yield (no measured dividends for this name) and is WRONG for income names (HYG, TLT); anchor_iv, lambda_guard_ok and the Black-Scholes overlay depend on it",
+    "rate_note": "q is an assumed index-like dividend yield (this name's own yield could not be measured) and is WRONG for income names (HYG, TLT); anchor_iv, lambda_guard_ok and the Black-Scholes overlay depend on it",
     "anchor_iv": 0.346693,
     "lambda_guard_ok": true,
     "anchors": {
@@ -1107,7 +1107,7 @@ export const SURFACE_REFUSED: SurfaceResponse = {
     "r": 0.04,
     "q": 0.019,
     "q_source": "assumed",
-    "rate_note": "q is an assumed index-like dividend yield (no measured dividends for this name) and is WRONG for income names (HYG, TLT); anchor_iv, lambda_guard_ok and the Black-Scholes overlay depend on it",
+    "rate_note": "q is an assumed index-like dividend yield (this name's own yield could not be measured) and is WRONG for income names (HYG, TLT); anchor_iv, lambda_guard_ok and the Black-Scholes overlay depend on it",
     "anchor_iv": null,
     "lambda_guard_ok": null,
     "anchors": {

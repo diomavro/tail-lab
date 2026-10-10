@@ -141,7 +141,13 @@ test('a short history states the scaling, so the arithmetic still closes', async
 })
 
 test('on the market path q is not used and says so', async ({ page }) => {
-  await serveBacktest(page, { ...BACKTEST, priced_from: 'market', dividend_basis: null })
+  await serveBacktest(page, {
+    ...BACKTEST,
+    priced_from: 'market',
+    dividend_basis: null,
+    // Real market cycles carry no model T (put_roll's market path).
+    cycles: BACKTEST.cycles.map((c) => ({ ...c, t_years: null })),
+  })
   const section = await open(page)
   await expect(section.getByTestId('price-build-q')).toHaveText('not used: the premium is a real quote')
   await expect(section.getByTestId('price-build-dividends')).toHaveCount(0)
@@ -152,6 +158,8 @@ test('on the market path q is not used and says so', async ({ page }) => {
   await expect(section).not.toContainText('a model-priced backtest like this one')
   // r enters no listed ask either.
   await expect(section.getByTestId('price-build-r')).toHaveText('not used: the premium is a real quote')
+  // The contract is named: its listed expiry, not a model T.
+  await expect(section.getByTestId('price-build-t')).toHaveText(`to the listed expiry, ${BACKTEST.cycles.at(-1)!.expiry_date}`)
 })
 
 test('on the model path the section says a model backtest is not Book evidence', async ({ page }) => {
