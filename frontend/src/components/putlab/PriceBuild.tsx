@@ -94,9 +94,10 @@ export function PriceBuild({ bt }: { bt: PutBacktestResponse }) {
         special dividend moves q for up to a year &mdash; up if it is larger than a regular payment, down if smaller
         &mdash; and a dividend falling inside a short put&rsquo;s life is spread across the year: the stock drops by a
         whole quarterly dividend (~0.3% of spot at q &asymp; 1.3%) inside a 21-day SPY put that spans an ex-date, where
-        q&middot;T, with T = 21/252, prices in ~0.1% of spot &mdash; so that put is under-priced by ~0.2% of spot, and
-        each of the two in three that span no ex-date is over-priced by ~0.1%. Across a year of rolls it nets out;
-        roll by roll it does not.
+        q&middot;T, with T = 21/252, takes only ~0.1% off the expected price at expiry. So that put&rsquo;s model
+        expects the stock ~0.2% of spot too high and is under-priced, while each of the two in three that span no
+        ex-date expects it ~0.1% too low and is over-priced &mdash; the premium errors are those shifts times the
+        put&rsquo;s delta. Across a year of rolls it nets out; roll by roll it does not.
       </p>
       <p className="pl-note">
         Next: the strike itself is a fixed distance below spot here, which reaches very different deltas in calm and

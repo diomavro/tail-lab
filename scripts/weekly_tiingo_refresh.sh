@@ -4,8 +4,8 @@
 #
 # Why its own script and timer rather than a line in local_daily_refresh.sh:
 # Tiingo's free tier allows ~50 requests an hour and a run is one request per
-# universe symbol, so the ingest throttles itself to 45/hour -- about 95
-# minutes for the 70 names. Inside the daily script it would hold that run's
+# universe symbol, so the ingest throttles itself to 45/hour -- about 92
+# minutes for the 70 names (69 gaps of 80 s). Inside the daily script it would hold that run's
 # lock for an hour and a half; sharing the daily lock file would make the
 # daily run's own 300 s wait time out and fire its alert. The race the lock
 # prevents (write_bronze has no compare-and-swap, so two writers double a

@@ -350,6 +350,43 @@ test('the ex-date caveat gives both sides of the bias', async ({ page }) => {
   const section = await open(page)
   const caveat = section.locator('.pl-caveat').first()
   await expect(caveat).toContainText('under-priced')
-  await expect(caveat).toContainText('under-priced by ~0.2% of spot')
-  await expect(caveat).toContainText('over-priced by ~0.1%')
+  await expect(caveat).toContainText('expects the stock ~0.2% of spot too high and is under-priced')
+  await expect(caveat).toContainText('~0.1% too low and is over-priced')
+  // The shifts are in the expected stock price, not the premium.
+  await expect(caveat).toContainText("those shifts times the put’s delta")
+})
+
+test('the "(6 dp)" mark appears only when a row is rounded, even if just one is', async ({ page }) => {
+  // No split: every adjusted figure is the cash paid, nothing rounded.
+  let section = await open(page)
+  await expect(section.locator('thead')).not.toContainText('(6 dp)')
+  // A split inside the window: earlier rows divided (0.37 / 3), later exact.
+  const payments = BACKTEST.dividend_basis!.payments.map((p, i) =>
+    i < 2 ? { ...p, cash: 0.37, adjusted: 0.37 / 3 } : { ...p, cash: 0.13, adjusted: 0.13 },
+  )
+  const annual = payments.reduce((t, p) => t + p.adjusted, 0)
+  await serveBacktest(page, {
+    ...BACKTEST,
+    dividend_basis: { ...BACKTEST.dividend_basis!, payments, annual, close: 160, q: -Math.log(1 - annual / 160) },
+  })
+  section = await open(page)
+  await expect(section.locator('thead')).toContainText('(6 dp)')
+})
+
+test('a short history after a split states its sum exactly', async ({ page }) => {
+  const payments = BACKTEST.dividend_basis!.payments.slice(0, 2).map((p) => ({ ...p, cash: 0.37, adjusted: 0.37 / 3 }))
+  const total = (0.37 / 3) * 2
+  await serveBacktest(page, {
+    ...BACKTEST,
+    dividend_basis: {
+      ...BACKTEST.dividend_basis!,
+      source: 'short_history',
+      payments,
+      annual: total * 2,
+      close: 160,
+      q: -Math.log(1 - (total * 2) / 160),
+    },
+  })
+  const section = await open(page)
+  await expect(section.getByTestId('price-build-d')).toContainText(`sum to ${String(Number(total.toPrecision(10)))}, scaled`)
 })

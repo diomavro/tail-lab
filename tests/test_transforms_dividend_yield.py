@@ -214,7 +214,8 @@ def test_no_row_after_the_date_is_read() -> None:
 
 def test_a_date_before_the_data_is_unknown() -> None:
     yields = DividendYields("x", _history("2021-01-04", "2021-12-31", 400.0, {}))
-    assert yields.at(dt.date(2020, 1, 1)).source == "unknown"
+    got = yields.at(dt.date(2020, 1, 1))
+    assert (got.source, got.close) == ("unknown", None)
 
 
 def test_past_the_last_row_the_value_is_carried_then_flagged_stale() -> None:
@@ -575,3 +576,14 @@ def test_stale_means_three_weeks_as_every_doc_and_the_timer_promise() -> None:
     ):
         text = (Path(__file__).parents[1] / doc).read_text()
         assert "21 days" in text or "three weeks" in text, doc
+
+
+def test_an_annual_payer_is_suspended_only_after_two_full_years() -> None:
+    # The cut-off is strict: at exactly 2 x 365 days since the last payment the
+    # run still counts; one day later it is suspended. For an annual payer the
+    # boundary lands on a whole day, so ">" and ">=" are different rules.
+    ex = ["2016-05-04", "2017-05-04", "2018-05-04", "2019-05-03", "2020-05-04"]
+    yields = DividendYields("x", _history("2015-01-02", "2022-12-30", 50.0, dict.fromkeys(ex, 2.0)))
+    last = dt.date(2020, 5, 4)
+    assert yields.at(last + dt.timedelta(days=730)).source == "measured"
+    assert yields.at(last + dt.timedelta(days=731)).source == "suspended"
