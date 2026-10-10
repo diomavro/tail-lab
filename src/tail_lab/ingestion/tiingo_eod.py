@@ -156,7 +156,12 @@ def tiingo_getter(
             # requests carries the full URL -- token included -- in the
             # message; re-raise the same type with it redacted, outside the
             # handler so the original cannot ride along as __context__.
-            body = exc.response.text[:300] if exc.response is not None else ""
+            # The body that failed: the response's, or for a body that never
+            # parsed (no response attached) the document the parser saw.
+            if isinstance(exc, requests.exceptions.JSONDecodeError):
+                body = exc.doc[:300]
+            else:
+                body = exc.response.text[:300] if exc.response is not None else ""
             # Same type where its constructor takes a message; JSONDecodeError
             # needs (msg, doc, pos), so a body that stayed unparseable is
             # re-raised as the decoding fault it is.
@@ -165,7 +170,8 @@ def tiingo_getter(
                 if isinstance(exc, requests.exceptions.JSONDecodeError)
                 else type(exc)
             )
-            redacted = kind(f"{exc} {body}".strip().replace(api_key, "<redacted>"))
+            message = f"Tiingo fetch failed for {symbol}: {exc} {body}".strip()
+            redacted = kind(message.replace(api_key, "<redacted>"))
         if redacted is not None:
             raise redacted
         return payload

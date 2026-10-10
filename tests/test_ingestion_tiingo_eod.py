@@ -251,6 +251,22 @@ def test_a_body_that_never_parses_fails_with_the_real_fault_not_a_typeerror(
         tiingo_getter("SECRET", throttle_s=0.0, sleep=lambda s: None)("spy", {})
     assert len(calls) == tiingo_eod._FETCH_ATTEMPTS
     assert "SECRET" not in str(info.value)
+    # The line that ends a 95-minute run names the symbol and what came back.
+    assert "for spy" in str(info.value)
+    if body:
+        assert body.decode() in str(info.value)
+
+
+def test_a_refused_fetch_reports_the_body_the_server_sent(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(
+        tiingo_eod.requests,
+        "get",
+        lambda url, params, timeout: _response(404, b'{"detail":"Ticker not found"}'),
+    )
+    with pytest.raises(requests.exceptions.HTTPError) as info:
+        tiingo_getter("SECRET", throttle_s=0.0, sleep=lambda s: None)("zzz", {})
+    assert "Ticker not found" in str(info.value) and "for zzz" in str(info.value)
+    assert "SECRET" not in str(info.value)
 
 
 def test_the_run_log_counts_dividends_and_splits(

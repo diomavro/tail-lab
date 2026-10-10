@@ -542,7 +542,7 @@ def test_the_bounded_session_cache_clears_without_changing_an_answer(
 
 
 def test_stale_means_three_weeks_as_every_doc_and_the_timer_promise() -> None:
-    # docs/DATA_FLOW.md, docs/DATA_CONTRACTS.md #15 and the Tiingo timer all
+    # docs/DATA_FLOW.md, docs/DATA_CONTRACTS.md #14 and the Tiingo timer all
     # say a carried yield turns "stale" after 21 days -- three missed weekly
     # runs. The constant is pinned by value so a change has to touch them too.
     assert CARRY_STALE_DAYS == 21
