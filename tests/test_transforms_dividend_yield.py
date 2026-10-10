@@ -683,3 +683,23 @@ def test_a_carried_short_history_is_labelled_carried_then_stale() -> None:
     carried = yields.at(dt.date(2013, 1, 10))
     assert (carried.source, carried.q, carried.annual) == ("carried", inside.q, inside.annual)
     assert yields.at(dt.date(2013, 2, 15)).source == "stale"
+
+
+def test_the_gap_window_is_four_gaps_wide() -> None:
+    # _GAP_WINDOW (4) is how many recent gaps seed the median a pause is
+    # measured against. Gaps here, oldest first: 91, 365, 91, 91, 365 days.
+    # The last four (365, 91, 91, 365) have median 228, so no gap exceeds
+    # 3 x 228 and the whole run counts: the yield is measured. A window of
+    # three (91, 91, 365) or five (91, 365, 91, 91, 365) has median 91, the
+    # last 365-day gap reads as a pause, and a fresh run of one payment has no
+    # frequency to read -- unknown. Either neighbour of 4 flips this.
+    ex = ["2006-03-16", "2006-06-15", "2007-06-15", "2007-09-14", "2007-12-14", "2008-12-15"]
+    yields = DividendYields(
+        "x", _history("2006-01-03", "2009-01-15", 100.0, dict.fromkeys(ex, 1.0))
+    )
+    got = yields.at(dt.date(2009, 1, 15))
+    assert got.source == "measured"
+    # The 700-day window holds the last four payments (mean gap ~183 days):
+    # semiannual, so the last two make D.
+    assert got.per_year == 2
+    assert got.q == pytest.approx(_q(2.0, 100.0))

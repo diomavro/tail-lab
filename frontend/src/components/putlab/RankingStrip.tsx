@@ -1,5 +1,6 @@
-import { useState } from 'react'
+import { useId, useState } from 'react'
 import type { RankedAsset, Verdict } from '../../api/client'
+import { UNKNOWN_Q_CAUSES } from '../../content/concepts'
 import { fmtFixed, fmtPct, fmtPrice } from './format'
 
 /* The fragility ranking.
@@ -60,6 +61,10 @@ const at = (r: RankedAsset) =>
 
 export function RankingStrip({ ranked, currentAsset, onSelect, snapshotIds, codeSha }: Props) {
   const [open, setOpen] = useState(false)
+  // The "q = 0 rolls" tag's explanation is printed under the table, not in a
+  // hover-only title, so keyboard, touch and screen-reader readers get it too.
+  const qZeroNoteId = useId()
+  const anyQZero = ranked.some((r) => r.q_source === 'none')
 
   const pick = (r: RankedAsset) =>
     onSelect(
@@ -158,10 +163,7 @@ export function RankingStrip({ ranked, currentAsset, onSelect, snapshotIds, code
                   </td>
                   <td className="num" data-testid={`q-source-${r.asset}`}>
                     {r.q_source === 'none' ? (
-                      <span
-                        className="pl-tag pl-tag-bad"
-                        title="At least one roll priced at q = 0: no dividend data for it or its date, a single dividend so far or since a long pause, or one the close cannot support"
-                      >
+                      <span className="pl-tag pl-tag-bad" aria-describedby={qZeroNoteId}>
                         q = 0 rolls
                       </span>
                     ) : r.q_source === 'measured' ? (
@@ -177,6 +179,12 @@ export function RankingStrip({ ranked, currentAsset, onSelect, snapshotIds, code
               ))}
             </tbody>
           </table>
+          {anyQZero && (
+            <p id={qZeroNoteId} className="pl-micro" style={{ padding: '4px 2px 0' }} data-testid="q-zero-note">
+              q = 0 rolls: at least one roll was priced at q = 0 because its dividend yield is unknown &mdash;{' '}
+              {UNKNOWN_Q_CAUSES}. Read that row&rsquo;s return as the old, cheap price.
+            </p>
+          )}
           <p className="pl-micro" style={{ padding: '4px 2px 0' }}>
             {snapshotIds.length} bronze snapshot{snapshotIds.length === 1 ? '' : 's'} ·{' '}
             {codeSha === 'unknown' ? 'code sha unknown' : codeSha.slice(0, 7)}

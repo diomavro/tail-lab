@@ -1,4 +1,5 @@
 import type { DividendBasis, DividendSource, PutBacktestResponse } from '../../api/client'
+import { UNKNOWN_Q_CAUSES } from '../../content/concepts'
 import { ConceptInfo } from './ConceptInfo'
 import { fmtPrice } from './format'
 
@@ -19,8 +20,7 @@ const SOURCE_TEXT: Record<DividendSource, string> = {
   short_history: 'measured, but from fewer payments than a full year, scaled up to one',
   carried: "measured on the data's last day and carried forward",
   stale: "measured, but carried more than three weeks past the data's last day \u2014 refresh Tiingo",
-  unknown:
-    'unknown, so the roll was priced at q = 0: no dividend data for this name or for this date, a single dividend so far or since a long pause (no frequency to read), or a dividend the close cannot support',
+  unknown: `unknown, so the roll was priced at q = 0: ${UNKNOWN_Q_CAUSES}`,
 }
 
 const pct = (x: number, digits = 2) => `${(x * 100).toFixed(digits)}%`

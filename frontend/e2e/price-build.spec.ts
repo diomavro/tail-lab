@@ -1,5 +1,6 @@
 import { expect, test, type Page } from '@playwright/test'
 import type { PutBacktestResponse } from '../src/api/client'
+import { UNKNOWN_Q_CAUSES } from '../src/content/concepts'
 import { BACKTEST, LEADERBOARD } from './fixtures/putlab'
 import { mockPutLabApi } from './fixtures/mock-api'
 
@@ -83,6 +84,57 @@ test('the ranking says which rows priced at an unknown q = 0', async ({ page }) 
   // ...in the warning style, not the muted one a measured row wears.
   await expect(page.getByTestId('q-source-eem').locator('span')).toHaveClass(/pl-tag-bad/)
   await expect(page.getByTestId('q-source-spy')).toHaveText('measured')
+})
+
+test('the q = 0 tag explains itself without a hover: visible note, accessible description', async ({ page }) => {
+  // A title tooltip reaches neither a keyboard nor a touch reader; the note
+  // under the table does, and the tag points at it for a screen reader.
+  await page.goto('/')
+  await page.getByRole('button', { name: /All 7 names/ }).click()
+  const note = page.getByTestId('q-zero-note')
+  await expect(note).toBeVisible()
+  await expect(note).toContainText(UNKNOWN_Q_CAUSES)
+  const tag = page.getByTestId('q-source-eem').locator('span')
+  await expect(tag).toHaveAccessibleDescription(/a single dividend so far or since a long pause/)
+})
+
+test('the q = 0 note is absent when no row priced at q = 0', async ({ page }) => {
+  await page.route(
+    (url) => url.pathname === '/api/putlab/leaderboard',
+    (route) =>
+      route.fulfill({
+        contentType: 'application/json',
+        body: JSON.stringify({
+          ...LEADERBOARD,
+          ranked: LEADERBOARD.ranked.map((r) => ({ ...r, q_source: 'measured' })),
+        }),
+      }),
+  )
+  await page.goto('/')
+  await page.getByRole('button', { name: /All 7 names/ }).click()
+  await expect(page.getByTestId('q-source-eem')).toHaveText('measured')
+  await expect(page.getByTestId('q-zero-note')).toHaveCount(0)
+})
+
+test('every copy of the unknown-q causes is the one shared list, and it names all four', async ({ page }) => {
+  // The list once drifted: one copy lost "or since a long pause". All copies
+  // now read UNKNOWN_Q_CAUSES; this pins its content and that each surface uses it.
+  for (const cause of [
+    'no dividend data for this name or for this date',
+    'a single dividend so far',
+    'or since a long pause',
+    'a dividend the close cannot support',
+  ]) {
+    expect(UNKNOWN_Q_CAUSES).toContain(cause)
+  }
+  await serveBacktest(page, {
+    ...BACKTEST,
+    dividend_basis: { ...BACKTEST.dividend_basis!, source: 'unknown', payments: [] },
+  })
+  const section = await open(page)
+  await expect(section.getByTestId('price-build-dividends')).toContainText(UNKNOWN_Q_CAUSES)
+  await page.getByRole('tab', { name: 'Glossary' }).click()
+  await expect(page.locator('#dividend_yield')).toContainText(UNKNOWN_Q_CAUSES)
 })
 
 test('a ranking row with no dividend basis (a real-quote run) says nothing about q', async ({ page }) => {

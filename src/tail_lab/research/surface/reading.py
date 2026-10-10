@@ -62,7 +62,7 @@ def rate_note_for(q_source: str) -> str:
     before the first Tiingo ingest, a name it does not cover, a date before the
     name's data, a single dividend so far or since a long pause (no frequency
     yet), or a dividend the
-    close cannot support. It is the old flat index-like 1.9% -- wrong for income
+    close cannot support (the frontend's ``UNKNOWN_Q_CAUSES`` lists the same causes). It is the old flat index-like 1.9% -- wrong for income
     names, and not what the backtest uses there (q = 0, labelled unknown). Every other source comes
     from the name's own dividend record (`transforms/dividend_yield.py`): a
     measured yield, or a real zero for a name that never paid or stopped.

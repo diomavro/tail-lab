@@ -28,6 +28,13 @@ export interface Concept {
 
 // Ordered by category following CATEGORY_ORDER, so CONCEPT_LIST is already
 // display-ordered.
+/** Every reason a name's dividend yield can be "unknown" (and its roll priced
+ *  at q = 0). One list, read by the glossary, the price build and the ranking's
+ *  q = 0 note, so no copy can drop a cause; research/surface/reading.py
+ *  `rate_note_for` carries the same list in Python. */
+export const UNKNOWN_Q_CAUSES =
+  'no dividend data for this name or for this date, a single dividend so far or since a long pause (no frequency to read), or a dividend the close cannot support'
+
 export const CONCEPTS: Record<string, Concept> = {
   // ---------------------------------------------------------------- thesis
   fragility_thesis: {
@@ -204,7 +211,7 @@ export const CONCEPTS: Record<string, Concept> = {
     intuition:
       'A put is a claim on where the stock will be at expiry, and a stock that pays a dividend drops by it on the ex-date -- so a payer is expected to end lower than a non-payer with the same price and volatility, and its puts cost more. Until October 2026 this lab priced every name at q = 0, which under-priced puts on income names worst: scored against the exchange\'s own deltas, HYG was off by 0.197 and TLT by 0.060, against 0.004 for SPY. q is now read from each name\'s paid dividends (Tiingo): the last N payments at its own frequency, summed and divided by the close. It deliberately carries no forecast, so it lags a cut by up to N payments, a special dividend moves it for N payments (up if larger than a regular payment, down if smaller), and it misses a dividend falling inside a short put\'s life (the stock drops by a whole quarterly dividend, ~0.3% of spot at q ≈ 1.3%, inside a 21-day SPY put that spans an ex-date, where q·T with T = 21/252 takes only ~0.1% off the expected price -- so that put\'s model expects the stock ~0.2% of spot too high and under-prices it, while the two in three that span no ex-date expect it ~0.1% too low and over-price; the premium errors are those shifts times the delta, and they net out over a year, not roll by roll).',
     howToRead:
-      'Every roll says where its q came from. "measured" is the name\'s own payments; "non-payer" and "suspended" are real zeros; "carried" and "stale" are the last measured value held past the data\'s end; "unknown" means q could not be read -- no dividend data, a single dividend so far, or one the close cannot support -- and the roll was priced at q = 0: read those numbers as the old, cheap prices.',
+      `Every roll says where its q came from. "measured" is the name's own payments; "non-payer" and "suspended" are real zeros; "carried" and "stale" are the last measured value held past the data's end; "unknown" means q could not be read -- ${UNKNOWN_Q_CAUSES} -- and the roll was priced at q = 0: read those numbers as the old, cheap prices.`,
     seeAlso: ['model_priced', 'oom_put'],
   },
 

@@ -1260,6 +1260,28 @@ def test_surface_uses_the_names_own_yield_and_says_where_it_came_from(
     assert "own dividend yield" in after["rate_note"]
 
 
+def test_surface_says_a_stale_yield_is_stale_and_asks_for_a_refresh(
+    client: TestClient,
+) -> None:
+    # The Surface passes the dividend source straight to the reader: a yield
+    # carried more than CARRY_STALE_DAYS past Tiingo's last row must say so on
+    # the page, not pass for a fresh measurement.
+    from tests.test_research_dividends import seed_tiingo_eod
+
+    store = app.dependency_overrides[putlab_get_lake_store]()
+    today = dt.datetime.now(dt.UTC).date()
+    _seed_chain(store, today)
+    _clear_putlab_caches()
+    seed_tiingo_eod(store, ["spy"], today - dt.timedelta(days=40), annual_yield=0.06)
+    params = {"asset": "spy", "moneyness_pct": 7, "as_of": today.isoformat()}
+    surface = client.get("/api/putlab/surface", params=params).json()["surface"]
+    assert surface["q_source"] == "stale"
+    # Still the name's own yield -- never dropped to zero for being old.
+    assert surface["q"] == pytest.approx(-np.log1p(-0.06))
+    assert "carried over three weeks" in surface["rate_note"]
+    assert "Tiingo needs a refresh" in surface["rate_note"]
+
+
 def test_metric_screen_baskets_price_with_dividends(client: TestClient) -> None:
     params = {"moneyness_pct": 10, "tenor_weeks": 4, "years": 1, "top_k": 2}
     before, after = _before_and_after_dividends(
