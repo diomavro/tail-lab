@@ -81,6 +81,12 @@ class Settings(BaseSettings):
     #: CI/local dev by default; only a live `make ingest-rates` needs it.
     fred_api_key: str | None = Field(default=None, validation_alias="FRED_API_KEY")
 
+    #: Tiingo API key for ingestion/tiingo_eod.py (docs/DATA_CONTRACTS.md #14).
+    #: Plain env name for the same reason as fred_api_key: it is the name the
+    #: local .env entry already uses (HUMAN_TODO.md). Only a live
+    #: `make ingest-tiingo-eod` needs it.
+    tiingo_api_key: str | None = Field(default=None, validation_alias="TIINGO_API_KEY")
+
     #: The deployed code revision, stamped into structured run logs so a
     #: backtest line is traceable to an exact commit (docs/STANDARDS.md §f).
     #: Set by the deploy pipeline (env: TAIL_LAB_CODE_SHA); "unknown" locally.

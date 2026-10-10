@@ -6,8 +6,11 @@
   server-side and records each per-regime outcome, so the agent can't fabricate
   a verdict — it only asks "record what this rule actually did."
 - ``GET /api/putlab/memory`` — public read: the stored prior art for a rule
-  (aggregate verdict + every per-regime outcome, with ``run_count``), or an
-  empty ``outcomes`` list when the exact rule was never recorded.
+  priced with measured dividends (aggregate verdict + every per-regime outcome,
+  with ``run_count``; empty ``outcomes`` when no measured run was recorded),
+  plus a separate ``legacy`` section for the same rule priced without dividends.
+  Memory is addressed by hash only, so this is the one read path that keeps the
+  pre-dividend records reachable.
 
 The token check mirrors ``feedback_routes`` (unset -> 404, wrong -> 401,
 constant-time compare); it reuses ``feedback_token`` since a single operator
@@ -18,15 +21,21 @@ from __future__ import annotations
 
 import datetime as dt
 import logging
+from functools import partial
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Query
 
 from tail_lab.api.auth import require_bearer_token as _require_token
-from tail_lab.api.schemas import MemoryPriorArt, MemoryRecordResponse, RecordedRegime
+from tail_lab.api.schemas import (
+    MemoryPriorArt,
+    MemoryPriorArtSection,
+    MemoryRecordResponse,
+    RecordedRegime,
+)
 from tail_lab.config import get_lake_store as _get_configured_lake_store
 from tail_lab.config import get_memory_store as _get_configured_memory_store
 from tail_lab.config import get_settings
-from tail_lab.contracts.hypothesis import RuleSpec
+from tail_lab.contracts.hypothesis import rule_spec_for
 from tail_lab.contracts.ohlcv import dataset_id
 from tail_lab.lake.store import LakeStore
 from tail_lab.memory.store import HypothesisMemory
@@ -80,18 +89,17 @@ def record_verdict(
     except LookupError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
 
-    spec = RuleSpec(
-        asset=asset,
-        moneyness_pct=moneyness_pct,
-        tenor_weeks=tenor_weeks,
-        lookback_years=round(years),
-    )
+    # The verdict's own spec: its dividend basis is the run's, so a run that
+    # priced any roll at an unknown q = 0 is stored under the "none" hash.
+    spec = verdict.rule_spec
     # run_id ties this recording to the exact data version it saw (§f provenance).
     try:
         ohlcv_snap = store.bronze_snapshot_id(dataset_id(asset), resolved)
     except LookupError:
         ohlcv_snap = "unknown"
-    run_id = f"{resolved.isoformat()}#{ohlcv_snap}"
+    # ...and the dividend basis: a re-record after a new Tiingo snapshot priced
+    # with a different q, so it is a different run.
+    run_id = f"{resolved.isoformat()}#{ohlcv_snap}#{verdict.dividend_snapshot or 'no-dividends'}"
 
     recorded: list[RecordedRegime] = []
     for sl in verdict.slices:
@@ -115,7 +123,9 @@ def record_verdict(
         tenor_weeks=tenor_weeks,
         years=years,
         rule_hash=spec.rule_hash(),
+        dividends=spec.dividends,
         ohlcv_snapshot=ohlcv_snap,
+        dividend_snapshot=verdict.dividend_snapshot,
         code_sha=get_settings().code_sha,
         verdict=verdict.verdict,
         n_recorded=len(recorded),
@@ -133,15 +143,26 @@ def prior_art(
     years: float = Query(gt=0, le=20),
     memory: HypothesisMemory = Depends(get_memory_store),
 ) -> MemoryPriorArt:
-    spec = RuleSpec(
+    spec_for = partial(
+        rule_spec_for,
         asset=asset,
         moneyness_pct=moneyness_pct,
         tenor_weeks=tenor_weeks,
-        lookback_years=round(years),
+        years=years,
     )
-    rule_hash = spec.rule_hash()
+    measured = spec_for(q_source="measured").rule_hash()
+    legacy = spec_for(q_source=None).rule_hash()
+    legacy_outcomes = memory.outcomes_for_rule(legacy)
     return MemoryPriorArt(
-        rule_hash=rule_hash,
-        verdict=memory.verdict_for_rule(rule_hash),
-        outcomes=memory.outcomes_for_rule(rule_hash),
+        rule_hash=measured,
+        verdict=memory.verdict_for_rule(measured),
+        outcomes=memory.outcomes_for_rule(measured),
+        legacy=MemoryPriorArtSection(
+            rule_hash=legacy,
+            verdict=memory.verdict_for_rule(legacy),
+            outcomes=legacy_outcomes,
+            note="priced without dividends (q = 0)",
+        )
+        if legacy_outcomes
+        else None,
     )

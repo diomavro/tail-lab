@@ -30,27 +30,33 @@ assumptions as much as to the numbers they produce.
    dividend-paying underlyings are worth more than this returns; the gap
    grows with moneyness, dividend yield and time. Bounded for the short-dated
    OOM puts this platform buys, where early exercise is worth ~nothing.
-4. **The dividend yield defaults to zero.** *Breaks*: a yielding underlying
-   has a lower forward, so every put on it is worth *more* than ``q=0``
-   returns. **This is not a rounding error for the income names in the
-   universe.** ``make greeks-check`` scores our delta against the exchange's
-   own across 7,618 liquid contracts, and the error orders itself by
-   distribution yield exactly as theory demands:
+4. **The dividend yield is a continuous trailing estimate.** ``q`` defaults
+   to zero here; the backtest, ranking, sweep, portfolio, metric screen, roll
+   schedule and Surface pass the name's measured yield
+   (``research/dividends.py``, from Tiingo's paid dividends, since 2026-10). The Book (``hedge_overlay``, ``contribution_plan``,
+   ``model_plan``), ``index_replication`` and ``skew`` still pass the flat
+   ``DEFAULT_DIVIDEND_YIELD`` (1.9%).
+   Before that the roll backtest priced every name at ``q = 0``, and the delta
+   error against the exchange's own ordered itself by yield (HYG 0.197, TLT
+   0.060 in September 2026). ``make greeks-check`` on the 2026-10-08 session,
+   7,729 liquid contracts, same contracts both ways:
 
-   =========  ==============  ====================
-   symbol     approx. yield   median |delta error|
-   =========  ==============  ====================
-   TSLA       0%              0.0006
-   SPY        ~1.2%           0.0043
-   TLT        ~4%             0.0601
-   HYG        ~6%             0.1967
-   =========  ==============  ====================
+   =========  ===========  ===================  ====================
+   symbol     measured q   median |err|, q = 0  median |err|, q
+   =========  ===========  ===================  ====================
+   HYG        6.3%         0.1094               0.0228
+   TLT        5.1%         0.0209               0.0120
+   XLE        2.4%         0.0144               0.0064
+   SPY        1.0%         0.0011 (p95 0.022)   0.0010 (p95 0.011)
+   FXI        2.1%         0.0145               0.0198
+   overall                 0.0020 (p95 0.023)   0.0016 (p95 0.016)
+   =========  ===========  ===================  ====================
 
-   A 0.20 delta error on HYG is a different option from the one we think we
-   are pricing, and HYG and TLT are in the screening universe precisely as the
-   credit and rates hedges. ``index_replication`` passes ``q`` explicitly; the
-   roll backtest does **not**, and that is queued in ``AGENT_TODO.md``. Until
-   it lands, treat put prices and greeks on income names as biased cheap.
+   *Still breaks*: a continuous yield spreads a lumpy dividend across the
+   year. FXI pays essentially once a year, so a 30-day put that does not
+   cross its ex-date is priced with a yield it will never see -- its error
+   grew. The exchange prices discrete dividends; this does not. Lag on a cut
+   and specials are disclosed in ``transforms/dividend_yield.py``.
 5. **Continuous, frictionless trading at a known constant rate.** No bid-ask,
    no borrow, no rate curve. *Breaks*: real fills cost more. Handled outside
    this module by ``research/backtest/brokerage.py``, which is itself one

@@ -12,6 +12,7 @@ import { ConceptInfo } from '../ConceptInfo'
 import { fmtDollar, fmtFixed, fmtMult, fmtPct, fmtPrice } from '../format'
 import { Ledger } from '../Ledger'
 import { MemoryTeaser } from '../MemoryTeaser'
+import { PriceBuild } from '../PriceBuild'
 import type { ResourceState } from '../PutLab'
 import { RankingStrip } from '../RankingStrip'
 import { StrategyTape } from '../StrategyTape'
@@ -234,6 +235,10 @@ function Result({
           </div>
         ))}
       </div>
+
+      <section className="pl-section">
+        <PriceBuild bt={bt} />
+      </section>
 
       <section className="pl-section">
         <div className="pl-section-head">

@@ -39,6 +39,16 @@ test('prints each entry verbatim rather than paraphrasing it', async ({ page }) 
   if (hit.formula) await expect(entry.locator('.pl-gloss-formula')).toHaveText(hit.formula)
 })
 
+test('every see-also id in every entry names a real entry', () => {
+  // A dangling id renders a dead #anchor and nothing else catches it; the
+  // thread a reader follows (dividend yield -> pricing -> ...) runs on these.
+  for (const concept of Object.values(CONCEPTS)) {
+    for (const id of concept.seeAlso ?? []) {
+      expect(CONCEPTS[id], `${concept.id} links to missing '${id}'`).toBeDefined()
+    }
+  }
+})
+
 test('keeps the see-also links pointing at real entries', async ({ page }) => {
   const roi = CONCEPTS.roi_on_premium!
   const entry = page.locator('#roi_on_premium')

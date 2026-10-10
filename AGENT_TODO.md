@@ -751,14 +751,17 @@ a large one strictly in order.
       the two paths' `.dtypes` are identical, not just the column names) plus
       a dtype assertion added to the existing drop-unbracketable-dates test.
 - [ ] **Switch OHLCV primary to Tiingo** — the key now exists and is
-      verified (`HUMAN_TODO.md`, 2026-09-03). New adapter (500 unique
-      symbols/month budget — plan symbol rotation), demote Yahoo to
-      fallback, update `docs/DATA_CONTRACTS.md` #1's source section in the
-      same PR. Measured: SPY 1993-01-29 → 2026-09-02 with `adjClose` and
-      `divCash`, so 33 years of adjusted daily history. Auth is
-      `Authorization: Token <key>`; put the key in `config.py` as
-      `tiingo_api_key` mirroring `fred_api_key` (plain env name, not
-      `TAIL_LAB_`-prefixed).
+      verified (`HUMAN_TODO.md`, 2026-09-03). **Amended 2026-10-10:** the key
+      is already in `config.py` (`tiingo_api_key`) and a Tiingo adapter exists
+      — `ingestion/tiingo_eod.py` writes `tiingo_eod` (#14: as-traded close,
+      dividends, splits, whole universe, weekly). Reuse that getter and its
+      throttle; do NOT add a second Tiingo fetch path or a second key. This
+      item now narrows to OHLCV itself: replace or back `ohlcv_<sym>` from
+      Tiingo, demote Yahoo, update `docs/DATA_CONTRACTS.md` #1. Budget: the
+      weekly `tiingo_eod` run already spends ~70 requests (≤ 45/hour) of the
+      free tier's ~50/hour and 500 symbols/month — an OHLCV run must share that
+      budget, not double it. Measured: SPY 1993-01-29 → 2026-09-02 with
+      `adjClose` and `divCash`, so 33 years of adjusted daily history.
 
       **DO NOT also attempt the delisted backfill on Tiingo.** The gate this
       item used to carry — "spot-check LEH/BSC/WM/SIVB actually return data
@@ -2938,7 +2941,16 @@ ever go down.
 
 ## Found by validation (2026-08-27)
 
-- [ ] **Pass a dividend yield through the roll backtest.** Discovered by
+- [x] **Done 2026-10-10: the roll backtest and its siblings take the name's measured
+      yield** from `tiingo_eod` (`transforms/dividend_yield.py`,
+      `research/dividends.py`); `make greeks-check` on 2026-10-08: HYG
+      0.109 → 0.023, TLT 0.021 → 0.012. The keyless method proposed below
+      (`close` vs `adj_close`) is **obsolete**: bronze OHLCV comes from Nasdaq,
+      split-adjusted only, so that divergence is ~0 and would read q ≈ 0. Open
+      follow-up: annual payers (FXI) price worse with a continuous yield —
+      discrete dividends inside an option's life (`option_pricer.py`
+      assumption 4). Original item:
+- [x] **Pass a dividend yield through the roll backtest.** Discovered by
       `make greeks-check`, the new scoring of our greeks against the
       exchange's own (`docs/adr/0020` chains). The delta error orders itself
       by distribution yield exactly as theory demands — TSLA (no payout)

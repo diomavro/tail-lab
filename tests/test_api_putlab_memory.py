@@ -96,10 +96,54 @@ def test_record_then_prior_art_accumulates(client: TestClient) -> None:
     second = client.post("/api/putlab/memory/record", params=_RULE, headers=auth).json()
     assert all(r["run_count"] == 2 for r in second["recorded"])
 
+    # This lake has no Tiingo snapshot, so every roll priced at an unknown
+    # q = 0: the runs are filed under the "none" hash and read back as legacy,
+    # never as measured evidence.
     art = client.get("/api/putlab/memory", params=_RULE).json()
-    assert art["verdict"] in {"confirmed", "regime_only", "failed"}
-    assert art["outcomes"]
-    assert all(o["run_count"] == 2 for o in art["outcomes"])  # persisted, accumulated
+    assert body["rule_hash"] == art["legacy"]["rule_hash"] != art["rule_hash"]
+    assert art["verdict"] == "untested" and art["outcomes"] == []
+    legacy = art["legacy"]
+    assert legacy["verdict"] in {"confirmed", "regime_only", "failed"}
+    assert legacy["note"] == "priced without dividends (q = 0)"
+    assert all(o["run_count"] == 2 for o in legacy["outcomes"])  # persisted, accumulated
+    assert all(o["spec"]["dividends"] == "none" for o in legacy["outcomes"])
+
+
+def test_a_dividend_measured_run_is_filed_under_its_own_hash(
+    client: TestClient, caplog: pytest.LogCaptureFixture
+) -> None:
+    from tail_lab.research import dividends
+    from tests.test_research_dividends import seed_tiingo_eod
+
+    dividends._memo.clear()
+    lake = app.dependency_overrides[mem_get_lake_store]()
+    seed_tiingo_eod(lake, ["spy"], dt.datetime.now(dt.UTC).date())
+    auth = {"Authorization": f"Bearer {TOKEN}"}
+    recorded = client.post("/api/putlab/memory/record", params=_RULE, headers=auth).json()
+    art = client.get("/api/putlab/memory", params=_RULE).json()
+    # Stored under the measured hash, the spec saying so -- and nothing legacy.
+    assert recorded["rule_hash"] == art["rule_hash"]
+    assert art["outcomes"] and all(o["spec"]["dividends"] == "measured" for o in art["outcomes"])
+    # The run id names the dividend data the run priced with, so a re-record on
+    # a new Tiingo snapshot is a different run.
+    assert all("#tiingo_eod@" in o["last_run_id"] for o in art["outcomes"])
+    lines = [
+        r.getMessage() for r in caplog.records if "event=putlab.memory.record " in r.getMessage()
+    ]
+    assert lines and all(
+        "dividend_snapshot=tiingo_eod@" in m and "dividends=measured" in m for m in lines
+    )
+    assert art["legacy"] is None
+
+
+def test_pre_dividend_records_keep_their_hash() -> None:
+    # Pinned before RuleSpec gained `dividends`: every stored record is keyed by
+    # this hash, so changing it would orphan the whole memory.
+    from tail_lab.contracts.hypothesis import RuleSpec
+
+    spec = RuleSpec(asset="spy", moneyness_pct=5, tenor_weeks=4, lookback_years=4)
+    assert spec.rule_hash() == "h-a0360216"
+    assert spec.model_copy(update={"dividends": "measured"}).rule_hash() != "h-a0360216"
 
 
 def test_record_404_unknown_asset(client: TestClient) -> None:
@@ -115,3 +159,32 @@ def test_record_404_unknown_asset(client: TestClient) -> None:
 def test_prior_art_is_public(client: TestClient) -> None:
     # No token needed for the read.
     assert client.get("/api/putlab/memory", params=_RULE).status_code == 200
+
+
+def test_a_record_cites_the_snapshot_its_prices_used_even_if_one_lands_mid_request(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # A weekly ingest can land between the backtest and the run id: the record
+    # must name the data the prices came from, so it reads the snapshot once.
+    from tail_lab.research import dividends
+    from tests.test_research_dividends import seed_tiingo_eod
+
+    dividends._memo.clear()
+    lake = app.dependency_overrides[mem_get_lake_store]()
+    seed_tiingo_eod(lake, ["spy"], dt.datetime.now(dt.UTC).date())
+    real = type(lake).bronze_snapshot_id
+    reads = {"n": 0}
+
+    def later_after_first(self: object, dataset: str, as_of: dt.date) -> str:
+        snap = real(lake, dataset, as_of)
+        if dataset == "tiingo_eod":
+            reads["n"] += 1
+            return snap if reads["n"] == 1 else "tiingo_eod@LATER#ingest-landed"
+        return snap
+
+    monkeypatch.setattr(type(lake), "bronze_snapshot_id", later_after_first)
+    auth = {"Authorization": f"Bearer {TOKEN}"}
+    client.post("/api/putlab/memory/record", params=_RULE, headers=auth)
+    art = client.get("/api/putlab/memory", params=_RULE).json()
+    assert art["outcomes"]
+    assert all("LATER" not in o["last_run_id"] for o in art["outcomes"])

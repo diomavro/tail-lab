@@ -41,10 +41,40 @@ PARAMETERISATION: Final = (
     "this confounds regime comparisons (docs/PRIOR_ART.md §1)"
 )
 LOG_BASIS_NOTE: Final = "dismissed -- docs/adr/0026 §5: log returns are not in RV_alpha"
-RATE_NOTE: Final = (
-    "q is an index-like dividend yield and is WRONG for income names (HYG, TLT); "
-    "anchor_iv, lambda_guard_ok and the Black-Scholes overlay depend on it"
-)
+_Q_DEPENDS: Final = "anchor_iv, lambda_guard_ok and the Black-Scholes overlay depend on it"
+
+
+#: Each measured source in a reader's words -- never the raw label.
+_Q_SOURCE_WORDS = {
+    "measured": "this name's own dividend yield, from its paid dividends",
+    "short_history": "this name's own dividend yield, from fewer payments than a year, scaled up",
+    "carried": "this name's own dividend yield, carried from the data's last day",
+    "stale": "this name's own dividend yield, carried over three weeks -- Tiingo needs a refresh",
+    "non_payer": "zero: this name has never paid a dividend",
+    "suspended": "zero: this name has stopped paying dividends",
+}
+
+
+def rate_note_for(q_source: str) -> str:
+    """What the reader must know about ``q`` for this reading.
+
+    ``"assumed"`` is the fallback whenever the name's own yield is ``unknown``:
+    before the first Tiingo ingest, a name it does not cover, a date before the
+    name's data, a single dividend so far or since a long pause (no frequency
+    yet), or a dividend the close cannot support (the frontend's
+    ``UNKNOWN_Q_CAUSES`` lists the same causes). It is the old flat index-like
+    1.9% -- wrong for income names, and not what the backtest uses there
+    (q = 0, labelled unknown). Every other source comes
+    from the name's own dividend record (`transforms/dividend_yield.py`): a
+    measured yield, or a real zero for a name that never paid or stopped.
+    """
+    if q_source == "assumed":
+        return (
+            "q is an assumed index-like dividend yield "
+            "(this name's own yield could not be measured) "
+            f"and is WRONG for income names (HYG, TLT); {_Q_DEPENDS}"
+        )
+    return f"q is {_Q_SOURCE_WORDS.get(q_source, q_source)}; {_Q_DEPENDS}"
 
 
 @dataclass(frozen=True)
@@ -103,6 +133,9 @@ class SurfaceReading:
     parameterisation: str
     r: float
     q: float
+    #: Where ``q`` came from: a ``transforms.dividend_yield`` source, or
+    #: ``"assumed"`` for the flat index-like fallback.
+    q_source: str
     rate_note: str
     anchor_iv: float | None
     lambda_guard_ok: bool | None
@@ -245,6 +278,7 @@ def read_surface(
     tenor_days: float,
     r: float,
     q: float,
+    q_source: str = "assumed",
 ) -> SurfaceReading | None:
     """Assemble the Surface for ``underlying`` from one session of chain quotes.
 
@@ -292,7 +326,8 @@ def read_surface(
         parameterisation=PARAMETERISATION,
         r=r,
         q=q,
-        rate_note=RATE_NOTE,
+        q_source=q_source,
+        rate_note=rate_note_for(q_source),
         anchor_iv=anchor_iv,
         lambda_guard_ok=guard,
         anchors=anchors,

@@ -50,11 +50,55 @@ export interface PutBacktestCycle {
   spot: number
   strike: number
   sigma: number
+  /** Dividend yield this roll was priced with, taken at entry, and where it
+   *  came from (transforms/dividend_yield.py). On the market path q is 0 and
+   *  q_source is null: the premium is a real quote, not priced with q. */
+  q: number
+  q_source: DividendSource | null
+  /** Years to expiry the premium was priced with (trading days / 252); null on
+   *  the market path. */
+  t_years: number | null
   premium: number
+  /** True when Black-Scholes gave less than spot x 0.0001 and the premium is
+   *  that floor, not a model price. */
+  premium_floored: boolean
   contracts: number
   cost: number
   payoff: number
   net: number
+}
+
+/** Where a dividend yield came from. "unknown" is priced at q = 0. */
+export type DividendSource =
+  | 'measured'
+  | 'non_payer'
+  | 'suspended'
+  | 'short_history'
+  | 'carried'
+  | 'stale'
+  | 'unknown'
+
+/** One dividend summed into q: cash paid per share, and that cash on the
+ *  pricing date's share basis (after any later split). */
+export interface DividendPayment {
+  ex_date: string
+  cash: number
+  adjusted: number
+}
+
+/** The yield behind the latest roll, laid out to be redone by hand:
+ *  q = -ln(1 - sum(adjusted) / close). See put_roll.DividendBasisView. */
+export interface DividendBasis {
+  date: string
+  q: number
+  source: DividendSource
+  age_days: number
+  close: number | null
+  /** D exactly as used (scaled to a year for short_history) and N, the
+   *  payments a year it stands for: q = -ln(1 - annual / close). */
+  annual: number
+  per_year: number
+  payments: DividendPayment[]
 }
 
 export interface EquityPoint {
@@ -98,6 +142,12 @@ export interface PutBacktestResponse {
    *  "model"; carried through so a model-priced ROI never looks identical to
    *  a market-priced one once the route can serve either. */
   priced_from: 'model' | 'market'
+  /** "measured" iff no roll priced from an unknown yield; null on the market
+   *  path. The hypothesis memory hashes on it. */
+  q_source: 'measured' | 'none' | null
+  /** The tiingo_eod snapshot the yields came from; null without one. */
+  dividend_snapshot: string | null
+  dividend_basis: DividendBasis | null
   equity_curve: EquityPoint[]
   mtm_curve: EquityPoint[]
   price_path: PricePoint[]
@@ -374,6 +424,8 @@ export interface RankedAsset {
   asset: string
   name: string
   spot: number
+  /** The dividend basis this row's backtest priced on (see PutBacktestResponse.q_source). */
+  q_source: 'measured' | 'none' | null
   downside_beta: number | null
   co_skewness: number | null
   co_kurtosis: number | null
@@ -714,6 +766,8 @@ export interface SurfaceReading {
   parameterisation: string
   r: number
   q: number
+  /** Where q came from: a measured-yield source, or 'assumed' (flat index-like fallback). */
+  q_source: string
   rate_note: string
   anchor_iv: number | null
   lambda_guard_ok: boolean | null

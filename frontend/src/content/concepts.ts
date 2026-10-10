@@ -28,6 +28,13 @@ export interface Concept {
 
 // Ordered by category following CATEGORY_ORDER, so CONCEPT_LIST is already
 // display-ordered.
+/** Every reason a name's dividend yield can be "unknown" (and its roll priced
+ *  at q = 0). One list, read by the glossary, the price build and the ranking's
+ *  q = 0 note, so no copy can drop a cause; the docstring of
+ *  research/surface/reading.py `rate_note_for` names the same causes. */
+export const UNKNOWN_Q_CAUSES =
+  'no dividend data for this name or for this date, a single dividend so far or since a long pause (no frequency to read), or a dividend the close cannot support'
+
 export const CONCEPTS: Record<string, Concept> = {
   // ---------------------------------------------------------------- thesis
   fragility_thesis: {
@@ -186,12 +193,26 @@ export const CONCEPTS: Record<string, Concept> = {
     short:
       'Every premium is a Black-Scholes price using trailing realized volatility as an IV stand-in -- not a real historical option quote.',
     formula:
-      'premium = BlackScholesPut(spot, strike, T, r=0.04, σ);  σ = clip(annualized 20-day realized vol, 0.06, 2.0)',
+      'premium = BlackScholesPut(spot, strike, T, r=0.04, σ, q);  σ = clip(annualized 20-day realized vol, 0.06, 2.0);  q = the name\'s dividend yield',
     intuition:
       'Real historical option quotes are paid data the project does not yet have, so v1 prices every put with closed-form Black-Scholes (ADR 0004). The implied-volatility input is a proxy: the trailing 20-day realized volatility of the underlying (sample std of daily log returns, annualized by √252), floored at 0.06 and capped at 2.0 so a dead-calm or crashing short window cannot imply free or absurd puts. The point-in-time honesty holds -- the vol at each entry uses only past prices -- but there is a deep caveat: the whole thesis is that the market MISPRICES tail risk, and a model priced off its own vol inputs cannot see that mispricing.',
     howToRead:
       'Read the put P&L as a RELATIVE ranking of which fragility metric sorts payoffs best, never as literal expected P&L. Absolute ROI numbers will change (likely a lot) once real option quotes replace the model.',
-    seeAlso: ['oom_put', 'roi_on_premium', 'in_sample', 'fragility_thesis'],
+    seeAlso: ['oom_put', 'roi_on_premium', 'dividend_yield', 'in_sample', 'fragility_thesis'],
+  },
+  dividend_yield: {
+    id: 'dividend_yield',
+    term: 'Dividend yield (q)',
+    category: 'option',
+    short:
+      'The continuous yield the stock pays away to its holders -- it lowers the forward price, so every put on a payer is worth more than a q = 0 price says.',
+    formula:
+      'q = −ln(1 − D / S);  D = sum of the last N dividends (N = 1, 2, 4 or 12 a year), each on the share basis of the day q is measured;  S = that day\'s as-traded close',
+    intuition:
+      'A put is a claim on where the stock will be at expiry, and a stock that pays a dividend drops by it on the ex-date -- so a payer is expected to end lower than a non-payer with the same price and volatility, and its puts cost more. Until October 2026 this lab priced every name at q = 0, which under-priced puts on income names worst: scored against the exchange\'s own deltas, HYG was off by 0.197 and TLT by 0.060, against 0.004 for SPY. q is now read from each name\'s paid dividends (Tiingo): the last N payments at its own frequency, summed and divided by the close. It deliberately carries no forecast, so it lags a cut by up to N payments, a special dividend moves it for N payments (up if larger than a regular payment, down if smaller), and it misses a dividend falling inside a short put\'s life (the stock drops by a whole quarterly dividend, ~0.3% of spot at q ≈ 1.3%, inside a 21-day SPY put that spans an ex-date, where q·T with T = 21/252 takes only ~0.1% off the expected price -- so that put\'s model expects the stock ~0.2% of spot too high and under-prices it, while the two in three that span no ex-date expect it ~0.1% too low and over-price; the premium errors are those shifts times the delta, and they net out over a year, not roll by roll).',
+    howToRead:
+      `Every roll says where its q came from. "measured" is the name's own payments; "non-payer" and "suspended" are real zeros; "carried" and "stale" are the last measured value held past the data's end; "unknown" means q could not be read -- ${UNKNOWN_Q_CAUSES} -- and the roll was priced at q = 0: read those numbers as the old, cheap prices.`,
+    seeAlso: ['model_priced', 'oom_put'],
   },
 
   // ---------------------------------------------------------------- result

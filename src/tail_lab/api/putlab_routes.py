@@ -89,6 +89,7 @@ from tail_lab.research.backtest.roll_schedule import RollSchedule, build_roll_sc
 from tail_lab.research.backtest.sweep import MODEL_PRICED_MAX_MONEYNESS_PCT, run_sweep
 from tail_lab.research.cadence import resolve_cadence
 from tail_lab.research.data_quality import DataQualityReport, assess_asset_quality
+from tail_lab.research.dividends import dividend_lookup, dividend_snapshot_id
 from tail_lab.research.regimes.timeline import RegimeTimelineView, compute_regime_view
 from tail_lab.research.surface.reading import read_surface
 
@@ -211,6 +212,11 @@ def _snapshot(store: LakeStore, dataset: str, as_of: dt.date) -> str | None:
         return None
 
 
+def _cited_dividend_snapshot(ranking: UniverseRanking) -> str | None:
+    """The dividend snapshot a ranking cites in its own ``snapshot_ids``."""
+    return next((s for s in ranking.snapshot_ids if s.startswith("tiingo_eod@")), None)
+
+
 def _log_run(
     store: LakeStore,
     event: str,
@@ -224,7 +230,12 @@ def _log_run(
     """Emit the §f structured run line for a backtest/mart build: identity
     (asset, as-of, bronze snapshot ids, code SHA), parameters, and headline
     outputs (docs/STANDARDS.md §f)."""
-    snaps: dict[str, str | None] = {"ohlcv_snapshot": _snapshot(store, dataset_id(asset), as_of)}
+    snaps: dict[str, str | None] = {
+        "ohlcv_snapshot": _snapshot(store, dataset_id(asset), as_of),
+        # The dividend basis every model price used (None before the first
+        # Tiingo ingest, when every q was an unknown 0).
+        "dividend_snapshot": dividend_snapshot_id(store, as_of),
+    }
     for field, ds in extra_snapshots:
         snaps[field] = _snapshot(store, ds, as_of)
     log_event(
@@ -287,6 +298,7 @@ def putlab_backtest(
             "n_cycles": result.n_cycles,
             "roi_on_premium": result.roi_on_premium,
             "net_pnl": result.net_pnl,
+            "q_source": result.q_source,
             "sharpe_ratio": result.sharpe_ratio,
             "benchmark_annualized": result.benchmark_annualized,
         },
@@ -341,7 +353,13 @@ def putlab_sweep(
         raise HTTPException(status_code=404, detail=str(exc)) from exc
 
     cells = run_sweep(
-        prices, realized_vol_proxy, asset=asset, as_of=resolved, notional=notional, years=years
+        prices,
+        realized_vol_proxy,
+        asset=asset,
+        as_of=resolved,
+        notional=notional,
+        years=years,
+        dividends=dividend_lookup(store, asset, resolved).lookup,
     )
     if not cells:
         raise HTTPException(status_code=404, detail=f"no scorable window for {asset}")
@@ -563,6 +581,7 @@ def putlab_portfolio(
     log_event(
         logger,
         "putlab.portfolio",
+        dividend_snapshot=dividend_snapshot_id(store, resolved),
         as_of=resolved,
         n_legs=len(body.legs),
         notional=body.notional,
@@ -745,6 +764,7 @@ def putlab_roll_schedule(
         key=lambda r: -(r.best_annualized or 0.0),
     )[:top_k]
     sigma_by_asset: dict[str, float] = {}
+    q_by_asset: dict[str, float] = {}
     for row in wanted:
         try:
             _, realized_vol_proxy = load_asof_series(store, row.asset, resolved)
@@ -753,6 +773,11 @@ def putlab_roll_schedule(
         trailing = realized_vol_proxy.dropna()
         if not trailing.empty:
             sigma_by_asset[row.asset] = float(trailing.iloc[-1])
+        # Read fresh, while `ranking` may be the memo's copy: for up to one memo
+        # refresh (15 min) after a weekly Tiingo ingest, the quoted premium uses
+        # the new q and the ranking that picked the leg the old one. Accepted:
+        # q moves by basis points week to week, and the next refresh realigns.
+        q_by_asset[row.asset] = dividend_lookup(store, row.asset, resolved).lookup(resolved).q
 
     schedule = build_roll_schedule(
         ranking.ranked,
@@ -763,10 +788,16 @@ def putlab_roll_schedule(
         screen_moneyness_pct=moneyness_pct,
         screen_tenor_weeks=tenor_weeks,
         lookback_years=years,
+        q_by_asset=q_by_asset,
     )
     log_event(
         logger,
         "putlab.roll_schedule",
+        # Two bases can differ for one memo refresh after a weekly ingest: the
+        # (possibly memoised) ranking that picked the legs, and the fresh read
+        # the premiums were quoted on. Log both rather than claim one.
+        ranking_dividend_snapshot=_cited_dividend_snapshot(ranking),
+        premium_dividend_snapshot=dividend_snapshot_id(store, resolved),
         as_of=resolved,
         moneyness_pct=moneyness_pct,
         tenor_weeks=tenor_weeks,
@@ -810,6 +841,9 @@ def putlab_leaderboard(
     log_event(
         logger,
         "putlab.leaderboard",
+        # What THIS ranking priced with -- it may be the memo's copy, so a
+        # fresh read could name a snapshot it never used.
+        dividend_snapshot=_cited_dividend_snapshot(ranking),
         as_of=resolved,
         moneyness_pct=moneyness_pct,
         tenor_weeks=tenor_weeks,
@@ -856,6 +890,7 @@ def putlab_metric_screen(
     log_event(
         logger,
         "putlab.metric_screen",
+        dividend_snapshot=dividend_snapshot_id(store, resolved),
         as_of=resolved,
         moneyness_pct=moneyness_pct,
         tenor_weeks=tenor_weeks,
@@ -898,6 +933,10 @@ def putlab_surface(
         prices: pd.Series | None = load_asof_series(store, asset, resolved)[0]
     except LookupError:
         prices = None
+    # The name's own measured yield; without one, the old flat index-like
+    # yield, labelled "assumed" so the page can say it is wrong for income names.
+    dividend = dividend_lookup(store, asset, resolved).lookup(resolved)
+    measured = dividend.source != "unknown"
     reading = read_surface(
         chain,
         prices,
@@ -905,7 +944,8 @@ def putlab_surface(
         moneyness_pct=moneyness_pct,
         tenor_days=tenor_days,
         r=DEFAULT_RATE,
-        q=DEFAULT_DIVIDEND_YIELD,
+        q=dividend.q if measured else DEFAULT_DIVIDEND_YIELD,
+        q_source=dividend.source if measured else "assumed",
     )
     if reading is None:
         raise HTTPException(status_code=404, detail=f"no listed expiry for {asset} in the chain")
@@ -915,6 +955,7 @@ def putlab_surface(
     log_event(
         logger,
         "api.putlab.surface",
+        dividend_snapshot=dividend_snapshot_id(store, resolved),
         asset=asset,
         as_of=resolved,
         moneyness_pct=moneyness_pct,

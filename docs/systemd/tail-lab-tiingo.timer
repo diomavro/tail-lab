@@ -1,0 +1,17 @@
+[Unit]
+Description=Refresh Tiingo EOD, dividends and splits weekly
+
+[Timer]
+# Saturday 10:00 UTC: Friday's close is final, and it stays clear of the
+# weekday refresh (06:30 UTC) and the chain sweep (21:30 / 05:00 UTC). Weekly,
+# because a 70-symbol run takes ~92 minutes of the free tier's hourly budget,
+# and dividends change quarterly: the yield is carried with its age between
+# runs and flagged stale only after 21 days.
+OnCalendar=Sat 10:00 UTC
+# The laptop sleeps; Tiingo serves history on demand, so a catch-up at any
+# later hour returns the same data.
+Persistent=true
+AccuracySec=5min
+
+[Install]
+WantedBy=timers.target

@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import datetime as dt
 from dataclasses import dataclass, field
+from pathlib import Path
 
 import numpy as np
 import pandas as pd
@@ -632,3 +633,60 @@ def test_a_fill_expiring_on_its_own_entry_day_cannot_hang_the_roll() -> None:
             basis=PricingBasis(quotes=_ZeroDteSource()),
             include_curves=False,
         )
+
+
+def test_a_market_priced_backtest_cites_no_dividend_basis(tmp_path: Path) -> None:
+    # Real quotes, not q, price this run: it must not claim a dividend basis
+    # or snapshot it never used, even when one exists for the name.
+    from tail_lab.contracts.ohlcv import dataset_id
+    from tail_lab.lake.store import DeltaLakeStore
+    from tail_lab.research import dividends
+    from tail_lab.research.backtest.put_roll import compute_put_backtest
+    from tests.test_research_dividends import seed_tiingo_eod
+
+    dividends._memo.clear()
+    px = [100.0] * 35
+    px[34] = 84.0
+    _, _, dates = _build(px)
+    store = DeltaLakeStore(tmp_path)
+    store.write_bronze(
+        dataset_id("test"),
+        dates[-1],
+        pd.DataFrame(
+            {
+                "symbol": "TEST",
+                "trade_date": pd.to_datetime(dates),
+                "open": px,
+                "high": px,
+                "low": px,
+                "close": px,
+                "volume": 1_000_000,
+                "adj_close": px,
+            }
+        ),
+    )
+    seed_tiingo_eod(store, ["test"], dates[-1])
+    source = _FakeQuoteSource(
+        fills={
+            dates[20]: Fill(
+                premium=2.5,
+                strike=90.0,
+                expiry=dates[34],
+                realized_moneyness_pct=10.0,
+                realized_dte=14,
+            )
+        }
+    )
+    result = compute_put_backtest(
+        store,
+        asset="test",
+        as_of=dates[-1],
+        notional=1000.0,
+        moneyness_pct=10.0,
+        tenor_weeks=2.0,
+        lookback_years=5.0,
+        basis=PricingBasis(quotes=source),
+    )
+    assert result.priced_from == "market"
+    assert (result.q_source, result.dividend_snapshot, result.dividend_basis) == (None, None, None)
+    assert all(c.q_source is None and c.q == 0.0 for c in result.cycles)

@@ -117,9 +117,13 @@ them.
   ZERO gaps**; spx is not ingested. An earlier version of this line said "SPY
   has 63 of 168" and it was wrong: it predated the rest of the corpus arriving
   on 2026-09-03, and an adversarial reviewer built a whole finding on it.
-  The real constraint is that bronze OHLCV is a **rolling five-year Tiingo
-  window** (2021-08..2026-08) while this panel ends 2023-12, so anything
-  needing both has only **~589 overlapping trading days**. Two joins are also
+  The real constraint is that bronze OHLCV is **Nasdaq's ~10-year
+  split-adjusted history** (measured 2026-10-10: `ohlcv_spy` 2016-10-10 ..
+  2026-10-08) while this panel ends 2023-12, so anything needing both has
+  **1,818 overlapping trading days**. (An earlier version said "a rolling
+  five-year Tiingo window, ~589 days": the source moved to Nasdaq and that
+  line was never updated. Tiingo now feeds `tiingo_eod` -- dividends and
+  splits -- not OHLCV.) Two joins are also
   silently wrong: the panel's `spot` is as-traded while OHLCV `close` is
   split-adjusted (**nvda differs by exactly 10**), and VIX cannot be joined at
   all because its `spot` is the index while VIX options settle on futures.
@@ -151,20 +155,39 @@ them.
 - **Greeks exist now** (`option_pricer.PutGreeks`) in desk units: **vega per vol
   point, theta per calendar day**. `make greeks-check` scores them against the
   exchange's own from the chain snapshot — the only independent check that the
-  *model* is right, as opposed to internally consistent. **It found a live bug**:
-  the roll backtest prices every name at `q = 0`, so delta error tracks dividend
-  yield (TSLA 0.0006, SPY 0.0043, TLT 0.060, **HYG 0.197**). Put prices and
-  greeks on income names are biased cheap until that is fixed.
+  *model* is right, as opposed to internally consistent. It found that every
+  name was priced at `q = 0` (HYG's delta off by 0.197); since 2026-10 the
+  backtest, ranking, sweep, portfolio, metric screen, roll schedule and Surface
+  take the name's measured yield from
+  `tiingo_eod` via `research/dividends.py` -- HYG 0.109 -> 0.023, TLT
+  0.021 -> 0.012 on one session. The Book (`hedge_overlay`,
+  `contribution_plan`, `model_plan`), `index_replication` and `skew` still use
+  the flat 1.9% `DEFAULT_DIVIDEND_YIELD`. A continuous yield still mis-prices **annual payers** (FXI got
+  worse); see `option_pricer.py` assumption 4. Without a Tiingo snapshot every
+  roll says `q_source: unknown` and prices at 0 -- check that before trusting a
+  price on an income name.
+- **Verdict memory split on 2026-10-10 by dividend basis.** `RuleSpec` gained
+  `dividends` (`contracts/hypothesis.py`), hashed only when `"measured"`: every
+  older record keeps its hash, and a run where every roll had a real dividend
+  basis files under a NEW hash, so ADR 0015 evidence for q-aware rules accrues
+  from zero. `GET /api/putlab/memory` returns the measured record at the top
+  level and the old one as `legacy` ("priced without dividends"). A run that
+  priced even one roll at an unknown q = 0 still files under the old hash --
+  so before the first Tiingo ingest nothing changes, and a name that only
+  recently began paying (META, GOOGL) keeps filing as legacy while its window
+  covers the gap between its first and second dividend. `docs/adr/0015`'s
+  2026-10-10 amendment is the decision of record.
 - **Two backlogs:** the agent owns `AGENT_TODO.md`; anything needing an account/key/money goes to `HUMAN_TODO.md` and is never attempted by the agent.
 
 ## ARCHITECTURE.md's tree is partly aspirational
 
 The layer boundaries and dependency rules in `ARCHITECTURE.md` are enforced and real, but its file tree describes the end state, not the current code. As of now:
 
-- `contracts/` is one module per dataset (`vix.py`, `ohlcv.py`, `regime.py`, `options_calendar.py`, `option_quotes.py`, `option_chain.py`, `rates.py`, `credit.py`, `cboe_strategy.py`, `hypothesis.py`), not the single `datasets.py` shown.
+- `contracts/` is one module per dataset (`vix.py`, `ohlcv.py`, `regime.py`, `options_calendar.py`, `option_quotes.py`, `option_chain.py`, `rates.py`, `credit.py`, `cboe_strategy.py`, `hypothesis.py`, `tiingo_eod.py`), not the single `datasets.py` shown.
 - `lake/` is `store.py` (`LakeStore` protocol + `DeltaLakeStore`, including as-of resolution — there is no separate `asof.py`) and `blob_store.py` (JSON blobs, used by feedback).
 - `api/` is flat (`main.py`, `putlab_routes.py`, `feedback_routes.py`, `ingest_routes.py`, `schemas.py`), no `routes/` subpackage yet.
 - `feedback/` is a real layer (peer of ingestion/transforms in the import-linter contract) not shown in the tree.
+- `transforms/` gained `dividend_yield.py` (bronze `tiingo_eod` -> the yield `q`), and `research/dividends.py` is its one reader (backtest, ranking, sweep, portfolio, metric screen, roll schedule, Surface; not yet the Book).
 - `research/` currently has `metrics/` (downside_beta, downside_capture, tail_beta, co_skewness, co_kurtosis, vol_beta), `option_pricer.py` (one module, not the `pricing/` package `ARCHITECTURE.md` shows), `skew.py`, `accuracy.py`, `cadence.py`, `vix_stretch.py`, `data_quality.py`, `regimes/timeline.py`, `surface/` (hill, karamata, returns, paretan, ladder, implied_alpha, alpha_bound — the Paretan tail analytics, `docs/adr/0026`), and `backtest/` (put_roll, portfolio, ranking, metric_screen, regime_verdict, brokerage, index_replication, hedge_overlay, sizing, sweep, growth, marks, quote_fills, quote_cache, roll_schedule).
 
 Follow the existing code's shape when extending; update `ARCHITECTURE.md` in the same change if you move it structurally, and add an ADR for consequential decisions.

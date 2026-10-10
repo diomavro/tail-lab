@@ -1174,6 +1174,36 @@
 .pl-surface-disclosures details > :not(summary) { margin-top: var(--space-3); }
 .pl-surface-caveat { color: var(--ink-70); }
 .pl-surface-caveat p + p { margin-top: var(--space-2); }
+
+/* "How the price is built" (PriceBuild.tsx): a derivation, collapsed. */
+.pl-explain { color: var(--ink-70); max-width: 72ch; }
+.pl-explain summary { cursor: pointer; color: var(--cyan-2); }
+.pl-explain > :not(summary) { margin-top: var(--space-3); }
+.pl-explain-inputs {
+  display: grid;
+  grid-template-columns: max-content minmax(0, 1fr);
+  gap: 4px var(--space-4);
+  font-size: 14px;
+}
+.pl-explain-inputs dt { color: var(--ink-70); }
+.pl-explain-inputs dd { margin: 0; color: var(--ink); font-variant-numeric: tabular-nums; }
+.pl-explain .pl-table thead th {
+  /* The shared header grey is too faint (2.6:1) for a table a reader must
+     reconcile figure by figure; this one meets AA. */
+  color: var(--ink-70);
+}
+.pl-explain .pl-table th.pl-explain-rowhead {
+  /* A row header that reads like its row: a date, not a column title. */
+  font-size: 13px;
+  text-transform: none;
+  letter-spacing: 0;
+  color: var(--ink);
+  font-weight: 400;
+  border-bottom: 1px solid color-mix(in srgb, var(--ink) 8%, transparent);
+  padding: var(--space-2);
+  text-align: left;
+}
+.pl-explain-formula { font-size: 13.5px; color: var(--cyan-2); overflow-wrap: anywhere; }
 .is-narrow .pl-ladder-table { font-size: 12px; }
 
 /* --------------------------------------------------------------- book --- */
@@ -1284,3 +1314,7 @@
 .pl-arm-dd-track > span { display: block; height: 6px; background: var(--mag); }
 .pl-arm-dd-v { color: var(--mag-2); }
 
+/* The dividend derivation is a block of its own paragraphs: space them like
+   the section's direct children (--space-3). Scoped under .putlab-root to beat
+   its `p { margin: 0 }` reset. */
+.putlab-root .pl-explain-stack > * + * { margin-top: var(--space-3); }

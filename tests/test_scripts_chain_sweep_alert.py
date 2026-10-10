@@ -75,3 +75,25 @@ def test_the_refresh_context_says_nothing_is_lost(tmp_path: Path) -> None:
     body = _run("refresh", tmp_path)
     assert "serve history on demand" in body
     assert "Do not run the chain sweep" in body
+
+
+def test_the_tiingo_context_has_its_own_marker_and_remedy(tmp_path: Path) -> None:
+    """Fails without the `tiingo)` case: the `*)` fallback would write the CHAIN
+    sweep's marker -- overwriting a genuine chain alert -- and shout UNKNOWN.
+    (Adding "tiingo" to the negative list above would not catch that: `*)`
+    prints neither the chain command nor its panic.)"""
+    subprocess.run(
+        [str(SCRIPT), "tiingo"],
+        env={"PATH": "/usr/bin:/bin", "HOME": str(tmp_path), "TAIL_LAB_REPO": str(tmp_path)},
+        check=False,
+        capture_output=True,
+        timeout=60,
+    )
+    marker = tmp_path / ".tiingo-refresh-FAILED"
+    assert marker.exists()
+    assert not (tmp_path / ".chain-sweep-FAILED").exists()
+    body = marker.read_text()
+    assert "./scripts/weekly_tiingo_refresh.sh" in body
+    assert "serves history on demand" in body
+    assert "UNKNOWN" not in body
+    assert FORBIDDEN not in body and PANIC not in body
