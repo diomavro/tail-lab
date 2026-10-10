@@ -654,3 +654,18 @@ def test_a_run_with_one_payment_in_the_window_reads_its_last_two() -> None:
     )
     got = yields.at(day)
     assert (got.source, got.per_year) == ("measured", 1)
+
+
+def test_three_of_four_quarterly_payments_are_scaled_to_a_year() -> None:
+    # A quarterly payer with only 3 payments in its run (AAPL in early 2013):
+    # D is those three scaled by 4/3, labelled short_history -- not the three
+    # alone, which would read q a quarter low.
+    old = ["2005-03-15", "2005-06-15", "2005-09-15", "2005-12-15"]
+    new = ["2012-08-09", "2012-11-07", "2013-02-07"]
+    divs = {**dict.fromkeys(old, 0.25), **dict.fromkeys(new, 2.65)}
+    got = DividendYields("x", _history("2005-01-03", "2013-03-29", 450.0, divs)).at(
+        dt.date(2013, 3, 1)
+    )
+    assert got.source == "short_history" and got.per_year == 4
+    assert got.annual == pytest.approx(2.65 * 3 * 4 / 3)
+    assert got.q == pytest.approx(_q(2.65 * 4, 450.0))

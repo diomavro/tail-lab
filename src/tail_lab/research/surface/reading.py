@@ -60,8 +60,9 @@ def rate_note_for(q_source: str) -> str:
 
     ``"assumed"`` is the fallback when no measured yield exists for the name
     (before the first Tiingo ingest, or a name it does not cover): the old flat
-    index-like 1.9%, which is wrong for income names. Every other source is the
-    name's own measured yield (`transforms/dividend_yield.py`).
+    index-like 1.9%, which is wrong for income names. Every other source comes
+    from the name's own dividend record (`transforms/dividend_yield.py`): a
+    measured yield, or a real zero for a name that never paid or stopped.
     """
     if q_source == "assumed":
         return (

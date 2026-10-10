@@ -150,6 +150,16 @@ test('on the market path q is not used and says so', async ({ page }) => {
   await expect(section).not.toContainText('Every roll is priced as a Black')
   await expect(section).not.toContainText('What a trailing yield cannot see')
   await expect(section).not.toContainText('a model-priced backtest like this one')
+  // r enters no listed ask either.
+  await expect(section.getByTestId('price-build-r')).toHaveText('not used: the premium is a real quote')
+})
+
+test('on the model path the section says a model backtest is not Book evidence', async ({ page }) => {
+  const section = await open(page)
+  await expect(section).toContainText(
+    'only Cboe’s real-quote programs count as evidence, never a model-priced backtest like this one (ADR 0027)',
+  )
+  await expect(section.getByTestId('price-build-r')).toHaveText('4.210%')
 })
 
 // Black–Scholes put, as research/option_pricer.py prices it -- the reader's check.

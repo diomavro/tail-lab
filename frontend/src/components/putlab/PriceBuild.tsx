@@ -79,7 +79,7 @@ export function PriceBuild({ bt }: { bt: PutBacktestResponse }) {
         <dt>Time</dt>
         <dd>{last.t_years == null ? 'to the listed expiry' : `${last.t_years.toFixed(4)} years (trading days / 252)`}</dd>
         <dt>Rate r</dt>
-        <dd>{pct(bt.rate, 3)}</dd>
+        <dd data-testid="price-build-r">{market ? 'not used: the premium is a real quote' : pct(bt.rate, 3)}</dd>
         <dt>Volatility σ</dt>
         <dd>{pct(last.sigma, 3)} (20-day realised)</dd>
         <dt>Dividend yield q</dt>

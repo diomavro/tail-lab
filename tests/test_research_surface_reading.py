@@ -177,7 +177,7 @@ def test_gap_is_implied_minus_realised_when_both_exist() -> None:
         ("measured", "from its paid dividends"),
         ("short_history", "scaled up"),
         ("carried", "carried from the data's last day"),
-        ("stale", "Tiingo needs a refresh"),
+        ("stale", "carried over three weeks -- Tiingo needs a refresh"),
         ("non_payer", "never paid a dividend"),
         ("suspended", "stopped paying"),
     ],
