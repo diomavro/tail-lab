@@ -24,12 +24,15 @@ const SOURCE_TEXT: Record<DividendSource, string> = {
 }
 
 const pct = (x: number, digits = 2) => `${(x * 100).toFixed(digits)}%`
-/** A dividend figure exactly as the backend holds it (vendor cash has few
- *  decimals; float noise beyond ten significant digits is dropped), so the
- *  formula and the table can be redone to q's last printed digit -- any fixed
- *  rounding missed it on low-priced names (EEM: 1.0400 / 43.12 -> 2.441%,
- *  printed 2.442%). */
+/** D and S exactly as the backend holds them (float noise past ten
+ *  significant digits dropped), so the formula reproduces q's last printed
+ *  digit -- any fixed rounding missed it on low-priced names (EEM: 1.0400 /
+ *  43.12 -> 2.441%, printed 2.442%). */
 const exact = (x: number) => String(Number(x.toPrecision(10)))
+/** A payment in the table: cash paid has the vendor's few decimals, but its
+ *  split-adjusted value is a quotient (0.37 / 3), so rows are rounded to six
+ *  decimals and say so; D above sums them unrounded. */
+const six = (x: number) => String(Number(x.toFixed(6)))
 const days = (n: number) => `${n} day${n === 1 ? '' : 's'}`
 
 /** The session q was measured on: the requested date, less any carry. */
@@ -91,9 +94,9 @@ export function PriceBuild({ bt }: { bt: PutBacktestResponse }) {
         special dividend moves q for up to a year &mdash; up if it is larger than a regular payment, down if smaller
         &mdash; and a dividend falling inside a short put&rsquo;s life is spread across the year: the stock drops by a
         whole quarterly dividend (~0.3% of spot at q &asymp; 1.3%) inside a 21-day SPY put that spans an ex-date, where
-        q&middot;T, with T = 21/252, prices in ~0.1% of spot &mdash; so that put is under-priced, and the two in three
-        that span no ex-date are over-priced by the same ~0.1%. Across a year of rolls it nets out; roll by roll it
-        does not.
+        q&middot;T, with T = 21/252, prices in ~0.1% of spot &mdash; so that put is under-priced by ~0.2% of spot, and
+        each of the two in three that span no ex-date is over-priced by ~0.1%. Across a year of rolls it nets out;
+        roll by roll it does not.
       </p>
       <p className="pl-note">
         Next: the strike itself is a fixed distance below spot here, which reaches very different deltas in calm and
@@ -110,6 +113,9 @@ function DividendDerivation({ basis }: { basis: DividendBasis }) {
   // Any source can be carried past the data's last day -- a real zero too.
   const carried = basis.age_days > 0 ? ` (as of the data's last day, ${days(basis.age_days)} earlier)` : ''
   const on = measuredOn(basis)
+  // Whether any row is rounded -- then its header says so, and the rows can
+  // miss D's last digit by the rounding.
+  const rounded = basis.payments.some((p) => six(p.adjusted) !== exact(p.adjusted))
   return (
     <div data-testid="price-build-dividends" className="pl-explain-stack">
       <p>
@@ -144,7 +150,7 @@ function DividendDerivation({ basis }: { basis: DividendBasis }) {
                 <tr>
                   <th>Ex-date</th>
                   <th className="num">Paid per share</th>
-                  <th className="num">On {on}&rsquo;s basis</th>
+                  <th className="num">On {on}&rsquo;s basis{rounded ? ' (6 dp)' : ''}</th>
                 </tr>
               </thead>
               <tbody>
@@ -155,7 +161,7 @@ function DividendDerivation({ basis }: { basis: DividendBasis }) {
                       {p.ex_date}
                     </th>
                     <td className="num">{exact(p.cash)}</td>
-                    <td className="num">{exact(p.adjusted)}</td>
+                    <td className="num">{six(p.adjusted)}</td>
                   </tr>
                 ))}
               </tbody>

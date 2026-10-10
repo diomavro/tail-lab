@@ -55,8 +55,9 @@ annual payer can read ``N = 2``. A carried ``short_history`` value is labelled `
 ``annual`` is still the scaled figure. And a trailing estimate misses a dividend inside a short put's
 life: the stock drops a whole quarterly dividend (~0.3% of spot at q ~ 1.3%)
 inside a 21-day SPY put that spans an ex-date, where ``q·T`` (T = 21/252) prices
-in ~0.1% of spot -- that put is under-priced, and the two in three that span no
-ex-date are over-priced by the same ~0.1%; it nets out over a year, not per roll.
+in ~0.1% of spot -- that put is under-priced by ~0.2% of spot, and each of the two
+in three that span no ex-date is over-priced by ~0.1%; it nets out over a year,
+not per roll.
 """
 
 from __future__ import annotations

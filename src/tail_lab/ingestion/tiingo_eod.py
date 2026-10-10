@@ -12,7 +12,7 @@ assumption 4).
 Budget: the free tier allows about 50 requests an hour. One request per
 symbol returns its whole history, so a run is ``len(universe)`` requests;
 :func:`tiingo_getter` spaces them :data:`THROTTLE_S` apart (≤ 45/hour), which
-makes a 70-symbol run take about 95 minutes. A manual use of the same key in
+makes a 70-symbol run take about 92 minutes. A manual use of the same key in
 that hour can still trip a 429; the fetch then retries with a long backoff and,
 if the hour is truly spent, fails -- and a failed fetch aborts the write.
 
@@ -28,7 +28,7 @@ Write policy, and why each half exists:
   absent, which every reader treats as ``q`` unknown.
 * **A run on a day that already has a partition does nothing** and says so:
   bronze is immutable (a second write would be a no-op anyway), and skipping
-  saves the 95 minutes of rate-limited fetching.
+  saves the ~92 minutes of rate-limited fetching.
 
 Three-function seam as everywhere else, so tests never touch the network:
 the pure parser :func:`parse_tiingo_prices`, the validator
@@ -132,7 +132,7 @@ def tiingo_getter(
             raise requests.exceptions.ContentDecodingError("Tiingo returned an empty 200 body")
         # Parsed INSIDE the retried call: a truncated or HTML 200 raises
         # requests' JSONDecodeError, which retry_transient treats as a blip --
-        # as every sibling adapter does -- rather than killing a 95-minute run.
+        # as every sibling adapter does -- rather than killing a 92-minute run.
         payload: object = resp.json()
         return payload
 

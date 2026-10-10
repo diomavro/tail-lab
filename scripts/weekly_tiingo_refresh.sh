@@ -22,7 +22,7 @@
 #   * a failed fetch fails the run (non-zero, so OnFailure= fires); the ingest
 #     itself has already refused to write a partition missing a symbol.
 #   * re-running the same day is a logged no-op: the ingest skips a day whose
-#     partition already exists rather than spending 95 minutes to no-op.
+#     partition already exists rather than spending ~92 minutes to no-op.
 set -uo pipefail
 
 # Overridable ONLY so tests can sandbox it; systemd sets neither.
@@ -36,7 +36,7 @@ exec 9>"$LOCK" || exit 1
 # instead of every later run reporting success (local_daily_refresh.sh).
 if ! flock -w "$LOCK_WAIT" 9; then
   echo "=== tiingo refresh $(date -u +%FT%TZ): $LOCK still held after ${LOCK_WAIT}s ===" >> "$LOG"
-  echo "    A previous run is in flight (it takes ~95 min) or an orphaned child holds the lock." >> "$LOG"
+  echo "    A previous run is in flight (it takes ~92 min) or an orphaned child holds the lock." >> "$LOG"
   echo "    Check: fuser -v $LOCK" >> "$LOG"
   exit 1
 fi

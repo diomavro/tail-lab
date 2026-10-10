@@ -619,7 +619,7 @@ do.
       cd ~/Documents/apps/tail-lab && git pull --ff-only
       cp docs/systemd/tail-lab-tiingo.{service,timer} ~/.config/systemd/user/
       systemctl --user daemon-reload && systemctl --user enable --now tail-lab-tiingo.timer
-      make ingest-tiingo-eod     # first run now: ~95 min, throttled to 45 requests/hour
+      make ingest-tiingo-eod     # first run now: ~92 min, throttled to 45 requests/hour
       ```
 
       The key is already in `.env` (`TIINGO_API_KEY`). The run writes to the

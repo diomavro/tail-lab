@@ -1037,7 +1037,7 @@ silently wrong yield; a run on a day whose partition exists is a logged no-op.
 
 **Budget.** Free tier ≈ 50 requests/hour; one request per symbol returns its
 whole history, and the adapter spaces them 80 s apart (45/hour), so a run takes
-~95 minutes. Scheduled weekly (`docs/systemd/tail-lab-tiingo.timer`, Saturday
+~92 minutes (69 throttled gaps of 80 s). Scheduled weekly (`docs/systemd/tail-lab-tiingo.timer`, Saturday
 10:00 UTC) through `scripts/weekly_tiingo_refresh.sh`, which holds the
 dataset's own lock (`.tiingo-refresh.lock`).
 

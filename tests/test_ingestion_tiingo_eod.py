@@ -217,7 +217,7 @@ def test_the_getter_returns_the_parsed_payload(monkeypatch: pytest.MonkeyPatch) 
 
 
 def test_a_truncated_200_is_retried_like_any_blip(monkeypatch: pytest.MonkeyPatch) -> None:
-    # A half-sent body must not kill a 95-minute run on the first try: it is
+    # A half-sent body must not kill a 92-minute run on the first try: it is
     # parsed inside the retried call, as every sibling adapter does.
     bodies = [b'[{"date":"2020', b"<html>busy</html>", FIXTURE.read_bytes()]
     monkeypatch.setattr(
@@ -251,7 +251,7 @@ def test_a_body_that_never_parses_fails_with_the_real_fault_not_a_typeerror(
         tiingo_getter("SECRET", throttle_s=0.0, sleep=lambda s: None)("spy", {})
     assert len(calls) == tiingo_eod._FETCH_ATTEMPTS
     assert "SECRET" not in str(info.value)
-    # The line that ends a 95-minute run names the symbol and what came back.
+    # The line that ends a 92-minute run names the symbol and what came back.
     assert "for spy" in str(info.value)
     if not body:
         assert "returned an empty 200 body" in str(info.value)

@@ -152,7 +152,7 @@ render() {
       echo "Tiingo serves history on demand, so nothing is lost -- a re-run"
       echo "recovers the whole history. Until then every price uses the last"
       echo "dividend yields, carried with their age (flagged stale after 21"
-      echo "days). The run takes ~95 minutes (45 requests/hour). This is NOT the"
+      echo "days). The run takes ~92 minutes (45 requests/hour). This is NOT the"
       echo "option-chain sweep. Do not run the chain sweep because of this."
       ;;
     budget)

@@ -323,8 +323,11 @@ test('the payments add up to the D the formula uses, after a split', async ({ pa
   })
   const section = await open(page)
   const cells = await section.locator('tbody tr td:nth-child(3)').allInnerTexts()
+  expect(cells).toEqual(Array(4).fill('0.123333'))
+  // Rounded rows say so, and sum to D within their rounding (4 x 5e-7).
+  await expect(section.locator('thead')).toContainText('(6 dp)')
   const d = (await section.getByTestId('price-build-formula').innerText()).match(/1 − ([\d.]+) \//)![1]!
-  expect(cells.reduce((t, c) => t + Number(c), 0)).toBeCloseTo(Number(d), 9)
+  expect(Math.abs(cells.reduce((t, c) => t + Number(c), 0) - Number(d))).toBeLessThanOrEqual(4 * 5e-7)
 })
 
 test('a current yield names the day its share basis and close are from', async ({ page }) => {
@@ -337,12 +340,16 @@ test('a current yield names the day its share basis and close are from', async (
 test('the derivation paragraphs are spaced like the rest of the section', async ({ page }) => {
   const section = await open(page)
   const gap = await section.getByTestId('price-build-formula').evaluate((el) => getComputedStyle(el).marginTop)
-  expect(parseFloat(gap)).toBeGreaterThan(0)
+  // The same gap as between the section's own top-level blocks.
+  const sectionGap = await section.locator('> p').first().evaluate((el) => getComputedStyle(el).marginTop)
+  expect(parseFloat(sectionGap)).toBeGreaterThan(0)
+  expect(gap).toBe(sectionGap)
 })
 
 test('the ex-date caveat gives both sides of the bias', async ({ page }) => {
   const section = await open(page)
   const caveat = section.locator('.pl-caveat').first()
   await expect(caveat).toContainText('under-priced')
-  await expect(caveat).toContainText('over-priced by the same ~0.1%')
+  await expect(caveat).toContainText('under-priced by ~0.2% of spot')
+  await expect(caveat).toContainText('over-priced by ~0.1%')
 })

@@ -249,7 +249,7 @@ def test_a_real_zero_carried_past_the_data_keeps_its_label() -> None:
 def test_a_single_payment_ever_has_no_frequency_and_is_unknown() -> None:
     yields = DividendYields("x", _history("2021-01-04", "2021-12-31", 50.0, {"2021-06-15": 1.0}))
     got = yields.at(dt.date(2021, 9, 1))
-    assert (got.q, got.source) == (0.0, "unknown")
+    assert (got.q, got.source, got.close) == (0.0, "unknown", None)
 
 
 def test_a_resumed_run_of_one_old_payment_is_suspended_not_unknown() -> None:
@@ -339,7 +339,7 @@ def test_a_dividend_exactly_equal_to_the_close_is_unknown() -> None:
     ex = _third_fridays(range(2021, 2023), (3, 6, 9, 12))
     yields = DividendYields("x", _history("2021-01-04", "2022-12-30", 4.0, dict.fromkeys(ex, 1.0)))
     got = yields.at(dt.date(2022, 11, 1))  # D = 4.0 = close: -ln(0) is undefined
-    assert (got.q, got.source) == (0.0, "unknown")
+    assert (got.q, got.source, got.close) == (0.0, "unknown", None)
 
 
 def test_a_monthly_payers_49_day_year_end_gap_is_not_a_suspension() -> None:

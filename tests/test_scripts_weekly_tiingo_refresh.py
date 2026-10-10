@@ -106,7 +106,7 @@ def test_a_held_lock_gives_up_without_running_the_ingest(tmp_path: Path) -> None
 
 
 def test_it_never_shares_the_daily_refresh_lock(tmp_path: Path) -> None:
-    # Holding the DAILY lock must not block the weekly run: its ~95-minute run
+    # Holding the DAILY lock must not block the weekly run: its ~92-minute run
     # would otherwise time out the daily refresh's 300 s wait and fire its alert.
     repo = _sandbox(tmp_path)
     with (repo / ".daily-refresh.lock").open("w") as held:
