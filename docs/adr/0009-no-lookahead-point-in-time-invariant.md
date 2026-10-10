@@ -43,5 +43,5 @@ See `docs/adr/0027`'s amendment.
    months before SPY's first measured reading (1993-06, five months after
    listing) with that first reading, which was not yet known then. Bound,
    measured on the real lake (2026-10-10): the conservative leg's full-history
-   CAGR differs by +0.020bp/yr from setting those months' `y` to 0 and by
-   -0.005bp/yr from setting it to 3%.
+   CAGR differs by +0.023bp/yr from setting those months' `y` to 0 and by
+   -0.006bp/yr from setting it to 3%.
