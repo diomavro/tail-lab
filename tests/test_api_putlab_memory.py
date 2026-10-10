@@ -159,3 +159,32 @@ def test_record_404_unknown_asset(client: TestClient) -> None:
 def test_prior_art_is_public(client: TestClient) -> None:
     # No token needed for the read.
     assert client.get("/api/putlab/memory", params=_RULE).status_code == 200
+
+
+def test_a_record_cites_the_snapshot_its_prices_used_even_if_one_lands_mid_request(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # A weekly ingest can land between the backtest and the run id: the record
+    # must name the data the prices came from, so it reads the snapshot once.
+    from tail_lab.research import dividends
+    from tests.test_research_dividends import seed_tiingo_eod
+
+    dividends._memo.clear()
+    lake = app.dependency_overrides[mem_get_lake_store]()
+    seed_tiingo_eod(lake, ["spy"], dt.datetime.now(dt.UTC).date())
+    real = type(lake).bronze_snapshot_id
+    reads = {"n": 0}
+
+    def later_after_first(self: object, dataset: str, as_of: dt.date) -> str:
+        snap = real(lake, dataset, as_of)
+        if dataset == "tiingo_eod":
+            reads["n"] += 1
+            return snap if reads["n"] == 1 else "tiingo_eod@LATER#ingest-landed"
+        return snap
+
+    monkeypatch.setattr(type(lake), "bronze_snapshot_id", later_after_first)
+    auth = {"Authorization": f"Bearer {TOKEN}"}
+    client.post("/api/putlab/memory/record", params=_RULE, headers=auth)
+    art = client.get("/api/putlab/memory", params=_RULE).json()
+    assert art["outcomes"]
+    assert all("LATER" not in o["last_run_id"] for o in art["outcomes"])

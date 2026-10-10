@@ -77,10 +77,15 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     session = quote_date.date()
-    yields = {
-        symbol: dividend_lookup(store, str(symbol), session).lookup(session)
-        for symbol in df["underlying"].unique()
-    }
+    # --no-dividends never reads the yields: it is the old q = 0 scoring.
+    yields = (
+        {}
+        if args.no_dividends
+        else {
+            symbol: dividend_lookup(store, str(symbol), session).lookup(session)
+            for symbol in df["underlying"].unique()
+        }
+    )
     df["q"] = [0.0 if args.no_dividends else yields[u].q for u in df["underlying"]]
     pricer = BlackScholesPricer()
     df["our_delta"] = [
@@ -106,11 +111,11 @@ def main(argv: list[str] | None = None) -> int:
     print(f"priced with {basis}\n")
     print(f"{'symbol':<8}{'n':>6}{'median |err|':>14}{'p95 |err|':>12}{'q':>8}  source")
     for symbol, row in by_symbol.iterrows():
-        dy = yields[str(symbol)]
-        q = 0.0 if args.no_dividends else dy.q
+        dy = yields.get(str(symbol))
+        q, source = (dy.q, dy.source) if dy is not None else (0.0, "-")
         print(
             f"{symbol:<8}{int(row['n']):>6}{row['median']:>14.5f}{row['p95']:>12.5f}"
-            f"{q:>8.4f}  {'-' if args.no_dividends else dy.source}"
+            f"{q:>8.4f}  {source}"
         )
     overall = df["abs_err"].median()
     print(f"\n{'OVERALL':<8}{len(df):>6}{overall:>14.5f}{df['abs_err'].quantile(0.95):>12.5f}")

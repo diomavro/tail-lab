@@ -127,7 +127,11 @@ def tiingo_getter(
         )
         resp.raise_for_status()
         if not resp.content:
-            raise ValueError(f"Tiingo returned an empty 200 body for {symbol}")
+            # A requests fault, so retry_transient treats it as the blip it is
+            # -- the same as a truncated body below.
+            raise requests.exceptions.ContentDecodingError(
+                f"Tiingo returned an empty 200 body for {symbol}"
+            )
         # Parsed INSIDE the retried call: a truncated or HTML 200 raises
         # requests' JSONDecodeError, which retry_transient treats as a blip --
         # as every sibling adapter does -- rather than killing a 95-minute run.
@@ -153,7 +157,15 @@ def tiingo_getter(
             # message; re-raise the same type with it redacted, outside the
             # handler so the original cannot ride along as __context__.
             body = exc.response.text[:300] if exc.response is not None else ""
-            redacted = type(exc)(f"{exc} {body}".strip().replace(api_key, "<redacted>"))
+            # Same type where its constructor takes a message; JSONDecodeError
+            # needs (msg, doc, pos), so a body that stayed unparseable is
+            # re-raised as the decoding fault it is.
+            kind = (
+                requests.exceptions.ContentDecodingError
+                if isinstance(exc, requests.exceptions.JSONDecodeError)
+                else type(exc)
+            )
+            redacted = kind(f"{exc} {body}".strip().replace(api_key, "<redacted>"))
         if redacted is not None:
             raise redacted
         return payload

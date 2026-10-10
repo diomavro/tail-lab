@@ -228,12 +228,29 @@ def test_a_truncated_200_is_retried_like_any_blip(monkeypatch: pytest.MonkeyPatc
     assert bodies == []
 
 
-def test_an_empty_200_is_a_failed_fetch(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_an_empty_200_is_retried_like_a_truncated_one(monkeypatch: pytest.MonkeyPatch) -> None:
+    bodies = [b"", FIXTURE.read_bytes()]
     monkeypatch.setattr(
-        tiingo_eod.requests, "get", lambda url, params, timeout: _response(200, b"")
+        tiingo_eod.requests, "get", lambda url, params, timeout: _response(200, bodies.pop(0))
     )
-    with pytest.raises(ValueError, match="empty 200 body"):
+    assert tiingo_getter("SECRET", throttle_s=0.0, sleep=lambda s: None)("spy", {}) == _sample()
+
+
+@pytest.mark.parametrize("body", [b"", b'[{"date":"2020'])
+def test_a_body_that_never_parses_fails_with_the_real_fault_not_a_typeerror(
+    monkeypatch: pytest.MonkeyPatch, body: bytes
+) -> None:
+    calls: list[int] = []
+
+    def get(url: str, params: dict[str, str], timeout: float) -> requests.Response:
+        calls.append(1)
+        return _response(200, body)
+
+    monkeypatch.setattr(tiingo_eod.requests, "get", get)
+    with pytest.raises(requests.exceptions.ContentDecodingError) as info:
         tiingo_getter("SECRET", throttle_s=0.0, sleep=lambda s: None)("spy", {})
+    assert len(calls) == tiingo_eod._FETCH_ATTEMPTS
+    assert "SECRET" not in str(info.value)
 
 
 def test_the_run_log_counts_dividends_and_splits(

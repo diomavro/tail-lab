@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import datetime as dt
 import math
+from pathlib import Path
 
 import pandas as pd
 import pytest
@@ -538,3 +539,17 @@ def test_the_bounded_session_cache_clears_without_changing_an_answer(
         assert len(bounded._sessions) <= 5
         if d in expected:
             assert got == expected[d], d
+
+
+def test_stale_means_three_weeks_as_every_doc_and_the_timer_promise() -> None:
+    # docs/DATA_FLOW.md, docs/DATA_CONTRACTS.md #15 and the Tiingo timer all
+    # say a carried yield turns "stale" after 21 days -- three missed weekly
+    # runs. The constant is pinned by value so a change has to touch them too.
+    assert CARRY_STALE_DAYS == 21
+    for doc in (
+        "docs/DATA_FLOW.md",
+        "docs/DATA_CONTRACTS.md",
+        "docs/systemd/tail-lab-tiingo.timer",
+    ):
+        text = (Path(__file__).parents[1] / doc).read_text()
+        assert "21 days" in text or "three weeks" in text, doc

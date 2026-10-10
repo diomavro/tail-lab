@@ -41,7 +41,6 @@ from tail_lab.lake.store import LakeStore
 from tail_lab.memory.store import HypothesisMemory
 from tail_lab.observability import log_event
 from tail_lab.research.backtest.regime_verdict import compute_regime_verdict
-from tail_lab.research.dividends import dividend_snapshot_id
 
 router = APIRouter()
 logger = logging.getLogger("tail_lab.api.putlab.memory")
@@ -100,7 +99,7 @@ def record_verdict(
         ohlcv_snap = "unknown"
     # ...and the dividend basis: a re-record after a new Tiingo snapshot priced
     # with a different q, so it is a different run.
-    run_id = f"{resolved.isoformat()}#{ohlcv_snap}#{dividend_snapshot_id(store, resolved) or 'no-dividends'}"
+    run_id = f"{resolved.isoformat()}#{ohlcv_snap}#{verdict.dividend_snapshot or 'no-dividends'}"
 
     recorded: list[RecordedRegime] = []
     for sl in verdict.slices:
@@ -126,7 +125,7 @@ def record_verdict(
         rule_hash=spec.rule_hash(),
         dividends=spec.dividends,
         ohlcv_snapshot=ohlcv_snap,
-        dividend_snapshot=dividend_snapshot_id(store, resolved),
+        dividend_snapshot=verdict.dividend_snapshot,
         code_sha=get_settings().code_sha,
         verdict=verdict.verdict,
         n_recorded=len(recorded),

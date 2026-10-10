@@ -51,6 +51,10 @@ class RegimeVerdict(BaseModel):
     #: memory recorder stores exactly this, never a second spec built apart.
     rule_spec: RuleSpec
     rule_hash: str
+    #: The ``tiingo_eod`` snapshot the backtest priced from -- carried so the
+    #: recorder cites the one it used, never a re-read that a weekly ingest
+    #: landing mid-request could change.
+    dividend_snapshot: str | None = None
     verdict: Verdict
     slices: list[RegimeSlice]
 
@@ -148,6 +152,7 @@ def compute_regime_verdict(
         as_of=as_of,
         rule_spec=spec,
         rule_hash=spec.rule_hash(),
+        dividend_snapshot=result.dividend_snapshot,
         verdict=verdict,
         slices=slices,
     )
