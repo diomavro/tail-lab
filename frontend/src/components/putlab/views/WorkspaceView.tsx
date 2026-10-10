@@ -153,7 +153,7 @@ function Result({
   const optimism = accuracy.status === 'ready' ? accuracy.data.model.expected_optimism : null
   // accuracy.select_reference picks by strike AND tenor, so name the program it
   // served rather than implying the one nearest the strike alone.
-  const reference = (accuracy.status === 'ready' && accuracy.data.model.reference) || 'the Cboe program'
+  const reference = accuracy.status === 'ready' ? accuracy.data.model.reference : null
   const benchSymbol = sweep.status === 'ready' ? sweep.data.benchmark_symbol : 'benchmark'
   const bleedMonths = ((bt.worst_bleed_streak * controls.tenor_weeks) / 4.33).toFixed(0)
 
@@ -260,7 +260,9 @@ function Result({
             <dt data-testid="hero-error-bar">
               Error bar
               {controls.strike_rule === 'delta' &&
-                ` (${reference}, nearest ${controls.moneyness_pct}% below spot and this tenor, not this delta)`}
+                (reference
+                  ? ` (${reference}, nearest ${controls.moneyness_pct}% below spot and this tenor, not this delta)`
+                  : ' (read for a distance, not this delta)')}
             </dt>
             <dd>{optimism == null ? '—' : rate(optimism)}</dd>
           </div>
@@ -378,8 +380,12 @@ function Result({
       <section className="pl-section">
         {controls.strike_rule === 'delta' && (
           <p className="pl-note" data-testid="accuracy-rule-note">
-            Measured on {reference}, the program nearest {controls.moneyness_pct}% below spot and this tenor: the
-            error bar is read for a distance, not a delta.
+            {reference && (
+              <>
+                Measured on {reference}, the program nearest {controls.moneyness_pct}% below spot and this tenor:{' '}
+              </>
+            )}
+            The error bar is read for a distance, not a delta.
           </p>
         )}
         <AccuracyPanel accuracy={accuracy} />

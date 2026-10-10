@@ -110,6 +110,27 @@ test('at a quarter the error bar names the program the server picked, not the 5%
   await expect(page.getByTestId('accuracy-rule-note')).toContainText('Measured on PPUT3M')
 })
 
+test('with no measured reference the error bar names no program and claims no measurement', async ({ page }) => {
+  // model_accuracy serves reference=null when no replication is usable (a fresh
+  // lake); the panel then says the error is not measured, so the note must not.
+  await page.route(
+    (url) => url.pathname === '/api/putlab/accuracy',
+    (route) =>
+      route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({
+          ...ACCURACY,
+          model: { ...ACCURACY.model, reference: null, applicability: 'unmeasured', expected_optimism: null },
+        }),
+      }),
+  )
+  await page.goto('/')
+  await toDelta(page)
+  await expect(page.getByTestId('hero-error-bar')).toHaveText('Error bar (read for a distance, not this delta)')
+  await expect(page.getByTestId('accuracy-rule-note')).toHaveText('The error bar is read for a distance, not a delta.')
+})
+
 test('a sweep click switches the rule back to distance', async ({ page }) => {
   await page.goto('/')
   await toDelta(page)
