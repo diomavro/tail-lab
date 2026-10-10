@@ -72,6 +72,9 @@ class StrikePreview(BaseModel):
     asset: str
     target_delta: float
     tenor_weeks: float
+    #: The date ``q`` was read as of (the request's as-of), so the page can
+    #: say whose yield it is: not necessarily the latest roll's.
+    as_of: dt.date
     r: float
     q: float
     q_source: str
@@ -147,6 +150,7 @@ def preview_strikes(
     realized_vol: pd.Series,
     *,
     asset: str,
+    as_of: dt.date,
     target_delta: float,
     tenor_weeks: float,
     r: float,
@@ -170,6 +174,7 @@ def preview_strikes(
         asset=asset,
         target_delta=target_delta,
         tenor_weeks=tenor_weeks,
+        as_of=as_of,
         r=r,
         q=q,
         q_source=q_source,

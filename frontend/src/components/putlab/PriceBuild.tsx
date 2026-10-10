@@ -129,9 +129,11 @@ export function PriceBuild({
         put&rsquo;s delta. Across a year of rolls it nets out; roll by roll it does not.
         </p>
       )}
-      <p className="pl-note">
-        Next: the strike itself is a fixed distance below spot here, which reaches very different deltas in calm and
-        crisis. Whether any of this earns a place in a portfolio is the Book&rsquo;s question &mdash; and there only
+      <p className="pl-note" data-testid="price-build-next">
+        {bt.strike_rule === 'delta'
+          ? 'Next: the strike itself is set by the delta target at realised vol, so its distance below spot moves roll by roll — see “How the strike is chosen”. '
+          : 'Next: the strike itself is a fixed distance below spot here, which reaches very different deltas in calm and crisis. '}
+        Whether any of this earns a place in a portfolio is the Book&rsquo;s question &mdash; and there only
         Cboe&rsquo;s real-quote programs count as evidence
         {market ? '' : ', never a model-priced backtest like this one'} (ADR 0027).
       </p>

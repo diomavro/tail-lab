@@ -628,6 +628,8 @@ export interface StrikePreview {
   asset: string
   target_delta: number
   tenor_weeks: number
+  /** The date q was read as of: today's yield, not necessarily the latest roll's. */
+  as_of: string
   r: number
   q: number
   q_source: string

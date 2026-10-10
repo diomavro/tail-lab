@@ -134,8 +134,9 @@ export function StrikeBuild({
       {byDelta && target != null && (
         <>
       <p>
-        One convention everywhere: the Black&ndash;Scholes spot delta with the dividend yield, the same q and r as
-        the price above. Which &sigma; goes in decides everything, and the backtest has only realised vol for every
+        One convention everywhere: the Black&ndash;Scholes spot delta with the dividend yield q and the flat rate r
+        the backtest prices with &mdash; for today&rsquo;s strikes below, today&rsquo;s q, which can differ from
+        the latest roll&rsquo;s in the price above. Which &sigma; goes in decides everything, and the backtest has only realised vol for every
         past day &mdash; so its strike is &ldquo;{deltaLabel(target)}&rdquo;, never the desk&rsquo;s
         &ldquo;{Math.round(target * 100)}-delta put&rdquo;, which uses the market&rsquo;s implied vol. Implied sits above realised and is
         skewed, so the market&rsquo;s strike for the same delta lies further below spot:
@@ -171,6 +172,12 @@ export function StrikeBuild({
           </tbody>
         </table>
       </div>
+      {preview && (
+        <p className="pl-note" data-testid="strike-preview-inputs">
+          Both rows use q = {(preview.q * 100).toFixed(3)}% ({preview.q_source.replace(/_/g, ' ')}, as of{' '}
+          {preview.as_of}) and r = {(preview.r * 100).toFixed(3)}%.
+        </p>
+      )}
       {(preview?.model || preview?.market) && (
         <p className="pl-note" data-testid="strike-preview-dates">
           {preview.model && `Backtest: prices to ${preview.model.vol_date}. `}

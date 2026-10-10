@@ -1557,3 +1557,74 @@ def test_strike_preview_cache_keys_on_the_tenor(client: TestClient) -> None:
     ).json()
     assert (four["tenor_weeks"], twelve["tenor_weeks"]) == (4, 12)
     assert four["model"]["t_years"] != twelve["model"]["t_years"]
+
+
+def test_strike_preview_strikes_on_the_measured_yield_and_the_backtests_rate(
+    client: TestClient,
+) -> None:
+    # The page says the preview uses "the same q and r" as the backtest: a
+    # preview struck at q = 0 or r = 0 would put a different strike beside the
+    # backtest's and still look plausible, so pin both against the lookups.
+    from tail_lab.research import dividends
+    from tail_lab.research.backtest.put_roll import DEFAULT_RATE
+    from tail_lab.research.backtest.strike_rule import ByDelta
+    from tests.test_research_dividends import seed_tiingo_eod
+
+    store = app.dependency_overrides[putlab_get_lake_store]()
+    today = dt.datetime.now(dt.UTC).date()
+    seed_tiingo_eod(store, ["spy"], today, annual_yield=0.06)
+    dividends._memo.clear()
+    expected = dividends.dividend_lookup(store, "spy", today).lookup(today)
+    # "carried" on a weekend (the seed ends on the last business day).
+    assert expected.source in ("measured", "carried") and expected.q > 0.05
+    body = client.get(
+        "/api/putlab/strike-preview",
+        params={"asset": "spy", "target_delta": 0.10, "as_of": today.isoformat()},
+    ).json()
+    assert (body["q"], body["q_source"], body["r"]) == (
+        expected.q,
+        expected.source,
+        DEFAULT_RATE,
+    )
+    assert body["as_of"] == today.isoformat()
+    model = body["model"]
+    assert model["strike"] == pytest.approx(
+        ByDelta(0.10).strike(
+            spot=model["spot"],
+            sigma=model["sigma"],
+            t_years=model["t_years"],
+            r=DEFAULT_RATE,
+            q=expected.q,
+        ),
+        rel=1e-12,
+    )
+
+
+@pytest.mark.parametrize(
+    ("route", "extra"),
+    [
+        ("/api/putlab/strike-preview", {}),
+        ("/api/putlab/backtest", {"strike_rule": "delta", "years": 1}),
+        ("/api/putlab/regime-verdict", {"strike_rule": "delta", "years": 1}),
+        ("/api/putlab/metric-screen", {"strike_rule": "delta", "years": 1, "top_k": 2}),
+    ],
+)
+def test_a_delta_no_strike_can_reach_is_refused_not_a_server_error(
+    client: TestClient, route: str, extra: dict[str, Any]
+) -> None:
+    # A yield of ~161% (D = 80% of the close) over a 26-week roll caps a put's
+    # |delta| at e^(-qT) ~ 0.44: no strike has delta -0.50, and the rule says so. That is the request's inputs, not a
+    # fault -- a 422 naming the cause, never a 500.
+    from tail_lab.research import dividends
+    from tests.test_research_dividends import seed_tiingo_eod
+
+    store = app.dependency_overrides[putlab_get_lake_store]()
+    today = dt.datetime.now(dt.UTC).date()
+    seed_tiingo_eod(store, ["spy"], today, annual_yield=0.8)
+    dividends._memo.clear()
+    resp = TestClient(app, raise_server_exceptions=False).get(
+        route,
+        params={"asset": "spy", "target_delta": 0.5, "tenor_weeks": 26, **extra},
+    )
+    assert resp.status_code == 422, resp.text
+    assert "no strike has put delta" in resp.json()["detail"]

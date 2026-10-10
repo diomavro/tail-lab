@@ -72,8 +72,11 @@ from our dividend-adjusted spot delta by a median 0.004 (5-6% relative) on
    `MODEL_PRICED_MAX_MONEYNESS_PCT` without asking to (a low target in a high
    realised vol), where the flat-vol premium is not a price. The constant moves
    from `sweep.py` to `put_roll.py`, and every model-priced result reports
-   `beyond_model_depth_share`, shown as a count beside the headline whenever it is
-   above zero.
+   `beyond_model_depth_share`. The page shows it as a count beside the headline
+   (and in the strike section) only under a delta rule, and only when it is above
+   zero: that is the rule that can wander past the depth unasked. A moneyness
+   run's depth is the reader's own chosen percentage, printed on the page, so
+   it is not flagged again.
 
 8. **Amends `docs/adr/0028`:** the strike section's mode switch appears only on
    the tabs whose routes take a delta — Workspace and Bake-off. 0028's "a

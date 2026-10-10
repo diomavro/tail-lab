@@ -59,6 +59,7 @@ def _preview(
         prices,
         rv,
         asset=asset,
+        as_of=SESSION,
         target_delta=0.10,
         tenor_weeks=tenor_weeks,
         r=0.04,

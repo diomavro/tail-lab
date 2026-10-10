@@ -1,7 +1,7 @@
 import { expect, test, type Page } from '@playwright/test'
 import type { PutBacktestResponse } from '../src/api/client'
 import { UNKNOWN_Q_CAUSES } from '../src/content/concepts'
-import { BACKTEST, LEADERBOARD } from './fixtures/putlab'
+import { BACKTEST, backtestByDelta, bsPut, LEADERBOARD } from './fixtures/putlab'
 import { mockPutLabApi } from './fixtures/mock-api'
 
 // "How the price is built": the latest roll taken apart, and the dividend yield
@@ -222,20 +222,6 @@ test('on the model path the section says a model backtest is not Book evidence',
   await expect(section.getByTestId('price-build-r')).toHaveText('4.210%')
 })
 
-// Black–Scholes put, as research/option_pricer.py prices it -- the reader's check.
-function bsPut(S: number, K: number, T: number, r: number, sigma: number, q: number): number {
-  const N = (x: number) => 0.5 * (1 + erf(x / Math.SQRT2))
-  const d1 = (Math.log(S / K) + (r - q + (sigma * sigma) / 2) * T) / (sigma * Math.sqrt(T))
-  const d2 = d1 - sigma * Math.sqrt(T)
-  return K * Math.exp(-r * T) * N(-d2) - S * Math.exp(-q * T) * N(-d1)
-}
-function erf(x: number): number {
-  // Abramowitz-Stegun 7.1.26, |error| < 1.5e-7 -- ample for cents.
-  const t = 1 / (1 + 0.3275911 * Math.abs(x))
-  const y = 1 - ((((1.061405429 * t - 1.453152027) * t + 1.421413741) * t - 0.284496736) * t + 0.254829592) * t * Math.exp(-x * x)
-  return x >= 0 ? y : -y
-}
-
 test('the premium shown is the Black–Scholes price of the inputs shown', async ({ page }) => {
   const last = BACKTEST.cycles[BACKTEST.cycles.length - 1]!
   const premium = bsPut(last.spot, last.strike, last.t_years!, BACKTEST.rate, last.sigma, last.q)
@@ -259,26 +245,32 @@ test('a floored premium says it is a floor, not a model price', async ({ page })
 })
 
 
-test('every displayed input reprices to the displayed premium, to the cent', async ({ page }) => {
-  // The section's promise: a reader can redo the price from what it shows. Read
-  // each input AS DISPLAYED (rounding included) and reprice.
-  const section = await open(page)
-  const value = async (term: string) =>
-    (await section.locator('dt', { hasText: term }).locator('xpath=following-sibling::dd[1]').innerText()).trim()
-  const num = (text: string) => Number(text.replace(/[^0-9.]/g, ''))
-  const spot = num(await value('Spot'))
-  const strike = num((await value('Strike')).split('(')[0]!)
-  const T = num((await value('Time')).split(' ')[0]!)
-  const r = num(await value('Rate r')) / 100
-  const sigma = num((await value('Volatility σ')).split(' ')[0]!) / 100
-  const q = num(await value('Dividend yield q')) / 100
-  const shown = num((await value('Premium')).split(' ')[0]!)
-  // Rounding hides at most this much: the displayed premium is to the cent, so
-  // half a cent is the whole budget; the rates are shown to 3 decimals, spot and
-  // strike to the cent, T to 4 decimals.
-  expect(await value('Rate r')).toBe('4.210%')
-  expect(Math.abs(bsPut(spot, strike, T, r, sigma, q) - shown)).toBeLessThan(0.005)
-})
+for (const [rule, body] of [
+  ['distance', BACKTEST],
+  ['delta', backtestByDelta(0.1)],
+] as const) {
+  test(`every displayed input reprices to the displayed premium, to the cent (by ${rule})`, async ({ page }) => {
+    await serveBacktest(page, body)
+    // The section's promise: a reader can redo the price from what it shows. Read
+    // each input AS DISPLAYED (rounding included) and reprice.
+    const section = await open(page)
+    const value = async (term: string) =>
+      (await section.locator('dt', { hasText: term }).locator('xpath=following-sibling::dd[1]').innerText()).trim()
+    const num = (text: string) => Number(text.replace(/[^0-9.]/g, ''))
+    const spot = num(await value('Spot'))
+    const strike = num((await value('Strike')).split('(')[0]!)
+    const T = num((await value('Time')).split(' ')[0]!)
+    const r = num(await value('Rate r')) / 100
+    const sigma = num((await value('Volatility σ')).split(' ')[0]!) / 100
+    const q = num(await value('Dividend yield q')) / 100
+    const shown = num((await value('Premium')).split(' ')[0]!)
+    // Rounding hides at most this much: the displayed premium is to the cent, so
+    // half a cent is the whole budget; the rates are shown to 3 decimals, spot and
+    // strike to the cent, T to 4 decimals.
+    expect(await value('Rate r')).toBe('4.210%')
+    expect(Math.abs(bsPut(spot, strike, T, r, sigma, q) - shown)).toBeLessThan(0.005)
+  })
+}
 
 
 test('one day of carry is "1 day", not "1 days"', async ({ page }) => {
@@ -465,4 +457,17 @@ test('a short history after a split states its sum exactly', async ({ page }) =>
   })
   const section = await open(page)
   await expect(section.getByTestId('price-build-d')).toContainText(`sum to ${String(Number(total.toPrecision(10)))}, scaled`)
+})
+
+test('the hand-off to the strike names a distance rule as a distance', async ({ page }) => {
+  const section = await open(page)
+  await expect(section.getByTestId('price-build-next')).toContainText('a fixed distance below spot here')
+})
+
+test('the hand-off to the strike names a delta rule as a delta, never a fixed distance', async ({ page }) => {
+  await serveBacktest(page, backtestByDelta(0.1))
+  const next = (await open(page)).getByTestId('price-build-next')
+  await expect(next).toContainText('set by the delta target at realised vol')
+  await expect(next).toContainText('How the strike is chosen')
+  await expect(next).not.toContainText('fixed distance')
 })

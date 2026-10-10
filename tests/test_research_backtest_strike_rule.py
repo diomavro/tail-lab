@@ -18,6 +18,7 @@ from tail_lab.research.backtest.strike_rule import (
     MIN_TARGET_DELTA,
     ByDelta,
     ByMoneyness,
+    UnreachableDeltaError,
     put_delta,
 )
 from tail_lab.research.option_pricer import BlackScholesPricer
@@ -74,7 +75,7 @@ def test_realised_vol_strikes_sit_closer_to_spot_than_the_markets() -> None:
 
 
 def test_a_target_with_no_strike_is_refused_not_clipped() -> None:
-    with pytest.raises(ValueError, match="not below 1"):
+    with pytest.raises(UnreachableDeltaError, match="not below 1"):
         ByDelta(0.50).strike(spot=100.0, sigma=0.3, t_years=30.0, r=0.0, q=0.04)
 
 

@@ -41,6 +41,7 @@ __all__ = [
     "ByDelta",
     "ByMoneyness",
     "StrikeRule",
+    "UnreachableDeltaError",
     "put_delta",
 ]
 
@@ -52,6 +53,12 @@ MIN_TARGET_DELTA = 0.01
 MAX_TARGET_DELTA = 0.50
 
 _N = NormalDist()
+
+
+class UnreachableDeltaError(ValueError):
+    """No strike has the target delta: ``|delta| e^(qT) >= 1``. A property of
+    the inputs (a yield and tenor large enough to cap the put's delta), so the
+    routes refuse the request rather than fail it."""
 
 
 @dataclass(frozen=True)
@@ -87,7 +94,7 @@ class ByDelta:
     def strike(self, *, spot: float, sigma: float, t_years: float, r: float, q: float) -> float:
         scaled = self.target * math.exp(q * t_years)
         if scaled >= 1.0:  # the target is >= 0.01, so scaled is always > 0
-            raise ValueError(
+            raise UnreachableDeltaError(
                 f"no strike has put delta -{self.target} at q={q}, T={t_years}: "
                 f"|delta| e^(qT) = {scaled:.4f} is not below 1"
             )

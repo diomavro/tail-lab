@@ -61,6 +61,13 @@ export function putDelta(S: number, K: number, sigma: number, T: number, r: numb
   return -Math.exp(-q * T) * normCdf(-d1)
 }
 
+/** Black-Scholes put, as research/option_pricer.py prices it -- the reader's check. */
+export function bsPut(S: number, K: number, T: number, r: number, sigma: number, q: number): number {
+  const d1 = (Math.log(S / K) + (r - q + (sigma * sigma) / 2) * T) / (sigma * Math.sqrt(T))
+  const d2 = d1 - sigma * Math.sqrt(T)
+  return K * Math.exp(-r * T) * normCdf(-d2) - S * Math.exp(-q * T) * normCdf(-d1)
+}
+
 // 12 rolls. `payoff` is the cash the put returned; `cost` is what the contracts
 // actually filled at, which is NOT the per-roll budget (NOTIONAL) -- that gap is
 // the whole reason the ledger prints Fill and Budget as separate columns.
@@ -1715,15 +1722,23 @@ export function strikeForDelta(S: number, target: number, sigma: number, T: numb
 }
 
 /** The same 12 rolls struck at a fixed delta: the distance now moves with
- *  each roll's vol, and every entry delta IS the target. */
+ *  each roll's vol, and every entry delta IS the target. The latest roll --
+ *  the one "How the price is built" takes apart -- is repriced at its new
+ *  strike, so its premium is still the Black-Scholes price of what is shown. */
 export function backtestByDelta(target: number): PutBacktestResponse {
-  const cycles = CYCLES.map((c) => {
+  const cycles = CYCLES.map((c, i) => {
     const strike = Number(strikeForDelta(c.spot, target, c.sigma, c.t_years!, BACKTEST.rate, c.q).toFixed(2))
+    const latest = i === CYCLES.length - 1
+    const premium = latest ? Number(bsPut(c.spot, strike, c.t_years!, BACKTEST.rate, c.sigma, c.q).toFixed(2)) : c.premium
+    const contracts = Math.max(1, Math.floor(NOTIONAL / (premium * 100)))
     return {
       ...c,
       strike,
       entry_moneyness_pct: Number(((1 - strike / c.spot) * 100).toFixed(4)),
       entry_delta: -target,
+      premium,
+      contracts,
+      cost: Number((contracts * premium * 100).toFixed(2)),
     }
   })
   return {
@@ -1754,6 +1769,7 @@ export function strikePreview(target: number): StrikePreview {
     asset: 'spy',
     target_delta: target,
     tenor_weeks: 4,
+    as_of: '2026-08-21',
     r,
     q,
     q_source: 'measured',

@@ -94,6 +94,7 @@ from tail_lab.research.backtest.strike_rule import (
     ByDelta,
     ByMoneyness,
     StrikeRule,
+    UnreachableDeltaError,
 )
 from tail_lab.research.backtest.sweep import run_sweep
 from tail_lab.research.cadence import resolve_cadence
@@ -319,6 +320,8 @@ def putlab_backtest(
     except LookupError as exc:
         log_event(logger, "putlab.backtest.miss", asset=asset, as_of=resolved, reason=str(exc))
         raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except UnreachableDeltaError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
     # The S&P 500 buy-and-hold hurdle over the same window, so the tape can draw
     # the horizon at which the annualized-so-far line crossed the market. The
     # pure engine has no benchmark; the route fills it before caching.
@@ -473,6 +476,8 @@ def putlab_regime_verdict(
             logger, "putlab.regime_verdict.miss", asset=asset, as_of=resolved, reason=str(exc)
         )
         raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except UnreachableDeltaError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
     _REGIME_VERDICT_CACHE[cache_key] = (time.monotonic() + _REGIME_VERDICT_TTL_S, result)
     _log_run(
         store,
@@ -951,6 +956,8 @@ def putlab_metric_screen(
         )
     except LookupError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except UnreachableDeltaError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
     _METRIC_SCREEN_CACHE[cache_key] = (time.monotonic() + _METRIC_SCREEN_TTL_S, comparison)
     winner = comparison.entries[0].metric if comparison.entries else None
     log_event(
@@ -1081,17 +1088,21 @@ def putlab_strike_preview(
     except LookupError:
         chain = pd.DataFrame()
     dividend = dividend_lookup(store, asset, resolved).lookup(resolved)
-    preview = preview_strikes(
-        chain,
-        prices,
-        realized_vol,
-        asset=asset,
-        target_delta=target_delta,
-        tenor_weeks=tenor_weeks,
-        r=DEFAULT_RATE,
-        q=dividend.q,
-        q_source=dividend.source,
-    )
+    try:
+        preview = preview_strikes(
+            chain,
+            prices,
+            realized_vol,
+            asset=asset,
+            as_of=resolved,
+            target_delta=target_delta,
+            tenor_weeks=tenor_weeks,
+            r=DEFAULT_RATE,
+            q=dividend.q,
+            q_source=dividend.source,
+        )
+    except UnreachableDeltaError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
     log_event(
         logger,
         "api.putlab.strike_preview",

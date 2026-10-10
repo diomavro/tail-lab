@@ -254,7 +254,11 @@ function Result({
             <dd>{bench == null ? '—' : rate(bench)}</dd>
           </div>
           <div className="pl-brokenout-row">
-            <dt>Error bar</dt>
+            <dt data-testid="hero-error-bar">
+              Error bar
+              {controls.strike_rule === 'delta' &&
+                ` (reference program nearest ${controls.moneyness_pct}% below spot, not this delta)`}
+            </dt>
             <dd>{optimism == null ? '—' : rate(optimism)}</dd>
           </div>
         </dl>

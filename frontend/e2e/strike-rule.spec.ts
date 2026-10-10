@@ -76,9 +76,14 @@ test('the dateline and tape say the rule the run used', async ({ page }) => {
 test('ranking, sweep and accuracy say they are still by distance', async ({ page }) => {
   await page.goto('/')
   await expect(page.getByTestId('rank-rule-note')).toHaveCount(0)
+  await expect(page.getByTestId('hero-error-bar')).toHaveText('Error bar')
   await toDelta(page)
   await expect(page.getByTestId('rank-rule-note')).toContainText('not by delta')
   await expect(page.getByTestId('accuracy-rule-note')).toContainText('nearest 5% below spot')
+  // The headline's error bar is the same distance-based measurement, so it says so there too.
+  await expect(page.getByTestId('hero-error-bar')).toHaveText(
+    'Error bar (reference program nearest 5% below spot, not this delta)',
+  )
   await expect(page.locator('.pl-note').filter({ hasText: 'This is a grid of distances below spot' })).toBeVisible()
 })
 
@@ -255,6 +260,11 @@ test.describe('How the strike is chosen', () => {
     await expect(model).toContainText('$497.33')
     await expect(model).toContainText('2.9% below spot')
     await expect(section.getByTestId('strike-preview-market')).toContainText('$481.00')
+    // The q and r both rows were struck with, and whose q it is: today's, not
+    // necessarily the latest roll's in the price build.
+    await expect(section.getByTestId('strike-preview-inputs')).toHaveText(
+      `Both rows use q = 1.307% (measured, as of ${STRIKE_PREVIEW.as_of}) and r = 4.210%.`,
+    )
     // A "Rolled over" change re-runs the backtest but not today's strikes.
     await rail(page).getByRole('radiogroup', { name: 'Rolled over' }).getByText('2y').click()
     await expect(model).toContainText('$497.33')
