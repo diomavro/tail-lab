@@ -1073,7 +1073,8 @@ def putlab_metric_screen(
     # One backtest per screened name (up to the 70-name universe);
     # deterministic given the immutable bronze, so the memo (stale-while-
     # revalidate, single flight, shared screen slot) serves repeats at once.
-    # A run on parameters already computed today returns that result.
+    # A run on parameters already computed today returns that result, until a
+    # deploy or restart empties the in-process memo.
     rule = _rule(strike_rule, moneyness_pct, target_delta)
     cache_key = (rule, tenor_weeks, years, top_k, resolved.isoformat())
     try:

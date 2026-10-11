@@ -574,6 +574,44 @@ test.describe('with the shared fixture', () => {
     await expect(bestTable(page).getByRole('row', { name: 'Open TSLA at its best cell' })).not.toBeFocused()
   })
 
+  test('a strike-only keyboard open gets focus back too', async ({ page }) => {
+    // IWM's best cell is 10% · 4w: only the strike differs from the 5% · 4w
+    // screen, and in the fragility order that still re-screens the table.
+    await expand(page)
+    await fragTable(page).getByRole('row', { name: 'Open IWM' }).focus()
+    const landed = page.waitForResponse(
+      (r) => new URL(r.url()).pathname === '/api/putlab/leaderboard' && new URL(r.url()).searchParams.get('moneyness_pct') === '10',
+    )
+    await page.keyboard.press('Enter')
+    await landed
+    await expect(fragTable(page).getByRole('row', { name: 'Open IWM' })).toBeFocused()
+  })
+
+  test('the restore does not scroll a reader who moved down the page', async ({ page }) => {
+    await page.setViewportSize({ width: 1280, height: 700 })
+    await page.route(
+      (url) => url.pathname === '/api/putlab/leaderboard' && url.searchParams.get('tenor_weeks') === '12',
+      async (route) => {
+        await new Promise((r) => setTimeout(r, 1500))
+        await route.fallback()
+      },
+    )
+    const landed = page.waitForResponse(
+      (r) => new URL(r.url()).pathname === '/api/putlab/leaderboard' && new URL(r.url()).searchParams.get('tenor_weeks') === '12',
+    )
+    await strip(page).getByTestId('rank-pick').filter({ hasText: 'TSLA' }).focus()
+    await page.keyboard.press('Enter')
+    await expect(strip(page).getByTestId('rank-status')).toBeVisible()
+    await page.evaluate(() => window.scrollTo(0, document.body.scrollHeight))
+    const y = await page.evaluate(() => window.scrollY)
+    expect(y).toBeGreaterThan(200)
+    await landed
+    await expect(strip(page).getByTestId('rank-pick').filter({ hasText: 'TSLA' })).toBeFocused()
+    // Not pulled back up to the strip (the page may shift a little as the
+    // strip's own height changes; scroll anchoring keeps the reader's place).
+    expect(await page.evaluate(() => window.scrollY)).toBeGreaterThan(y - 150)
+  })
+
   test('a row opened from the keyboard gets focus back when its table returns', async ({ page }) => {
     await openBestReturn(page)
     const tsla = bestTable(page).getByRole('row', { name: 'Open TSLA at its best cell' })

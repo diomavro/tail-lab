@@ -31,7 +31,8 @@ import { StandaloneNote } from './StandaloneNote'
  * One backtest per screened name runs server-side, so the tab runs it on its
  * button rather than on every control change. The server pre-computes one
  * fixed-parameter bake-off daily (the Workspace's line) and serves any run
- * already computed that day from its memo.
+ * already computed that day from its memo (an in-process memo: a deploy or
+ * restart empties it).
  */
 
 type State =
@@ -160,8 +161,8 @@ export function BakeOff({ controls }: { controls: PutLabControls }) {
       {state.status === 'idle' && (
         <p className="pl-status">
           One backtest per screened name runs server-side, so this runs on the button rather than
-          on every control change. Parameters already run today come back from the server&rsquo;s
-          stored result.
+          on every control change. Parameters already run today usually come back from the
+          server&rsquo;s stored result (not after a restart, which empties it).
         </p>
       )}
 

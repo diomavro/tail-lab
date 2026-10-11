@@ -546,7 +546,8 @@ export async function fetchPutLabLeaderboard(
 // 70-name universe). The tab runs it on its button; the Workspace reads one
 // fixed-parameter bake-off, which the server pre-computes daily when
 // TAIL_LAB_WARM_RANKING is on (fly.toml). A run on parameters already computed
-// that day is served from the server's memo.
+// that day is served from the server's in-process memo, until a deploy or
+// restart empties it.
 
 export interface MetricScreenEntry {
   metric: string

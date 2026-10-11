@@ -148,8 +148,11 @@ export function RankingStrip({
     refocus.current = null
     const active = document.activeElement
     if (active != null && active !== document.body) return
-    stripRef.current?.querySelector<HTMLElement>(`[data-refocus="${target}"]`)?.focus()
-  }, [data, open, sort])
+    // preventScroll: the next Tab continues from the control used, but a
+    // reader who scrolled down to the result is not pulled back up to it.
+    stripRef.current?.querySelector<HTMLElement>(`[data-refocus="${target}"]`)?.focus({ preventScroll: true })
+    // Keyed on the screen alone: a new screen is what the target waits for.
+  }, [data])
 
   // Armed only from the keyboard: a mouse click also focuses the control,
   // and restoring focus then would scroll a reader who has moved on to the
