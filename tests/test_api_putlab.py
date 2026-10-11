@@ -1899,6 +1899,17 @@ def test_metric_screen_cache_keys_on_the_rule(client: TestClient) -> None:
     assert (m["strike_rule"], d["strike_rule"]) == ("moneyness", "delta")
 
 
+def test_metric_screen_cache_keys_on_basket_size_and_window(client: TestClient) -> None:
+    """The memo serves a key for 24h and `_bakeoff` computes from the key, so a
+    key that dropped `top_k` or `years` would hand one request's basket or
+    window to every later request with different ones."""
+    base = {"tenor_weeks": 4, "moneyness_pct": 10}
+    first = client.get("/api/putlab/metric-screen", params={**base, "top_k": 2, "years": 1})
+    other = client.get("/api/putlab/metric-screen", params={**base, "top_k": 3, "years": 2})
+    assert (first.json()["top_k"], first.json()["lookback_years"]) == (2, 1)
+    assert (other.json()["top_k"], other.json()["lookback_years"]) == (3, 2)
+
+
 def test_strike_preview_cache_keys_on_the_target(client: TestClient) -> None:
     ten = client.get(
         "/api/putlab/strike-preview", params={"asset": "spy", "target_delta": 0.10}

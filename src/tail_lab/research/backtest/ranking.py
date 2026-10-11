@@ -180,7 +180,8 @@ class UniverseRanking(BaseModel):
     notional: float
     ranked: list[RankedAsset]
     #: The bronze snapshots this screen actually read (VIX, one per ranked
-    #: name, and the dividend snapshot once one exists -- see
+    #: name, the SPY benchmark whenever it was loaded, and the dividend
+    #: snapshot once one exists -- see
     #: `snapshot_ids_for`), and the code that computed it. `docs/STANDARDS.md`: "a result
     #: without both is not trustworthy and should not be surfaced" -- this is
     #: the standing-directive screen (Dio's north star), so it is the first
@@ -395,9 +396,9 @@ def snapshot_ids_for(store: LakeStore, as_of: dt.date, symbols: Iterable[str]) -
     depends on it, whether or not any name was scored), then each scored
     name's own OHLCV snapshot, deduplicated, then the dividend snapshot every
     name was priced with (absent before the first Tiingo ingest, when every q
-    was an unknown 0). Shared by the ranking and the metric bake-off; the
-    bake-off passes the SPY benchmark among ``symbols`` so it is cited even
-    when SPY itself is not scored.
+    was an unknown 0). Shared by the ranking and the metric bake-off; both
+    pass the SPY benchmark among ``symbols`` so it is cited even when SPY
+    itself is not scored.
     """
     snapshot_ids = [store.bronze_snapshot_id(VIX_DATASET, as_of)]
     for symbol in symbols:
@@ -477,7 +478,10 @@ def rank_universe(
     # COMPOSITE_METRICS). Most fragile first; names with no fragility estimate
     # sort last.
     rows = _score_and_sort(rows)
-    snapshot_ids = snapshot_ids_for(store, as_of, (row.asset for row in rows))
+    # Every row's fragility columns read SPY's returns, so the benchmark is
+    # cited whenever it was loaded -- even when SPY itself is not a ranked row.
+    read = [row.asset for row in rows] + ([BENCHMARK] if bench_ret is not None else [])
+    snapshot_ids = snapshot_ids_for(store, as_of, read)
     return UniverseRanking(
         as_of=as_of,
         moneyness_pct=moneyness_pct,

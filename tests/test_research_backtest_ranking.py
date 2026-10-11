@@ -102,7 +102,8 @@ def test_rank_universe_sorts_by_fragility_and_skips_missing(tmp_path: Path) -> N
 
 def test_rank_universe_snapshot_ids_cover_vix_and_every_ranked_name(tmp_path: Path) -> None:
     """`docs/STANDARDS.md`: a result without its bronze snapshot id(s) is not
-    trustworthy and should not be surfaced. `missing` never lands in `ranked`
+    trustworthy and should not be surfaced. The SPY benchmark is cited though
+    it is not ranked (every row read it). `missing` never lands in `ranked`
     (no data), so its snapshot must not appear either -- the list traces what
     was actually READ into the screen, not what was asked for."""
     store = DeltaLakeStore(tmp_path)
@@ -123,6 +124,10 @@ def test_rank_universe_snapshot_ids_cover_vix_and_every_ranked_name(tmp_path: Pa
 
     expected = {store.bronze_snapshot_id("vix", ingest)}
     expected |= {store.bronze_snapshot_id(dataset_id(r.asset), ingest) for r in ranking.ranked}
+    # SPY is not ranked here, but every row's fragility columns read it as the
+    # benchmark, so it was read into the screen and must be cited.
+    assert all(r.downside_beta is not None for r in ranking.ranked)
+    expected.add(store.bronze_snapshot_id(dataset_id("spy"), ingest))
     assert set(ranking.snapshot_ids) == expected
     assert len(ranking.snapshot_ids) == len(set(ranking.snapshot_ids))  # no duplicates
     assert dataset_id("missing") not in "".join(ranking.snapshot_ids)
