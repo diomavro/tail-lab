@@ -227,6 +227,47 @@ def _run_local(symbols: list[str]) -> int:
     return 0
 
 
+def _post_sweep(args: argparse.Namespace, payload: dict[str, object]) -> int:
+    """POST the sweep and turn every way it can fail into an annotated exit code."""
+    try:
+        result_json = _post(args.post, args.token, payload, args.timeout)
+    except urllib.error.HTTPError as exc:
+        if exc.code == 425:
+            # SessionInProgress on the app side: nothing lost, nothing written.
+            print(f"SKIPPED: {exc.read()[:400]!r}")
+            return 0
+        print(
+            f"::error::app rejected the sweep: HTTP {exc.code} {exc.read()[:400]!r}",
+            file=sys.stderr,
+        )
+        return 1
+    except urllib.error.URLError as exc:
+        print(f"::error::could not reach {args.post}: {exc.reason}", file=sys.stderr)
+        return 1
+    except TimeoutError:
+        # NOT caught by the clause above: TimeoutError is a sibling of URLError
+        # under OSError, not a subclass. `_post` now models timeouts as a
+        # first-class retryable outcome, so this is the shape a fully wedged
+        # app arrives in -- and it has to read as an annotated failure rather
+        # than a raw traceback, because the premise of this workflow is that a
+        # red run is legible at a glance.
+        print(
+            f"::error::{args.post} did not answer within {args.timeout}s "
+            f"across {POST_ATTEMPTS} attempts",
+            file=sys.stderr,
+        )
+        return 1
+
+    try:
+        response = OptionChainSnapshotResponse.model_validate(result_json)
+    except ValidationError as exc:
+        # The app answered 2xx with a body this script cannot read: the sweep
+        # may or may not have landed, so this is a failure, never a guess.
+        print(f"::error::the app's response is not a snapshot result: {exc}", file=sys.stderr)
+        return 1
+    return _report_post(response)
+
+
 def main(argv: list[str] | None = None) -> int:
     args = _parse_args(argv)
     configure_logging()
@@ -266,43 +307,7 @@ def main(argv: list[str] | None = None) -> int:
         "symbols": symbols,
         "market_session": session.isoformat() if session else None,
     }
-    try:
-        result_json = _post(args.post, args.token, payload, args.timeout)
-    except urllib.error.HTTPError as exc:
-        if exc.code == 425:
-            # SessionInProgress on the app side: nothing lost, nothing written.
-            print(f"SKIPPED: {exc.read()[:400]!r}")
-            return 0
-        print(
-            f"::error::app rejected the sweep: HTTP {exc.code} {exc.read()[:400]!r}",
-            file=sys.stderr,
-        )
-        return 1
-    except urllib.error.URLError as exc:
-        print(f"::error::could not reach {args.post}: {exc.reason}", file=sys.stderr)
-        return 1
-    except TimeoutError:
-        # NOT caught by the clause above: TimeoutError is a sibling of URLError
-        # under OSError, not a subclass. `_post` now models timeouts as a
-        # first-class retryable outcome, so this is the shape a fully wedged
-        # app arrives in -- and it has to read as an annotated failure rather
-        # than a raw traceback, because the premise of this workflow is that a
-        # red run is legible at a glance.
-        print(
-            f"::error::{args.post} did not answer within {args.timeout}s "
-            f"across {POST_ATTEMPTS} attempts",
-            file=sys.stderr,
-        )
-        return 1
-
-    try:
-        response = OptionChainSnapshotResponse.model_validate(result_json)
-    except ValidationError as exc:
-        # The app answered 2xx with a body this script cannot read: the sweep
-        # may or may not have landed, so this is a failure, never a guess.
-        print(f"::error::the app's response is not a snapshot result: {exc}", file=sys.stderr)
-        return 1
-    return _report_post(response)
+    return _post_sweep(args, payload)
 
 
 def _report_post(response: OptionChainSnapshotResponse) -> int:
