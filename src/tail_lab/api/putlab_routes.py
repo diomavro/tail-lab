@@ -304,9 +304,9 @@ def _rule(
     return ByDelta(target_delta)
 
 
-def _cited_dividend_snapshot(ranking: UniverseRanking) -> str | None:
-    """The dividend snapshot a ranking cites in its own ``snapshot_ids``."""
-    return next((s for s in ranking.snapshot_ids if s.startswith("tiingo_eod@")), None)
+def _cited_dividend_snapshot(result: UniverseRanking | MetricScreenComparison) -> str | None:
+    """The dividend snapshot a screen cites in its own ``snapshot_ids``."""
+    return next((s for s in result.snapshot_ids if s.startswith("tiingo_eod@")), None)
 
 
 def _log_run(
@@ -746,8 +746,7 @@ def warm_leaderboard(store: LakeStore) -> None:
     warms could let the bake-off take the slot first. A failed screen is
     logged and does not stop the bake-off warm or the daily loop.
     """
-    as_of = _resolve_as_of(None).isoformat()
-    key = (*_WARM_SCREEN, as_of)
+    key = (*_WARM_SCREEN, _resolve_as_of(None).isoformat())
     try:
         _LEADERBOARD_CACHE.get(key, _screen(store, key))
     except Exception:
@@ -756,7 +755,10 @@ def warm_leaderboard(store: LakeStore) -> None:
         # screen must not stop the bake-off warm or every later day's. Not
         # silent -- the traceback is logged.
         logger.exception("event=putlab.leaderboard_warm_failed")
-    bakeoff_key = (*_WARM_BAKEOFF, as_of)
+    # Read the date again: the ranking screen above blocks, and if it ran past
+    # midnight UTC the bake-off should warm the day that has begun, not the
+    # one that ended (which no reader will ask for).
+    bakeoff_key = (*_WARM_BAKEOFF, _resolve_as_of(None).isoformat())
     _METRIC_SCREEN_CACHE.warm(bakeoff_key, _bakeoff(store, bakeoff_key))
 
 
@@ -836,9 +838,7 @@ def _bakeoff(
             logger,
             "putlab.metric_screen",
             # What this bake-off priced with, from its own provenance.
-            dividend_snapshot=next(
-                (sid for sid in comparison.snapshot_ids if sid.startswith("tiingo_eod@")), None
-            ),
+            dividend_snapshot=_cited_dividend_snapshot(comparison),
             as_of=as_of,
             moneyness_pct=rule.pct if isinstance(rule, ByMoneyness) else None,
             strike_rule=rule.kind,

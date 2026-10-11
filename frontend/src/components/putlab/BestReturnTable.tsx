@@ -153,7 +153,7 @@ export function BestReturnTable({ data, rows, currentAsset, onPick }: Props) {
                   </div>
                   <div className="pl-rec-recipe">
                     Buy puts <span className="pl-rec-strike">{r.best_moneyness_pct}%</span> out of
-                    the money, rolled every {r.best_tenor_weeks} weeks
+                    the money, rolled every {r.best_tenor_weeks} week{r.best_tenor_weeks === 1 ? '' : 's'}
                     <span className="dimmer">{cadenceGloss(r.best_tenor_weeks!)}</span>, held to
                     expiry.
                   </div>
@@ -233,7 +233,7 @@ export function BestReturnTable({ data, rows, currentAsset, onPick }: Props) {
         Magenta = a loss, deeper for a larger one. Biggest-payoff bars are on a log scale.
       </p>
       {anyQZero && (
-        <p id={qZeroNoteId} className="pl-micro" style={{ padding: '4px 2px 0' }} data-testid="best-q-zero-note">
+        <p id={qZeroNoteId} className="pl-micro pl-rank-ref" style={{ padding: '4px 2px 0' }} data-testid="best-q-zero-note">
           q = 0 rolls: at least one roll at that row&rsquo;s best cell was priced at q = 0 because its
           dividend yield is unknown &mdash; {UNKNOWN_Q_CAUSES}. Read that row&rsquo;s return as the
           old, cheap price.

@@ -529,11 +529,14 @@
 .pl-table .pl-rank-group-start { border-left: 1px solid var(--rule-2); }
 .pl-rank-legend-item { margin-left: 10px; white-space: nowrap; }
 /* The legend carries meaning (direction, colour, scale): AA, not micro grey. */
-.pl-rank-legend { color: var(--ink-70); }
+.pl-rank-legend,
+.pl-rank-ref { color: var(--ink-70); }
 /* The name stays in view while the wide fragility table scrolls sideways. */
 .pl-rank-table th:nth-child(2),
 .pl-rank-table td:nth-child(2) { position: sticky; left: 0; background: var(--paper); z-index: 1; }
 .pl-rank-groups th:nth-child(2) { position: static; }
+/* The pinned cell is opaque, so it carries the current row's tint itself. */
+.pl-rank-table tr.is-current td:nth-child(2) { background: color-mix(in srgb, var(--cyan) 12%, var(--paper)); }
 
 /* Shading: each class sets ONLY the background, so the text keeps the cell's
    own ink, never --mag-2 or --ink-70 (both fall under 4.5:1 on a shade). The

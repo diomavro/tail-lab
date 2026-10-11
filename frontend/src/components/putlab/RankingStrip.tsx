@@ -181,21 +181,31 @@ export function RankingStrip({ ranking, bakeoff, sort, onSort, requested, curren
             aria-expanded={open}
             onClick={() => setOpen((v) => !v)}
           >
-            {open ? 'Collapse the screen' : `All ${rows.length} names`}
+            {open ? 'Collapse the screen' : `All ${rows.length} name${rows.length === 1 ? '' : 's'}`}
           </button>
         )}
 
         {sort === 'fragility' && (
-          <BakeoffLine bakeoff={bakeoff} sameAsList={sameAsBakeoff} onOpen={onOpenBakeOff} />
+          <BakeoffLine
+            bakeoff={bakeoff}
+            sameAsList={sameAsBakeoff}
+            screenShown={data != null && rows.length > 0}
+            onOpen={onOpenBakeOff}
+          />
         )}
       </div>
-      {data && rows.length > 0 && (
-        <p className="pl-micro pl-rank-notes" data-testid="rank-click-note">
-          Opening a name loads its best cell into the controls (just the name, where no best cell was scored).
+      {/* The strike note stays up through the re-screen it warns about. */}
+      {((data && rows.length > 0) || sort === 'return') && (
+        <p className="pl-micro pl-rank-notes">
+          {data && rows.length > 0 && (
+            <span data-testid="rank-click-note">
+              Opening a name loads its best cell into the controls (just the name, where no best cell was scored).
+            </span>
+          )}
           {sort === 'return' && (
             <span data-testid="rank-strike-note">
               {' '}
-              Best-return rows don&rsquo;t depend on the strike; changing it re-screens the universe.
+              Best-return rows don&rsquo;t depend on the strike; changing the distance re-screens the universe.
             </span>
           )}
         </p>
@@ -209,7 +219,7 @@ export function RankingStrip({ ranking, bakeoff, sort, onSort, requested, curren
           ) : (
             <FragilityTable data={data} currentAsset={currentAsset} onPick={pick} />
           )}
-          <p className="pl-micro" style={{ padding: '4px 2px 0' }} data-testid="rank-provenance">
+          <p className="pl-micro pl-rank-ref" style={{ padding: '4px 2px 0' }} data-testid="rank-provenance">
             As of {data.as_of} · {data.snapshot_ids.length} bronze snapshot
             {data.snapshot_ids.length === 1 ? '' : 's'} ·{' '}
             {data.code_sha === 'unknown' ? 'code sha unknown' : data.code_sha.slice(0, 7)}
@@ -237,6 +247,10 @@ function FragilityTable({
   const qZeroNoteId = useId()
   const ranked = data.ranked
   const anyQZero = ranked.some((r) => r.q_source === 'none')
+  // While every row is model-priced (the ranking passes no real quotes yet)
+  // a Basis column would repeat one word per row; one printed line says it,
+  // and the column appears the day a row is market-priced.
+  const anyMarket = ranked.some((r) => r.priced_from === 'market')
   const screened = `At ${data.moneyness_pct}% · ${data.tenor_weeks}w`
   const shade = Object.fromEntries(
     METRICS.map((m) => [m.key, fragilityRank(ranked.map((r) => r[m.key]), data.fragile_high[m.key] ?? true)]),
@@ -250,12 +264,19 @@ function FragilityTable({
       <table className="pl-table pl-rank-table" aria-label="Full fragility ranking">
         <thead>
           <tr className="pl-rank-groups">
-            <th colSpan={10} />
+            <th colSpan={4} />
             <th colSpan={2} className="pl-rank-group" title="Each name's own best cell over its strike × tenor grid">
               Best cell
             </th>
-            <th colSpan={6} className="pl-rank-group" title="The rail's strike and tenor, screened by distance below spot">
+            <th
+              colSpan={anyMarket ? 6 : 5}
+              className="pl-rank-group"
+              title="The rail's strike and tenor, screened by distance below spot"
+            >
               {screened}
+            </th>
+            <th colSpan={6} className="pl-rank-group" title="Each measure ranked across the screen on its own">
+              Fragility measures
             </th>
           </tr>
           <tr>
@@ -268,11 +289,6 @@ function FragilityTable({
             >
               Fragility
             </th>
-            {METRICS.map((m) => (
-              <th key={m.key} className="num" title={CONCEPTS[m.key]?.short}>
-                {m.head}
-              </th>
-            ))}
             <th className="num pl-rank-group-start" aria-label="Per year at best cell">
               Per year
             </th>
@@ -291,9 +307,16 @@ function FragilityTable({
             >
               q
             </th>
-            <th className="num" title="Whether this row's ROI came from the pricing model or a real listed quote">
-              Basis
-            </th>
+            {anyMarket && (
+              <th className="num" title="Whether this row's ROI came from the pricing model or a real listed quote">
+                Basis
+              </th>
+            )}
+            {METRICS.map((m) => (
+              <th key={m.key} className="num" title={CONCEPTS[m.key]?.short}>
+                {m.head}
+              </th>
+            ))}
           </tr>
         </thead>
         <tbody>
@@ -325,19 +348,6 @@ function FragilityTable({
                   <span className="pl-mini-bar pl-frag-bar" style={{ width: `${Math.round(r.fragility_score * 36)}px` }} />
                 )}
               </td>
-              {METRICS.map((m) => {
-                const rank = shade[m.key][i]
-                return (
-                  <td
-                    key={m.key}
-                    className={`num${rank == null ? ' dim' : ' pl-shade-rank'}`}
-                    style={rank == null ? undefined : ({ '--pl-r': rank } as CSSProperties)}
-                    data-testid={`shade-${m.key}-${r.asset}`}
-                  >
-                    {num(r[m.key], m.digits)}
-                  </td>
-                )
-              })}
               <td
                 className={`num bold pl-rank-group-start${bestHeat[i] == null ? (r.best_annualized == null ? ' dim' : r.best_annualized >= 0 ? ' pl-pos' : ' pl-neg') : ' pl-heat-loss'}`}
                 style={heatStyle(bestHeat[i])}
@@ -380,9 +390,24 @@ function FragilityTable({
                   '—'
                 )}
               </td>
-              <td className="num" data-testid={`basis-${r.asset}`}>
-                <span className={BASIS_TAG[r.priced_from]}>{BASIS_LABEL[r.priced_from]}</span>
-              </td>
+              {anyMarket && (
+                <td className="num" data-testid={`basis-${r.asset}`}>
+                  <span className={BASIS_TAG[r.priced_from]}>{BASIS_LABEL[r.priced_from]}</span>
+                </td>
+              )}
+              {METRICS.map((m) => {
+                const rank = shade[m.key][i]
+                return (
+                  <td
+                    key={m.key}
+                    className={`num${rank == null ? ' dim' : ' pl-shade-rank'}`}
+                    style={rank == null ? undefined : ({ '--pl-r': rank } as CSSProperties)}
+                    data-testid={`shade-${m.key}-${r.asset}`}
+                  >
+                    {num(r[m.key], m.digits)}
+                  </td>
+                )
+              })}
             </tr>
           ))}
         </tbody>
@@ -390,6 +415,7 @@ function FragilityTable({
       <p className="pl-micro pl-rank-legend" style={{ padding: '6px 2px 0' }} data-testid="rank-legend">
         Stronger shade = more fragile on that measure (each column ranked on its own; co-skew and vol β are fragile
         when low). Magenta = a loss, deeper for a larger one. Biggest-payoff bars are on a log scale.
+        {!anyMarket && <span data-testid="rank-model-priced"> Every row is model-priced, not quoted.</span>}
         {METRICS.map((m) => (
           <span key={m.key} className="pl-rank-legend-item">
             {m.head}
@@ -398,7 +424,7 @@ function FragilityTable({
         ))}
       </p>
       {anyQZero && (
-        <p id={qZeroNoteId} className="pl-micro" style={{ padding: '4px 2px 0' }} data-testid="q-zero-note">
+        <p id={qZeroNoteId} className="pl-micro pl-rank-ref" style={{ padding: '4px 2px 0' }} data-testid="q-zero-note">
           q = 0 rolls: at least one roll was priced at q = 0 because its dividend yield is unknown &mdash;{' '}
           {UNKNOWN_Q_CAUSES}. Read that row&rsquo;s return as the old, cheap price.
         </p>
@@ -414,10 +440,13 @@ function FragilityTable({
 function BakeoffLine({
   bakeoff,
   sameAsList,
+  screenShown,
   onOpen,
 }: {
   bakeoff: ResourceState<MetricScreenComparison>
   sameAsList: boolean
+  /** Whether a screen is on the page to compare with, or only asked for. */
+  screenShown: boolean
   onOpen: () => void
 }) {
   const b = STRIP_BAKEOFF
@@ -443,13 +472,16 @@ function BakeoffLine({
   const data = bakeoff.data
   const composite = data.entries.find((e) => e.metric === 'fragility_score')
   const n = data.universe_size
-  const lift = composite?.lift_vs_baseline ?? 0
   // Both levels, not only the gap: a "beat" between two losing baskets reads
   // as a gain. Under half a tenth of a point the gap rounds away: "matched".
   const levels = composite
     ? `returned ${fmtPct1(composite.roi_on_premium)} on premium against ${fmtPct1(data.baseline_roi)} for buying all ${n}`
     : ''
-  const gap = Math.abs(lift * 100).toFixed(1)
+  // The gap between the two PRINTED levels, so the sentence's own figures add
+  // up: rounding each level and the raw lift separately can disagree by 0.1.
+  const r1 = (x: number) => Math.round(x * 1000) / 10
+  const gapPts = composite ? r1(composite.roi_on_premium) - r1(data.baseline_roi) : 0
+  const gap = Math.abs(gapPts).toFixed(1)
   // With no more scored names than the basket holds, the top K IS everyone:
   // there is no selection to measure, and "beat/matched buying all N" would
   // describe comparing a basket with itself.
@@ -458,9 +490,9 @@ function BakeoffLine({
       ? 'This bake-off carried no composite row.'
       : b.top_k >= n
       ? `It scored only ${n} name${n === 1 ? '' : 's'}, so its top ${b.top_k} is all of them: no selection to measure.`
-      : Math.abs(lift) < 0.0005
+      : Math.abs(gapPts) < 0.05
       ? `The composite screen's top ${b.top_k} ${levels}: no difference.`
-      : `The composite screen's top ${b.top_k} ${levels}: ${gap} pts ${lift > 0 ? 'better' : 'worse'}.`
+      : `The composite screen's top ${b.top_k} ${levels}: ${gap} pts ${gapPts > 0 ? 'better' : 'worse'}.`
   // The p-value is two-sided, so "significant" alone would endorse a screen
   // that ordered names significantly the WRONG way: the sign is stated.
   const rho = composite?.spearman_vs_payoff
@@ -468,9 +500,10 @@ function BakeoffLine({
     composite == null || composite.spearman_pvalue == null || rho == null
       ? 'Its correlation with payoff could not be tested (too few names, or no variation to rank).'
       : `Its ranking's correlation with payoff (ρ = ${fmtFixed(rho)}) is ${composite.significant_corrected ? '' : 'not '}significant after FDR correction across ${data.n_comparisons} screens${composite.significant_corrected && rho < 0 ? ': it ordered names the wrong way, more fragile paying less' : ''}.`
+  const which = screenShown ? 'the screen above' : 'the screen asked for'
   const scope = sameAsList
-    ? 'Same settings as the screen above; its universe can differ.'
-    : 'Not the settings of the screen above.'
+    ? `Same settings as ${which}; its universe can differ.`
+    : `Not the settings of ${which}.`
   return (
     <p className="pl-micro pl-rank-bakeoff" data-testid="rank-bakeoff">
       <strong>{`${base} of ${n}`}</strong>: {liftText} {sigText} {scope}{' '}

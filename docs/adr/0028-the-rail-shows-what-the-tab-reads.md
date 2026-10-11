@@ -143,9 +143,13 @@ ordering, and the best cell's own dividend and pricing basis.
   best-return order re-sorts the same response. Switching the order never
   refetches.
 * **The fragility table names which strategy each figure comes from.** Two
-  column groups: "At N% · Tw" (the screened cell -- per year, hit, biggest
-  payoff, verdict, q, basis) and "Best cell" (per year, where). Before, the
-  argmax return sat beside the screened cell's hit rate on one row.
+  column groups: "Best cell" (per year, where) and "At N% · Tw" (the
+  screened cell -- per year, hit, biggest payoff, verdict, q, and basis once
+  any row is market-priced; until then one printed line says every row is
+  model-priced). Both come before the six fragility measures, so a laptop
+  shows them without a sideways scroll; the name column stays pinned.
+  Before, the argmax return sat beside the screened cell's hit rate on one
+  row.
 * **The best-return table keeps the same-cell rule for its tags too.**
   `RankedAsset` gains `best_q_source` and `best_priced_from`.
 * **A bake-off verdict line, at fixed settings.** In the fragility order the
@@ -166,7 +170,8 @@ ordering, and the best cell's own dividend and pricing basis.
   screen (5% · 4w · 4y) is pre-warmed. A row click loads the row's best cell,
   usually a different tenor, so the strip shows its status line through a
   cold re-screen (~25 s alone). A strike change in the best-return order
-  re-screens too, for an identical table; the strip says so beside the switch.
+  re-screens too, for an identical table; the strip says so under the switch,
+  in the best-return order, while the re-screen runs as well.
 * **Universe screens take one at a time.** Each memo already single-flights
   its own keys, but the ranking and the bake-off would otherwise screen in
   parallel on the app's one shared CPU -- the 2026-10-08 health-check failure.
@@ -174,7 +179,10 @@ ordering, and the best cell's own dividend and pricing basis.
   waiting on it holds a threadpool thread but no CPU; sync handlers keep
   running after the client leaves, so an abandoned screen stays queued, and
   `threading.Lock` is not fair, so a live reader can wait behind it. The wait
-  is logged (`putlab.screen_slot_wait`).
+  is logged (`putlab.screen_slot_wait`). The health check is a sync route too,
+  so enough queued screens on distinct keys (about 40, the threadpool's size)
+  would starve it -- the same thread occupancy as the parallel screens this
+  replaces, but now spent waiting rather than computing.
 * **The bake-off line is not a verdict on the list above it.** The strip's
   settings follow the rail and every row click, and even at the same settings
   the bake-off's universe can differ from the ranking's (its coverage filter

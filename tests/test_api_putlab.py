@@ -438,6 +438,41 @@ def test_a_warm_that_crosses_midnight_neither_skips_a_day_nor_drifts(
     assert sleeps == [30.0]
 
 
+def test_a_warm_that_ends_past_the_next_warm_does_not_kill_the_thread(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A screen that runs past 00:01 leaves the next warm in the past: the
+    sleep must clamp to zero, since ``time.sleep`` raises on a negative length
+    and that would end the daily warm thread for the life of the process."""
+    times = [dt.datetime(2026, 10, 8, 23, 50, tzinfo=dt.UTC)]
+
+    def very_slow_warm(_store: object) -> None:
+        times[0] = dt.datetime(2026, 10, 9, 0, 5, tzinfo=dt.UTC)
+
+    sleeps: list[float] = []
+    monkeypatch.setattr(putlab_routes, "warm_leaderboard", very_slow_warm)
+    putlab_routes.warm_leaderboard_daily(
+        DeltaLakeStore(Path("unused")), now=lambda: times[0], sleep=sleeps.append, rounds=1
+    )
+    assert sleeps == [0.0]
+
+
+def test_a_ranking_warm_that_crosses_midnight_warms_the_new_days_bakeoff(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The bake-off key is read after the (blocking) ranking screen, so a
+    warm that crosses midnight warms the day readers are about to ask for."""
+    days = iter([dt.date(2026, 10, 8), dt.date(2026, 10, 9)])
+    monkeypatch.setattr(putlab_routes, "_resolve_as_of", lambda _as_of: next(days))
+    calls: list[tuple[str, object]] = []
+    _patch_warm_memos(monkeypatch, calls)
+    putlab_routes.warm_leaderboard(DeltaLakeStore(Path("unused")))
+    assert calls == [
+        ("leaderboard.get", (5.0, 4.0, 4.0, "2026-10-08")),
+        ("bakeoff.warm", (putlab_routes.ByMoneyness(5.0), 4.0, 4.0, 5, "2026-10-09")),
+    ]
+
+
 def _patch_warm_memos(
     monkeypatch: pytest.MonkeyPatch,
     calls: list[tuple[str, object]],
