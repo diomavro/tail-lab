@@ -343,7 +343,9 @@ def test_the_bakeoff_reads_its_directions_from_ranking_fragile_high(
 
     for m in COMPOSITE_METRICS:
         monkeypatch.setitem(FRAGILE_HIGH, m, not FRAGILE_HIGH[m])
-    monkeypatch.setitem(FRAGILE_HIGH, "vol_beta", not FRAGILE_HIGH["vol_beta"])  # undo the first flip
+    monkeypatch.setitem(
+        FRAGILE_HIGH, "vol_beta", not FRAGILE_HIGH["vol_beta"]
+    )  # undo the first flip
     _, composite_flipped = rhos()
     assert composite_flipped == pytest.approx(-composite_before)
 
