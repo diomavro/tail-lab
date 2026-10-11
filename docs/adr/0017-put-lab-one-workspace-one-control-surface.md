@@ -61,8 +61,8 @@ metrics are worth ranking on, and the bake-off is the test of that assumption.
 It is a **Bake-off** tab, and the first caller `fetchMetricScreen` has ever had.
 It runs on an explicit button, not on control change: the endpoint runs ~35
 backtests server-side. *(Amended 2026-10-11, `docs/adr/0028`: the Workspace's
-ranking strip also reads one fixed-parameter bake-off, pre-computed daily, for
-its verdict line; the tab still runs on its button, and the endpoint runs one
+ranking strip also reads one fixed-parameter bake-off, pre-computed daily where
+`TAIL_LAB_WARM_RANKING` is on, for its verdict line; the tab still runs on its button, and the endpoint runs one
 backtest per screened name, up to 70.)*
 
 **The page scrolls normally.** No fixed shell, no inner scroller.

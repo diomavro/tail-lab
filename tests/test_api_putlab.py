@@ -468,7 +468,9 @@ def test_the_warmed_bakeoff_is_the_one_the_workspace_asks_for() -> None:
     ).read_text()
     block = src[src.index("export const STRIP_BAKEOFF") :]
     block = block[: block.index("}")]
-    fields = dict(re.findall(r"(\w+): ([\w.']+)", block))
+    # Each value up to its comma, whole: an expression ("4 + 1") must fail the
+    # float() below rather than be read as its first token.
+    fields = {k: v.strip() for k, v in re.findall(r"(\w+): ([^,\n]+),", block)}
     rule, tenor, years, top_k = putlab_routes._WARM_BAKEOFF
     assert fields["strike_rule"].startswith("'moneyness'")
     assert rule == putlab_routes.ByMoneyness(float(fields["moneyness_pct"]))

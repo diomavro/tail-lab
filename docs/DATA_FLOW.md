@@ -91,7 +91,7 @@ Screen tab's deeper "is the screen any good?" question moved to its own
 | **Surface** | How fat a tail is the option market pricing, against the name's own history? | `/api/putlab/surface` (one chain session; the anchor is the rail's strike, the expiry its tenor) | `option_chain_snapshot`, `ohlcv_<asset>`, `tiingo_eod` (q) |
 | **Regime** | What market are we in? | `/api/putlab/regimes`, `/api/vix/stretch`, `/accuracy` (the per-regime residual) | `vix`, `cboe_strategy`, `credit` (widening, §3.2 — falls back to VIX-only until ingested) |
 | **Glossary** | — (renders `content/concepts.ts`, no network) | none | none |
-| **Roll schedule** (export, not a tab) | What would I actually place? | `/api/putlab/roll-schedule` (the ranking's read at the rail's screen, reused from cache; its legs are each name's best cell, so the screen's strike is a label only) | `ohlcv_*`, `vix` |
+| **Roll schedule** (export, not a tab) | What would I actually place? | `/api/putlab/roll-schedule` (the ranking's read at the rail's screen, reused from cache; its legs are each name's best cell, so the screen's strike is a label only) | `ohlcv_*`, `vix`, `tiingo_eod` (q, per leg) |
 | **Control rail** (the tabs that read it: `rail.ts`, `docs/adr/0028`) | What position am I asking about, and where did the data come from? | `/api/putlab/universe`, `/cadence`, `/data-quality` | `ohlcv_<asset>`, the options calendar |
 
 **A strike rule travels with the request on three routes only.** `/backtest`,

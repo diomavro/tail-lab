@@ -135,21 +135,26 @@ export function RankingStrip({
   const data = ranking.status === 'ready' ? ranking.data : held
   const rows: RankedAsset[] = data == null ? [] : sort === 'return' ? bestReturnRows(data.ranked) : data.ranked
 
-  // A row opened from the keyboard re-screens and remounts the table; focus
-  // goes back to that row when it returns, not to the top of the page.
+  // A row opened from the table re-screens and remounts it, which drops focus
+  // to the page. When the table returns, focus goes back to that row -- but
+  // only if focus is still lost: a reader who has moved on (the rail, the
+  // expand button) keeps their place. One attempt, then the target is gone.
   const tablesRef = useRef<HTMLDivElement>(null)
   const refocus = useRef<string | null>(null)
   useEffect(() => {
     if (refocus.current == null || !open || data == null) return
-    const row = tablesRef.current?.querySelector<HTMLElement>(`tr[data-asset="${refocus.current}"]`)
-    if (row) {
-      row.focus()
-      refocus.current = null
-    }
+    const target = refocus.current
+    refocus.current = null
+    const active = document.activeElement
+    if (active != null && active !== document.body) return
+    tablesRef.current?.querySelector<HTMLElement>(`tr[data-asset="${target}"]`)?.focus()
   }, [data, open, sort])
 
-  const pick = (r: RankedAsset) => {
-    if (tablesRef.current?.contains(document.activeElement)) refocus.current = r.asset
+  // Armed only from the keyboard: a mouse click also focuses the row (it has
+  // tabIndex), and restoring focus then would scroll a reader who has moved on
+  // to the result back up to the table.
+  const pick = (r: RankedAsset, byKeyboard = false) => {
+    refocus.current = byKeyboard ? r.asset : null
     onSelect(
       r.asset,
       r.best_moneyness_pct != null && r.best_tenor_weeks != null
@@ -300,7 +305,8 @@ function FragilityTable({
   data: PutLabLeaderboardResponse
   currentAsset: string
   deltaMode: boolean
-  onPick: (r: RankedAsset) => void
+  /** `byKeyboard`: opened with Enter/Space, so focus should come back to it. */
+  onPick: (r: RankedAsset, byKeyboard?: boolean) => void
 }) {
   // The "q = 0 rolls" tag's explanation is printed under the table, not in a
   // hover-only title, so keyboard, touch and screen-reader readers get it too.
@@ -401,7 +407,7 @@ function FragilityTable({
               onKeyDown={(e) => {
                 if (e.key === 'Enter' || e.key === ' ') {
                   e.preventDefault()
-                  onPick(r)
+                  onPick(r, true)
                 }
               }}
             >

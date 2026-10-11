@@ -54,7 +54,8 @@ interface Props {
   data: PutLabLeaderboardResponse
   rows: BestRow[]
   currentAsset: string
-  onPick: (r: RankedAsset) => void
+  /** `byKeyboard`: opened with Enter/Space, so focus should come back to it. */
+  onPick: (r: RankedAsset, byKeyboard?: boolean) => void
 }
 
 export function BestReturnTable({ data, rows, currentAsset, onPick }: Props) {
@@ -134,7 +135,7 @@ export function BestReturnTable({ data, rows, currentAsset, onPick }: Props) {
                 onKeyDown={(e) => {
                   if (e.key === 'Enter' || e.key === ' ') {
                     e.preventDefault()
-                    onPick(r)
+                    onPick(r, true)
                   }
                 }}
               >

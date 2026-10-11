@@ -160,7 +160,8 @@ ordering, and the best cell's own dividend and pricing basis.
   4w · 4y, by distance, top 5 -- its lift, whether its rank correlation with
   payoff survives FDR correction across the screens compared, and whether
   those settings are the list's (or, when the two were read on different
-  days, that they were). The server pre-computes it daily
+  days, that they were). Where `TAIL_LAB_WARM_RANKING` is on (fly.toml) the
+  server pre-computes it daily
   (`_WARM_BAKEOFF`), after the opening ranking. The bake-off response gains
   `snapshot_ids` and `code_sha` (`docs/STANDARDS.md`), shared with the
   ranking through `ranking.snapshot_ids_for`.
@@ -179,7 +180,8 @@ ordering, and the best cell's own dividend and pricing basis.
   keeps its rows up during the re-screen: in the best-return order, with the
   tenor and years unchanged, the rows cannot change. Any other re-screen shows
   the status line, since the tenor and years change coverage and values. A row
-  opened from the keyboard gets focus back when its table returns.
+  opened from a table gets focus back when the table returns, if focus was
+  lost in the remount (a reader who has moved on keeps their place).
 * **Universe screens take one at a time.** Each memo already single-flights
   its own keys, but the ranking and the bake-off would otherwise screen in
   parallel on the app's one shared CPU -- the 2026-10-08 health-check failure.

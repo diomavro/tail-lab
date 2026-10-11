@@ -431,6 +431,8 @@ test.describe('with the shared fixture', () => {
   })
 
   test('the strike note stays up while the re-screen it warns about runs', async ({ page }) => {
+    // Let the first screen land, or there is nothing to hold yet.
+    await expect(picks(page).first()).toBeVisible()
     await sortTo(page, 'Best return')
     // Hold the next screen open, then move the strike.
     await page.route(
@@ -459,6 +461,29 @@ test.describe('with the shared fixture', () => {
     await expect(bestTable(page)).toHaveCount(0)
   })
 
+  test('a years change never holds the old window’s rows', async ({ page }) => {
+    await openBestReturn(page)
+    await page.route(
+      (url) => url.pathname === '/api/putlab/leaderboard' && url.searchParams.get('years') !== '4',
+      () => {},
+    )
+    await rail(page).getByText('3y', { exact: true }).click()
+    await expect(strip(page).getByTestId('rank-status')).toContainText('Screening the universe')
+    await expect(bestTable(page)).toHaveCount(0)
+  })
+
+  test('a mouse click does not pull the reader back to the table', async ({ page }) => {
+    await openBestReturn(page)
+    const landed = page.waitForResponse(
+      (r) => new URL(r.url()).pathname === '/api/putlab/leaderboard' && new URL(r.url()).searchParams.get('tenor_weeks') === '12',
+    )
+    await bestTable(page).locator('tbody tr').filter({ hasText: 'TSLA' }).click()
+    await landed
+    await expect(bestTable(page)).toBeVisible()
+    await page.waitForTimeout(300)
+    await expect(bestTable(page).getByRole('row', { name: 'Open TSLA at its best cell' })).not.toBeFocused()
+  })
+
   test('the fragility order never holds a stale table: its screened cells move with the strike', async ({ page }) => {
     await expand(page)
     await page.route(
@@ -468,6 +493,31 @@ test.describe('with the shared fixture', () => {
     await rail(page).getByRole('radiogroup', { name: 'Strike presets' }).getByText('10%').click()
     await expect(strip(page).getByTestId('rank-status')).toContainText('Screening the universe')
     await expect(fragTable(page)).toHaveCount(0)
+  })
+
+  test('a reader who moves on during the re-screen keeps their place', async ({ page }) => {
+    await openBestReturn(page)
+    // Slow the 12-week screen TSLA's row asks for.
+    await page.route(
+      (url) => url.pathname === '/api/putlab/leaderboard' && url.searchParams.get('tenor_weeks') === '12',
+      async (route) => {
+        await new Promise((r) => setTimeout(r, 1500))
+        await route.fallback()
+      },
+    )
+    await bestTable(page).getByRole('row', { name: 'Open TSLA at its best cell' }).focus()
+    const landed = page.waitForResponse(
+      (r) => new URL(r.url()).pathname === '/api/putlab/leaderboard' && new URL(r.url()).searchParams.get('tenor_weeks') === '12',
+    )
+    await page.keyboard.press('Enter')
+    // The table is gone while the 12-week screen runs; the reader moves on.
+    await expect(bestTable(page)).toHaveCount(0)
+    const strike = page.getByLabel('Out of the money, %')
+    await strike.focus()
+    await landed
+    await expect(bestTable(page)).toBeVisible()
+    await page.waitForTimeout(300)
+    await expect(strike).toBeFocused()
   })
 
   test('a row opened from the keyboard gets focus back when its table returns', async ({ page }) => {
