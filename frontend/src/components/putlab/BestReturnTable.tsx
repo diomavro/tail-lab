@@ -2,7 +2,7 @@ import { type CSSProperties, useId } from 'react'
 import type { PutLabLeaderboardResponse, RankedAsset, Verdict } from '../../api/client'
 import { UNKNOWN_Q_CAUSES } from '../../content/concepts'
 import { fmtDollar, fmtMult, fmtPct } from './format'
-import type { BestRow } from './rankOrder'
+import { type BestRow, VERDICT_TITLE } from './rankOrder'
 import { biggestBarWidth, lossHeat } from './rankShade'
 
 /* Every name's best strategy, ranked against each other -- the ranking strip's
@@ -32,15 +32,6 @@ const VERDICT_TAG: Record<Verdict, string> = {
   regime_only: 'pl-tag pl-tag-mute',
   failed: 'pl-tag pl-tag-bad',
   untested: 'pl-tag pl-tag-outline',
-}
-
-/** What each verdict means, for its tag's hover text (supplementary: the
- *  "How to read a row" note below prints the same). */
-const VERDICT_TITLE: Record<Verdict, string> = {
-  confirmed: 'Entered and paid off in two or more VIX regimes',
-  regime_only: 'Paid off in one VIX regime only -- a bet on that regime recurring',
-  failed: 'Did not pay off in any regime it was entered in',
-  untested: 'Too few rolls in any regime to judge',
 }
 
 /** The familiar name for a tenor, where one exists. Used as a gloss beside the
@@ -94,7 +85,7 @@ export function BestReturnTable({ data, rows, currentAsset, onPick }: Props) {
         This is a screen, <strong>not advice</strong>. Every number here is measured{' '}
         <strong>in sample</strong> &mdash; the parameters were chosen by looking at the same window
         they are scored on, which is the definition of overfitting a backtest. It is model-priced,
-        not quoted. Read it as &ldquo;where has convexity been worth owning&rdquo;, never as
+        not quoted, unless a row is tagged Market. Read it as &ldquo;where has convexity been worth owning&rdquo;, never as
         &ldquo;what will pay off next&rdquo;.
       </p>
 
@@ -117,7 +108,10 @@ export function BestReturnTable({ data, rows, currentAsset, onPick }: Props) {
               <th className="num" title="The largest single roll's payoff, as a multiple of its premium">
                 Biggest payoff
               </th>
-              <th className="num" title="Composite fragility, 0-100 (100 = most fragile name in the screen)">
+              <th
+                className="num"
+                title="Composite fragility, 0-100: the mean of the name's rank on each composite measure (100 = the most fragile on every one)"
+              >
                 Fragility
               </th>
               <th className="num">Verdict</th>
@@ -241,7 +235,8 @@ export function BestReturnTable({ data, rows, currentAsset, onPick }: Props) {
             and a positive return is working exactly as intended. <strong>Verdict</strong> counts
             how many VIX regimes the strategy was entered in and paid off in: two or more is{' '}
             <em>confirmed</em>, one is <em>regime only</em> &mdash; a bet on that regime recurring
-            rather than a standalone edge.
+            rather than a standalone edge &mdash; none is <em>failed</em>, and too few rolls in any
+            regime to judge is <em>untested</em>.
           </p>
         </div>
         <div>

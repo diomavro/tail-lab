@@ -56,3 +56,27 @@ export async function cellContrast(cell: Locator): Promise<number> {
   const [a, b] = [luminance(fg), luminance(bg)].sort((x, y) => y - x)
   return (a! + 0.05) / (b! + 0.05)
 }
+
+/** WCAG contrast of an element's text on the page's own ground (`.putlab-root`),
+ *  for text with no background of its own. Both colours canvas-normalised. */
+export async function textContrastOnPage(el: Locator): Promise<number> {
+  const [fg, bg] = await el.evaluate((node) => {
+    const paint = (css: string): [number, number, number] => {
+      const canvas = document.createElement('canvas')
+      canvas.width = canvas.height = 1
+      const ctx = canvas.getContext('2d')!
+      ctx.fillStyle = '#ffffff'
+      ctx.fillRect(0, 0, 1, 1)
+      ctx.fillStyle = css
+      ctx.fillRect(0, 0, 1, 1)
+      const d = ctx.getImageData(0, 0, 1, 1).data
+      return [d[0]!, d[1]!, d[2]!]
+    }
+    return [
+      paint(getComputedStyle(node).color),
+      paint(getComputedStyle(document.querySelector('.putlab-root')!).backgroundColor),
+    ]
+  })
+  const [a, b] = [luminance(fg), luminance(bg)].sort((x, y) => y - x)
+  return (a! + 0.05) / (b! + 0.05)
+}

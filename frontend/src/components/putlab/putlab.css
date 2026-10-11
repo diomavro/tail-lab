@@ -515,16 +515,17 @@
 .pl-rank-at { color: var(--ink-45); font-size: 12px; }
 .pl-rank-more { margin-left: auto; font-size: 13px; }
 .pl-rank-sort { flex: none; }
-.pl-rank-insample { color: var(--ink-45); }
+/* Load-bearing notes, so at --ink-70 (AA on both sheets), not the micro --ink-45. */
+.pl-rank-insample { color: var(--ink-70); }
 /* The bake-off verdict sits on its own row under the picks. */
 .pl-rank-bakeoff { flex-basis: 100%; margin: 0; color: var(--ink-70); }
 .pl-rank-bakeoff strong { font-weight: 600; color: var(--ink); }
 .pl-rank-bakeoff-link { font-size: 12px; padding: 0 4px; }
-.pl-rank-notes { margin: 0 0 6px; color: var(--ink-45); }
+.pl-rank-notes { margin: 0 0 6px; color: var(--ink-70); }
 
 /* The fragility table's two strategy groups. */
 .pl-rank-groups th { border-bottom: none; padding-bottom: 0; }
-.pl-rank-group { text-align: left; color: var(--ink-70); border-left: 1px solid var(--rule-2); }
+.pl-table .pl-rank-groups th.pl-rank-group { text-align: left; color: var(--ink-70); border-left: 1px solid var(--rule-2); }
 .pl-table .pl-rank-group-start { border-left: 1px solid var(--rule-2); }
 .pl-rank-legend-item { margin-left: 10px; white-space: nowrap; }
 

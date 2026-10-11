@@ -22,6 +22,7 @@ from tail_lab.contracts.ohlcv import dataset_id
 from tail_lab.contracts.options_expiry import dataset_id as options_expiry_dataset_id
 from tail_lab.lake.store import DeltaLakeStore
 from tail_lab.research.backtest.hedge_overlay import HedgeOverlayResult
+from tail_lab.research.backtest.metric_screen import MetricScreenComparison
 
 
 def _seed_ohlcv(store: DeltaLakeStore, symbol: str, ingest_date: dt.date, n: int = 320) -> None:
@@ -533,9 +534,7 @@ def test_the_warm_computes_hold_the_screen_slot(monkeypatch: pytest.MonkeyPatch)
         assert done.is_set()
 
 
-def _fake_bakeoff() -> Any:
-    from tail_lab.research.backtest.metric_screen import MetricScreenComparison
-
+def _fake_bakeoff() -> MetricScreenComparison:
     return MetricScreenComparison(
         as_of=dt.date(2026, 10, 9),
         moneyness_pct=5.0,
@@ -628,7 +627,14 @@ def test_ranking_and_bakeoff_never_screen_at_once(
             )
         )
         bakeoff.start()
-        time.sleep(2.0)
+        # Wait until the bake-off has actually reached the slot (the recording
+        # lock logs the attempt before blocking), so the check below cannot
+        # pass merely because its thread had not got there yet.
+        deadline = time.monotonic() + 10
+        while len(slot.acquisitions) < 2 and time.monotonic() < deadline:
+            time.sleep(0.02)
+        assert len(slot.acquisitions) >= 2, "the bake-off never reached the screen slot"
+        time.sleep(0.5)
         assert bakeoff_runs == [], "the bake-off screened while the ranking held the slot"
         release.set()
         ranking.join(5)
@@ -1641,7 +1647,56 @@ def test_the_bakeoff_cites_what_it_read(client: TestClient) -> None:
     assert any(s.startswith("ohlcv_spy@") for s in before["snapshot_ids"])
     assert not any(s.startswith("tiingo_eod@") for s in before["snapshot_ids"])
     assert any(s.startswith("tiingo_eod@") for s in after["snapshot_ids"])
-    assert after["code_sha"] == putlab_routes.get_settings().code_sha
+
+
+def test_the_bakeoff_is_stamped_with_the_running_code(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The sha is the deploy's, stamped on the way out: a real one, not the
+    model's own ``"unknown"`` default, so a route that forgot to stamp fails."""
+    from tail_lab.config import Settings
+
+    monkeypatch.setattr(putlab_routes, "get_settings", lambda: Settings(code_sha="abc1234"))
+    _clear_putlab_caches()
+    params = {"moneyness_pct": 10, "tenor_weeks": 4, "years": 1, "top_k": 2}
+    body = client.get("/api/putlab/metric-screen", params=params).json()
+    assert body["code_sha"] == "abc1234"
+    # The memo keeps the unstamped value: the next deploy's sha is not baked in.
+    (cached,) = [e.value for e in putlab_routes._METRIC_SCREEN_CACHE._entries.values()]
+    assert cached.code_sha == "unknown"
+
+
+def test_the_bakeoff_logs_once_per_compute_not_per_read(
+    client: TestClient, caplog: pytest.LogCaptureFixture
+) -> None:
+    """``putlab.metric_screen`` records a computed bake-off; a memo hit is not
+    a new one and must not log as if it were."""
+    _clear_putlab_caches()
+    params = {"moneyness_pct": 10, "tenor_weeks": 4, "years": 1, "top_k": 2}
+    with caplog.at_level("INFO", logger="tail_lab.api.putlab"):
+        for _ in range(3):
+            assert client.get("/api/putlab/metric-screen", params=params).status_code == 200
+    assert caplog.text.count("event=putlab.metric_screen ") == 1
+
+
+def test_a_repeat_bakeoff_is_served_from_the_memo(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The Workspace reads its bake-off line on every page load: up to 70
+    backtests each time without the memo."""
+    calls: list[int] = []
+    real = putlab_routes.compare_metric_screens
+
+    def counted(*args: Any, **kwargs: Any) -> MetricScreenComparison:
+        calls.append(1)
+        return real(*args, **kwargs)
+
+    monkeypatch.setattr(putlab_routes, "compare_metric_screens", counted)
+    _clear_putlab_caches()
+    params = {"moneyness_pct": 10, "tenor_weeks": 4, "years": 1, "top_k": 2}
+    for _ in range(3):
+        assert client.get("/api/putlab/metric-screen", params=params).status_code == 200
+    assert calls == [1]
 
 
 def test_every_pricing_route_logs_the_dividend_snapshot_it_priced_with(

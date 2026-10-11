@@ -18,6 +18,15 @@ a large one strictly in order.
 
 ## Next increments
 
+- [ ] **The strike × tenor grid scrolls a phone page sideways on real data**
+      (found 2026-10-11 while screenshotting the Workspace against a two-name
+      scratch lake). At 390px, `SweepGrid`'s `.pl-sweep-cell` buttons whose
+      label is "−100%" over "201 rolls" end at x = 413, so the page scrolls
+      23px. The hermetic `rail.spec.ts` "no tab scrolls the page sideways"
+      stays green because the fixture sweep never prints a −100% cell.
+      *Success*: the grid fits (or scrolls inside itself) at 390px with a
+      −100% cell, and the e2e check uses such a cell.
+
 - [ ] **A 3D view of the real option surface** (from the 2026-10-07 redesign
       handoff, deliberately not shipped with it). The
       handoff's `Tail Surface 3D.html` drew a Black–Scholes surface from an

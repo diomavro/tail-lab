@@ -1,8 +1,8 @@
 import { type CSSProperties, useId, useState } from 'react'
 import type { MetricScreenComparison, PutLabLeaderboardResponse, RankedAsset, Verdict } from '../../api/client'
-import { UNKNOWN_Q_CAUSES } from '../../content/concepts'
+import { CONCEPTS, UNKNOWN_Q_CAUSES } from '../../content/concepts'
 import { BestReturnTable } from './BestReturnTable'
-import { type BestRow, bestReturnRows } from './rankOrder'
+import { type BestRow, bestReturnRows, VERDICT_TITLE } from './rankOrder'
 import { ConceptInfo } from './ConceptInfo'
 import { fmtFixed, fmtMult, fmtPct, fmtPrice, signedPts } from './format'
 import type { ResourceState } from './PutLab'
@@ -158,7 +158,7 @@ export function RankingStrip({ ranking, bakeoff, sort, onSort, requested, curren
           rows.slice(0, 3).map((r, i) => (
             <button key={r.asset} type="button" className="pl-rank-pick" data-testid="rank-pick" onClick={() => pick(r)}>
               <span className="pl-rank-n">{i + 1}</span> <strong>{r.asset.toUpperCase()}</strong>{' '}
-              <span className={r.best_annualized != null && r.best_annualized >= 0 ? 'pl-pos' : 'pl-neg'}>
+              <span className={r.best_annualized == null ? 'pl-rank-at' : r.best_annualized >= 0 ? 'pl-pos' : 'pl-neg'}>
                 {r.best_annualized == null ? '—' : fmtPct(r.best_annualized)}
               </span>{' '}
               <span className="pl-rank-at">{at(r)}</span>
@@ -186,7 +186,7 @@ export function RankingStrip({ ranking, bakeoff, sort, onSort, requested, curren
       </div>
       {data && rows.length > 0 && (
         <p className="pl-micro pl-rank-notes" data-testid="rank-click-note">
-          Opening a name loads its best cell into the controls.
+          Opening a name loads its best cell into the controls (just the name, where no best cell was scored).
           {sort === 'return' && (
             <span data-testid="rank-strike-note">
               {' '}
@@ -257,11 +257,14 @@ function FragilityTable({
             <th className="num">#</th>
             <th>Name</th>
             <th className="num">Spot</th>
-            <th className="num" title="Composite fragility, 0-100 (100 = most fragile name in the screen)">
+            <th
+              className="num"
+              title="Composite fragility, 0-100: the mean of the name's rank on each composite measure (100 = the most fragile on every one)"
+            >
               Fragility
             </th>
             {METRICS.map((m) => (
-              <th key={m.key} className="num">
+              <th key={m.key} className="num" title={CONCEPTS[m.key]?.short}>
                 {m.head}
               </th>
             ))}
@@ -336,8 +339,10 @@ function FragilityTable({
                 {fmtMult(r.biggest_payoff_mult)}
                 <span className="pl-mini-bar" style={{ width: `${biggestBarWidth(r.biggest_payoff_mult, maxPayoff)}px` }} />
               </td>
-              <td className="num">
-                <span className={VERDICT_TAG[r.verdict]}>{r.verdict.replace('_', ' ')}</span>
+              <td className="num" data-testid={`screened-verdict-${r.asset}`}>
+                <span className={VERDICT_TAG[r.verdict]} title={VERDICT_TITLE[r.verdict]}>
+                  {r.verdict.replace('_', ' ')}
+                </span>
               </td>
               <td className="num" data-testid={`q-source-${r.asset}`}>
                 {r.q_source === 'none' ? (
@@ -354,7 +359,7 @@ function FragilityTable({
                 <span className={BASIS_TAG[r.priced_from]}>{BASIS_LABEL[r.priced_from]}</span>
               </td>
               <td
-                className={`num bold pl-rank-group-start${bestHeat[i] == null ? (r.best_annualized != null && r.best_annualized >= 0 ? ' pl-pos' : ' pl-neg') : ' pl-heat-loss'}`}
+                className={`num bold pl-rank-group-start${bestHeat[i] == null ? (r.best_annualized == null ? ' dim' : r.best_annualized >= 0 ? ' pl-pos' : ' pl-neg') : ' pl-heat-loss'}`}
                 style={heatStyle(bestHeat[i])}
                 data-testid={`best-ann-${r.asset}`}
               >
@@ -422,23 +427,34 @@ function BakeoffLine({
   const composite = data.entries.find((e) => e.metric === 'fragility_score')
   const n = data.universe_size
   const lift = composite?.lift_vs_baseline ?? 0
+  const pts = 'pts of return on premium over the window'
+  // With no more scored names than the basket holds, the top K IS everyone:
+  // there is no selection to measure, and "beat/matched buying all N" would
+  // describe comparing a basket with itself.
   const liftText =
-    lift > 0
-      ? `The composite screen's top ${b.top_k} beat buying all ${n} by ${signedPts(lift)} pts.`
+    composite == null
+      ? 'This bake-off carried no composite row.'
+      : b.top_k >= n
+      ? `It scored only ${n} name${n === 1 ? '' : 's'}, so its top ${b.top_k} is all of them: no selection to measure.`
+      : lift > 0
+      ? `The composite screen's top ${b.top_k} beat buying all ${n} by ${signedPts(lift)} ${pts}.`
       : lift < 0
-        ? `The composite screen's top ${b.top_k} trailed buying all ${n} by ${Math.abs(lift * 100).toFixed(1)} pts.`
+        ? `The composite screen's top ${b.top_k} trailed buying all ${n} by ${Math.abs(lift * 100).toFixed(1)} ${pts}.`
         : `The composite screen's top ${b.top_k} matched buying all ${n}.`
+  // The p-value is two-sided, so "significant" alone would endorse a screen
+  // that ordered names significantly the WRONG way: the sign is stated.
+  const rho = composite?.spearman_vs_payoff
   const sigText =
-    composite == null || composite.spearman_pvalue == null
+    composite == null || composite.spearman_pvalue == null || rho == null
       ? 'Its correlation with payoff could not be tested (too few names, or no variation to rank).'
-      : `Its ranking's correlation with payoff is ${composite.significant_corrected ? '' : 'not '}significant after FDR correction across ${data.n_comparisons} screens.`
+      : `Its ranking's correlation with payoff (ρ = ${fmtFixed(rho)}) is ${composite.significant_corrected ? '' : 'not '}significant after FDR correction across ${data.n_comparisons} screens${composite.significant_corrected && rho < 0 ? ': it ordered names the wrong way, more fragile paying less' : ''}.`
   const scope = sameAsList
-    ? 'Same settings as the list above; its universe can differ.'
-    : 'Not the settings of the list above.'
+    ? 'Same settings as the screen above; its universe can differ.'
+    : 'Not the settings of the screen above.'
   return (
     <p className="pl-micro pl-rank-bakeoff" data-testid="rank-bakeoff">
       <strong>{`${base} of ${n}`}</strong>: {liftText} {sigText} {scope}{' '}
-      <span className="dimmer">
+      <span>
         As of {data.as_of} · {data.snapshot_ids.length} bronze snapshot{data.snapshot_ids.length === 1 ? '' : 's'} ·{' '}
         {data.code_sha === 'unknown' ? 'code sha unknown' : data.code_sha.slice(0, 7)}
       </span>{' '}

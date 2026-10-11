@@ -214,6 +214,10 @@ test.describe('on a phone-width page', () => {
   test('a row swiped to its end by hand drops the fade, and its tabs keep the 16px inset', async ({ page }) => {
     await page.goto('/')
     await expect(page.locator('.pl-tabs-fade')).toBeVisible()
+    // Swipe once the row's width has settled: a web font landing after the
+    // swipe widens the tabs and leaves the row short of its end (a one-off
+    // red under full-suite load, 2026-10-11).
+    await page.evaluate(() => document.fonts.ready)
     await page.getByRole('tablist', { name: 'Put Lab views' }).evaluate((el) => {
       el.scrollLeft = el.scrollWidth
     })

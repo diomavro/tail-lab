@@ -347,7 +347,9 @@ export const LEADERBOARD: PutLabLeaderboardResponse = {
       fragility_score: frag,
       roi_on_premium: bestAnn * 2.8,
       annualized_return: bestAnn - 0.03,
-      verdict: verdict as RegimeVerdictResponse['verdict'],
+      // IWM's screened cell failed where its best cell paid in one regime, so a
+      // table that printed the best verdict in the screened group is caught.
+      verdict: (asset === 'iwm' ? 'failed' : verdict) as RegimeVerdictResponse['verdict'],
       hit_rate: 0.08 + frag / 9,
       biggest_payoff_mult: 1 + frag * 4,
       n_cycles: 52,
