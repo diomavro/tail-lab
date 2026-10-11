@@ -129,7 +129,9 @@ ordering, and the best cell's own dividend and pricing basis.
 
 * **One strip, two orders over one read.** The strip gains a *Sort the
   screen* switch: by fragility (the server's own order) or by best return
-  (the old Recommendations table, word for word, as `BestReturnTable`). The
+  (the old Recommendations table as `BestReturnTable`: its columns, caveat,
+  notes and export kept, plus a biggest-payoff column, loss shading, and the
+  best cell's own q = 0 and Market tags). The
   Recommendations tab, its `RAIL` row and its spec are removed. The table row
   above for Recommendations, and "a Recommendations click still opens the
   Workspace", no longer apply: a click in either order loads that name's best
@@ -143,7 +145,8 @@ ordering, and the best cell's own dividend and pricing basis.
   best-return order re-sorts the same response. Switching the order never
   refetches.
 * **The fragility table names which strategy each figure comes from.** Two
-  column groups: "Best cell" (per year, where) and "At N% · Tw" (the
+  column groups: "Best cell" (per year, where, and that cell's own q = 0 or
+  Market tag beside its figure) and "At N% · Tw" (the
   screened cell -- per year, hit, biggest payoff, verdict, q, and basis once
   any row is market-priced; until then one printed line says every row is
   model-priced). Both come before the six fragility measures, so a laptop
@@ -172,7 +175,11 @@ ordering, and the best cell's own dividend and pricing basis.
   usually a different tenor, so the strip shows its status line through a
   cold re-screen (~25 s alone). A strike change in the best-return order
   re-screens too, for an identical table; the strip says so under the switch,
-  in the best-return order, while the re-screen runs as well.
+  in the best-return order, while the re-screen runs as well. That one case
+  keeps its rows up during the re-screen: in the best-return order, with the
+  tenor and years unchanged, the rows cannot change. Any other re-screen shows
+  the status line, since the tenor and years change coverage and values. A row
+  opened from the keyboard gets focus back when its table returns.
 * **Universe screens take one at a time.** Each memo already single-flights
   its own keys, but the ranking and the bake-off would otherwise screen in
   parallel on the app's one shared CPU -- the 2026-10-08 health-check failure.

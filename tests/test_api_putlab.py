@@ -457,6 +457,28 @@ def test_a_warm_that_ends_past_the_next_warm_does_not_kill_the_thread(
     assert sleeps == [0.0]
 
 
+def test_the_warmed_bakeoff_is_the_one_the_workspace_asks_for() -> None:
+    """The Workspace strip asks for STRIP_BAKEOFF (frontend types.ts); the
+    server warms _WARM_BAKEOFF. If they drift, every page load runs a cold
+    bake-off and nothing else fails, so this reads the client constant."""
+    import re
+
+    src = (
+        Path(__file__).resolve().parents[1] / "frontend/src/components/putlab/types.ts"
+    ).read_text()
+    block = src[src.index("export const STRIP_BAKEOFF") :]
+    block = block[: block.index("}")]
+    fields = dict(re.findall(r"(\w+): ([\w.']+)", block))
+    rule, tenor, years, top_k = putlab_routes._WARM_BAKEOFF
+    assert fields["strike_rule"].startswith("'moneyness'")
+    assert rule == putlab_routes.ByMoneyness(float(fields["moneyness_pct"]))
+    assert (tenor, years, top_k) == (
+        float(fields["tenor_weeks"]),
+        float(fields["years"]),
+        int(fields["top_k"]),
+    )
+
+
 def test_a_ranking_warm_that_crosses_midnight_warms_the_new_days_bakeoff(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

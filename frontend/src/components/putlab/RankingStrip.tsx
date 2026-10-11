@@ -1,4 +1,4 @@
-import { type CSSProperties, useId, useState } from 'react'
+import { type CSSProperties, useEffect, useId, useRef, useState } from 'react'
 import type { MetricScreenComparison, PutLabLeaderboardResponse, RankedAsset, Verdict } from '../../api/client'
 import { CONCEPTS, UNKNOWN_Q_CAUSES } from '../../content/concepts'
 import { BestReturnTable } from './BestReturnTable'
@@ -114,16 +114,49 @@ export function RankingStrip({
   const [open, setOpen] = useState(false)
   const sortName = useId()
 
-  const data = ranking.status === 'ready' ? ranking.data : null
+  // The last screen shown, for one honest hold: in the best-return order a
+  // re-screen that changes ONLY the strike returns identical rows (every
+  // column is strike-free; the tenor and years decide coverage and values),
+  // so those rows stay up while it runs. Any other change shows the status
+  // line instead (docs/adr/0028 amendment).
+  const lastReady = useRef<PutLabLeaderboardResponse | null>(null)
+  useEffect(() => {
+    if (ranking.status === 'ready') lastReady.current = ranking.data
+  }, [ranking])
+  const prev = lastReady.current
+  const held =
+    sort === 'return' &&
+    ranking.status === 'loading' &&
+    prev != null &&
+    prev.tenor_weeks === requested.tenor_weeks &&
+    prev.lookback_years === requested.years
+      ? prev
+      : null
+  const data = ranking.status === 'ready' ? ranking.data : held
   const rows: RankedAsset[] = data == null ? [] : sort === 'return' ? bestReturnRows(data.ranked) : data.ranked
 
-  const pick = (r: RankedAsset) =>
+  // A row opened from the keyboard re-screens and remounts the table; focus
+  // goes back to that row when it returns, not to the top of the page.
+  const tablesRef = useRef<HTMLDivElement>(null)
+  const refocus = useRef<string | null>(null)
+  useEffect(() => {
+    if (refocus.current == null || !open || data == null) return
+    const row = tablesRef.current?.querySelector<HTMLElement>(`tr[data-asset="${refocus.current}"]`)
+    if (row) {
+      row.focus()
+      refocus.current = null
+    }
+  }, [data, open, sort])
+
+  const pick = (r: RankedAsset) => {
+    if (tablesRef.current?.contains(document.activeElement)) refocus.current = r.asset
     onSelect(
       r.asset,
       r.best_moneyness_pct != null && r.best_tenor_weeks != null
         ? { moneyness_pct: r.best_moneyness_pct, tenor_weeks: r.best_tenor_weeks }
         : undefined,
     )
+  }
 
   const axes: ScreenAxes = data
     ? { moneyness_pct: data.moneyness_pct, tenor_weeks: data.tenor_weeks, years: data.lookback_years }
@@ -148,7 +181,9 @@ export function RankingStrip({
 
         {ranking.status === 'loading' && (
           <span className="pl-micro pl-rank-ref" role="status" aria-live="polite" data-testid="rank-status">
-            Screening the universe &mdash; one strike × tenor sweep per name…
+            {held
+              ? 'Re-screening at the new strike — these best-return rows do not change with it.'
+              : 'Screening the universe — one strike × tenor sweep per name…'}
           </span>
         )}
         {ranking.status === 'error' && (
@@ -178,7 +213,12 @@ export function RankingStrip({
               </span>{' '}
               <span className="pl-rank-at">{at(r)}</span>
               {r.best_q_source === 'none' && (
-                <span className="pl-tag pl-tag-bad pl-rank-pick-q" data-testid={`pick-q-${r.asset}`}>
+                <span
+                  className="pl-tag pl-tag-bad pl-rank-pick-q"
+                  data-testid={`pick-q-${r.asset}`}
+                  aria-label="q = 0: this best cell's dividend yield is unknown, so its puts were priced too cheap"
+                  title="This best cell's dividend yield is unknown, so its puts were priced at q = 0 (too cheap)"
+                >
                   q = 0
                 </span>
               )}
@@ -231,7 +271,7 @@ export function RankingStrip({
       <div className="pl-rule-hair" />
 
       {open && data && rows.length > 0 && (
-        <div style={{ padding: '4px 0 20px' }}>
+        <div style={{ padding: '4px 0 20px' }} ref={tablesRef}>
           {sort === 'return' ? (
             <BestReturnTable data={data} rows={rows as BestRow[]} currentAsset={currentAsset} onPick={pick} />
           ) : (
@@ -353,6 +393,7 @@ function FragilityTable({
           {ranked.map((r, i) => (
             <tr
               key={r.asset}
+              data-asset={r.asset}
               className={`pick${r.asset === currentAsset ? ' is-current' : ''}`}
               tabIndex={0}
               aria-label={`Open ${r.asset.toUpperCase()}`}

@@ -271,6 +271,8 @@ test.describe('with the shared fixture', () => {
     await expect(page.getByTestId('q-zero-note')).toContainText('beside the figure it applies to')
     // The pick advertising XLF's best cell carries the flag too.
     await expect(page.getByTestId('pick-q-xlf')).toHaveText('q = 0')
+    // Collapsed, the note is not on the page: the tag explains itself.
+    await expect(page.getByTestId('pick-q-xlf')).toHaveAttribute('aria-label', /dividend yield is unknown/)
     await expect(page.getByTestId('pick-q-tsla')).toHaveCount(0)
   })
 
@@ -304,6 +306,10 @@ test.describe('with the shared fixture', () => {
     await sortTo(page, 'Best return')
     const tslaRow = bestTable(page).locator('tbody tr').filter({ hasText: 'TSLA' })
     await expect(tslaRow.locator('td.pl-rec-biggest')).toContainText(`${tsla.best_biggest_payoff_mult!.toFixed(1)}×`)
+    // ...and its bar is that same cell's, on the table's own log scale.
+    const maxBest = Math.max(...byReturn().map((r) => r.best_biggest_payoff_mult ?? 0))
+    const width = await tslaRow.locator('td.pl-rec-biggest .pl-mini-bar').evaluate((el) => (el as HTMLElement).offsetWidth)
+    expect(Math.abs(width - Math.round((Math.log1p(tsla.best_biggest_payoff_mult!) / Math.log1p(maxBest)) * 40))).toBeLessThanOrEqual(1)
   })
 
   test('metric shading follows each column’s own fragility rank', async ({ page }) => {
@@ -436,6 +442,45 @@ test.describe('with the shared fixture', () => {
     await expect(page.getByTestId('rank-strike-note')).toBeVisible()
   })
 
+  test('a strike-only re-screen keeps the identical best-return rows up; a tenor change does not', async ({ page }) => {
+    await openBestReturn(page)
+    // Hold every re-screen open.
+    await page.route(
+      (url) => url.pathname === '/api/putlab/leaderboard' && url.searchParams.get('moneyness_pct') !== '5',
+      () => {},
+    )
+    await rail(page).getByRole('radiogroup', { name: 'Strike presets' }).getByText('10%').click()
+    await expect(strip(page).getByTestId('rank-status')).toContainText('Re-screening at the new strike')
+    await expect(bestTable(page)).toBeVisible()
+    // The tenor decides coverage: rows could change, so they come down.
+    await rail(page).getByRole('radiogroup', { name: 'Held to expiry' }).getByText('1 quarter').click()
+    await expect(strip(page).getByTestId('rank-status')).toContainText('Screening the universe')
+    await expect(bestTable(page)).toHaveCount(0)
+  })
+
+  test('the fragility order never holds a stale table: its screened cells move with the strike', async ({ page }) => {
+    await expand(page)
+    await page.route(
+      (url) => url.pathname === '/api/putlab/leaderboard' && url.searchParams.get('moneyness_pct') !== '5',
+      () => {},
+    )
+    await rail(page).getByRole('radiogroup', { name: 'Strike presets' }).getByText('10%').click()
+    await expect(strip(page).getByTestId('rank-status')).toContainText('Screening the universe')
+    await expect(fragTable(page)).toHaveCount(0)
+  })
+
+  test('a row opened from the keyboard gets focus back when its table returns', async ({ page }) => {
+    await openBestReturn(page)
+    const tsla = bestTable(page).getByRole('row', { name: 'Open TSLA at its best cell' })
+    await tsla.focus()
+    const rescreen = page.waitForResponse(
+      (r) => new URL(r.url()).pathname === '/api/putlab/leaderboard' && new URL(r.url()).searchParams.get('tenor_weeks') === '12',
+    )
+    await page.keyboard.press('Enter')
+    await rescreen
+    await expect(bestTable(page).getByRole('row', { name: 'Open TSLA at its best cell' })).toBeFocused()
+  })
+
   test('a narrow page never scrolls sideways with the best-return table open', async ({ page }) => {
     await page.setViewportSize({ width: 390, height: 844 })
     await openBestReturn(page)
@@ -557,6 +602,7 @@ test.describe('with the shared fixture', () => {
     expect(url.searchParams.get('tenor_weeks')).toBe(String(LEADERBOARD.tenor_weeks))
     expect(url.searchParams.get('years')).toBe(String(LEADERBOARD.lookback_years))
     expect(url.searchParams.get('notional')).toBe(String(LEADERBOARD.notional))
+    expect(url.searchParams.get('as_of')).toBe(LEADERBOARD.as_of)
     expect(Number(url.searchParams.get('top_k'))).toBeGreaterThan(0)
     const view = page.getByTestId('best-return')
     await expect(view).toContainText('never places')

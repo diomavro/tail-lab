@@ -71,6 +71,9 @@ export function BestReturnTable({ data, rows, currentAsset, onPick }: Props) {
       years: String(data.lookback_years),
       notional: String(data.notional),
       top_k: String(SCHEDULE_TOP_K),
+      // The screen's own date: a page left open past midnight must not
+      // export today's screen under yesterday's table.
+      as_of: data.as_of,
     }).toString()
   const heat = lossHeat(rows.map((r) => r.best_annualized))
   const maxPayoff = Math.max(0, ...rows.map((r) => r.best_biggest_payoff_mult ?? 0))
@@ -123,6 +126,7 @@ export function BestReturnTable({ data, rows, currentAsset, onPick }: Props) {
             {rows.map((r, i) => (
               <tr
                 key={r.asset}
+                data-asset={r.asset}
                 className={`pick${r.asset === currentAsset ? ' is-current' : ''}`}
                 tabIndex={0}
                 aria-label={`Open ${r.asset.toUpperCase()} at its best cell`}
