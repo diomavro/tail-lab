@@ -27,6 +27,17 @@ a large one strictly in order.
       *Success*: the grid fits (or scrolls inside itself) at 390px with a
       −100% cell, and the e2e check uses such a cell.
 
+- [ ] **Two small paint bugs carried over from Recommendations** (found by
+      a 2026-10-12 review; both predate the Workspace fold). (1) The
+      best-return "On premium" cell (`BestReturnTable.tsx`, `pl-rec-premium`)
+      sets `dim` beside `pl-neg`, and `dim` wins, so a losing return on
+      premium is never printed in the loss colour. (2) The `.pl-seg` focus
+      ring is cyan on the checked option's cyan fill (`putlab.css`), so a
+      keyboard reader cannot see focus on the selected option of any
+      segmented switch, the screen's sort switch included.
+      *Success*: a losing On premium prints magenta; the focused, checked
+      segment shows a visible ring (contrast-checked in both sheets).
+
 - [ ] **A 3D view of the real option surface** (from the 2026-10-07 redesign
       handoff, deliberately not shipped with it). The
       handoff's `Tail Surface 3D.html` drew a Black–Scholes surface from an

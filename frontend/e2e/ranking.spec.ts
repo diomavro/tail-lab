@@ -234,6 +234,38 @@ test.describe('with the shared fixture', () => {
     expect(await cellContrast(spy)).toBeGreaterThanOrEqual(4.5)
   })
 
+  test('every best-return row’s loss shade is scaled within the best cells', async ({ page }) => {
+    // SPY is the worst row in both cells, so it reads 1 either way; EEM and QQQ
+    // shade differently if the heat were taken from the screened cells.
+    await openBestReturn(page)
+    const worst = Math.min(...byReturn().map((r) => r.best_annualized!))
+    const rows = bestTable(page).locator('tbody tr')
+    for (const [i, r] of byReturn().entries()) {
+      const cell = rows.nth(i).locator('td.pl-rec-ann')
+      const d = await cell.evaluate((el) => (el as HTMLElement).style.getPropertyValue('--pl-d'))
+      if (r.best_annualized! < 0) expect(Number(d)).toBeCloseTo(r.best_annualized! / worst, 2)
+      else expect(d).toBe('')
+    }
+  })
+
+  test('every name advertises its own best cell, in both orders', async ({ page }) => {
+    const cell = (r: RankedAsset) => `${r.best_moneyness_pct}% · ${r.best_tenor_weeks}w`
+    const byFragility = LEADERBOARD.ranked
+    for (const [i, r] of byFragility.slice(0, 3).entries()) await expect(picks(page).nth(i)).toContainText(cell(r))
+    await expand(page)
+    for (const r of byFragility) {
+      await expect(fragTable(page).locator('tbody tr').filter({ hasText: r.asset.toUpperCase() })).toContainText(cell(r))
+    }
+    await sortTo(page, 'Best return')
+    const rows = bestTable(page).locator('tbody tr')
+    for (const [i, r] of byReturn().entries()) {
+      await expect(rows.nth(i).locator('.pl-rec-strike')).toHaveText(`${r.best_moneyness_pct}%`)
+    }
+    // At least one best strike differs from the screened 5%, or the recipe
+    // could print the screen's strike and pass.
+    expect(byReturn().some((r) => r.best_moneyness_pct !== LEADERBOARD.moneyness_pct)).toBe(true)
+  })
+
   test('in delta mode the screened group says it is still by distance', async ({ page }) => {
     await rail(page).getByRole('radiogroup', { name: 'Strike chosen by' }).getByText('Delta').click()
     await expand(page)
@@ -1253,6 +1285,26 @@ test.describe('with a response of its own', () => {
     await expect(page.getByTestId('rank-pick').first()).toBeVisible()
     await expect(page.getByLabel('Out of the money, %')).toHaveValue('10')
     await expect(line).toContainText('Not the settings of the screen above')
+  })
+
+  for (const [axis, patch] of [
+    ['strike', { moneyness_pct: 10 }],
+    ['tenor', { tenor_weeks: 12 }],
+  ] as const) {
+    test(`the bake-off line notices when only the ${axis} differs`, async ({ page }) => {
+      await mockPutLabApi(page)
+      await serveLeaderboard(page, () => ({ ...LEADERBOARD, ...patch }))
+      await page.goto('/')
+      await expect(picks(page).first()).toBeVisible()
+      await expect(strip(page).getByTestId('rank-bakeoff')).toContainText('Not the settings of the screen above')
+    })
+  }
+
+  test('the bake-off line does not point at a screen that listed nothing', async ({ page }) => {
+    await mockPutLabApi(page)
+    await serveLeaderboard(page, () => ({ ...LEADERBOARD, ranked: [] }))
+    await page.goto('/')
+    await expect(strip(page).getByTestId('rank-bakeoff')).toContainText('Same settings as the screen asked for')
   })
 
   test('the bake-off line notices when only the years differ', async ({ page }) => {
