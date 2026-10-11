@@ -106,7 +106,8 @@ test('the q = 0 note is absent when no row priced at q = 0', async ({ page }) =>
         contentType: 'application/json',
         body: JSON.stringify({
           ...LEADERBOARD,
-          ranked: LEADERBOARD.ranked.map((r) => ({ ...r, q_source: 'measured' })),
+          // Neither cell: the note covers best-cell figures too.
+          ranked: LEADERBOARD.ranked.map((r) => ({ ...r, q_source: 'measured', best_q_source: 'measured' })),
         }),
       }),
   )
