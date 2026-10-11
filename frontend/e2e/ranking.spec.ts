@@ -2,6 +2,7 @@ import { expect, test, type Page, type Route } from '@playwright/test'
 import { cellContrast, cellPaint, textContrastOnPage } from './contrast'
 import { LEADERBOARD, METRIC_SCREEN_NO_WINNER, METRIC_SCREEN_WINNER, MODEL_PRICED_MAX } from './fixtures/putlab'
 import { type MockOptions, mockPutLabApi } from './fixtures/mock-api'
+import { fmtPct } from '../src/components/putlab/format'
 import type { MetricScreenComparison, PutLabLeaderboardResponse, RankedAsset } from '../src/api/client'
 
 // The screen: the universe ranking as a strip at the top of the Workspace, in
@@ -692,6 +693,19 @@ test.describe('with the shared fixture', () => {
     expect(top.best_hit_rate).not.toBe(top.hit_rate)
   })
 
+  test('every best-return row’s premium return and verdict are its best cell’s', async ({ page }) => {
+    // The top row alone cannot tell the fields apart: only IWM's screened
+    // verdict differs from its best cell's. Read every row.
+    await openBestReturn(page)
+    const rows = bestTable(page).locator('tbody tr')
+    for (const [i, r] of byReturn().entries()) {
+      await expect(rows.nth(i).locator('td.pl-rec-premium')).toHaveText(new RegExp(`^\\${fmtPct(r.best_roi_on_premium!)}`))
+      await expect(rows.nth(i).locator('td.pl-rec-verdict')).toHaveText(r.best_verdict!.replace('_', ' '))
+    }
+    expect(byReturn().some((r) => r.verdict !== r.best_verdict)).toBe(true)
+    expect(byReturn().some((r) => fmtPct(r.roi_on_premium!) !== fmtPct(r.best_roi_on_premium!))).toBe(true)
+  })
+
   test('names the premium a return on premium was measured against', async ({ page }) => {
     await openBestReturn(page)
     const top = topByReturn()
@@ -793,6 +807,11 @@ test.describe('with a response of its own', () => {
       ranked: [...LEADERBOARD.ranked, row('qqq', { asset: 'kre', name: 'Regional Banks', fragility_score: 0.05, best_annualized: null })],
     }))
     await page.goto('/')
+    // The expand button counts the order's own rows.
+    await expect(strip(page).getByRole('button', { name: `All ${LEADERBOARD.ranked.length + 1} names` })).toBeVisible()
+    await sortTo(page, 'Best return')
+    await expect(strip(page).getByRole('button', { name: `All ${byReturn().length} names` })).toBeVisible()
+    await sortTo(page, 'Fragility')
     await expand(page)
     await expect(fragTable(page).locator('tbody tr')).toHaveCount(LEADERBOARD.ranked.length + 1)
     await expect(fragTable(page)).toContainText('KRE')
@@ -867,6 +886,21 @@ test.describe('with a response of its own', () => {
     await expect(strip(page).getByTestId('rank-bakeoff')).toContainText(
       'From a different day (2026-08-20) than the screen above.',
     )
+  })
+
+  test('the fragility table’s q = 0 note shows for a best cell’s tag alone', async ({ page }) => {
+    // Every screened cell measured, only XLF's best cell at q = 0: its tag in
+    // the Best-cell group must still point at a note that is on the page.
+    await mockPutLabApi(page)
+    await serveLeaderboard(page, () => ({
+      ...LEADERBOARD,
+      ranked: LEADERBOARD.ranked.map((r) => ({ ...r, q_source: 'measured' as const })),
+    }))
+    await page.goto('/')
+    await expand(page)
+    await expect(page.getByTestId('best-cell-q-xlf')).toBeVisible()
+    const noteId = await page.getByTestId('q-zero-note').getAttribute('id')
+    await expect(page.getByTestId('best-cell-q-xlf')).toHaveAttribute('aria-describedby', noteId!)
   })
 
   test('the best-return q = 0 note follows the best cells', async ({ page }) => {
@@ -1184,6 +1218,22 @@ test.describe('with a response of its own', () => {
     })
     await page.goto('/')
     await expect(strip(page).getByTestId('rank-bakeoff')).toContainText('could not be tested')
+  })
+
+  test('the bake-off line counts only the screens that entered the correction', async ({ page }) => {
+    // A screen with no p-value is not among the K tests the FDR correction ran.
+    await mockPutLabApi(page)
+    await serveBakeoff(page, {
+      ...METRIC_SCREEN_WINNER,
+      n_comparisons: METRIC_SCREEN_WINNER.entries.length - 1,
+      entries: METRIC_SCREEN_WINNER.entries.map((e) =>
+        e.metric === 'co_kurtosis' ? { ...e, spearman_vs_payoff: null, spearman_pvalue: null, significant_corrected: false } : e,
+      ),
+    })
+    await page.goto('/')
+    await expect(strip(page).getByTestId('rank-bakeoff')).toContainText(
+      `across ${METRIC_SCREEN_WINNER.entries.length - 1} screens`,
+    )
   })
 
   test('the bake-off line compares its settings with the list’s', async ({ page }) => {
