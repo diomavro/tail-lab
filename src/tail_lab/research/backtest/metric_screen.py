@@ -176,8 +176,9 @@ class MetricScreenComparison(BaseModel):
     #: FDR level `significant_corrected` was computed at.
     fdr_alpha: float
     entries: list[MetricScreenEntry]
-    #: The bronze snapshots this bake-off read (VIX, one per scored name, and
-    #: the dividend snapshot once one exists -- `ranking.snapshot_ids_for`),
+    #: The bronze snapshots this bake-off read (VIX, the SPY benchmark whether
+    #: or not it was scored, one per scored name, and the dividend snapshot
+    #: once one exists -- `ranking.snapshot_ids_for`),
     #: and the code that computed it. `docs/STANDARDS.md`: "a result without
     #: both is not trustworthy and should not be surfaced". `code_sha` is
     #: filled in by the API route from `Settings`, which `research/` may not

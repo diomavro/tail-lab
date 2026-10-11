@@ -156,7 +156,8 @@ ordering, and the best cell's own dividend and pricing basis.
   strip shows the composite fragility screen's result from a bake-off at 5% ·
   4w · 4y, by distance, top 5 -- its lift, whether its rank correlation with
   payoff survives FDR correction across the screens compared, and whether
-  those settings are the list's. The server pre-computes it daily
+  those settings are the list's (or, when the two were read on different
+  days, that they were). The server pre-computes it daily
   (`_WARM_BAKEOFF`), after the opening ranking. The bake-off response gains
   `snapshot_ids` and `code_sha` (`docs/STANDARDS.md`), shared with the
   ranking through `ranking.snapshot_ids_for`.

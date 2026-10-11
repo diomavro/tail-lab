@@ -587,8 +587,9 @@ export interface MetricScreenComparison {
   n_comparisons: number
   fdr_alpha: number
   entries: MetricScreenEntry[]
-  /** The bronze snapshots this bake-off read (VIX, one per scored name, and
-   *  the dividend snapshot once one exists) and the code that computed it --
+  /** The bronze snapshots this bake-off read (VIX, the SPY benchmark whether
+   *  or not it was scored, one per scored name, and the dividend snapshot once
+   *  one exists) and the code that computed it --
    *  docs/STANDARDS.md. */
   snapshot_ids: string[]
   code_sha: string

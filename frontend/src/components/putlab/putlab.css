@@ -476,7 +476,8 @@
 .pl-table .num { text-align: right; }
 .pl-table th.num { text-align: right; }
 .pl-table .pick { cursor: pointer; }
-.pl-table .is-current { background: color-mix(in srgb, var(--cyan) 12%, transparent); }
+.pl-table .is-current,
+.pl-table tbody tr.is-current:hover { background: color-mix(in srgb, var(--cyan) 12%, transparent); }
 .pl-table .is-winner { background: color-mix(in srgb, var(--cyan) 10%, transparent); }
 .pl-table .dim { color: var(--ink-70); }
 .pl-table .dimmer { color: var(--ink-45); }
@@ -528,6 +529,9 @@
 .pl-table .pl-rank-groups th.pl-rank-group { text-align: left; color: var(--ink-70); border-left: 1px solid var(--rule-2); }
 .pl-table .pl-rank-group-start { border-left: 1px solid var(--rule-2); }
 .pl-rank-legend-item { margin-left: 10px; white-space: nowrap; }
+.pl-table .pl-rank-frag { white-space: nowrap; }
+.pl-cell-tag { margin-left: 6px; font-weight: 400; }
+.pl-rank-pick-q { margin-left: 4px; font-size: 10.5px; }
 /* The legend carries meaning (direction, colour, scale): AA, not micro grey. */
 .pl-rank-legend,
 .pl-rank-ref { color: var(--ink-70); }

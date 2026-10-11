@@ -395,7 +395,9 @@ def snapshot_ids_for(store: LakeStore, as_of: dt.date, symbols: Iterable[str]) -
     depends on it, whether or not any name was scored), then each scored
     name's own OHLCV snapshot, deduplicated, then the dividend snapshot every
     name was priced with (absent before the first Tiingo ingest, when every q
-    was an unknown 0). Shared by the ranking and the metric bake-off.
+    was an unknown 0). Shared by the ranking and the metric bake-off; the
+    bake-off passes the SPY benchmark among ``symbols`` so it is cited even
+    when SPY itself is not scored.
     """
     snapshot_ids = [store.bronze_snapshot_id(VIX_DATASET, as_of)]
     for symbol in symbols:

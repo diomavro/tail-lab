@@ -82,7 +82,7 @@ export function WorkspaceView({
       {ranking.status === 'ready' && controls.strike_rule === 'delta' && (
         <p className="pl-note" data-testid="rank-rule-note">
           The ranking screens every name on a grid of distances below spot (each row&rsquo;s best cell), not by delta;
-          opening a row switches the strike back to distance.
+          opening a row with a best cell switches the strike back to distance.
         </p>
       )}
       {/* Always mounted: the switch and the bake-off line stay put while the

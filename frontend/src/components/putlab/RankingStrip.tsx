@@ -73,9 +73,6 @@ const at = (r: RankedAsset) =>
     ? '—'
     : `${r.best_moneyness_pct}% · ${r.best_tenor_weeks}w`
 
-/** A level to one decimal, so a small gap between two levels stays visible. */
-const fmtPct1 = (x: number) => `${x >= 0 ? '+' : '−'}${Math.abs(x * 100).toFixed(1)}%`
-
 const heatStyle = (d: number | null | undefined): CSSProperties | undefined =>
   d == null ? undefined : ({ '--pl-d': d } as CSSProperties)
 
@@ -180,6 +177,11 @@ export function RankingStrip({
                 {r.best_annualized == null ? '—' : fmtPct(r.best_annualized)}
               </span>{' '}
               <span className="pl-rank-at">{at(r)}</span>
+              {r.best_q_source === 'none' && (
+                <span className="pl-tag pl-tag-bad pl-rank-pick-q" data-testid={`pick-q-${r.asset}`}>
+                  q = 0
+                </span>
+              )}
             </button>
           ))}
         {data && rows.length > 0 && (
@@ -264,7 +266,7 @@ function FragilityTable({
   // hover-only title, so keyboard, touch and screen-reader readers get it too.
   const qZeroNoteId = useId()
   const ranked = data.ranked
-  const anyQZero = ranked.some((r) => r.q_source === 'none')
+  const anyQZero = ranked.some((r) => r.q_source === 'none' || r.best_q_source === 'none')
   // Read from the response, like the shading: the legend must not keep its
   // own copy of which way is fragile.
   const fragileLow = METRICS.filter((m) => data.fragile_high[m.key] === false).map((m) => m.head)
@@ -272,6 +274,7 @@ function FragilityTable({
   // a Basis column would repeat one word per row; one printed line says it,
   // and the column appears the day a row is market-priced.
   const anyMarket = ranked.some((r) => r.priced_from === 'market')
+  const anyBestMarket = ranked.some((r) => r.best_priced_from === 'market')
   const screened = `At ${data.moneyness_pct}% · ${data.tenor_weeks}w`
   const shade = Object.fromEntries(
     METRICS.map((m) => [m.key, fragilityRank(ranked.map((r) => r[m.key]), data.fragile_high[m.key] ?? true)]),
@@ -384,6 +387,18 @@ function FragilityTable({
                 data-testid={`best-ann-${r.asset}`}
               >
                 {r.best_annualized == null ? '—' : fmtPct(r.best_annualized)}
+                {/* The best cell's own bases (the q and Basis columns are the
+                    screened cell's): flagged here, beside its own figure. */}
+                {r.best_q_source === 'none' && (
+                  <span className="pl-tag pl-tag-bad pl-cell-tag" aria-describedby={qZeroNoteId} data-testid={`best-cell-q-${r.asset}`}>
+                    q = 0
+                  </span>
+                )}
+                {r.best_priced_from === 'market' && (
+                  <span className="pl-tag pl-tag-ok pl-cell-tag" data-testid={`best-cell-basis-${r.asset}`}>
+                    Market
+                  </span>
+                )}
               </td>
               <td className="dimmer nowrap">{at(r)}</td>
               <td
@@ -452,7 +467,9 @@ function FragilityTable({
       <p className="pl-micro pl-rank-legend" style={{ padding: '6px 2px 0' }} data-testid="rank-legend">
         Stronger shade = more fragile on that measure (each column ranked on its own
         {fragileLow.length > 0 && `; ${fragileLow.join(' and ')} ${fragileLow.length === 1 ? 'is' : 'are'} fragile when low`}). Magenta = a loss, deeper for a larger one. Biggest-payoff bars are on a log scale.
-        {!anyMarket && <span data-testid="rank-model-priced"> Every row is model-priced, not quoted.</span>}
+        {!anyMarket && !anyBestMarket && (
+          <span data-testid="rank-model-priced"> Every figure is model-priced, not quoted.</span>
+        )}
         {METRICS.map((m) => (
           <span key={m.key} className="pl-rank-legend-item">
             {m.head}
@@ -462,8 +479,9 @@ function FragilityTable({
       </p>
       {anyQZero && (
         <p id={qZeroNoteId} className="pl-micro pl-rank-ref" style={{ padding: '4px 2px 0' }} data-testid="q-zero-note">
-          q = 0 rolls: at least one roll was priced at q = 0 because its dividend yield is unknown &mdash;{' '}
-          {UNKNOWN_Q_CAUSES}. Read that row&rsquo;s return as the old, cheap price.
+          q = 0: at least one roll in that cell was priced at q = 0 because its dividend yield is unknown &mdash;{' '}
+          {UNKNOWN_Q_CAUSES}. The tag sits beside the figure it applies to (a Best cell return, or the {screened}{' '}
+          cell in the q column); read that figure as the old, cheap price.
         </p>
       )}
     </>
@@ -515,13 +533,15 @@ function BakeoffLine({
   const n = data.universe_size
   // Both levels, not only the gap: a "beat" between two losing baskets reads
   // as a gain. Under half a tenth of a point the gap rounds away: "matched".
-  const levels = composite
-    ? `returned ${fmtPct1(composite.roi_on_premium)} on premium against ${fmtPct1(data.baseline_roi)} for buying all ${n}`
-    : ''
-  // The gap between the two PRINTED levels, so the sentence's own figures add
-  // up: rounding each level and the raw lift separately can disagree by 0.1.
-  const r1 = (x: number) => Math.round(x * 1000) / 10
-  const gapPts = composite ? r1(composite.roi_on_premium) - r1(data.baseline_roi) : 0
+  // One rounding for the printed levels AND the gap between them, so the
+  // sentence's own figures always add up (toFixed and Math.round disagree
+  // on negative halves).
+  const tenths = (x: number) => Math.sign(x) * Number(Math.abs(x * 100).toFixed(1))
+  const shown = (t: number) => `${t >= 0 ? '+' : '−'}${Math.abs(t).toFixed(1)}%`
+  const a = composite ? tenths(composite.roi_on_premium) : 0
+  const baseline = tenths(data.baseline_roi)
+  const levels = composite ? `returned ${shown(a)} on premium against ${shown(baseline)} for buying all ${n}` : ''
+  const gapPts = Math.round((a - baseline) * 10) / 10
   const gap = Math.abs(gapPts).toFixed(1)
   // With no more scored names than the basket holds, the top K IS everyone:
   // there is no selection to measure, and "beat/matched buying all N" would

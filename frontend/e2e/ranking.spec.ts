@@ -135,6 +135,9 @@ test.describe('with the shared fixture', () => {
 
   test('prints fragility on a readable scale in the full table too', async ({ page }) => {
     await expand(page)
+    // ...with a bar 36px at 100: TSLA's 0.884 is 32px.
+    const bar = fragTable(page).locator('tbody tr').first().locator('.pl-frag-bar')
+    expect(await bar.evaluate((el) => (el as HTMLElement).style.width)).toBe('32px')
     const cells = fragTable(page).locator('td.pl-rank-frag')
     await expect(cells).toHaveCount(LEADERBOARD.ranked.length)
     const shown = await cells.allTextContents()
@@ -145,7 +148,7 @@ test.describe('with the shared fixture', () => {
     // One printed line rather than a column repeating "Model" seven times.
     await expand(page)
     for (const r of LEADERBOARD.ranked) expect(r.priced_from).toBe('model')
-    await expect(page.getByTestId('rank-model-priced')).toHaveText(' Every row is model-priced, not quoted.')
+    await expect(page.getByTestId('rank-model-priced')).toHaveText(' Every figure is model-priced, not quoted.')
     await expect(fragTable(page).getByRole('columnheader', { name: 'Basis' })).toHaveCount(0)
   })
 
@@ -256,6 +259,19 @@ test.describe('with the shared fixture', () => {
     // The screened cell's dividend and pricing basis are not best-cell figures.
     await expect(bestTable(page).getByRole('columnheader', { name: 'q', exact: true })).toHaveCount(0)
     await expect(bestTable(page).getByRole('columnheader', { name: 'Basis', exact: true })).toHaveCount(0)
+  })
+
+  test('the fragility table flags a q = 0 best cell beside its own figure', async ({ page }) => {
+    // XLF's best cell priced at q = 0 while its screened cell did not; EEM the
+    // reverse. Each flag sits beside the figure it applies to.
+    await expand(page)
+    await expect(page.getByTestId('best-cell-q-xlf')).toHaveText('q = 0')
+    await expect(page.getByTestId('best-cell-q-eem')).toHaveCount(0)
+    await expect(page.getByTestId('q-source-eem')).toContainText('q = 0 rolls')
+    await expect(page.getByTestId('q-zero-note')).toContainText('beside the figure it applies to')
+    // The pick advertising XLF's best cell carries the flag too.
+    await expect(page.getByTestId('pick-q-xlf')).toHaveText('q = 0')
+    await expect(page.getByTestId('pick-q-tsla')).toHaveCount(0)
   })
 
   test('each order shows its own cell’s dividend basis', async ({ page }) => {
@@ -385,6 +401,12 @@ test.describe('with the shared fixture', () => {
     await page.keyboard.press('Enter')
     await expect(page.getByLabel('Out of the money, %')).toHaveValue(String(eem.best_moneyness_pct))
     await expect(page.getByRole('term').filter({ hasText: 'Name' }).locator('..')).toContainText('EEM')
+    // Space opens a row too, as for any button-like control.
+    const iwm = LEADERBOARD.ranked.find((r) => r.asset === 'iwm')!
+    await fragTable(page).getByRole('row', { name: 'Open IWM' }).focus()
+    await page.keyboard.press(' ')
+    await expect(page.getByRole('term').filter({ hasText: 'Name' }).locator('..')).toContainText('IWM')
+    expect(iwm.best_tenor_weeks).toBe(4)
   })
 
   test('the best-return order carries exactly one accounting label', async ({ page }) => {
@@ -544,6 +566,7 @@ test.describe('with the shared fixture', () => {
   test('the screen’s provenance shows under both tables', async ({ page }) => {
     await expand(page)
     await expect(page.getByTestId('rank-provenance')).toContainText(LEADERBOARD.code_sha)
+    await expect(page.getByTestId('rank-provenance')).toContainText(`${LEADERBOARD.snapshot_ids.length} bronze snapshots`)
     await sortTo(page, 'Best return')
     await expect(page.getByTestId('rank-provenance')).toContainText(LEADERBOARD.code_sha)
   })
@@ -668,6 +691,9 @@ test.describe('with a response of its own', () => {
     await openBestReturn(page)
     await expect(page.getByTestId('best-q-source-xlf')).toBeVisible()
     await expect(page.getByTestId('best-q-zero-note')).toBeVisible()
+    // The tag names its note for assistive tech.
+    const noteId = await page.getByTestId('best-q-zero-note').getAttribute('id')
+    await expect(page.getByTestId('best-q-source-xlf')).toHaveAttribute('aria-describedby', noteId!)
   })
 
   test('a losing pick prints its loss in the loss colour', async ({ page }) => {
@@ -678,6 +704,52 @@ test.describe('with a response of its own', () => {
     }))
     await page.goto('/')
     await expect(picks(page).first().locator('.pl-neg')).toHaveText('−5%')
+  })
+
+  test('the bake-off line’s figures add up at an exact half', async ({ page }) => {
+    // −1.25% and −1.3%: one rounding for both levels and the gap.
+    await mockPutLabApi(page)
+    await serveBakeoff(page, {
+      ...METRIC_SCREEN_WINNER,
+      baseline_roi: -0.013,
+      entries: METRIC_SCREEN_WINNER.entries.map((e) =>
+        e.metric === 'fragility_score' ? { ...e, roi_on_premium: -0.0125, lift_vs_baseline: 0.0005 } : e,
+      ),
+    })
+    await page.goto('/')
+    await expect(strip(page).getByTestId('rank-bakeoff')).toContainText('−1.3% on premium against −1.3% for buying all 35: no difference.')
+  })
+
+  test('a negative correlation that is not significant is not called the wrong way', async ({ page }) => {
+    await mockPutLabApi(page)
+    await serveBakeoff(page, {
+      ...METRIC_SCREEN_WINNER,
+      entries: METRIC_SCREEN_WINNER.entries.map((e) =>
+        e.metric === 'fragility_score'
+          ? { ...e, spearman_vs_payoff: -0.3, spearman_pvalue: 0.2, significant_corrected: false }
+          : e,
+      ),
+    })
+    await page.goto('/')
+    const line = strip(page).getByTestId('rank-bakeoff')
+    await expect(line).toContainText('(ρ = −0.30) is not significant')
+    await expect(line).not.toContainText('wrong way')
+  })
+
+  test('tied metric values share a shade', async ({ page }) => {
+    await mockPutLabApi(page)
+    await serveLeaderboard(page, () => ({
+      ...LEADERBOARD,
+      ranked: LEADERBOARD.ranked.map((r) => (r.asset === 'iwm' ? { ...r, tail_beta: 1.06 } : r)),
+    }))
+    await page.goto('/')
+    await expand(page)
+    const r = (asset: string) =>
+      page.getByTestId(`shade-tail_beta-${asset}`).evaluate((el) => Number((el as HTMLElement).style.getPropertyValue('--pl-r')))
+    // IWM now equals XLF's 1.06: tied at the 5th and 6th of 7 places, they
+    // share the mean rank (4.5 / 6), not the first one (4 / 6).
+    expect(await r('iwm')).toBe(await r('xlf'))
+    expect(await r('iwm')).toBeCloseTo(0.75, 5)
   })
 
   test('the bake-off line keeps a tenth of a point', async ({ page }) => {
@@ -707,10 +779,11 @@ test.describe('with a response of its own', () => {
     await openBestReturn(page)
     await expect(page.getByTestId('best-basis-gld')).toHaveText('Market')
     await expect(page.getByTestId('best-basis-tsla')).toHaveCount(0)
-    // ...and the fragility table, whose rows are all model-priced at the
-    // screened cell, shows no Market anywhere.
+    // ...and the fragility table tags GLD's best-cell figure, not its
+    // screened cells, and no longer claims every figure is model-priced.
     await page.getByRole('radiogroup', { name: 'Sort the screen' }).getByText('Fragility').click()
-    await expect(page.getByTestId('rank-model-priced')).toBeVisible()
+    await expect(page.getByTestId('best-cell-basis-gld')).toHaveText('Market')
+    await expect(page.getByTestId('rank-model-priced')).toHaveCount(0)
   })
 
   test('a market-priced screened cell brings the Basis column, its own cell’s', async ({ page }) => {
