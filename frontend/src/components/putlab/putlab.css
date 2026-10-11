@@ -529,7 +529,9 @@
 .pl-table .pl-rank-groups th.pl-rank-group { text-align: left; color: var(--ink-70); border-left: 1px solid var(--rule-2); }
 .pl-table .pl-rank-group-start { border-left: 1px solid var(--rule-2); }
 .pl-rank-legend-item { margin-left: 10px; white-space: nowrap; }
-.pl-table .pl-rank-frag { white-space: nowrap; }
+.pl-table .pl-rank-frag,
+.pl-rank-table td[data-testid^='screened-biggest-'],
+.pl-rank-table td[data-testid^='best-ann-'] { white-space: nowrap; }
 .pl-cell-tag { margin-left: 6px; font-weight: 400; }
 .pl-rank-pick-q { margin-left: 4px; font-size: 10.5px; }
 /* The legend carries meaning (direction, colour, scale): AA, not micro grey. */

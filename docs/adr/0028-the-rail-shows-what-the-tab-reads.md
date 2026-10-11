@@ -178,7 +178,9 @@ ordering, and the best cell's own dividend and pricing basis.
   re-screens too, for an identical table; the strip says so under the switch,
   in the best-return order, while the re-screen runs as well. That one case
   keeps its rows up during the re-screen: in the best-return order, with the
-  tenor and years unchanged, the rows cannot change. Any other re-screen shows
+  tenor and years unchanged, the rows cannot change with the strike (a new
+  day's or a new ingest's screen can still differ, and replaces them when it
+  lands; the provenance line dates the rows shown). Any other re-screen shows
   the status line, since the tenor and years change coverage and values. A row
   opened from the keyboard gets focus back when its table returns, if focus
   was lost in the remount (a reader who has moved on keeps their place; a

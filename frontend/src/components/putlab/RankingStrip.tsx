@@ -155,7 +155,14 @@ export function RankingStrip({
   // and restoring focus then would scroll a reader who has moved on to the
   // result back up to the strip. `where` names the control: a pick or a row.
   const pick = (r: RankedAsset, byKeyboard = false, where: 'pick' | 'row' = 'row') => {
-    refocus.current = byKeyboard ? `${where}-${r.asset}` : null
+    // Only an open that re-screens unmounts what was focused: one that lands
+    // on the screen already shown (or has no best cell) changes nothing, so
+    // there is nothing to restore -- and an armed target would linger.
+    const rescreens =
+      r.best_moneyness_pct != null &&
+      r.best_tenor_weeks != null &&
+      (r.best_moneyness_pct !== requested.moneyness_pct || r.best_tenor_weeks !== requested.tenor_weeks)
+    refocus.current = byKeyboard && rescreens ? `${where}-${r.asset}` : null
     onSelect(
       r.asset,
       r.best_moneyness_pct != null && r.best_tenor_weeks != null
@@ -235,8 +242,8 @@ export function RankingStrip({
                 <span
                   className="pl-tag pl-tag-bad pl-rank-pick-q"
                   data-testid={`pick-q-${r.asset}`}
-                  aria-label="q = 0: this best cell's dividend yield is unknown, so its puts were priced too cheap"
-                  title="This best cell's dividend yield is unknown, so its puts were priced at q = 0 (too cheap)"
+                  aria-label="q = 0: at least one roll at this best cell was priced with an unknown dividend yield, so it reads too cheap"
+                  title="At least one roll at this best cell was priced at q = 0 (dividend yield unknown), so it reads too cheap"
                 >
                   q = 0
                 </span>
@@ -349,7 +356,7 @@ function FragilityTable({
       <table className="pl-table pl-rank-table" aria-label="Full fragility ranking">
         <thead>
           <tr className="pl-rank-groups">
-            <th colSpan={4} />
+            <th colSpan={4} aria-hidden="true" />
             <th colSpan={2} className="pl-rank-group" title="Each name's own best cell over its strike × tenor grid">
               Best cell
             </th>

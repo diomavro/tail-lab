@@ -272,7 +272,7 @@ test.describe('with the shared fixture', () => {
     // The pick advertising XLF's best cell carries the flag too.
     await expect(page.getByTestId('pick-q-xlf')).toHaveText('q = 0')
     // Collapsed, the note is not on the page: the tag explains itself.
-    await expect(page.getByTestId('pick-q-xlf')).toHaveAttribute('aria-label', /dividend yield is unknown/)
+    await expect(page.getByTestId('pick-q-xlf')).toHaveAttribute('aria-label', /unknown dividend yield/)
     await expect(page.getByTestId('pick-q-tsla')).toHaveCount(0)
   })
 
@@ -470,6 +470,17 @@ test.describe('with the shared fixture', () => {
     await rail(page).getByText('3y', { exact: true }).click()
     await expect(strip(page).getByTestId('rank-status')).toContainText('Screening the universe')
     await expect(bestTable(page)).toHaveCount(0)
+  })
+
+  test('a mouse click on a pick does not arm the restore', async ({ page }) => {
+    const landed = page.waitForResponse(
+      (r) => new URL(r.url()).pathname === '/api/putlab/leaderboard' && new URL(r.url()).searchParams.get('tenor_weeks') === '12',
+    )
+    await strip(page).getByTestId('rank-pick').filter({ hasText: 'TSLA' }).click()
+    await landed
+    await expect(picks(page).first()).toBeVisible()
+    await page.waitForTimeout(300)
+    await expect(strip(page).getByTestId('rank-pick').filter({ hasText: 'TSLA' })).not.toBeFocused()
   })
 
   test('a mouse click does not pull the reader back to the table', async ({ page }) => {
@@ -941,8 +952,49 @@ test.describe('with a response of its own', () => {
     await expect(fragTable(page).getByRole('columnheader', { name: 'Basis' })).toBeVisible()
     await expect(page.getByTestId('basis-gld')).toHaveText('Market')
     await expect(page.getByTestId('basis-tsla')).toHaveText('Model')
+    // The best cell is model-priced: no Market tag beside its figure or pick.
+    await expect(page.getByTestId('best-cell-basis-gld')).toHaveCount(0)
     await sortTo(page, 'Best return')
     await expect(page.getByTestId('best-basis-gld')).toHaveCount(0)
+    await expect(page.getByTestId('pick-basis-gld')).toHaveCount(0)
+  })
+
+  test('a pick’s q = 0 tag is its best cell’s, not its screened cell’s', async ({ page }) => {
+    await mockPutLabApi(page)
+    await serveLeaderboard(page, () => ({
+      ...LEADERBOARD,
+      ranked: LEADERBOARD.ranked.map((r) =>
+        r.asset === 'tsla' ? { ...r, q_source: 'none' as const, best_q_source: 'measured' as const } : r,
+      ),
+    }))
+    await page.goto('/')
+    await expect(picks(page).first()).toContainText('TSLA')
+    await expect(page.getByTestId('pick-q-tsla')).toHaveCount(0)
+  })
+
+  test('a keyboard open that lands on the screen already shown arms nothing', async ({ page }) => {
+    // EEM's best cell is 5% · 4w, the screen already up: nothing re-screens,
+    // so nothing may later pull focus back to it.
+    await mockPutLabApi(page)
+    await page.goto('/')
+    await expand(page)
+    const eem = fragTable(page).getByRole('row', { name: 'Open EEM' })
+    await eem.focus()
+    await page.keyboard.press('Enter')
+    await page.evaluate(() => {
+      document.addEventListener(
+        'focusin',
+        (e) => {
+          const el = e.target as HTMLElement
+          if (el.tagName === 'BUTTON' || el.tagName === 'INPUT') el.blur()
+        },
+        true,
+      )
+      ;(document.activeElement as HTMLElement | null)?.blur()
+    })
+    await sortTo(page, 'Best return')
+    await page.waitForTimeout(300)
+    await expect(bestTable(page).getByRole('row', { name: 'Open EEM at its best cell' })).not.toBeFocused()
   })
 
   test('each metric column is ranked on its own, not by the composite', async ({ page }) => {

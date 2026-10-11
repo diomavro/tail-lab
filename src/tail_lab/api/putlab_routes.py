@@ -152,7 +152,12 @@ _METRIC_SCREEN_CACHE: RefreshingMemo[
 #: The bake-off the Workspace's ranking strip reads: the composite fragility
 #: screen at the app's opening screen (`_WARM_SCREEN`), top 5. Warmed after
 #: the leaderboard each day.
-_WARM_BAKEOFF: tuple[StrikeRule, float, float, int] = (ByMoneyness(5.0), 4.0, 4.0, 5)
+_WARM_BAKEOFF: tuple[StrikeRule, float, float, int] = (
+    ByMoneyness(_WARM_SCREEN[0]),
+    _WARM_SCREEN[1],
+    _WARM_SCREEN[2],
+    5,
+)
 
 #: Universe-wide screens (the ranking and the bake-off) take one at a time.
 #: Each memo already single-flights its own keys, but two memos -- or two keys
