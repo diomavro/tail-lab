@@ -506,7 +506,8 @@ export interface PutLabLeaderboardResponse {
   notional: number
   ranked: RankedAsset[]
   /** The bronze snapshots this screen actually read (VIX, one per ranked
-   *  name, and the dividend snapshot once one exists) and the code that
+   *  name, the SPY benchmark whenever it was loaded, and the dividend
+   *  snapshot once one exists) and the code that
    *  computed it -- docs/STANDARDS.md: "a result without both is not
    *  trustworthy and should not be surfaced." */
   snapshot_ids: string[]
