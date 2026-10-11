@@ -1,5 +1,6 @@
 import type {
   AccuracyResponse,
+  MetricScreenComparison,
   PutBacktestResponse,
   PutLabLeaderboardResponse,
   RegimeTimelineView,
@@ -9,7 +10,7 @@ import type {
 import { useState } from 'react'
 import { AccuracyPanel } from '../AccuracyPanel'
 import { ConceptInfo } from '../ConceptInfo'
-import { fmtDollar, fmtFixed, fmtMult, fmtPct, fmtPrice } from '../format'
+import { fmtDollar, fmtFixed, fmtMult, fmtPct, fmtPrice, signedPts } from '../format'
 import { Ledger } from '../Ledger'
 import { MemoryTeaser } from '../MemoryTeaser'
 import { PriceBuild } from '../PriceBuild'
@@ -19,7 +20,7 @@ import { RankingStrip } from '../RankingStrip'
 import { StrategyTape } from '../StrategyTape'
 import { SweepGrid } from '../SweepGrid'
 import { StandaloneNote } from '../StandaloneNote'
-import { deltaLabel, type PutLabControls } from '../types'
+import { deltaLabel, type PutLabControls, type RankSort } from '../types'
 
 /* Screen and Backtest, merged.
  *
@@ -44,17 +45,15 @@ interface Props {
   sweep: ResourceState<SweepResponse>
   accuracy: ResourceState<AccuracyResponse>
   ranking: ResourceState<PutLabLeaderboardResponse>
+  bakeoffLine: ResourceState<MetricScreenComparison>
+  rankSort: RankSort
+  onRankSort: (sort: RankSort) => void
+  onOpenBakeOff: () => void
   regimeVerdict: ResourceState<RegimeVerdictResponse>
   regimes: RegimeTimelineView | null
   onSelectAsset: (asset: string, best?: { moneyness_pct: number; tenor_weeks: number }) => void
 }
 
-/** Points of annualized return, signed. Points, not percent: a difference of
- *  two rates is a spread, and printing it with a % sign invites reading it as a
- *  ratio of the two. */
-function signedPts(x: number): string {
-  return `${x >= 0 ? '+' : '−'}${Math.abs(x * 100).toFixed(1)}`
-}
 function rate(x: number): string {
   return `${x >= 0 ? '+' : '−'}${Math.abs(x * 100).toFixed(1)}%`
 }
@@ -66,6 +65,10 @@ export function WorkspaceView({
   sweep,
   accuracy,
   ranking,
+  bakeoffLine,
+  rankSort,
+  onRankSort,
+  onOpenBakeOff,
   regimes,
   regimeVerdict,
   onSelectAsset,
@@ -82,15 +85,18 @@ export function WorkspaceView({
           opening a row switches the strike back to distance.
         </p>
       )}
-      {ranking.status === 'ready' && (
-        <RankingStrip
-          ranked={ranking.data.ranked}
-          currentAsset={controls.asset}
-          onSelect={onSelectAsset}
-          snapshotIds={ranking.data.snapshot_ids}
-          codeSha={ranking.data.code_sha}
-        />
-      )}
+      {/* Always mounted: the switch and the bake-off line stay put while the
+          screen re-reads, and the strip says what it is waiting for. */}
+      <RankingStrip
+        ranking={ranking}
+        bakeoff={bakeoffLine}
+        sort={rankSort}
+        onSort={onRankSort}
+        requested={{ moneyness_pct: controls.moneyness_pct, tenor_weeks: controls.tenor_weeks, years: controls.years }}
+        currentAsset={controls.asset}
+        onSelect={onSelectAsset}
+        onOpenBakeOff={onOpenBakeOff}
+      />
 
       {backtest.status === 'loading' && (
         <p className="pl-status" role="status" aria-live="polite">

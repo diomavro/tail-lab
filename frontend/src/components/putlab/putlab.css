@@ -253,7 +253,7 @@
   color: var(--ink);
   border-bottom-color: var(--cyan);
 }
-/* Narrow: one row that scrolls sideways, never a wrapped stack of eight. */
+/* Narrow: one row that scrolls sideways, never a wrapped stack of tabs. */
 .is-narrow .pl-tabs-wrap { margin-bottom: var(--space-6); }
 .is-narrow .pl-tabs {
   flex-wrap: nowrap;
@@ -514,6 +514,43 @@
 .pl-rank-n { color: var(--ink-45); }
 .pl-rank-at { color: var(--ink-45); font-size: 12px; }
 .pl-rank-more { margin-left: auto; font-size: 13px; }
+.pl-rank-sort { flex: none; }
+.pl-rank-insample { color: var(--ink-45); }
+/* The bake-off verdict sits on its own row under the picks. */
+.pl-rank-bakeoff { flex-basis: 100%; margin: 0; color: var(--ink-70); }
+.pl-rank-bakeoff strong { font-weight: 600; color: var(--ink); }
+.pl-rank-bakeoff-link { font-size: 12px; padding: 0 4px; }
+.pl-rank-notes { margin: 0 0 6px; color: var(--ink-45); }
+
+/* The fragility table's two strategy groups. */
+.pl-rank-groups th { border-bottom: none; padding-bottom: 0; }
+.pl-rank-group { text-align: left; color: var(--ink-70); border-left: 1px solid var(--rule-2); }
+.pl-table .pl-rank-group-start { border-left: 1px solid var(--rule-2); }
+.pl-rank-legend-item { margin-left: 10px; white-space: nowrap; }
+
+/* Shading: each class sets ONLY the background, so the text keeps the cell's
+   own ink, never --mag-2 or --ink-70 (both fall under 4.5:1 on a shade). The
+   caps hold ink text at >= 4.5:1 on both sheets: the loss heat to 60% magenta
+   (5.1 paper / 5.4 plate) and the rank shade to 28% ink (8.3 / 5.4). Shaded
+   cells always print their value too -- colour is never the only carrier. */
+.pl-table .pl-heat-loss {
+  background: color-mix(in srgb, var(--mag) calc(var(--pl-d) * 60%), var(--paper));
+}
+.pl-table .pl-shade-rank {
+  background: color-mix(in srgb, var(--ink) calc(var(--pl-r) * 28%), var(--paper));
+}
+/* A shaded cell's own background would hide the row's highlight, so the
+   current row is outlined as well. */
+.pl-table tr.is-current { outline: 2px solid var(--cyan); outline-offset: -2px; }
+
+/* Small inline bars: fragility 0-100, and the biggest payoff on a log scale. */
+.pl-mini-bar {
+  display: inline-block;
+  height: 6px;
+  margin-left: 6px;
+  vertical-align: middle;
+  background: var(--ink-45);
+}
 
 /* ----------------------------------------------------------------- hero --- */
 
@@ -810,7 +847,7 @@
   color: var(--ink-45);
 }
 
-/* ------------------------------------------------------- recommendations --- */
+/* ------------------------------------- best-return table (BestReturnTable) --- */
 
 .pl-rec-caveat { margin-bottom: var(--space-4); font-size: 13.5px; max-width: 80ch; }
 .pl-rec-table td { vertical-align: top; }

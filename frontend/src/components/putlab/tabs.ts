@@ -4,11 +4,10 @@ import type { TabId } from './PutLab'
 // its result were on two tabs bridged by a ranking pinned above both, so the
 // ranking had to stay on screen permanently to make the split workable. Both
 // now live in Workspace, with the ranking as a one-line strip at its top.
+// Recommendations went the same way (docs/adr/0028 amendment): it re-sorted
+// the strip's own read, so it is now the strip's best-return order.
 export const TABS: { id: TabId; label: string }[] = [
   { id: 'workspace', label: 'Workspace' },
-  // Directly after Workspace: it answers the question a reader has once they
-  // have seen one name's result -- "so which of these is actually best?"
-  { id: 'recommendations', label: 'Recommendations' },
   { id: 'portfolio', label: 'Portfolio' },
   // After Portfolio: it asks the portfolio question about the hedge itself --
   // how much of the book should carry it, judged on the growth of the whole.

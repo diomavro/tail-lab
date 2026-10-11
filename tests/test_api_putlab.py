@@ -4,6 +4,8 @@ through the real HTTP path with a seeded in-memory-ish Delta store."""
 from __future__ import annotations
 
 import datetime as dt
+import threading
+import time
 from collections.abc import Callable, Iterator
 from pathlib import Path
 from typing import Any
@@ -395,9 +397,13 @@ def test_the_daily_warm_rewarms_just_after_each_utc_midnight(
     warms: list[object] = []
     sleeps: list[float] = []
     monkeypatch.setattr(putlab_routes, "warm_leaderboard", warms.append)
+    # Two reads per round: the schedule is taken before the warm, the sleep
+    # measured after it (an instant warm here, so both reads agree).
     clock = iter(
         [
             dt.datetime(2026, 10, 8, 15, 0, tzinfo=dt.UTC),
+            dt.datetime(2026, 10, 8, 15, 0, tzinfo=dt.UTC),
+            dt.datetime(2026, 10, 9, 0, 1, tzinfo=dt.UTC),
             dt.datetime(2026, 10, 9, 0, 1, tzinfo=dt.UTC),
         ]
     )
@@ -410,15 +416,234 @@ def test_the_daily_warm_rewarms_just_after_each_utc_midnight(
     assert sleeps == [9 * 3600 + 60, 24 * 3600]
 
 
-def test_warm_leaderboard_screens_the_workspace_defaults(monkeypatch: pytest.MonkeyPatch) -> None:
-    seen: list[tuple[object, ...]] = []
-    monkeypatch.setattr(
-        putlab_routes._LEADERBOARD_CACHE, "warm", lambda key, compute: seen.append(key)
+def test_a_warm_that_crosses_midnight_neither_skips_a_day_nor_drifts(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The warm now blocks for a whole screen. Scheduling from the clock read
+    after it would skip the new day when the warm crosses midnight; sleeping
+    from the read before it would wake later by the warm's length every day."""
+    times = [dt.datetime(2026, 10, 8, 23, 50, tzinfo=dt.UTC)]
+
+    def slow_warm(_store: object) -> None:
+        times[0] = dt.datetime(2026, 10, 9, 0, 0, 30, tzinfo=dt.UTC)  # 10.5 min screen
+
+    sleeps: list[float] = []
+    monkeypatch.setattr(putlab_routes, "warm_leaderboard", slow_warm)
+    putlab_routes.warm_leaderboard_daily(
+        DeltaLakeStore(Path("unused")), now=lambda: times[0], sleep=sleeps.append, rounds=1
     )
+    # The 00:01 warm of the day the screen ran into, 30 s after it finished --
+    # not the day after (skipped day), not 11 min (drift from the pre-warm read).
+    assert sleeps == [30.0]
+
+
+def _patch_warm_memos(
+    monkeypatch: pytest.MonkeyPatch,
+    calls: list[tuple[str, object]],
+    *,
+    leaderboard_get: Callable[[object, object], object] | None = None,
+) -> None:
+    def get(key: object, compute: object) -> object:
+        calls.append(("leaderboard.get", key))
+        return leaderboard_get(key, compute) if leaderboard_get else None
+
+    monkeypatch.setattr(putlab_routes._LEADERBOARD_CACHE, "get", get)
+    monkeypatch.setattr(
+        putlab_routes._METRIC_SCREEN_CACHE,
+        "warm",
+        lambda key, compute: calls.append(("bakeoff.warm", key)),
+    )
+
+
+def test_warm_leaderboard_screens_the_workspace_defaults(monkeypatch: pytest.MonkeyPatch) -> None:
+    calls: list[tuple[str, object]] = []
+    _patch_warm_memos(monkeypatch, calls)
     putlab_routes.warm_leaderboard(DeltaLakeStore(Path("unused")))
     today = dt.datetime.now(dt.UTC).date().isoformat()
-    # PUTLAB_DEFAULT_CONTROLS in the frontend, and the route's query defaults.
-    assert seen == [(5.0, 4.0, 4.0, today)]
+    # PUTLAB_DEFAULT_CONTROLS in the frontend, and the route's query defaults;
+    # then the Workspace's fixed bake-off line at the same screen, top 5.
+    assert calls == [
+        ("leaderboard.get", (5.0, 4.0, 4.0, today)),
+        ("bakeoff.warm", (putlab_routes.ByMoneyness(5.0), 4.0, 4.0, 5, today)),
+    ]
+
+
+def test_the_bakeoff_warm_waits_for_the_ranking(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The landing ranking is screened first, in full: two background warms
+    could let the bake-off take the (unfair) screen slot first after every
+    restart. A ranking that runs in a spawned thread would let the bake-off
+    warm start while it is still going."""
+    calls: list[tuple[str, object]] = []
+    release = threading.Event()
+    _patch_warm_memos(monkeypatch, calls, leaderboard_get=lambda _k, _c: release.wait(5))
+    worker = threading.Thread(
+        target=putlab_routes.warm_leaderboard, args=(DeltaLakeStore(Path("unused")),)
+    )
+    worker.start()
+    try:
+        time.sleep(0.3)
+        assert [c[0] for c in calls] == ["leaderboard.get"]
+    finally:
+        release.set()
+        worker.join(5)
+    assert [c[0] for c in calls] == ["leaderboard.get", "bakeoff.warm"]
+
+
+def test_a_failed_ranking_warm_is_logged_and_the_bakeoff_still_warms(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    """A blocking ``get`` re-raises; uncaught, one failed screen would end the
+    daily warm thread until the next deploy."""
+    calls: list[tuple[str, object]] = []
+
+    def boom(_key: object, _compute: object) -> object:
+        raise LookupError("no VIX known")
+
+    _patch_warm_memos(monkeypatch, calls, leaderboard_get=boom)
+    with caplog.at_level("ERROR", logger="tail_lab.api.putlab"):
+        putlab_routes.warm_leaderboard(DeltaLakeStore(Path("unused")))
+    assert [c[0] for c in calls] == ["leaderboard.get", "bakeoff.warm"]
+    assert "event=putlab.leaderboard_warm_failed" in caplog.text
+
+
+def test_the_warm_computes_hold_the_screen_slot(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The warm must hand the memos the slot-guarded factories, not a compute
+    of its own: an unguarded warm would screen alongside a visitor's."""
+    computes: dict[str, Callable[[], object]] = {}
+    monkeypatch.setattr(
+        putlab_routes._LEADERBOARD_CACHE,
+        "get",
+        lambda key, compute: computes.setdefault("leaderboard", compute),
+    )
+    monkeypatch.setattr(
+        putlab_routes._METRIC_SCREEN_CACHE,
+        "warm",
+        lambda key, compute: computes.setdefault("bakeoff", compute),
+    )
+    monkeypatch.setattr(putlab_routes, "rank_universe", lambda *a, **k: "ranked")
+    monkeypatch.setattr(putlab_routes, "compare_metric_screens", lambda *a, **k: _fake_bakeoff())
+    putlab_routes.warm_leaderboard(DeltaLakeStore(Path("unused")))
+    for name, compute in computes.items():
+        done = threading.Event()
+        with putlab_routes._SCREEN_SLOT:
+            t = threading.Thread(target=lambda c=compute, d=done: (c(), d.set()))
+            t.start()
+            assert not done.wait(0.3), f"{name} warm ran without the screen slot"
+        t.join(5)
+        assert done.is_set()
+
+
+def _fake_bakeoff() -> Any:
+    from tail_lab.research.backtest.metric_screen import MetricScreenComparison
+
+    return MetricScreenComparison(
+        as_of=dt.date(2026, 10, 9),
+        moneyness_pct=5.0,
+        tenor_weeks=4.0,
+        lookback_years=4.0,
+        top_k=5,
+        universe_size=3,
+        baseline_roi=0.0,
+        n_comparisons=0,
+        fdr_alpha=0.1,
+        entries=[],
+    )
+
+
+class _RecordingLock:
+    """A real lock that records how every acquisition was made."""
+
+    def __init__(self) -> None:
+        self._lock = threading.Lock()
+        self.acquisitions: list[tuple[bool, float]] = []
+
+    def acquire(self, blocking: bool = True, timeout: float = -1) -> bool:
+        self.acquisitions.append((blocking, timeout))
+        return self._lock.acquire(blocking, timeout)
+
+    def release(self) -> None:
+        self._lock.release()
+
+    def __enter__(self) -> bool:
+        return self.acquire()
+
+    def __exit__(self, *_exc: object) -> None:
+        self.release()
+
+
+def test_ranking_and_bakeoff_never_screen_at_once(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Two memos would otherwise screen in parallel on one shared CPU -- the
+    2026-10-08 health-check failure. Driven through the real closures: a test
+    that handed `memo.get` its own compute would bypass the slot entirely."""
+    slot = _RecordingLock()
+    monkeypatch.setattr(putlab_routes, "_SCREEN_SLOT", slot)
+    putlab_routes._LEADERBOARD_CACHE.clear()
+    putlab_routes._METRIC_SCREEN_CACHE.clear()
+    in_ranking, release, bakeoff_runs = threading.Event(), threading.Event(), []
+
+    def slow_rank(*_a: object, **_k: object) -> object:
+        in_ranking.set()
+        assert release.wait(5)
+        return putlab_routes.UniverseRanking(
+            as_of=dt.date(2026, 10, 9),
+            moneyness_pct=5.0,
+            tenor_weeks=4.0,
+            lookback_years=4.0,
+            notional=1000.0,
+            ranked=[],
+        )
+
+    def fake_bakeoff(*_a: object, **_k: object) -> object:
+        bakeoff_runs.append(1)
+        return _fake_bakeoff()
+
+    monkeypatch.setattr(putlab_routes, "rank_universe", slow_rank)
+    monkeypatch.setattr(putlab_routes, "compare_metric_screens", fake_bakeoff)
+    store = DeltaLakeStore(tmp_path)
+    app.dependency_overrides[putlab_get_lake_store] = lambda: store
+    try:
+        ranking = threading.Thread(
+            target=putlab_routes._rank_cached,
+            kwargs={
+                "store": store,
+                "moneyness_pct": 5.0,
+                "tenor_weeks": 4.0,
+                "years": 4.0,
+                "resolved": dt.date(2026, 10, 9),
+            },
+        )
+        ranking.start()
+        assert in_ranking.wait(5)
+        responses: list[int] = []
+        bakeoff = threading.Thread(
+            target=lambda: responses.append(
+                TestClient(app)
+                .get(
+                    "/api/putlab/metric-screen",
+                    params={"moneyness_pct": 5, "tenor_weeks": 4, "years": 4, "top_k": 5},
+                )
+                .status_code
+            )
+        )
+        bakeoff.start()
+        time.sleep(2.0)
+        assert bakeoff_runs == [], "the bake-off screened while the ranking held the slot"
+        release.set()
+        ranking.join(5)
+        bakeoff.join(10)
+        assert responses == [200]
+        assert bakeoff_runs == [1]
+        # Every acquisition waited without a timeout: a timed-out fall-through
+        # would also pass the steps above once the ranking finished.
+        assert slot.acquisitions and all(
+            blocking and timeout == -1 for blocking, timeout in slot.acquisitions
+        )
+    finally:
+        app.dependency_overrides.clear()
+        putlab_routes._LEADERBOARD_CACHE.clear()
+        putlab_routes._METRIC_SCREEN_CACHE.clear()
 
 
 def test_metric_screen_returns_bakeoff(client: TestClient) -> None:
@@ -643,8 +868,8 @@ def test_sweep_tells_the_client_where_the_pricer_stops_being_trustworthy(
 
 
 def test_leaderboards_best_cell_carries_its_own_stats(client: TestClient) -> None:
-    """Every ``best_*`` field describes the same run, so the recommendations
-    view can print a whole strategy per row without mixing two of them."""
+    """Every ``best_*`` field describes the same run, so the Workspace's
+    best-return view can print a whole strategy per row without mixing two."""
     resp = client.get(
         "/api/putlab/leaderboard", params={"moneyness_pct": 5, "tenor_weeks": 4, "years": 1}
     )
@@ -661,6 +886,8 @@ def test_leaderboards_best_cell_carries_its_own_stats(client: TestClient) -> Non
             "best_hit_rate",
             "best_n_cycles",
             "best_verdict",
+            "best_q_source",
+            "best_priced_from",
         ):
             assert row[field] is not None, field
         # The headline never advertises a strike the model cannot price.
@@ -1320,6 +1547,24 @@ def test_leaderboard_rows_price_with_dividends_and_say_so(client: TestClient) ->
     # ...and every best_* figure comes from a re-roll at that cell: same basis too.
     assert row_before["best_roi_on_premium"] != row_after["best_roi_on_premium"]
     assert any(s.startswith("tiingo_eod@") for s in after["snapshot_ids"])
+    # The best cell's own dividend basis, served beside it.
+    assert (row_before["best_q_source"], row_after["best_q_source"]) == ("none", "measured")
+
+
+def test_the_leaderboard_serves_which_way_each_metric_is_fragile(client: TestClient) -> None:
+    """The Workspace shades each metric column by fragility rank; it reads the
+    direction from here rather than keeping a copy that could drift."""
+    body = client.get(
+        "/api/putlab/leaderboard", params={"moneyness_pct": 5, "tenor_weeks": 4, "years": 1}
+    ).json()
+    assert body["fragile_high"] == {
+        "downside_beta": True,
+        "co_skewness": False,
+        "co_kurtosis": True,
+        "tail_beta": True,
+        "downside_capture": True,
+        "vol_beta": False,
+    }
 
 
 def test_roll_schedule_quotes_the_premium_with_dividends(client: TestClient) -> None:
@@ -1382,6 +1627,21 @@ def test_metric_screen_baskets_price_with_dividends(client: TestClient) -> None:
     )
     assert before["baseline_roi"] != after["baseline_roi"]
     assert before["entries"] != after["entries"]
+
+
+def test_the_bakeoff_cites_what_it_read(client: TestClient) -> None:
+    """docs/STANDARDS.md: a result without its snapshot ids and code sha must
+    not be surfaced -- and the Workspace now shows this one on its landing view.
+    It prices every name with dividends, so it cites that snapshot too."""
+    params = {"moneyness_pct": 10, "tenor_weeks": 4, "years": 1, "top_k": 2}
+    before, after = _before_and_after_dividends(
+        lambda: client.get("/api/putlab/metric-screen", params=params).json()
+    )
+    assert before["snapshot_ids"][0].startswith("vix@")
+    assert any(s.startswith("ohlcv_spy@") for s in before["snapshot_ids"])
+    assert not any(s.startswith("tiingo_eod@") for s in before["snapshot_ids"])
+    assert any(s.startswith("tiingo_eod@") for s in after["snapshot_ids"])
+    assert after["code_sha"] == putlab_routes.get_settings().code_sha
 
 
 def test_every_pricing_route_logs_the_dividend_snapshot_it_priced_with(

@@ -303,3 +303,49 @@ def test_bakeoff_multiple_testing_correction_on_pure_noise(tmp_path: Path) -> No
     # given the fixed seeds above, not a hand-derived value.
     assert not any(e.significant_corrected for e in cmp.entries)
     assert any(e.significant_raw for e in cmp.entries)
+
+
+def test_the_bakeoff_reads_its_directions_from_ranking_fragile_high(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The bake-off ranks each metric by the one shared table of directions
+    (``ranking.FRAGILE_HIGH``), not a private copy: flipping it flips which
+    end of vol beta the screen calls fragile, and so its correlation's sign."""
+    from tail_lab.research.backtest.ranking import FRAGILE_HIGH
+
+    ingest = dt.date(2026, 3, 2)
+    store = _seeded_store(tmp_path, ingest)
+
+    def vol_beta_rho() -> float:
+        cmp = compare_metric_screens(
+            store,
+            symbols=("spy", "wild", "calm", "mid"),
+            as_of=ingest,
+            rule=ByMoneyness(10.0),
+            tenor_weeks=4.0,
+            years=1.0,
+            top_k=2,
+        )
+        (entry,) = [e for e in cmp.entries if e.metric == "vol_beta"]
+        assert entry.spearman_vs_payoff is not None and entry.spearman_vs_payoff != 0.0
+        return entry.spearman_vs_payoff
+
+    before = vol_beta_rho()
+    monkeypatch.setitem(FRAGILE_HIGH, "vol_beta", not FRAGILE_HIGH["vol_beta"])
+    assert vol_beta_rho() == pytest.approx(-before)
+
+
+def test_the_bakeoff_cites_the_snapshots_it_read(tmp_path: Path) -> None:
+    ingest = dt.date(2026, 3, 2)
+    store = _seeded_store(tmp_path, ingest)
+    cmp = compare_metric_screens(
+        store,
+        symbols=("spy", "wild", "missing"),
+        as_of=ingest,
+        rule=ByMoneyness(10.0),
+        tenor_weeks=4.0,
+        years=1.0,
+        top_k=2,
+    )
+    # VIX first, then each SCORED name (not the one with no data).
+    assert [s.split("@")[0] for s in cmp.snapshot_ids] == ["vix", "ohlcv_spy", "ohlcv_wild"]

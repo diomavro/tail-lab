@@ -1,5 +1,5 @@
 // Serves the fixture payloads to the browser so the UI suite is hermetic: no
-// lake, no backend, no 35-backtest bake-off round-trip. The router matches on
+// lake, no backend, no bake-off round-trip (one backtest per screened name). The router matches on
 // pathname only and reads query params where a fixture varies by them, which
 // keeps the specs asserting on rendered behaviour rather than on fetch calls.
 
@@ -116,7 +116,9 @@ export async function mockPutLabApi(page: Page, opts: MockOptions = {}): Promise
     },
   )
   // Exposed for specs that need to prove a request was (or was not) made --
-  // e.g. the bake-off must not fire until the Run button is pressed.
+  // e.g. the Bake-off tab must not run its own bake-off until the Run button
+  // is pressed (the Workspace's strip reads one fixed-parameter bake-off on
+  // load, so count from the tab's arrival).
   ;(page as Page & { apiRequests?: string[] }).apiRequests = requests
 }
 

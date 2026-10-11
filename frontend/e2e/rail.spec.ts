@@ -39,16 +39,6 @@ test('Bake-off carries strike, tenor and years, and no name or premium', async (
   await expect(rail(page).getByLabel('Filter the universe')).toHaveCount(0)
 })
 
-test('Recommendations carries tenor and years only: every row is its own best strike', async ({ page }) => {
-  // The table reports each name's best cell over a fixed grid, so the rail's
-  // strike would change nothing on screen while re-running the whole screen.
-  await page.goto('/')
-  await page.getByRole('tab', { name: 'Recommendations' }).click()
-  await expect(rail(page).getByText('Controls Recommendations reads')).toBeVisible()
-  await expectSections(page, [TENOR, YEARS], [UNIVERSE, PREMIUM, STRIKE])
-  await expect(rail(page).getByLabel('Out of the money, %')).toHaveCount(0)
-})
-
 test('Surface keeps the name, the anchor and the expiry, and drops years and premium', async ({ page }) => {
   // The anchor IS the strike control and the tenor picks the expiry
   // (read_surface): dropping them would pin the Surface to one reading.
@@ -92,7 +82,7 @@ test('the dateline names a single position only on tabs that read one', async ({
   await page.goto('/')
   const dateline = page.locator('.pl-dateline')
   await expect(dateline).toContainText('$512.40')
-  for (const name of ['Recommendations', 'Bake-off', 'Portfolio', 'Regime', 'Glossary']) {
+  for (const name of ['Bake-off', 'Portfolio', 'Regime', 'Glossary']) {
     await page.getByRole('tab', { name }).click()
     await expect(dateline, name).not.toContainText('$512.40')
     await expect(dateline, name).not.toContainText('Name')
@@ -105,7 +95,7 @@ test('a strike set on Bake-off is the strike on the Workspace: one shared state'
   await page.goto('/')
   await page.getByRole('tab', { name: 'Bake-off' }).click()
   await rail(page).getByRole('radiogroup', { name: 'Strike presets' }).getByText('10%').click()
-  await page.getByRole('tab', { name: 'Recommendations' }).click()
+  await page.getByRole('tab', { name: 'Regime' }).click()
   await rail(page).getByRole('radiogroup', { name: 'Held to expiry' }).getByText('1 quarter').click()
   await page.getByRole('tab', { name: 'Workspace' }).click()
   await expect(rail(page).getByLabel('Out of the money, %')).toHaveValue('10')
@@ -172,8 +162,8 @@ test.describe('on a phone-width page', () => {
     await expect(toggle).toHaveAttribute('aria-expanded', 'true')
     await expect(rail(page).getByLabel('Filter the universe')).toBeVisible()
 
-    await page.getByRole('tab', { name: 'Recommendations' }).click()
-    await expect(page.getByTestId('rail-summary')).toHaveText('1m · 4y')
+    await page.getByRole('tab', { name: 'Regime' }).click()
+    await expect(page.getByTestId('rail-summary')).toHaveText('5% OOM · 1m')
   })
 
   test('the tab row scrolls sideways and keeps the active tab in view', async ({ page }) => {
@@ -217,7 +207,7 @@ test.describe('on a phone-width page', () => {
     const toggle = rail(page).getByRole('button', { name: /Controls/ })
     await toggle.click()
     await expect(toggle).toHaveAttribute('aria-expanded', 'true')
-    await page.getByRole('tab', { name: 'Recommendations' }).click()
+    await page.getByRole('tab', { name: 'Regime' }).click()
     await expect(rail(page).getByRole('button', { name: /Controls/ })).toHaveAttribute('aria-expanded', 'false')
   })
 
@@ -230,7 +220,8 @@ test.describe('on a phone-width page', () => {
     await expect(page.locator('.pl-tabs-fade')).toHaveCount(0)
     // A tab mid-row is placed 16px from the row's left edge.
     await page.getByRole('tab', { name: 'Workspace' }).focus()
-    await page.keyboard.press('ArrowRight')
+    // One step: Portfolio follows Workspace directly now that Recommendations
+    // folded into the Workspace.
     await page.keyboard.press('ArrowRight')
     const inset = () =>
       page.evaluate(() => {
@@ -281,7 +272,7 @@ test.describe('on a phone-width page', () => {
     // Measured once each tab's reads have landed: right after the click the
     // panel is a loading line, which never overflows.
     await page.goto('/')
-    for (const name of ['Workspace', 'Recommendations', 'Portfolio', 'Book', 'Bake-off', 'Regime', 'Surface', 'Glossary']) {
+    for (const name of ['Workspace', 'Portfolio', 'Book', 'Bake-off', 'Regime', 'Surface', 'Glossary']) {
       await page.getByRole('tab', { name }).click()
       await page.waitForLoadState('networkidle')
       const overflow = await page.evaluate(
@@ -308,8 +299,9 @@ test('a rail stacked above the result is never sticky over it', async ({ page })
   // rail that stayed sticky there scrolled the ranking underneath itself.
   for (const width of [760, 800, 820, 850, 880, 900, 1024, 1440]) {
     await page.setViewportSize({ width, height: 700 })
+    // On the Workspace: the tab whose result is the ranking the rail could
+    // scroll underneath itself.
     await page.goto('/')
-    await page.getByRole('tab', { name: 'Recommendations' }).click()
     await page.waitForLoadState('networkidle')
     const side = (await page.locator('.pl-side').boundingBox())!
     const main = (await page.locator('.pl-main').boundingBox())!
@@ -423,21 +415,4 @@ test('a strike set on the Regime rail reaches the residuals, which say they are 
   // Never "unmeasured" for a read that is merely in flight.
   await expect(page.getByText('residual: measuring…')).toHaveCount(3)
   await expect(page.getByText('residual unmeasured')).toHaveCount(0)
-})
-
-test('Recommendations screens at one strike whatever the rail elsewhere says, and dates its read', async ({ page }) => {
-  // Its table is each name's best cell, which no screening strike changes, so a
-  // strike set on another tab must not re-run the universe for it.
-  await page.goto('/')
-  await page.getByRole('tab', { name: 'Bake-off' }).click()
-  await rail(page).getByRole('radiogroup', { name: 'Strike presets' }).getByText('15%').click()
-  const screens: string[] = []
-  page.on('request', (r) => {
-    const u = new URL(r.url())
-    if (u.pathname === '/api/putlab/leaderboard') screens.push(u.searchParams.get('moneyness_pct') ?? '')
-  })
-  await page.getByRole('tab', { name: 'Recommendations' }).click()
-  await page.waitForLoadState('networkidle')
-  expect(screens.filter((m) => m !== '5')).toEqual([])
-  await expect(page.locator('.pl-masthead')).toContainText(/\d{4}-\d{2}-\d{2}/)
 })

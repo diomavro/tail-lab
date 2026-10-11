@@ -1,22 +1,26 @@
-import type { PutLabLeaderboardResponse, RankedAsset, Verdict } from '../../../api/client'
-import { fmtDollar, fmtPct } from '../format'
-import type { ResourceState } from '../PutLab'
-import type { PutLabControls } from '../types'
-import { StandaloneNote } from '../StandaloneNote'
+import { type CSSProperties, useId } from 'react'
+import type { PutLabLeaderboardResponse, RankedAsset, Verdict } from '../../api/client'
+import { UNKNOWN_Q_CAUSES } from '../../content/concepts'
+import { fmtDollar, fmtMult, fmtPct } from './format'
+import type { BestRow } from './rankOrder'
+import { biggestBarWidth, lossHeat } from './rankShade'
 
-/* Every name's best strategy, ranked against each other.
+/* Every name's best strategy, ranked against each other -- the ranking strip's
+ * best-return view (it was the Recommendations tab until that folded into the
+ * Workspace, docs/adr/0028 amendment).
  *
- * The ranking strip answers "which names are most fragile". This answers the
+ * The fragility view answers "which names are most fragile". This answers the
  * question after it: given that, what would you actually have bought, and how
  * did each of those trades compare? So it sorts on the strategy's own return,
- * not on fragility, and states the whole position — ticker, strike, and roll
- * cadence — rather than leaving the reader to reconstruct it.
+ * not on fragility, and states the whole position -- ticker, strike, and roll
+ * cadence -- rather than leaving the reader to reconstruct it.
  *
  * The discipline that makes the table honest: every figure on a row comes from
- * the SAME (strike, tenor) run. `RankedAsset` carries two sets of numbers — one
- * at whatever strike the rail is set to, one at the name's own argmax — and
+ * the SAME (strike, tenor) run. `RankedAsset` carries two sets of numbers -- one
+ * at whatever strike the rail is set to, one at the name's own argmax -- and
  * pairing an argmax return with a screened-cell hit rate would describe two
- * different strategies on one line. Only `best_*` fields appear below.
+ * different strategies on one line. Only `best_*` fields appear below, the
+ * dividend and pricing tags included.
  *
  * And the strikes are bounded: the argmax cannot land past the depth where the
  * flat-vol pricer stops producing a price (docs/adr/0018), so this view cannot
@@ -28,6 +32,15 @@ const VERDICT_TAG: Record<Verdict, string> = {
   regime_only: 'pl-tag pl-tag-mute',
   failed: 'pl-tag pl-tag-bad',
   untested: 'pl-tag pl-tag-outline',
+}
+
+/** What each verdict means, for its tag's hover text (supplementary: the
+ *  "How to read a row" note below prints the same). */
+const VERDICT_TITLE: Record<Verdict, string> = {
+  confirmed: 'Entered and paid off in two or more VIX regimes',
+  regime_only: 'Paid off in one VIX regime only -- a bet on that regime recurring',
+  failed: 'Did not pay off in any regime it was entered in',
+  untested: 'Too few rolls in any regime to judge',
 }
 
 /** The familiar name for a tenor, where one exists. Used as a gloss beside the
@@ -45,51 +58,39 @@ function cadenceGloss(weeks: number): string {
 const SCHEDULE_TOP_K = 10
 
 interface Props {
-  ranking: ResourceState<PutLabLeaderboardResponse>
-  controls: PutLabControls
-  onSelectAsset: (asset: string, best?: { moneyness_pct: number; tenor_weeks: number }) => void
+  data: PutLabLeaderboardResponse
+  rows: BestRow[]
+  currentAsset: string
+  onPick: (r: RankedAsset) => void
 }
 
-export function RecommendationsView({ ranking, controls, onSelectAsset }: Props) {
-  if (ranking.status !== 'ready') {
-    return (
-      <p className="pl-status" role="status" aria-live="polite">
-        {ranking.status === 'error'
-          ? ranking.message
-          : ranking.status === 'no-data'
-            ? 'No screen for this window yet.'
-            : `Screening the universe — one strike × tenor sweep per name…`}
-      </p>
-    )
-  }
-
+export function BestReturnTable({ data, rows, currentAsset, onPick }: Props) {
+  const qZeroNoteId = useId()
+  const anyQZero = rows.some((r) => r.best_q_source === 'none')
+  const budget = fmtDollar(data.notional)
   // Built from the screen that produced this table, so the export and the page
   // can never describe different runs.
   const scheduleHref =
     '/api/putlab/roll-schedule?' +
     new URLSearchParams({
-      moneyness_pct: String(ranking.data.moneyness_pct),
-      tenor_weeks: String(ranking.data.tenor_weeks),
-      years: String(ranking.data.lookback_years),
-      notional: String(ranking.data.notional),
+      moneyness_pct: String(data.moneyness_pct),
+      tenor_weeks: String(data.tenor_weeks),
+      years: String(data.lookback_years),
+      notional: String(data.notional),
       top_k: String(SCHEDULE_TOP_K),
     }).toString()
-
-  const scored = ranking.data.ranked
-    .filter((r): r is RankedAsset & { best_annualized: number } => r.best_annualized != null)
-    .sort((a, b) => b.best_annualized - a.best_annualized)
+  const heat = lossHeat(rows.map((r) => r.best_annualized))
+  const maxPayoff = Math.max(0, ...rows.map((r) => r.best_biggest_payoff_mult ?? 0))
 
   return (
-    <div>
-      <h2 style={{ marginBottom: 4 }}>Recommendations</h2>
-      <StandaloneNote />
+    <div data-testid="best-return">
       <p className="pl-lede" style={{ marginBottom: 10 }}>
         Each name&rsquo;s <strong>best</strong> put strategy over this window &mdash; the argmax of
         its own strike × tenor grid &mdash; ranked against every other name&rsquo;s. Every figure on
         a row is measured at that same strike and tenor, so a row describes one position rather
         than a blend of two.
       </p>
-      <p className="pl-caveat pl-rec-caveat">
+      <p className="pl-caveat pl-rec-caveat" data-testid="best-return-caveat">
         This is a screen, <strong>not advice</strong>. Every number here is measured{' '}
         <strong>in sample</strong> &mdash; the parameters were chosen by looking at the same window
         they are scored on, which is the definition of overfitting a backtest. It is model-priced,
@@ -103,32 +104,50 @@ export function RecommendationsView({ ranking, controls, onSelectAsset }: Props)
             <tr>
               <th className="num">#</th>
               <th>The strategy</th>
-              <th className="num">Per year</th>
-              <th className="num">On premium</th>
-              <th className="num">Hit</th>
+              <th className="num" title="Geometric annualization of the return on premium, at the row's best cell">
+                Per year
+              </th>
+              <th className="num" title="Return on the premium spent, at the row's best cell">
+                On premium
+              </th>
+              <th className="num" title="Share of rolls whose payoff cleared the premium budget">
+                Hit
+              </th>
               <th className="num">Rolls</th>
-              <th className="num">Fragility</th>
+              <th className="num" title="The largest single roll's payoff, as a multiple of its premium">
+                Biggest payoff
+              </th>
+              <th className="num" title="Composite fragility, 0-100 (100 = most fragile name in the screen)">
+                Fragility
+              </th>
               <th className="num">Verdict</th>
             </tr>
           </thead>
           <tbody>
-            {scored.map((r, i) => (
+            {rows.map((r, i) => (
               <tr
                 key={r.asset}
-                className={`pick${r.asset === controls.asset ? ' is-current' : ''}`}
-                onClick={() =>
-                  onSelectAsset(
-                    r.asset,
-                    r.best_moneyness_pct != null && r.best_tenor_weeks != null
-                      ? { moneyness_pct: r.best_moneyness_pct, tenor_weeks: r.best_tenor_weeks }
-                      : undefined,
-                  )
-                }
+                className={`pick${r.asset === currentAsset ? ' is-current' : ''}`}
+                onClick={() => onPick(r)}
               >
                 <td className="num dimmer">{i + 1}</td>
-                <td>
+                <td title={`${r.best_moneyness_pct}% below spot · ${r.best_tenor_weeks}-week puts · ${data.lookback_years}-year window`}>
                   <div className="pl-rec-name">
-                    <strong>{r.asset.toUpperCase()}</strong> <span className="dimmer">{r.name}</span>
+                    <strong>{r.asset.toUpperCase()}</strong> <span className="dimmer">{r.name}</span>{' '}
+                    {r.best_q_source === 'none' && (
+                      <span
+                        className="pl-tag pl-tag-bad"
+                        aria-describedby={qZeroNoteId}
+                        data-testid={`best-q-source-${r.asset}`}
+                      >
+                        q = 0 rolls
+                      </span>
+                    )}
+                    {r.best_priced_from === 'market' && (
+                      <span className="pl-tag pl-tag-ok" data-testid={`best-basis-${r.asset}`}>
+                        Market
+                      </span>
+                    )}
                   </div>
                   <div className="pl-rec-recipe">
                     Buy puts <span className="pl-rec-strike">{r.best_moneyness_pct}%</span> out of
@@ -137,7 +156,10 @@ export function RecommendationsView({ ranking, controls, onSelectAsset }: Props)
                     expiry.
                   </div>
                 </td>
-                <td className={`num bold pl-rec-ann ${r.best_annualized >= 0 ? 'pl-pos' : 'pl-neg'}`}>
+                <td
+                  className={`num bold pl-rec-ann${heat[i] == null ? (r.best_annualized >= 0 ? ' pl-pos' : ' pl-neg') : ' pl-heat-loss'}`}
+                  style={heat[i] == null ? undefined : ({ '--pl-d': heat[i] } as CSSProperties)}
+                >
                   {fmtPct(r.best_annualized)}
                 </td>
                 <td
@@ -153,13 +175,33 @@ export function RecommendationsView({ ranking, controls, onSelectAsset }: Props)
                       (AGENT_TODO.md, "roi_on_premium needs its denominator
                       named on the surface"). */}
                   {r.best_n_cycles != null && (
-                    <div className="pl-micro">{fmtDollar(ranking.data.notional * r.best_n_cycles)}</div>
+                    <div className="pl-micro">{fmtDollar(data.notional * r.best_n_cycles)}</div>
                   )}
                 </td>
                 <td className="num dim pl-rec-hit">
                   {r.best_hit_rate == null ? '—' : `${Math.round(r.best_hit_rate * 100)}%`}
                 </td>
                 <td className="num dim pl-rec-rolls">{r.best_n_cycles ?? '—'}</td>
+                <td
+                  className="num pl-rec-biggest"
+                  aria-label={
+                    r.best_biggest_payoff_mult == null
+                      ? undefined
+                      : `Biggest payoff ${r.best_biggest_payoff_mult.toFixed(2)} times its premium`
+                  }
+                >
+                  {r.best_biggest_payoff_mult == null ? (
+                    '—'
+                  ) : (
+                    <>
+                      {fmtMult(r.best_biggest_payoff_mult)}
+                      <span
+                        className="pl-mini-bar"
+                        style={{ width: `${biggestBarWidth(r.best_biggest_payoff_mult, maxPayoff)}px` }}
+                      />
+                    </>
+                  )}
+                </td>
                 {/* A mean fractional rank in 0..1, scaled to read as a score;
                     rounding it unscaled puts the whole universe on 0 and 1. */}
                 <td className="num dim pl-rec-frag">
@@ -169,7 +211,7 @@ export function RecommendationsView({ ranking, controls, onSelectAsset }: Props)
                   {r.best_verdict == null ? (
                     '—'
                   ) : (
-                    <span className={VERDICT_TAG[r.best_verdict]}>
+                    <span className={VERDICT_TAG[r.best_verdict]} title={VERDICT_TITLE[r.best_verdict]}>
                       {r.best_verdict.replace('_', ' ')}
                     </span>
                   )}
@@ -179,6 +221,13 @@ export function RecommendationsView({ ranking, controls, onSelectAsset }: Props)
           </tbody>
         </table>
       </div>
+      {anyQZero && (
+        <p id={qZeroNoteId} className="pl-micro" style={{ padding: '4px 2px 0' }} data-testid="best-q-zero-note">
+          q = 0 rolls: at least one roll at that row&rsquo;s best cell was priced at q = 0 because its
+          dividend yield is unknown &mdash; {UNKNOWN_Q_CAUSES}. Read that row&rsquo;s return as the
+          old, cheap price.
+        </p>
+      )}
 
       <div className="pl-two-up" style={{ marginTop: 30 }}>
         <div>
@@ -187,7 +236,7 @@ export function RecommendationsView({ ranking, controls, onSelectAsset }: Props)
           </div>
           <p className="pl-note">
             <strong>Per year</strong> is the geometric annualization of the return on premium over
-            the {ranking.data.lookback_years}-year window. <strong>Hit</strong> is the share of
+            the {data.lookback_years}-year window. <strong>Hit</strong> is the share of
             rolls whose payoff cleared the premium budget &mdash; a tail hedge with a 6% hit rate
             and a positive return is working exactly as intended. <strong>Verdict</strong> counts
             how many VIX regimes the strategy was entered in and paid off in: two or more is{' '}
@@ -197,7 +246,7 @@ export function RecommendationsView({ ranking, controls, onSelectAsset }: Props)
         </div>
         <div>
           <div className="pl-kicker" style={{ marginBottom: 5 }}>
-            Why no strike is deeper than {ranking.data.moneyness_pct > 0 ? '10%' : '10%'}
+            Why no strike is deeper than 10%
           </div>
           <p className="pl-note">
             Past roughly 10% out of the money the flat-volatility pricer here reports these puts as
@@ -214,11 +263,12 @@ export function RecommendationsView({ ranking, controls, onSelectAsset }: Props)
           <h3>Take it away</h3>
         </div>
         <p className="pl-note" style={{ marginBottom: 12 }}>
-          Click any row to open it in the Workspace at exactly these parameters. Or export the
-          whole set as order intent: ticker, target strike, target expiry, and the premium{' '}
-          <strong>budget</strong> per roll &mdash; sized in budget rather than contracts, because
-          the model&rsquo;s premium is not the market&rsquo;s and the executor is the only thing
-          that can see the real quote.
+          Click any row to load exactly these parameters below. Or export the whole set as order
+          intent: ticker, target strike, target expiry, and the premium <strong>budget</strong> per
+          roll &mdash; sized in budget rather than contracts, because the model&rsquo;s premium is
+          not the market&rsquo;s and the executor is the only thing that can see the real quote.
+          The dollar figures and the export are at the screen&rsquo;s own {budget} per roll, which
+          the ranking always uses &mdash; not the rail&rsquo;s budget.
         </p>
         <p className="pl-note" style={{ marginBottom: 12 }}>
           tail-lab <strong>never places an order</strong> and holds no brokerage credential

@@ -11,17 +11,10 @@ export type RailSection = 'universe' | 'notional' | 'strike' | 'delta' | 'tenor'
 
 /** What each tab reads from the shared controls -- audited against the fetch
  *  keys in PutLab.tsx and the views' own reads. One state behind all of them,
- *  so a Recommendations click still opens Workspace at that name's cell. */
+ *  so a strike set on one tab is the strike on the next. */
 export const RAIL: Record<TabId, readonly RailSection[]> = {
   // Backtest, sweep, verdict and prefetch read all five.
   workspace: ['universe', 'notional', 'strike', 'delta', 'tenor', 'years'],
-  // Every row reports that name's own best cell over a fixed strike x tenor
-  // grid (ranking.run_sweep), so the rail's strike changes nothing in the
-  // table: the screening roll's cycle dates depend on the tenor alone, and
-  // the strike reaches only the export's screen_moneyness_pct label. Years is
-  // the window every best cell is searched over; tenor decides, at the 90%
-  // coverage edge, which names cover that window.
-  recommendations: ['tenor', 'years'],
   // fetchMetricScreen runs at these on Run, across the whole universe.
   bakeoff: ['strike', 'delta', 'tenor', 'years'],
   // The anchor IS the strike control and the tenor picks the expiry

@@ -78,7 +78,7 @@ test('moves between tabs with the arrow keys', async ({ page }) => {
   const workspace = page.getByRole('tab', { name: 'Workspace' })
   await workspace.focus()
   await page.keyboard.press('ArrowRight')
-  await expect(page.getByRole('tab', { name: 'Recommendations' })).toHaveAttribute(
+  await expect(page.getByRole('tab', { name: 'Portfolio' })).toHaveAttribute(
     'aria-selected',
     'true',
   )

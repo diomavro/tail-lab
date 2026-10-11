@@ -24,7 +24,7 @@ across every name.
 from __future__ import annotations
 
 import datetime as dt
-from collections.abc import Callable
+from collections.abc import Callable, Iterable
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from functools import partial
@@ -100,6 +100,21 @@ COMPOSITE_METRICS: tuple[str, ...] = (
     "vol_beta",
 )
 
+#: Which direction is fragile, per metric: ``True`` = a higher raw value is
+#: more fragile. Co-skewness and vol beta are fragile when *low* (more
+#: negative = more crash-prone / more reactive to a fear spike). One place:
+#: the composite below, the metric bake-off (``metric_screen.py``) and the
+#: Workspace's per-column shading (served as ``UniverseRanking.fragile_high``)
+#: all read it, so they cannot disagree about which way is fragile.
+FRAGILE_HIGH: dict[str, bool] = {
+    "downside_beta": True,
+    "co_skewness": False,
+    "co_kurtosis": True,
+    "tail_beta": True,
+    "downside_capture": True,
+    "vol_beta": False,
+}
+
 
 class RankedAsset(BaseModel):
     """One universe member: its fragility vs the market + the put backtest."""
@@ -153,6 +168,8 @@ class RankedAsset(BaseModel):
     best_biggest_payoff_mult: float | None = None
     best_n_cycles: int | None = None
     best_verdict: Verdict | None = None
+    best_q_source: Literal["measured", "none"] | None = None
+    best_priced_from: Literal["model", "market"] | None = None
 
 
 class UniverseRanking(BaseModel):
@@ -162,8 +179,9 @@ class UniverseRanking(BaseModel):
     lookback_years: float
     notional: float
     ranked: list[RankedAsset]
-    #: The bronze snapshots this screen actually read (VIX + one per ranked
-    #: name), and the code that computed it. `docs/STANDARDS.md`: "a result
+    #: The bronze snapshots this screen actually read (VIX, one per ranked
+    #: name, and the dividend snapshot once one exists -- see
+    #: `snapshot_ids_for`), and the code that computed it. `docs/STANDARDS.md`: "a result
     #: without both is not trustworthy and should not be surfaced" -- this is
     #: the standing-directive screen (Dio's north star), so it is the first
     #: surface to carry them in the payload, not only the run log.
@@ -172,6 +190,9 @@ class UniverseRanking(BaseModel):
     #: may not import.
     snapshot_ids: list[str] = Field(default_factory=list)
     code_sha: str = "unknown"
+    #: `FRAGILE_HIGH`, served so the client shades each metric column by its
+    #: fragility rank without keeping a copy of the directions.
+    fragile_high: dict[str, bool] = Field(default_factory=lambda: dict(FRAGILE_HIGH))
 
 
 def _returns(prices: pd.Series) -> pd.Series:
@@ -202,11 +223,8 @@ def _score_and_sort(rows: list[RankedAsset]) -> list[RankedAsset]:
     """Composite fragility score (average of ``COMPOSITE_METRICS``' cross-sectional
     ranks) then sort most-fragile-first; rows too thin to score sort last."""
     ranks = {
-        "downside_beta": _frac_rank([r.downside_beta for r in rows], fragile_high=True),
-        "co_skewness": _frac_rank([r.co_skewness for r in rows], fragile_high=False),
-        "tail_beta": _frac_rank([r.tail_beta for r in rows], fragile_high=True),
-        "downside_capture": _frac_rank([r.downside_capture for r in rows], fragile_high=True),
-        "vol_beta": _frac_rank([r.vol_beta for r in rows], fragile_high=False),
+        m: _frac_rank([getattr(r, m) for r in rows], fragile_high=FRAGILE_HIGH[m])
+        for m in COMPOSITE_METRICS
     }
     for i, r in enumerate(rows):
         parts = [ranks[m][i] for m in COMPOSITE_METRICS if i in ranks[m]]
@@ -365,7 +383,29 @@ def _rank_one(symbol: str, ctx: _RankContext) -> RankedAsset | None:
         best_biggest_payoff_mult=best_run.biggest_payoff_mult if best_run else None,
         best_n_cycles=best_run.n_cycles if best_run else None,
         best_verdict=best_verdict,
+        best_q_source=best_run.q_source if best_run else None,
+        best_priced_from=best_run.priced_from if best_run else None,
     )
+
+
+def snapshot_ids_for(store: LakeStore, as_of: dt.date, symbols: Iterable[str]) -> list[str]:
+    """The bronze snapshots a universe-wide screen read, for its provenance.
+
+    Mirrors `portfolio.py`'s `snapshot_ids`: VIX first (every regime verdict
+    depends on it, whether or not any name was scored), then each scored
+    name's own OHLCV snapshot, deduplicated, then the dividend snapshot every
+    name was priced with (absent before the first Tiingo ingest, when every q
+    was an unknown 0). Shared by the ranking and the metric bake-off.
+    """
+    snapshot_ids = [store.bronze_snapshot_id(VIX_DATASET, as_of)]
+    for symbol in symbols:
+        snap = store.bronze_snapshot_id(dataset_id(symbol), as_of)
+        if snap not in snapshot_ids:
+            snapshot_ids.append(snap)
+    dividend_snapshot = dividend_snapshot_id(store, as_of)
+    if dividend_snapshot is not None:
+        snapshot_ids.append(dividend_snapshot)
+    return snapshot_ids
 
 
 def rank_universe(
@@ -435,19 +475,7 @@ def rank_universe(
     # COMPOSITE_METRICS). Most fragile first; names with no fragility estimate
     # sort last.
     rows = _score_and_sort(rows)
-    # Mirrors `portfolio.py`'s `snapshot_ids`: VIX first (every row's regime
-    # verdict depends on it, whether or not any name made it into `rows`),
-    # then each ranked name's own OHLCV snapshot, deduplicated.
-    snapshot_ids = [store.bronze_snapshot_id(VIX_DATASET, as_of)]
-    for row in rows:
-        snap = store.bronze_snapshot_id(dataset_id(row.asset), as_of)
-        if snap not in snapshot_ids:
-            snapshot_ids.append(snap)
-    # The dividend snapshot every name was priced with (absent before the first
-    # Tiingo ingest, when every q was an unknown 0).
-    dividend_snapshot = dividend_snapshot_id(store, as_of)
-    if dividend_snapshot is not None:
-        snapshot_ids.append(dividend_snapshot)
+    snapshot_ids = snapshot_ids_for(store, as_of, (row.asset for row in rows))
     return UniverseRanking(
         as_of=as_of,
         moneyness_pct=moneyness_pct,

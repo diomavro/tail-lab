@@ -1414,7 +1414,10 @@ wrong side of the join.
       denominator is not a bias to adjust for — it is a different quantity.
       *Success*: a leg whose model price is some multiple of its market price
       (or which has no quote at all) cannot reach the top of the ranking
-      without that multiple being displayed beside it.
+      without that multiple being displayed beside it -- in both of the
+      Workspace strip's orders: the best-return order (the old
+      Recommendations tab, `docs/adr/0028` 2026-10-11 amendment) is exactly
+      where a mispriced leg's advertised return tops the list.
 
 - [x] **`roi_on_premium` needs its denominator named on the surface.**
       `put_roll.py:773` computes `net_pnl / total_premium` — return on

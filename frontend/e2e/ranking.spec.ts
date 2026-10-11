@@ -1,83 +1,670 @@
-import { expect, test } from '@playwright/test'
-import { LEADERBOARD } from './fixtures/putlab'
-import { mockPutLabApi } from './fixtures/mock-api'
+import { expect, test, type Page, type Route } from '@playwright/test'
+import { cellContrast, cellPaint } from './contrast'
+import { LEADERBOARD, METRIC_SCREEN_NO_WINNER, METRIC_SCREEN_WINNER, MODEL_PRICED_MAX } from './fixtures/putlab'
+import { type MockOptions, mockPutLabApi } from './fixtures/mock-api'
+import type { MetricScreenComparison, PutLabLeaderboardResponse, RankedAsset } from '../src/api/client'
 
-// The fragility ranking, as a strip at the top of the Workspace rather than a
-// permanently pinned 232px panel above the tab bar.
+// The screen: the universe ranking as a strip at the top of the Workspace, in
+// two orders over one response -- by fragility (the server's order) and by
+// best return (what the Recommendations tab was, docs/adr/0028 amendment).
 //
-// The behaviour that matters is not "a table exists". It is that a row's
+// The behaviour that matters is not "a table exists". It is that a pick's
 // headline is `best_annualized` -- the argmax of that name's whole strike x
-// tenor grid -- so clicking the row has to land on the cell the row ADVERTISED,
-// not on whatever strike happened to be selected. Landing on the selected
-// strike would show a different (usually worse) number than the one just
-// clicked, which is the bug this arrangement exists to prevent.
+// tenor grid -- so clicking it has to land on the cell the pick ADVERTISED,
+// not on whatever strike happened to be selected. That holds in both orders.
+// And in the best-return order every figure on a row comes from that SAME
+// cell: an argmax return beside a screened-cell hit rate would describe two
+// strategies on one line.
 
-test.beforeEach(async ({ page }) => {
-  await mockPutLabApi(page)
-  await page.goto('/')
+const strip = (page: Page) => page.getByRole('group', { name: 'Screen' })
+const rail = (page: Page) => page.getByRole('complementary', { name: 'Position controls' })
+const sortTo = (page: Page, order: 'Fragility' | 'Best return') =>
+  page.getByRole('radiogroup', { name: 'Sort the screen' }).getByText(order).click()
+const expand = (page: Page) => page.getByRole('button', { name: /All \d+ names/ }).click()
+const picks = (page: Page) => strip(page).getByTestId('rank-pick')
+const bestTable = (page: Page) => page.getByRole('table', { name: 'Ranked strategies' })
+const fragTable = (page: Page) => page.getByRole('table', { name: /fragility ranking/i })
+
+const byReturn = () =>
+  [...LEADERBOARD.ranked]
+    .filter((r) => r.best_annualized != null)
+    .sort((a, b) => b.best_annualized! - a.best_annualized!)
+const topByReturn = () => byReturn()[0]!
+
+async function openBestReturn(page: Page) {
+  await sortTo(page, 'Best return')
+  await expand(page)
+  await expect(bestTable(page)).toBeVisible()
+}
+
+/** Serve one leaderboard of our own, registered before the page loads. */
+async function serveLeaderboard(page: Page, body: (url: URL) => PutLabLeaderboardResponse) {
+  await page.route(
+    (url) => url.pathname === '/api/putlab/leaderboard',
+    (route: Route) =>
+      route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify(body(new URL(route.request().url()))),
+      }),
+  )
+}
+
+async function serveBakeoff(page: Page, body: MetricScreenComparison) {
+  await page.route(
+    (url) => url.pathname === '/api/putlab/metric-screen',
+    (route: Route) => route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(body) }),
+  )
+}
+
+const row = (asset: string, patch: Partial<RankedAsset>): RankedAsset => ({
+  ...LEADERBOARD.ranked.find((r) => r.asset === asset)!,
+  ...patch,
 })
 
-test('opens as one line carrying the top three names', async ({ page }) => {
-  const strip = page.getByRole('group', { name: 'Fragility ranking' })
-  await expect(strip.getByRole('button', { name: /TSLA/ })).toBeVisible()
-  await expect(strip.getByRole('button', { name: /IWM/ })).toBeVisible()
-  await expect(strip.getByRole('button', { name: /XLF/ })).toBeVisible()
-  // Fourth-ranked name is not in the strip -- that is what makes it one line.
-  await expect(strip.getByRole('button', { name: /EEM/ })).toHaveCount(0)
-})
+test.describe('with the shared fixture', () => {
+  test.beforeEach(async ({ page }) => {
+    await mockPutLabApi(page)
+    await page.goto('/')
+  })
 
-test('clicking a name lands on the cell that row advertised', async ({ page }) => {
-  // TSLA's best cell matches neither the 5% nor the 4wk the workspace opened
-  // on, so a patch that only set the asset would leave both controls untouched
-  // and this would fail. Read from the fixture rather than hard-coded: the
-  // argmax is bounded to the priced band, so the exact strike can move.
-  const tsla = LEADERBOARD.ranked.find((r) => r.asset === 'tsla')!
-  expect(tsla.best_moneyness_pct).not.toBe(5)
-  expect(tsla.best_tenor_weeks).not.toBe(4)
+  test('opens as one line carrying the top three names', async ({ page }) => {
+    await expect(strip(page).getByRole('button', { name: /TSLA/ })).toBeVisible()
+    await expect(strip(page).getByRole('button', { name: /IWM/ })).toBeVisible()
+    await expect(strip(page).getByRole('button', { name: /XLF/ })).toBeVisible()
+    // Fourth-ranked name is not in the strip -- that is what makes it one line.
+    await expect(strip(page).getByRole('button', { name: /EEM/ })).toHaveCount(0)
+  })
 
-  const strip = page.getByRole('group', { name: 'Fragility ranking' })
-  await strip.getByRole('button', { name: /TSLA/ }).click()
+  for (const order of ['Fragility', 'Best return'] as const) {
+    test(`clicking a ${order} pick lands on the cell it advertised`, async ({ page }) => {
+      // TSLA's best cell matches neither the 5% nor the 4wk the workspace opened
+      // on, so a patch that only set the asset would leave both controls
+      // untouched. It is a pick in both orders (first by fragility, second by
+      // return); GLD, first by return, has a best strike of 5% and could not
+      // prove the strike moved.
+      const tsla = LEADERBOARD.ranked.find((r) => r.asset === 'tsla')!
+      expect(tsla.best_moneyness_pct).not.toBe(5)
+      expect(tsla.best_tenor_weeks).not.toBe(4)
+      await sortTo(page, order)
+      await strip(page).getByRole('button', { name: /TSLA/ }).click()
 
-  await expect(page.getByLabel('Out of the money, %')).toHaveValue(String(tsla.best_moneyness_pct))
-  await expect(page.getByRole('radio', { name: '1 quarter' })).toBeChecked()
-  await expect(page.getByRole('term').filter({ hasText: 'Name' }).locator('..')).toContainText('TSLA')
-})
-
-test('expands to the full table with every metric the API returned', async ({ page }) => {
-  await page.getByRole('button', { name: /All 7 names/ }).click()
-
-  const table = page.getByRole('table', { name: /fragility ranking/i })
-  // downside_beta, co_skewness, co_kurtosis, tail_beta and downside_capture
-  // were all fetched by the old table and only fragility_score was printed.
-  for (const head of ['Fragility', 'Dn β', 'Co-skew', 'Co-kurt', 'Tail β', 'Dn cap', 'Best /yr']) {
-    await expect(table.getByRole('columnheader', { name: head, exact: true })).toBeVisible()
+      await expect(page.getByLabel('Out of the money, %')).toHaveValue(String(tsla.best_moneyness_pct))
+      await expect(page.getByRole('radio', { name: '1 quarter' })).toBeChecked()
+      await expect(page.getByRole('term').filter({ hasText: 'Name' }).locator('..')).toContainText('TSLA')
+    })
   }
-  await expect(table.locator('tbody tr')).toHaveCount(LEADERBOARD.ranked.length)
 
-  // The currently-selected name is marked in the table, not merely sorted into it.
-  await expect(table.locator('tbody tr.is-current')).toContainText('SPY')
+  test('expands to the full table, each figure under the strategy that produced it', async ({ page }) => {
+    await expand(page)
+    const table = fragTable(page)
+    for (const head of ['Fragility', 'Dn β', 'Co-skew', 'Co-kurt', 'Tail β', 'Dn cap', 'Vol β']) {
+      await expect(table.getByRole('columnheader', { name: head, exact: true })).toBeVisible()
+    }
+    // The two strategy groups, named from the response -- and two "Per year"
+    // columns, told apart by their accessible names.
+    await expect(table.getByRole('columnheader', { name: 'At 5% · 4w', exact: true })).toBeVisible()
+    await expect(table.getByRole('columnheader', { name: 'Best cell', exact: true })).toBeVisible()
+    await expect(table.getByRole('columnheader', { name: 'Per year at 5% · 4w', exact: true })).toBeVisible()
+    await expect(table.getByRole('columnheader', { name: 'Per year at best cell', exact: true })).toBeVisible()
+    await expect(table.locator('tbody tr')).toHaveCount(LEADERBOARD.ranked.length)
+    // The currently-selected name is marked in the table, not merely sorted into it.
+    await expect(table.locator('tbody tr.is-current')).toContainText('SPY')
+  })
+
+  test('the fragility table shows the screened cell beside the best one, never mixed', async ({ page }) => {
+    // The screened cell's own return, payoff and hit rate were fetched and
+    // never shown; the row printed the argmax return beside them.
+    await expand(page)
+    for (const r of LEADERBOARD.ranked) {
+      expect(r.annualized_return).not.toBe(r.best_annualized)
+      expect(r.biggest_payoff_mult).not.toBe(r.best_biggest_payoff_mult)
+    }
+    const tsla = LEADERBOARD.ranked.find((r) => r.asset === 'tsla')!
+    const pct = (x: number) => `${x >= 0 ? '+' : '−'}${Math.abs(x * 100).toFixed(0)}%`
+    await expect(page.getByTestId('screened-ann-tsla')).toHaveText(pct(tsla.annualized_return))
+    await expect(page.getByTestId('best-ann-tsla')).toHaveText(pct(tsla.best_annualized!))
+    await expect(page.getByTestId('screened-biggest-tsla')).toContainText(`${tsla.biggest_payoff_mult.toFixed(1)}×`)
+    await expect(page.getByTestId('screened-hit-tsla')).toHaveText(`${Math.round(tsla.hit_rate * 100)}%`)
+  })
+
+  test('prints fragility on a readable scale in the full table too', async ({ page }) => {
+    await expand(page)
+    const cells = fragTable(page).locator('td.pl-rank-frag')
+    await expect(cells).toHaveCount(LEADERBOARD.ranked.length)
+    const shown = await cells.allTextContents()
+    expect(new Set(shown).size).toBeGreaterThan(2)
+  })
+
+  test('labels every row model-priced, since the screen pays no real quotes yet', async ({ page }) => {
+    await expand(page)
+    await expect(fragTable(page).getByRole('columnheader', { name: 'Basis' })).toBeVisible()
+    for (const r of LEADERBOARD.ranked) {
+      expect(r.priced_from).toBe('model')
+      await expect(page.getByTestId(`basis-${r.asset}`)).toHaveText('Model')
+    }
+  })
+
+  test('the switch reorders the strip, and switching back restores it', async ({ page }) => {
+    // Guards against sorting the cached response in place (RANKING_CACHE in
+    // PutLab.tsx): the best-return order would then leak into the fragility one.
+    await expect(picks(page)).toHaveText([/TSLA/, /IWM/, /XLF/])
+    await sortTo(page, 'Best return')
+    await expect(picks(page)).toHaveText([/GLD/, /TSLA/, /IWM/])
+    await expect(strip(page).locator('.pl-kicker')).toHaveText('Screen · by best return')
+    await sortTo(page, 'Fragility')
+    await expect(picks(page)).toHaveText([/TSLA/, /IWM/, /XLF/])
+  })
+
+  test('switching the order never re-screens the universe', async ({ page }) => {
+    // Away from the warmed default, so a mutant that keyed the best-return
+    // order on the default strike would miss the cache and fetch.
+    await rail(page).getByRole('radiogroup', { name: 'Strike presets' }).getByText('10%').click()
+    await rail(page).getByRole('radiogroup', { name: 'Held to expiry' }).getByText('1 quarter').click()
+    await page.waitForRequest((r) => {
+      const u = new URL(r.url())
+      return (
+        u.pathname === '/api/putlab/leaderboard' &&
+        u.searchParams.get('moneyness_pct') === '10' &&
+        u.searchParams.get('tenor_weeks') === '12'
+      )
+    })
+    await expect(picks(page).first()).toBeVisible()
+    const fetched: string[] = []
+    page.on('request', (r) => {
+      const path = new URL(r.url()).pathname
+      if (path === '/api/putlab/leaderboard' || path === '/api/putlab/metric-screen') fetched.push(path)
+    })
+    // Longer than the 250ms debounce, or toggling back would cancel the fetch
+    // before it was ever sent.
+    await sortTo(page, 'Best return')
+    await page.waitForTimeout(600)
+    await sortTo(page, 'Fragility')
+    await page.waitForTimeout(600)
+    expect(fetched).toEqual([])
+  })
+
+  test('the best-return table has exactly the strategy columns', async ({ page }) => {
+    await openBestReturn(page)
+    await expect(bestTable(page).locator('thead th')).toHaveText([
+      '#',
+      'The strategy',
+      'Per year',
+      'On premium',
+      'Hit',
+      'Rolls',
+      'Biggest payoff',
+      'Fragility',
+      'Verdict',
+    ])
+    // The screened cell's dividend and pricing basis are not best-cell figures.
+    await expect(bestTable(page).getByRole('columnheader', { name: 'q', exact: true })).toHaveCount(0)
+    await expect(bestTable(page).getByRole('columnheader', { name: 'Basis', exact: true })).toHaveCount(0)
+  })
+
+  test('each order shows its own cell’s dividend basis', async ({ page }) => {
+    // The fixture's EEM and XLF are priced on different dividend bases at the
+    // screened and the best cell, both ways round.
+    await expand(page)
+    await expect(page.getByTestId('q-source-eem')).toContainText('q = 0 rolls')
+    await expect(page.getByTestId('q-source-xlf')).toContainText('measured')
+    await sortTo(page, 'Best return')
+    await expect(page.getByTestId('best-q-source-xlf')).toHaveText('q = 0 rolls')
+    await expect(page.getByTestId('best-q-source-eem')).toHaveCount(0)
+    await expect(page.getByTestId('best-q-zero-note')).toBeVisible()
+  })
+
+  test('the biggest payoff shows in both orders, from each order’s own cell', async ({ page }) => {
+    const tsla = LEADERBOARD.ranked.find((r) => r.asset === 'tsla')!
+    await expand(page)
+    await expect(page.getByTestId('screened-biggest-tsla')).toContainText(`${tsla.biggest_payoff_mult.toFixed(1)}×`)
+    await sortTo(page, 'Best return')
+    const tslaRow = bestTable(page).locator('tbody tr').filter({ hasText: 'TSLA' })
+    await expect(tslaRow.locator('td.pl-rec-biggest')).toContainText(`${tsla.best_biggest_payoff_mult!.toFixed(1)}×`)
+  })
+
+  test('metric shading follows each column’s own fragility rank', async ({ page }) => {
+    await expand(page)
+    const r = (metric: string, asset: string) =>
+      page.getByTestId(`shade-${metric}-${asset}`).evaluate((el) => Number((el as HTMLElement).style.getPropertyValue('--pl-r')))
+    // Co-skewness is fragile when LOW: the most negative value (TSLA, −0.94)
+    // carries the top rank, and the most positive (GLD) the bottom one.
+    expect(await r('co_skewness', 'tsla')).toBe(1)
+    expect(await r('co_skewness', 'gld')).toBe(0)
+    // Downside beta is fragile when HIGH.
+    expect(await r('downside_beta', 'tsla')).toBe(1)
+    expect(await r('downside_beta', 'gld')).toBe(0)
+    await expect(page.getByText('Stronger shade = more fragile on that measure')).toBeVisible()
+  })
+
+  for (const sheet of ['paper', 'plate'] as const) {
+    test(`shaded cells keep readable text and actually paint, on the ${sheet}`, async ({ page }) => {
+      if (sheet === 'plate') {
+        await page.getByRole('radiogroup', { name: 'Sheet' }).getByText('Plate').click()
+        await expect(page.locator('.putlab-root')).toHaveAttribute('data-theme', 'plate')
+      }
+      await expand(page)
+      // Gains take no heat; losses do.
+      await expect(page.getByTestId('best-ann-tsla')).not.toHaveClass(/pl-heat-loss/)
+      await expect(page.getByTestId('best-ann-spy')).toHaveClass(/pl-heat-loss/)
+      const shaded = page.locator('.pl-rank-table td.pl-heat-loss, .pl-rank-table td.pl-shade-rank')
+      const n = await shaded.count()
+      expect(n).toBeGreaterThan(40)
+      for (let i = 0; i < n; i++) {
+        const cell = shaded.nth(i)
+        expect(await cellContrast(cell), await cell.getAttribute('data-testid') ?? String(i)).toBeGreaterThanOrEqual(4.5)
+      }
+      // Contrast alone passes an unpainted cell. The worst-case cells -- SPY's
+      // loss (the column's largest) and the top-ranked metric cell -- must
+      // paint an opaque background unlike an unshaded cell's.
+      const plain = await cellPaint(fragTable(page).locator('tbody tr').first().locator('td').nth(1))
+      for (const id of ['best-ann-spy', 'screened-ann-spy', 'shade-co_skewness-tsla']) {
+        const p = await cellPaint(page.getByTestId(id))
+        expect(p.bgAlpha, id).toBe(255)
+        expect(p.bg, id).not.toEqual(plain.bg)
+      }
+    })
+  }
+
+  test('the order survives a row click and a tab round trip', async ({ page }) => {
+    await openBestReturn(page)
+    // TSLA moves the rail to 12 weeks: a new screen, a cache miss. Wait for
+    // that read itself, so the check cannot pass inside the 250ms debounce.
+    const rescreen = page.waitForResponse(
+      (r) => new URL(r.url()).pathname === '/api/putlab/leaderboard' && new URL(r.url()).searchParams.get('tenor_weeks') === '12',
+    )
+    await bestTable(page).locator('tbody tr').filter({ hasText: 'TSLA' }).click()
+    await rescreen
+    await expect(bestTable(page)).toBeVisible()
+    await expect(strip(page).locator('.pl-kicker')).toHaveText('Screen · by best return')
+    // A tab round trip unmounts the Workspace; the order lives in PutLab.
+    await page.getByRole('tab', { name: 'Regime' }).click()
+    await page.getByRole('tab', { name: 'Workspace' }).click()
+    await expect(strip(page).locator('.pl-kicker')).toHaveText('Screen · by best return')
+  })
+
+  test('both orders label the picks as in-sample, not advice', async ({ page }) => {
+    await expect(strip(page).getByTestId('rank-insample')).toHaveText('in-sample best · not advice')
+    await sortTo(page, 'Best return')
+    await expect(strip(page).getByTestId('rank-insample')).toHaveText('in-sample best · not advice')
+  })
+
+  test('the best-return order carries exactly one accounting label', async ({ page }) => {
+    await openBestReturn(page)
+    await expect(page.getByTestId('accounting')).toHaveCount(1)
+  })
+
+  test('the notes say a click loads the best cell, and the strike does not move best returns', async ({ page }) => {
+    await expect(page.getByTestId('rank-click-note')).toContainText('Opening a name loads its best cell into the controls.')
+    await expect(page.getByTestId('rank-strike-note')).toHaveCount(0)
+    await sortTo(page, 'Best return')
+    await expect(page.getByTestId('rank-strike-note')).toContainText(
+      'Best-return rows don’t depend on the strike; changing it re-screens the universe.',
+    )
+  })
+
+  test('a narrow page never scrolls sideways with the best-return table open', async ({ page }) => {
+    await page.setViewportSize({ width: 390, height: 844 })
+    await openBestReturn(page)
+    const overflow = await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth)
+    expect(overflow).toBeLessThanOrEqual(0)
+  })
+
+  test('the bake-off line reads the composite at fixed settings', async ({ page }) => {
+    const line = strip(page).getByTestId('rank-bakeoff')
+    await expect(line).toContainText(`Bake-off · 5% · 4w · 4y · by distance · top 5 of ${METRIC_SCREEN_WINNER.universe_size}`)
+    await expect(line).toContainText('Same settings as the list above')
+    // Its own provenance, not the ranking's.
+    await expect(line).toContainText(METRIC_SCREEN_WINNER.code_sha)
+    await expect(line).toContainText(`${METRIC_SCREEN_WINNER.snapshot_ids.length} bronze snapshots`)
+    await expect(line).not.toContainText(LEADERBOARD.code_sha)
+    // A verdict on the fragility order: shown with it, not with best return.
+    await sortTo(page, 'Best return')
+    await expect(strip(page).getByTestId('rank-bakeoff')).toHaveCount(0)
+  })
+
+  test('the bake-off line keeps its own settings when the rail moves', async ({ page }) => {
+    await rail(page).getByRole('radiogroup', { name: 'Strike presets' }).getByText('10%').click()
+    await rail(page).getByRole('radiogroup', { name: 'Held to expiry' }).getByText('1 quarter').click()
+    await expect(strip(page).getByTestId('rank-bakeoff')).toContainText('Bake-off · 5% · 4w · 4y · by distance · top 5 of')
+  })
+
+  test('the bake-off link opens the Bake-off tab', async ({ page }) => {
+    await strip(page).getByRole('button', { name: 'Bake-off →' }).click()
+    await expect(page.getByRole('tab', { name: 'Bake-off' })).toHaveAttribute('aria-selected', 'true')
+  })
+
+  // ---- the best-return order: what the Recommendations tab guaranteed ----
+
+  test('ranks every name by its own best strategy', async ({ page }) => {
+    await openBestReturn(page)
+    const rows = bestTable(page).locator('tbody tr')
+    await expect(rows).toHaveCount(byReturn().length)
+    const returns = await rows.locator('td.pl-rec-ann').allTextContents()
+    const asNumbers = returns.map((t) => Number(t.replace('−', '-').replace('%', '')))
+    expect(asNumbers).toEqual([...asNumbers].sort((a, b) => b - a))
+    // Ranked by best-cell return, NOT by fragility.
+    const byFragility = LEADERBOARD.ranked.map((r) => r.asset.toUpperCase())
+    expect(byReturn().map((r) => r.asset.toUpperCase())).not.toEqual(byFragility)
+    await expect(rows.first()).toContainText(topByReturn().asset.toUpperCase())
+  })
+
+  test('states each strategy in full — ticker, strike, and roll frequency', async ({ page }) => {
+    await openBestReturn(page)
+    const top = topByReturn()
+    const first = bestTable(page).locator('tbody tr').first()
+    await expect(first).toContainText(top.asset.toUpperCase())
+    await expect(first).toContainText(`${top.best_moneyness_pct}% out of the money`)
+    await expect(first).toContainText(`rolled every ${top.best_tenor_weeks} weeks`)
+  })
+
+  test('takes every figure on a row from that same cell', async ({ page }) => {
+    await openBestReturn(page)
+    const top = topByReturn()
+    const first = bestTable(page).locator('tbody tr').first()
+    await expect(first.locator('td.pl-rec-hit')).toHaveText(`${Math.round(top.best_hit_rate! * 100)}%`)
+    await expect(first.locator('td.pl-rec-rolls')).toHaveText(String(top.best_n_cycles))
+    await expect(first.locator('td.pl-rec-verdict')).toContainText(top.best_verdict!.replace('_', ' '))
+    // The screened-cell hit rate is a different number and must not appear here.
+    expect(top.best_hit_rate).not.toBe(top.hit_rate)
+  })
+
+  test('names the premium a return on premium was measured against', async ({ page }) => {
+    await openBestReturn(page)
+    const top = topByReturn()
+    const premium = LEADERBOARD.notional * top.best_n_cycles!
+    await expect(bestTable(page).locator('tbody tr').first().locator('td.pl-rec-premium')).toContainText(
+      `$${premium.toLocaleString('en-US')}`,
+    )
+  })
+
+  test('never recommends a strike the model cannot price', async ({ page }) => {
+    await openBestReturn(page)
+    const cells = bestTable(page).locator('.pl-rec-strike')
+    await expect(cells).toHaveCount(byReturn().length)
+    for (const s of await cells.allTextContents()) {
+      expect(Number(s.replace('%', ''))).toBeLessThanOrEqual(MODEL_PRICED_MAX)
+    }
+  })
+
+  test('says plainly that it is a screen, not advice', async ({ page }) => {
+    // tail-lab never trades (adr/0007).
+    await openBestReturn(page)
+    const caveat = page.getByTestId('best-return-caveat')
+    await expect(caveat).toContainText('in sample')
+    await expect(caveat).toContainText('not advice')
+    const view = page.getByTestId('best-return')
+    await expect(view).toContainText('never places an order')
+    await expect(view).toContainText('lives outside this platform')
+  })
+
+  test('prints fragility on a readable scale, not rounded to 0 or 1', async ({ page }) => {
+    await openBestReturn(page)
+    const cells = bestTable(page).locator('td.pl-rec-frag')
+    await expect(cells).toHaveCount(byReturn().length)
+    const shown = await cells.allTextContents()
+    expect(new Set(shown).size).toBeGreaterThan(2)
+    for (const t of shown) {
+      const n = Number(t)
+      expect(Number.isFinite(n)).toBe(true)
+      expect(n).toBeGreaterThanOrEqual(0)
+      expect(n).toBeLessThanOrEqual(100)
+    }
+  })
+
+  test('hands the schedule to an executor rather than placing it', async ({ page }) => {
+    await openBestReturn(page)
+    const link = page.getByRole('link', { name: /roll schedule/i })
+    await expect(link).toBeVisible()
+    const url = new URL((await link.getAttribute('href'))!, 'http://localhost')
+    expect(url.pathname).toBe('/api/putlab/roll-schedule')
+    expect(url.searchParams.get('moneyness_pct')).toBe(String(LEADERBOARD.moneyness_pct))
+    expect(url.searchParams.get('tenor_weeks')).toBe(String(LEADERBOARD.tenor_weeks))
+    expect(url.searchParams.get('years')).toBe(String(LEADERBOARD.lookback_years))
+    expect(url.searchParams.get('notional')).toBe(String(LEADERBOARD.notional))
+    expect(Number(url.searchParams.get('top_k'))).toBeGreaterThan(0)
+    const view = page.getByTestId('best-return')
+    await expect(view).toContainText('never places')
+    await expect(view).toContainText(/budget/i)
+  })
+
+  test('the screen’s provenance shows under both tables', async ({ page }) => {
+    await expand(page)
+    await expect(page.getByTestId('rank-provenance')).toContainText(LEADERBOARD.code_sha)
+    await sortTo(page, 'Best return')
+    await expect(page.getByTestId('rank-provenance')).toContainText(LEADERBOARD.code_sha)
+  })
 })
 
-test('prints fragility on a readable scale in the full table too', async ({ page }) => {
-  await page.getByRole('button', { name: /All 7 names/ }).click()
-  const cells = page.getByRole('table', { name: /fragility ranking/i }).locator('td.pl-rank-frag')
-  await expect(cells).toHaveCount(LEADERBOARD.ranked.length)
-  const shown = await cells.allTextContents()
-  expect(new Set(shown).size).toBeGreaterThan(2)
-})
+test.describe('with a response of its own', () => {
+  // Each override is registered before the first load: the strip reads on load
+  // and the client caches what it was served first.
 
-test('labels every row model-priced, since the screen pays no real quotes yet', async ({ page }) => {
-  await page.getByRole('button', { name: /All 7 names/ }).click()
-  const table = page.getByRole('table', { name: /fragility ranking/i })
-  await expect(table.getByRole('columnheader', { name: 'Basis' })).toBeVisible()
-  const rows = table.locator('tbody tr')
-  await expect(rows).toHaveCount(LEADERBOARD.ranked.length)
-  for (const r of LEADERBOARD.ranked) {
-    expect(r.priced_from).toBe('model')
+  for (const [state, opts, text] of [
+    ['loading', { hang: ['/api/putlab/leaderboard'] }, 'Screening the universe'],
+    ['an error', { fail: ['/api/putlab/leaderboard'] }, 'GET /api/putlab/leaderboard failed: 500'],
+    ['no data', { noData: ['/api/putlab/leaderboard'] }, 'No screen for this window yet'],
+  ] as [string, MockOptions, string][]) {
+    test(`the strip stays mounted and says so while the screen is ${state}`, async ({ page }) => {
+      await mockPutLabApi(page, opts)
+      await page.goto('/')
+      await expect(strip(page).getByTestId('rank-status')).toContainText(text)
+      await expect(page.getByRole('radiogroup', { name: 'Sort the screen' })).toBeVisible()
+      await expect(picks(page)).toHaveCount(0)
+      if (state === 'loading') {
+        // The bake-off line's link is a button in the strip, which is why the
+        // "ranking loaded" signal is `rank-pick`, never any strip button.
+        await expect(strip(page).getByRole('button', { name: 'Bake-off →' })).toBeVisible()
+      }
+    })
   }
-  const basisCells = rows.locator('td:last-child')
-  await expect(basisCells).toHaveCount(LEADERBOARD.ranked.length)
-  for (const text of await basisCells.allTextContents()) {
-    expect(text.trim()).toBe('Model')
+
+  test('the best-return order drops names with no scored best cell', async ({ page }) => {
+    await mockPutLabApi(page)
+    await serveLeaderboard(page, () => ({
+      ...LEADERBOARD,
+      ranked: [...LEADERBOARD.ranked, row('qqq', { asset: 'kre', name: 'Regional Banks', fragility_score: 0.05, best_annualized: null })],
+    }))
+    await page.goto('/')
+    await expand(page)
+    await expect(fragTable(page).locator('tbody tr')).toHaveCount(LEADERBOARD.ranked.length + 1)
+    await expect(fragTable(page)).toContainText('KRE')
+    await sortTo(page, 'Best return')
+    await expect(bestTable(page).locator('tbody tr')).toHaveCount(byReturn().length)
+    await expect(bestTable(page)).not.toContainText('KRE')
+  })
+
+  test('the best-return order says so when no name scored a best cell', async ({ page }) => {
+    await mockPutLabApi(page)
+    await serveLeaderboard(page, () => ({
+      ...LEADERBOARD,
+      ranked: LEADERBOARD.ranked.map((r) => ({ ...r, best_annualized: null })),
+    }))
+    await page.goto('/')
+    await sortTo(page, 'Best return')
+    await expect(strip(page).getByTestId('rank-empty')).toHaveText('No name had enough history to score its grid.')
+    await expect(picks(page)).toHaveCount(0)
+  })
+
+  test('the provenance dates the screen with its own as-of', async ({ page }) => {
+    await mockPutLabApi(page)
+    await serveLeaderboard(page, () => ({
+      ...LEADERBOARD,
+      as_of: '2026-08-20',
+      // No snapshot may postdate the screen's as-of.
+      snapshot_ids: LEADERBOARD.snapshot_ids.map((s) => s.replace('2026-08-21', '2026-08-20')),
+    }))
+    await page.goto('/')
+    await expand(page)
+    await expect(page.getByTestId('rank-provenance')).toContainText('As of 2026-08-20')
+    await sortTo(page, 'Best return')
+    await expect(page.getByTestId('rank-provenance')).toContainText('As of 2026-08-20')
+  })
+
+  test('the group label and the budget come from the screen, not the rail', async ({ page }) => {
+    await mockPutLabApi(page)
+    await serveLeaderboard(page, () => ({ ...LEADERBOARD, moneyness_pct: 7.5, tenor_weeks: 8, notional: 2500 }))
+    await page.goto('/')
+    await expand(page)
+    await expect(fragTable(page).getByRole('columnheader', { name: 'At 7.5% · 8w', exact: true })).toBeVisible()
+    await sortTo(page, 'Best return')
+    await expect(page.getByTestId('best-return')).toContainText('own $2,500 per roll')
+  })
+
+  test('the best-return Market tag is the best cell’s own', async ({ page }) => {
+    await mockPutLabApi(page)
+    await serveLeaderboard(page, () => ({
+      ...LEADERBOARD,
+      ranked: LEADERBOARD.ranked.map((r) =>
+        r.asset === 'gld' ? { ...r, best_priced_from: 'market' as const, priced_from: 'model' as const } : r,
+      ),
+    }))
+    await page.goto('/')
+    await openBestReturn(page)
+    await expect(page.getByTestId('best-basis-gld')).toHaveText('Market')
+    await expect(page.getByTestId('best-basis-tsla')).toHaveCount(0)
+  })
+
+  test('each metric column is ranked on its own, not by the composite', async ({ page }) => {
+    // KRE leads tail beta alone, with a low composite: built from GLD (which
+    // leads no column) so nothing ties, and listed last.
+    await mockPutLabApi(page)
+    await serveLeaderboard(page, () => ({
+      ...LEADERBOARD,
+      ranked: [...LEADERBOARD.ranked, row('gld', { asset: 'kre', name: 'Regional Banks', tail_beta: 1.9, fragility_score: 0.02 })],
+    }))
+    await page.goto('/')
+    await expand(page)
+    const r = (metric: string, asset: string) =>
+      page.getByTestId(`shade-${metric}-${asset}`).evaluate((el) => Number((el as HTMLElement).style.getPropertyValue('--pl-r')))
+    expect(await r('tail_beta', 'kre')).toBe(1)
+    expect(await r('tail_beta', 'tsla')).toBeLessThan(1)
+    expect(await r('downside_beta', 'tsla')).toBe(1)
+  })
+
+  test('the shading reads its directions from the response', async ({ page }) => {
+    await mockPutLabApi(page)
+    await serveLeaderboard(page, () => ({ ...LEADERBOARD, fragile_high: { ...LEADERBOARD.fragile_high, co_skewness: true } }))
+    await page.goto('/')
+    await expand(page)
+    const r = (asset: string) =>
+      page.getByTestId(`shade-co_skewness-${asset}`).evaluate((el) => Number((el as HTMLElement).style.getPropertyValue('--pl-r')))
+    // GLD has the most positive co-skewness: now the most fragile.
+    expect(await r('gld')).toBe(1)
+    expect(await r('tsla')).toBe(0)
+  })
+
+  test('the bake-off line reads the composite entry, wherever it sorts', async ({ page }) => {
+    await mockPutLabApi(page)
+    const composite = METRIC_SCREEN_WINNER.entries.find((e) => e.metric === 'fragility_score')!
+    await serveBakeoff(page, {
+      ...METRIC_SCREEN_WINNER,
+      entries: [...METRIC_SCREEN_WINNER.entries.filter((e) => e !== composite), composite],
+    })
+    await page.goto('/')
+    const line = strip(page).getByTestId('rank-bakeoff')
+    // The composite's +1.6 pts and its significance -- not entries[0]'s
+    // (downside beta: +0.3, not significant).
+    await expect(line).toContainText("The composite screen's top 5 beat buying all 35 by +1.6 pts.")
+    await expect(line).toContainText("Its ranking's correlation with payoff is significant after FDR correction across 7 screens.")
+  })
+
+  test('the bake-off line says when the composite trailed', async ({ page }) => {
+    await mockPutLabApi(page)
+    await serveBakeoff(page, { ...METRIC_SCREEN_NO_WINNER, top_k: 5 })
+    await page.goto('/')
+    await expect(strip(page).getByTestId('rank-bakeoff')).toContainText(
+      "The composite screen's top 5 trailed buying all 35 by 8.7 pts.",
+    )
+  })
+
+  test('the bake-off line says when the correlation could not be tested', async ({ page }) => {
+    await mockPutLabApi(page)
+    await serveBakeoff(page, {
+      ...METRIC_SCREEN_WINNER,
+      entries: METRIC_SCREEN_WINNER.entries.map((e) =>
+        e.metric === 'fragility_score' ? { ...e, spearman_vs_payoff: null, spearman_pvalue: null, significant_corrected: false } : e,
+      ),
+    })
+    await page.goto('/')
+    await expect(strip(page).getByTestId('rank-bakeoff')).toContainText('could not be tested')
+  })
+
+  test('the bake-off line compares its settings with the list’s', async ({ page }) => {
+    await mockPutLabApi(page)
+    // A leaderboard that answers at whatever it was asked for.
+    await serveLeaderboard(page, (u) => ({
+      ...LEADERBOARD,
+      moneyness_pct: Number(u.searchParams.get('moneyness_pct')),
+      tenor_weeks: Number(u.searchParams.get('tenor_weeks')),
+      lookback_years: Number(u.searchParams.get('years')),
+    }))
+    await page.goto('/')
+    const line = strip(page).getByTestId('rank-bakeoff')
+    await expect(line).toContainText('Same settings as the list above')
+    await rail(page).getByRole('radiogroup', { name: 'Strike presets' }).getByText('10%').click()
+    await rail(page).getByRole('radiogroup', { name: 'Held to expiry' }).getByText('1 quarter').click()
+    await expect(page.getByTestId('rank-pick').first()).toBeVisible()
+    await expect(page.getByLabel('Out of the money, %')).toHaveValue('10')
+    await expect(line).toContainText('Not the settings of the list above')
+  })
+
+  test('while the list loads, the bake-off line compares with what was asked for', async ({ page }) => {
+    await mockPutLabApi(page, { hang: ['/api/putlab/leaderboard'] })
+    await page.goto('/')
+    await expect(strip(page).getByTestId('rank-bakeoff')).toContainText('Same settings as the list above')
+  })
+
+  for (const [state, opts, text] of [
+    ['fails', { fail: ['/api/putlab/metric-screen'] }, 'Bake-off unavailable: GET /api/putlab/metric-screen failed: 500'],
+    ['has no data', { noData: ['/api/putlab/metric-screen'] }, 'Bake-off: no screen for this window'],
+  ] as [string, MockOptions, string][]) {
+    test(`the bake-off line says so when the read ${state}`, async ({ page }) => {
+      await mockPutLabApi(page, opts)
+      await page.goto('/')
+      await expect(strip(page).getByTestId('rank-bakeoff')).toContainText(text)
+    })
   }
+
+  test('the bake-off line never follows the rail', async ({ page }) => {
+    // The strip's first read happens while the rail is at its defaults, so a
+    // fetch that leaked the rail would look right on load. Fail that read, move
+    // the rail to non-default values on the Bake-off tab, and come back: the
+    // retry must still ask for the fixed settings.
+    await mockPutLabApi(page)
+    let first = true
+    await page.route(
+      (url) => url.pathname === '/api/putlab/metric-screen',
+      async (route) => {
+        if (first) {
+          first = false
+          return route.fulfill({ status: 500, contentType: 'application/json', body: '{"detail":"boom"}' })
+        }
+        return route.fallback()
+      },
+    )
+    await page.goto('/')
+    await expect(strip(page).getByTestId('rank-bakeoff')).toContainText('Bake-off unavailable')
+    await page.getByRole('tab', { name: 'Bake-off' }).click()
+    await rail(page).getByRole('radiogroup', { name: 'Strike presets' }).getByText('10%').click()
+    await rail(page).getByRole('radiogroup', { name: 'Held to expiry' }).getByText('1 quarter').click()
+    await rail(page).getByText('3y', { exact: true }).click()
+    await expect(rail(page).getByRole('radio', { name: '3y' })).toBeChecked()
+    await rail(page).getByRole('radiogroup', { name: 'Strike chosen by' }).getByText('Delta').click()
+    const urls: URL[] = []
+    page.on('request', (r) => {
+      const u = new URL(r.url())
+      if (u.pathname === '/api/putlab/metric-screen') urls.push(u)
+    })
+    await page.getByRole('tab', { name: 'Workspace' }).click()
+    await expect(strip(page).getByTestId('rank-bakeoff')).toContainText('Bake-off · 5% · 4w · 4y')
+    expect(urls.length).toBeGreaterThan(0)
+    for (const u of urls) {
+      expect(u.searchParams.get('moneyness_pct')).toBe('5')
+      expect(u.searchParams.get('tenor_weeks')).toBe('4')
+      expect(u.searchParams.get('years')).toBe('4')
+      expect(u.searchParams.get('top_k')).toBe('5')
+      expect(u.searchParams.get('strike_rule')).not.toBe('delta')
+    }
+  })
 })

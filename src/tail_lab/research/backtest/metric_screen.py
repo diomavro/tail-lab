@@ -49,7 +49,7 @@ from dataclasses import dataclass
 from typing import Literal
 
 import pandas as pd
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from scipy.stats import spearmanr
 
 from tail_lab.contracts.hypothesis import Verdict
@@ -67,8 +67,10 @@ from tail_lab.research.backtest.put_roll import (
 from tail_lab.research.backtest.ranking import (
     BENCHMARK,
     COMPOSITE_METRICS,
+    FRAGILE_HIGH,
     _frac_rank,
     _returns,
+    snapshot_ids_for,
 )
 from tail_lab.research.backtest.regime_verdict import RegimeSlice, regime_breakdown
 from tail_lab.research.backtest.strike_rule import ByDelta, ByMoneyness, StrikeRule
@@ -94,17 +96,6 @@ _METRIC_FUNCS: dict[str, Callable[[pd.Series, pd.Series], float]] = {
 }
 #: Every raw metric screened in the bake-off, including vol beta.
 _ALL_METRIC_NAMES: tuple[str, ...] = (*_METRIC_FUNCS, "vol_beta")
-#: A higher raw value means more fragile (matches ``ranking.py``'s directions):
-#: co-skewness and vol beta are fragile-when-*low* (more negative = more
-#: crash-prone / more reactive to a fear spike).
-_FRAGILE_HIGH: dict[str, bool] = {
-    "downside_beta": True,
-    "co_skewness": False,
-    "co_kurtosis": True,
-    "tail_beta": True,
-    "downside_capture": True,
-    "vol_beta": False,
-}
 _COMPOSITE = "fragility_score"
 #: FDR level for the Benjamini-Hochberg correction across the seven screens'
 #: Spearman tests (`docs/END_STATE.md` §4 Q1) -- the conventional per-test
@@ -185,6 +176,14 @@ class MetricScreenComparison(BaseModel):
     #: FDR level `significant_corrected` was computed at.
     fdr_alpha: float
     entries: list[MetricScreenEntry]
+    #: The bronze snapshots this bake-off read (VIX, one per scored name, and
+    #: the dividend snapshot once one exists -- `ranking.snapshot_ids_for`),
+    #: and the code that computed it. `docs/STANDARDS.md`: "a result without
+    #: both is not trustworthy and should not be surfaced". `code_sha` is
+    #: filled in by the API route from `Settings`, which `research/` may not
+    #: import.
+    snapshot_ids: list[str] = Field(default_factory=list)
+    code_sha: str = "unknown"
 
 
 @dataclass
@@ -426,7 +425,7 @@ def compare_metric_screens(
     # so the "Composite fragility" row here matches the shipped screen exactly
     # (co-kurtosis excluded; see ranking.COMPOSITE_METRICS).
     per_metric_rank = {
-        name: _frac_rank([s.metrics[name] for s in scored], fragile_high=_FRAGILE_HIGH[name])
+        name: _frac_rank([s.metrics[name] for s in scored], fragile_high=FRAGILE_HIGH[name])
         for name in _ALL_METRIC_NAMES
     }
     for i, s in enumerate(scored):
@@ -443,7 +442,7 @@ def compare_metric_screens(
             _run_screen(
                 name,
                 [s.metrics[name] for s in scored],
-                fragile_high=_FRAGILE_HIGH[name],
+                fragile_high=FRAGILE_HIGH[name],
                 scored=scored,
                 timeline=timeline,
                 notional=notional,
@@ -481,6 +480,7 @@ def compare_metric_screens(
         n_comparisons=n_comparisons,
         fdr_alpha=_FDR_ALPHA,
         entries=entries,
+        snapshot_ids=snapshot_ids_for(store, as_of, (s.symbol for s in scored)),
     )
 
 

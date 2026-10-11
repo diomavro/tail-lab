@@ -5,7 +5,7 @@ import { apiRequests, mockPutLabApi } from './fixtures/mock-api'
 // full walk of every tab must not throw, log an error, or make the page scroll
 // sideways.
 
-const TABS = ['Workspace', 'Recommendations', 'Portfolio', 'Bake-off', 'Regime', 'Glossary']
+const TABS = ['Workspace', 'Portfolio', 'Bake-off', 'Regime', 'Glossary']
 
 function collectErrors(page: Page): string[] {
   const errors: string[] = []
@@ -73,6 +73,7 @@ test('survives an API that is entirely down', async ({ page }) => {
       '/api/putlab/cadence',
       '/api/putlab/data-quality',
       '/api/putlab/leaderboard',
+      '/api/putlab/metric-screen',
       '/api/putlab/regime-verdict',
       '/api/putlab/regimes',
       '/api/vix/stretch',
@@ -94,7 +95,7 @@ test('does not re-screen the universe from a tab that cannot show it', async ({ 
   // screening axis from a tab that cannot show the result must not pay for one.
   await mockPutLabApi(page)
   await page.goto('/')
-  await expect(page.locator('.pl-rank-strip button').first()).toBeVisible()
+  await expect(page.getByTestId('rank-pick').first()).toBeVisible()
 
   // Bake-off reads the strike (its rail has one) but does not show the ranking.
   await page.getByRole('tab', { name: 'Bake-off' }).click()
@@ -106,9 +107,10 @@ test('does not re-screen the universe from a tab that cannot show it', async ({ 
 
   expect(apiRequests(page).filter((p) => p === '/api/putlab/leaderboard').length).toBe(before)
 
-  // ...and going back to the Workspace does screen, at the new strike. The
-  // strip keeps showing the previous strike's ranking until the new one lands,
-  // so poll for the request rather than for the strip.
+  // ...and going back to the Workspace does screen, at the new strike. For
+  // one 250ms debounce the strip still shows the previous strike's ranking,
+  // then its status line until the new one lands, so poll for the request
+  // rather than for the strip.
   await page.getByRole('tab', { name: 'Workspace' }).click()
   await expect
     .poll(() => apiRequests(page).filter((p) => p === '/api/putlab/leaderboard').length)
