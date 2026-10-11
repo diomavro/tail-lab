@@ -1743,6 +1743,26 @@ def test_the_bakeoff_logs_once_per_compute_not_per_read(
     assert caplog.text.count("event=putlab.metric_screen ") == 1
 
 
+def test_a_screen_logs_how_long_it_queued_for_the_slot(caplog: pytest.LogCaptureFixture) -> None:
+    """``putlab.screen_slot_wait`` is the only record that splits a memo's
+    ``compute_done`` seconds into queueing behind another screen and work
+    (STANDARDS §f; ADR 0028's amendment points at it)."""
+    run = putlab_routes._in_screen_slot("bakeoff", lambda: "done")
+    out: list[str] = []
+    with caplog.at_level("INFO", logger="tail_lab.api.putlab"):
+        with putlab_routes._SCREEN_SLOT:
+            worker = threading.Thread(target=lambda: out.append(run()))
+            worker.start()
+            time.sleep(0.3)
+        worker.join(timeout=5)
+    assert out == ["done"]
+    [line] = [
+        r.getMessage() for r in caplog.records if "event=putlab.screen_slot_wait " in r.getMessage()
+    ]
+    assert "screen=bakeoff" in line
+    assert float(line.split("seconds=")[1].split()[0]) >= 0.25
+
+
 def test_a_repeat_bakeoff_is_served_from_the_memo(
     client: TestClient, monkeypatch: pytest.MonkeyPatch
 ) -> None:
