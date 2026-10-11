@@ -105,7 +105,7 @@ export function BestReturnTable({ data, rows, currentAsset, onPick }: Props) {
                 Hit
               </th>
               <th className="num">Rolls</th>
-              <th className="num" title="The largest single roll's payoff, as a multiple of its premium">
+              <th className="num" title="The largest single roll's payoff, as a multiple of its premium (bar on a log scale)">
                 Biggest payoff
               </th>
               <th
@@ -122,7 +122,15 @@ export function BestReturnTable({ data, rows, currentAsset, onPick }: Props) {
               <tr
                 key={r.asset}
                 className={`pick${r.asset === currentAsset ? ' is-current' : ''}`}
+                tabIndex={0}
+                aria-label={`Open ${r.asset.toUpperCase()} at its best cell`}
                 onClick={() => onPick(r)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter' || e.key === ' ') {
+                    e.preventDefault()
+                    onPick(r)
+                  }
+                }}
               >
                 <td className="num dimmer">{i + 1}</td>
                 <td title={`${r.best_moneyness_pct}% below spot · ${r.best_tenor_weeks}-week puts · ${data.lookback_years}-year window`}>
@@ -198,8 +206,14 @@ export function BestReturnTable({ data, rows, currentAsset, onPick }: Props) {
                 </td>
                 {/* A mean fractional rank in 0..1, scaled to read as a score;
                     rounding it unscaled puts the whole universe on 0 and 1. */}
-                <td className="num dim pl-rec-frag">
+                <td
+                  className="num dim pl-rec-frag"
+                  title={`Dn β ${r.downside_beta ?? '—'} · Co-skew ${r.co_skewness ?? '—'} · Co-kurt ${r.co_kurtosis ?? '—'} · Tail β ${r.tail_beta ?? '—'} · Dn cap ${r.downside_capture ?? '—'} · Vol β ${r.vol_beta ?? '—'}`}
+                >
                   {r.fragility_score == null ? '—' : Math.round(r.fragility_score * 100)}
+                  {r.fragility_score != null && (
+                    <span className="pl-mini-bar" style={{ width: `${Math.round(r.fragility_score * 36)}px` }} />
+                  )}
                 </td>
                 <td className="num pl-rec-verdict">
                   {r.best_verdict == null ? (
@@ -215,6 +229,9 @@ export function BestReturnTable({ data, rows, currentAsset, onPick }: Props) {
           </tbody>
         </table>
       </div>
+      <p className="pl-micro pl-rank-legend" style={{ padding: '6px 2px 0' }}>
+        Magenta = a loss, deeper for a larger one. Biggest-payoff bars are on a log scale.
+      </p>
       {anyQZero && (
         <p id={qZeroNoteId} className="pl-micro" style={{ padding: '4px 2px 0' }} data-testid="best-q-zero-note">
           q = 0 rolls: at least one roll at that row&rsquo;s best cell was priced at q = 0 because its

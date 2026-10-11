@@ -4,7 +4,7 @@ import { CONCEPTS, UNKNOWN_Q_CAUSES } from '../../content/concepts'
 import { BestReturnTable } from './BestReturnTable'
 import { type BestRow, bestReturnRows, VERDICT_TITLE } from './rankOrder'
 import { ConceptInfo } from './ConceptInfo'
-import { fmtFixed, fmtMult, fmtPct, fmtPrice, signedPts } from './format'
+import { fmtFixed, fmtMult, fmtPct, fmtPrice } from './format'
 import type { ResourceState } from './PutLab'
 import { biggestBarWidth, fragilityRank, lossHeat } from './rankShade'
 import { type RankSort, STRIP_BAKEOFF } from './types'
@@ -72,6 +72,9 @@ const at = (r: RankedAsset) =>
   r.best_moneyness_pct == null || r.best_tenor_weeks == null
     ? '—'
     : `${r.best_moneyness_pct}% · ${r.best_tenor_weeks}w`
+
+/** A level to one decimal, so a small gap between two levels stays visible. */
+const fmtPct1 = (x: number) => `${x >= 0 ? '+' : '−'}${Math.abs(x * 100).toFixed(1)}%`
 
 const heatStyle = (d: number | null | undefined): CSSProperties | undefined =>
   d == null ? undefined : ({ '--pl-d': d } as CSSProperties)
@@ -149,9 +152,11 @@ export function RankingStrip({ ranking, bakeoff, sort, onSort, requested, curren
           </span>
         )}
 
-        {data && rows.length === 0 && sort === 'return' && (
-          <span className="pl-micro" data-testid="rank-empty">
-            No name had enough history to score its grid.
+        {data && rows.length === 0 && (
+          <span className="pl-micro pl-rank-insample" data-testid="rank-empty">
+            {sort === 'return'
+              ? 'No name had enough history to score its grid.'
+              : 'No name could be screened for this window.'}
           </span>
         )}
         {data &&
@@ -246,11 +251,11 @@ function FragilityTable({
         <thead>
           <tr className="pl-rank-groups">
             <th colSpan={10} />
-            <th colSpan={6} className="pl-rank-group" title="The rail's strike and tenor, screened by distance below spot">
-              {screened}
-            </th>
             <th colSpan={2} className="pl-rank-group" title="Each name's own best cell over its strike × tenor grid">
               Best cell
+            </th>
+            <th colSpan={6} className="pl-rank-group" title="The rail's strike and tenor, screened by distance below spot">
+              {screened}
             </th>
           </tr>
           <tr>
@@ -268,6 +273,10 @@ function FragilityTable({
                 {m.head}
               </th>
             ))}
+            <th className="num pl-rank-group-start" aria-label="Per year at best cell">
+              Per year
+            </th>
+            <th>At</th>
             <th className="num pl-rank-group-start" aria-label={`Per year ${screened.toLowerCase()}`}>
               Per year
             </th>
@@ -285,15 +294,23 @@ function FragilityTable({
             <th className="num" title="Whether this row's ROI came from the pricing model or a real listed quote">
               Basis
             </th>
-            <th className="num pl-rank-group-start" aria-label="Per year at best cell">
-              Per year
-            </th>
-            <th>At</th>
           </tr>
         </thead>
         <tbody>
           {ranked.map((r, i) => (
-            <tr key={r.asset} className={`pick${r.asset === currentAsset ? ' is-current' : ''}`} onClick={() => onPick(r)}>
+            <tr
+              key={r.asset}
+              className={`pick${r.asset === currentAsset ? ' is-current' : ''}`}
+              tabIndex={0}
+              aria-label={`Open ${r.asset.toUpperCase()}`}
+              onClick={() => onPick(r)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter' || e.key === ' ') {
+                  e.preventDefault()
+                  onPick(r)
+                }
+              }}
+            >
               <td className="num dimmer">{i + 1}</td>
               <td className="nowrap">
                 <strong className="bold">{r.asset.toUpperCase()}</strong> <span className="dimmer">{r.name}</span>
@@ -321,6 +338,14 @@ function FragilityTable({
                   </td>
                 )
               })}
+              <td
+                className={`num bold pl-rank-group-start${bestHeat[i] == null ? (r.best_annualized == null ? ' dim' : r.best_annualized >= 0 ? ' pl-pos' : ' pl-neg') : ' pl-heat-loss'}`}
+                style={heatStyle(bestHeat[i])}
+                data-testid={`best-ann-${r.asset}`}
+              >
+                {r.best_annualized == null ? '—' : fmtPct(r.best_annualized)}
+              </td>
+              <td className="dimmer nowrap">{at(r)}</td>
               <td
                 className={`num bold pl-rank-group-start${screenedHeat[i] == null ? (r.annualized_return >= 0 ? ' pl-pos' : ' pl-neg') : ' pl-heat-loss'}`}
                 style={heatStyle(screenedHeat[i])}
@@ -358,21 +383,13 @@ function FragilityTable({
               <td className="num" data-testid={`basis-${r.asset}`}>
                 <span className={BASIS_TAG[r.priced_from]}>{BASIS_LABEL[r.priced_from]}</span>
               </td>
-              <td
-                className={`num bold pl-rank-group-start${bestHeat[i] == null ? (r.best_annualized == null ? ' dim' : r.best_annualized >= 0 ? ' pl-pos' : ' pl-neg') : ' pl-heat-loss'}`}
-                style={heatStyle(bestHeat[i])}
-                data-testid={`best-ann-${r.asset}`}
-              >
-                {r.best_annualized == null ? '—' : fmtPct(r.best_annualized)}
-              </td>
-              <td className="dimmer nowrap">{at(r)}</td>
             </tr>
           ))}
         </tbody>
       </table>
-      <p className="pl-micro pl-rank-legend" style={{ padding: '6px 2px 0' }}>
+      <p className="pl-micro pl-rank-legend" style={{ padding: '6px 2px 0' }} data-testid="rank-legend">
         Stronger shade = more fragile on that measure (each column ranked on its own; co-skew and vol β are fragile
-        when low). Magenta = a loss, deeper for a larger one.
+        when low). Magenta = a loss, deeper for a larger one. Biggest-payoff bars are on a log scale.
         {METRICS.map((m) => (
           <span key={m.key} className="pl-rank-legend-item">
             {m.head}
@@ -427,7 +444,12 @@ function BakeoffLine({
   const composite = data.entries.find((e) => e.metric === 'fragility_score')
   const n = data.universe_size
   const lift = composite?.lift_vs_baseline ?? 0
-  const pts = 'pts of return on premium over the window'
+  // Both levels, not only the gap: a "beat" between two losing baskets reads
+  // as a gain. Under half a tenth of a point the gap rounds away: "matched".
+  const levels = composite
+    ? `returned ${fmtPct1(composite.roi_on_premium)} on premium against ${fmtPct1(data.baseline_roi)} for buying all ${n}`
+    : ''
+  const gap = Math.abs(lift * 100).toFixed(1)
   // With no more scored names than the basket holds, the top K IS everyone:
   // there is no selection to measure, and "beat/matched buying all N" would
   // describe comparing a basket with itself.
@@ -436,11 +458,9 @@ function BakeoffLine({
       ? 'This bake-off carried no composite row.'
       : b.top_k >= n
       ? `It scored only ${n} name${n === 1 ? '' : 's'}, so its top ${b.top_k} is all of them: no selection to measure.`
-      : lift > 0
-      ? `The composite screen's top ${b.top_k} beat buying all ${n} by ${signedPts(lift)} ${pts}.`
-      : lift < 0
-        ? `The composite screen's top ${b.top_k} trailed buying all ${n} by ${Math.abs(lift * 100).toFixed(1)} ${pts}.`
-        : `The composite screen's top ${b.top_k} matched buying all ${n}.`
+      : Math.abs(lift) < 0.0005
+      ? `The composite screen's top ${b.top_k} ${levels}: no difference.`
+      : `The composite screen's top ${b.top_k} ${levels}: ${gap} pts ${lift > 0 ? 'better' : 'worse'}.`
   // The p-value is two-sided, so "significant" alone would endorse a screen
   // that ordered names significantly the WRONG way: the sign is stated.
   const rho = composite?.spearman_vs_payoff

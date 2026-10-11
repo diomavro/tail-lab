@@ -1692,11 +1692,17 @@ def test_a_repeat_bakeoff_is_served_from_the_memo(
         return real(*args, **kwargs)
 
     monkeypatch.setattr(putlab_routes, "compare_metric_screens", counted)
+    # Record any background refresh instead of running it: a memo that thought
+    # its entry stale would serve it AND spawn a recompute, and this test must
+    # see that rather than race it.
+    spawned: list[object] = []
+    monkeypatch.setattr(putlab_routes._METRIC_SCREEN_CACHE, "_spawn", spawned.append)
     _clear_putlab_caches()
     params = {"moneyness_pct": 10, "tenor_weeks": 4, "years": 1, "top_k": 2}
     for _ in range(3):
         assert client.get("/api/putlab/metric-screen", params=params).status_code == 200
     assert calls == [1]
+    assert spawned == []
 
 
 def test_every_pricing_route_logs_the_dividend_snapshot_it_priced_with(

@@ -316,7 +316,7 @@ def test_the_bakeoff_reads_its_directions_from_ranking_fragile_high(
     ingest = dt.date(2026, 3, 2)
     store = _seeded_store(tmp_path, ingest)
 
-    def vol_beta_rho() -> float:
+    def rhos() -> tuple[float, float]:
         cmp = compare_metric_screens(
             store,
             symbols=("spy", "wild", "calm", "mid"),
@@ -327,12 +327,25 @@ def test_the_bakeoff_reads_its_directions_from_ranking_fragile_high(
             top_k=2,
         )
         (entry,) = [e for e in cmp.entries if e.metric == "vol_beta"]
+        (composite,) = [e for e in cmp.entries if e.metric == "fragility_score"]
         assert entry.spearman_vs_payoff is not None and entry.spearman_vs_payoff != 0.0
-        return entry.spearman_vs_payoff
+        assert composite.spearman_vs_payoff is not None
+        return entry.spearman_vs_payoff, composite.spearman_vs_payoff
 
-    before = vol_beta_rho()
+    before, composite_before = rhos()
     monkeypatch.setitem(FRAGILE_HIGH, "vol_beta", not FRAGILE_HIGH["vol_beta"])
-    assert vol_beta_rho() == pytest.approx(-before)
+    after, _ = rhos()
+    assert after == pytest.approx(-before)
+    # ...and the composite -- the row the Workspace's verdict line reads -- is
+    # built from the same table: flipping every composite direction reverses
+    # its order, so its correlation changes sign.
+    from tail_lab.research.backtest.ranking import COMPOSITE_METRICS
+
+    for m in COMPOSITE_METRICS:
+        monkeypatch.setitem(FRAGILE_HIGH, m, not FRAGILE_HIGH[m])
+    monkeypatch.setitem(FRAGILE_HIGH, "vol_beta", not FRAGILE_HIGH["vol_beta"])  # undo the first flip
+    _, composite_flipped = rhos()
+    assert composite_flipped == pytest.approx(-composite_before)
 
 
 def test_the_bakeoff_cites_the_snapshots_it_read(tmp_path: Path) -> None:

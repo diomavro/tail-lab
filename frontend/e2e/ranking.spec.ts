@@ -262,7 +262,17 @@ test.describe('with the shared fixture', () => {
       // Contrast alone passes an unpainted cell. The worst-case cells -- SPY's
       // loss (the column's largest) and the top-ranked metric cell -- must
       // paint an opaque background unlike an unshaded cell's.
-      const plain = await cellPaint(fragTable(page).locator('tbody tr').first().locator('td').nth(1))
+      // The legend and the bake-off verdict carry the reading: AA too.
+      expect(await cellContrastOnPage(page, 'rank-legend')).toBeGreaterThanOrEqual(4.5)
+      expect(await cellContrastOnPage(page, 'rank-bakeoff')).toBeGreaterThanOrEqual(4.5)
+      // A deeper loss shades deeper: SPY's is the column's largest, EEM's smaller.
+      const d = (id: string) =>
+        page.getByTestId(id).evaluate((el) => Number((el as HTMLElement).style.getPropertyValue('--pl-d')))
+      expect(await d('best-ann-spy')).toBe(1)
+      const eem = await d('best-ann-eem')
+      expect(eem).toBeGreaterThan(0)
+      expect(eem).toBeLessThan(0.5)
+      const plain = await cellPaint(fragTable(page).locator('tbody tr').first().locator('td').nth(0))
       for (const id of ['best-ann-spy', 'screened-ann-spy', 'shade-co_skewness-tsla']) {
         const p = await cellPaint(page.getByTestId(id))
         expect(p.bgAlpha, id).toBe(255)
@@ -302,6 +312,16 @@ test.describe('with the shared fixture', () => {
     await page.getByRole('radiogroup', { name: 'Sheet' }).getByText('Paper').click()
     await sortTo(page, 'Best return')
     await expect(strip(page).getByTestId('rank-insample')).toHaveText('in-sample best · not advice')
+  })
+
+  test('a row in either table opens from the keyboard', async ({ page }) => {
+    // Names past the top three are reachable only through the tables.
+    await expand(page)
+    const eem = LEADERBOARD.ranked.find((r) => r.asset === 'eem')!
+    await fragTable(page).getByRole('row', { name: 'Open EEM' }).focus()
+    await page.keyboard.press('Enter')
+    await expect(page.getByLabel('Out of the money, %')).toHaveValue(String(eem.best_moneyness_pct))
+    await expect(page.getByRole('term').filter({ hasText: 'Name' }).locator('..')).toContainText('EEM')
   })
 
   test('the best-return order carries exactly one accounting label', async ({ page }) => {
@@ -584,8 +604,9 @@ test.describe('with a response of its own', () => {
     const line = strip(page).getByTestId('rank-bakeoff')
     // The composite's +1.6 pts and its significance -- not entries[0]'s
     // (downside beta: +0.3, not significant).
+    // Both levels, not just the gap: these two baskets both LOST money.
     await expect(line).toContainText(
-      "The composite screen's top 5 beat buying all 35 by +1.6 pts of return on premium over the window.",
+      "The composite screen's top 5 returned −22.5% on premium against −24.1% for buying all 35: 1.6 pts better.",
     )
     await expect(line).toContainText(
       "Its ranking's correlation with payoff (ρ = 0.34) is significant after FDR correction across 7 screens.",
@@ -598,8 +619,31 @@ test.describe('with a response of its own', () => {
     await serveBakeoff(page, { ...METRIC_SCREEN_NO_WINNER, top_k: 5 })
     await page.goto('/')
     await expect(strip(page).getByTestId('rank-bakeoff')).toContainText(
-      "The composite screen's top 5 trailed buying all 35 by 8.7 pts of return on premium over the window.",
+      "The composite screen's top 5 returned −28.5% on premium against −19.8% for buying all 35: 8.7 pts worse.",
     )
+  })
+
+  test('the bake-off line calls a gap that rounds away no difference', async ({ page }) => {
+    await mockPutLabApi(page)
+    await serveBakeoff(page, {
+      ...METRIC_SCREEN_WINNER,
+      entries: METRIC_SCREEN_WINNER.entries.map((e) =>
+        e.metric === 'fragility_score' ? { ...e, lift_vs_baseline: 0.0004 } : e,
+      ),
+    })
+    await page.goto('/')
+    const line = strip(page).getByTestId('rank-bakeoff')
+    await expect(line).toContainText('for buying all 35: no difference.')
+    await expect(line).not.toContainText('better')
+  })
+
+  test('an empty screen says so in the fragility order too', async ({ page }) => {
+    await mockPutLabApi(page)
+    await serveLeaderboard(page, () => ({ ...LEADERBOARD, ranked: [] }))
+    await page.goto('/')
+    await expect(strip(page).getByTestId('rank-empty')).toHaveText('No name could be screened for this window.')
+    await sortTo(page, 'Best return')
+    await expect(strip(page).getByTestId('rank-empty')).toHaveText('No name had enough history to score its grid.')
   })
 
   test('the bake-off line says when the screen ordered names the wrong way', async ({ page }) => {
@@ -632,6 +676,13 @@ test.describe('with a response of its own', () => {
     await expect(line).not.toContainText('buying all 3')
   })
 
+  test('the bake-off line says so at the boundary, five names for a top five', async ({ page }) => {
+    await mockPutLabApi(page)
+    await serveBakeoff(page, { ...METRIC_SCREEN_WINNER, universe_size: 5 })
+    await page.goto('/')
+    await expect(strip(page).getByTestId('rank-bakeoff')).toContainText('It scored only 5 names, so its top 5 is all of them')
+  })
+
   test('the bake-off line says when the correlation could not be tested', async ({ page }) => {
     await mockPutLabApi(page)
     await serveBakeoff(page, {
@@ -661,6 +712,21 @@ test.describe('with a response of its own', () => {
     await expect(page.getByTestId('rank-pick').first()).toBeVisible()
     await expect(page.getByLabel('Out of the money, %')).toHaveValue('10')
     await expect(line).toContainText('Not the settings of the screen above')
+  })
+
+  test('the bake-off line notices when only the years differ', async ({ page }) => {
+    await mockPutLabApi(page)
+    await serveLeaderboard(page, (u) => ({
+      ...LEADERBOARD,
+      moneyness_pct: Number(u.searchParams.get('moneyness_pct')),
+      tenor_weeks: Number(u.searchParams.get('tenor_weeks')),
+      lookback_years: Number(u.searchParams.get('years')),
+    }))
+    await page.goto('/')
+    await expect(strip(page).getByTestId('rank-bakeoff')).toContainText('Same settings as the screen above')
+    await rail(page).getByText('3y', { exact: true }).click()
+    await expect(rail(page).getByRole('radio', { name: '3y' })).toBeChecked()
+    await expect(strip(page).getByTestId('rank-bakeoff')).toContainText('Not the settings of the screen above')
   })
 
   test('while the list loads, the bake-off line compares with what was asked for', async ({ page }) => {
