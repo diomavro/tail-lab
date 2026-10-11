@@ -2,8 +2,6 @@ import { type CSSProperties, useId } from 'react'
 import type { PutLabLeaderboardResponse, RankedAsset, Verdict } from '../../api/client'
 import { UNKNOWN_Q_CAUSES } from '../../content/concepts'
 import { fmtDollar, fmtFixed, fmtMult, fmtPct } from './format'
-
-const f2 = (v: number | null) => (v == null ? '—' : fmtFixed(v, 2))
 import { type BestRow, VERDICT_TITLE } from './rankOrder'
 import { biggestBarWidth, lossHeat } from './rankShade'
 
@@ -28,6 +26,8 @@ import { biggestBarWidth, lossHeat } from './rankShade'
  * flat-vol pricer stops producing a price (docs/adr/0018), so this view cannot
  * recommend a strategy whose return is a pricing artefact.
  */
+
+const f2 = (v: number | null) => (v == null ? '—' : fmtFixed(v, 2))
 
 const VERDICT_TAG: Record<Verdict, string> = {
   confirmed: 'pl-tag pl-tag-ok',

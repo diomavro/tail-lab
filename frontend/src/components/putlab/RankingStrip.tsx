@@ -94,11 +94,24 @@ interface Props {
    *  with while the ranking is still loading. */
   requested: ScreenAxes
   currentAsset: string
+  /** The rail picks strikes by delta: the screen still runs by distance, at
+   *  the distance the rail last held, which it no longer shows. */
+  deltaMode: boolean
   onSelect: (asset: string, best?: { moneyness_pct: number; tenor_weeks: number }) => void
   onOpenBakeOff: () => void
 }
 
-export function RankingStrip({ ranking, bakeoff, sort, onSort, requested, currentAsset, onSelect, onOpenBakeOff }: Props) {
+export function RankingStrip({
+  ranking,
+  bakeoff,
+  sort,
+  onSort,
+  requested,
+  currentAsset,
+  deltaMode,
+  onSelect,
+  onOpenBakeOff,
+}: Props) {
   // Local on purpose: it survives a re-screen (the strip stays mounted) but
   // not a tab round trip, where a collapsed strip is the right default.
   const [open, setOpen] = useState(false)
@@ -137,7 +150,7 @@ export function RankingStrip({ ranking, bakeoff, sort, onSort, requested, curren
         </div>
 
         {ranking.status === 'loading' && (
-          <span className="pl-micro" role="status" aria-live="polite" data-testid="rank-status">
+          <span className="pl-micro pl-rank-ref" role="status" aria-live="polite" data-testid="rank-status">
             Screening the universe &mdash; one strike × tenor sweep per name…
           </span>
         )}
@@ -147,7 +160,7 @@ export function RankingStrip({ ranking, bakeoff, sort, onSort, requested, curren
           </span>
         )}
         {ranking.status === 'no-data' && (
-          <span className="pl-micro" role="status" aria-live="polite" data-testid="rank-status">
+          <span className="pl-micro pl-rank-ref" role="status" aria-live="polite" data-testid="rank-status">
             No screen for this window yet.
           </span>
         )}
@@ -206,7 +219,9 @@ export function RankingStrip({ ranking, bakeoff, sort, onSort, requested, curren
           {sort === 'return' && (
             <span data-testid="rank-strike-note">
               {' '}
-              Best-return rows don&rsquo;t depend on the strike; changing the distance re-screens the universe.
+              {deltaMode
+                ? 'Best-return rows don’t depend on the strike.'
+                : 'Best-return rows don’t depend on the strike; changing the distance re-screens the universe.'}
             </span>
           )}
         </p>
@@ -214,11 +229,11 @@ export function RankingStrip({ ranking, bakeoff, sort, onSort, requested, curren
       <div className="pl-rule-hair" />
 
       {open && data && rows.length > 0 && (
-        <div className="pl-scroll" style={{ padding: '4px 0 20px' }}>
+        <div style={{ padding: '4px 0 20px' }}>
           {sort === 'return' ? (
             <BestReturnTable data={data} rows={rows as BestRow[]} currentAsset={currentAsset} onPick={pick} />
           ) : (
-            <FragilityTable data={data} currentAsset={currentAsset} onPick={pick} />
+            <FragilityTable data={data} currentAsset={currentAsset} deltaMode={deltaMode} onPick={pick} />
           )}
           <p className="pl-micro pl-rank-ref" style={{ padding: '4px 2px 0' }} data-testid="rank-provenance">
             As of {data.as_of} · {data.snapshot_ids.length} bronze snapshot
@@ -237,10 +252,12 @@ export function RankingStrip({ ranking, bakeoff, sort, onSort, requested, curren
 function FragilityTable({
   data,
   currentAsset,
+  deltaMode,
   onPick,
 }: {
   data: PutLabLeaderboardResponse
   currentAsset: string
+  deltaMode: boolean
   onPick: (r: RankedAsset) => void
 }) {
   // The "q = 0 rolls" tag's explanation is printed under the table, not in a
@@ -265,6 +282,7 @@ function FragilityTable({
 
   return (
     <>
+      <div className="pl-scroll">
       <table className="pl-table pl-rank-table" aria-label="Full fragility ranking">
         <thead>
           <tr className="pl-rank-groups">
@@ -275,7 +293,11 @@ function FragilityTable({
             <th
               colSpan={anyMarket ? 6 : 5}
               className="pl-rank-group"
-              title="The rail's strike and tenor, screened by distance below spot"
+              title={
+                deltaMode
+                  ? 'The last distance below spot the rail held, and its tenor: the ranking screens by distance only'
+                  : "The rail's strike and tenor, screened by distance below spot"
+              }
             >
               {screened}
             </th>
@@ -308,6 +330,7 @@ function FragilityTable({
             <th
               className="num"
               title="Whether every roll was priced with the name's own dividend yield, or some at an unknown q = 0"
+              style={{ textTransform: 'none' }}
             >
               q
             </th>
@@ -419,6 +442,13 @@ function FragilityTable({
           ))}
         </tbody>
       </table>
+      </div>
+      {deltaMode && (
+        <p className="pl-micro pl-rank-ref" style={{ padding: '6px 2px 0' }} data-testid="rank-screened-delta">
+          The &ldquo;{screened}&rdquo; group is screened by distance, at the distance the rail held before it
+          switched to delta: the ranking cannot screen by delta.
+        </p>
+      )}
       <p className="pl-micro pl-rank-legend" style={{ padding: '6px 2px 0' }} data-testid="rank-legend">
         Stronger shade = more fragile on that measure (each column ranked on its own
         {fragileLow.length > 0 && `; ${fragileLow.join(' and ')} ${fragileLow.length === 1 ? 'is' : 'are'} fragile when low`}). Magenta = a loss, deeper for a larger one. Biggest-payoff bars are on a log scale.
@@ -513,10 +543,11 @@ function BakeoffLine({
       : `Its ranking's correlation with payoff (ρ = ${fmtFixed(rho)}) is ${composite.significant_corrected ? '' : 'not '}significant after FDR correction across ${data.n_comparisons} screens${composite.significant_corrected && rho < 0 ? ': it ordered names the wrong way, more fragile paying less' : ''}.`
   const which = screenShown ? 'the screen above' : 'the screen asked for'
   const sameDay = listAsOf == null || listAsOf === data.as_of
-  const scope =
-    sameAsList && sameDay
-    ? `Same settings as ${which}; its universe can differ.`
-    : `Not the settings of ${which}.`
+  const scope = !sameDay
+    ? `From a different day (${data.as_of}) than ${which}.`
+    : sameAsList
+      ? `Same settings as ${which}; its universe can differ.`
+      : `Not the settings of ${which}.`
   return (
     <p className="pl-micro pl-rank-bakeoff" data-testid="rank-bakeoff">
       <strong>{`${base} of ${n}`}</strong>: {liftText} {sigText} {scope}{' '}

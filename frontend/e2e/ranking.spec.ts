@@ -171,6 +171,15 @@ test.describe('with the shared fixture', () => {
     await page.keyboard.press('Tab')
     await expect(current).toBeFocused()
     expect(await current.evaluate((el) => getComputedStyle(el).outlineWidth)).not.toBe(before)
+    // ...and on any other row, which is most of what a keyboard passes through.
+    const other = fragTable(page).getByRole('row', { name: 'Open TSLA' })
+    await page.keyboard.press('Shift+Tab')
+    await other.focus()
+    await page.keyboard.press('Tab')
+    await page.keyboard.press('Shift+Tab')
+    await expect(other).toBeFocused()
+    await expect(other).toHaveCSS('outline-style', 'solid')
+    await expect(other).toHaveCSS('outline-width', '3px')
     await expect(fragTable(page).locator('tbody tr').first().locator('td').nth(1)).toHaveCSS('position', 'sticky')
   })
 
@@ -213,6 +222,24 @@ test.describe('with the shared fixture', () => {
     expect(fetched).toEqual([])
   })
 
+  test('the best-return table shades its losses too', async ({ page }) => {
+    await openBestReturn(page)
+    const spy = bestTable(page).locator('tbody tr').filter({ hasText: 'SPY' }).locator('td.pl-rec-ann')
+    await expect(spy).toHaveClass(/pl-heat-loss/)
+    expect(await spy.evaluate((el) => Number((el as HTMLElement).style.getPropertyValue('--pl-d')))).toBe(1)
+    expect(await cellContrast(spy)).toBeGreaterThanOrEqual(4.5)
+  })
+
+  test('in delta mode the screened group says it is still by distance', async ({ page }) => {
+    await rail(page).getByRole('radiogroup', { name: 'Strike chosen by' }).getByText('Delta').click()
+    await expand(page)
+    await expect(page.getByTestId('rank-screened-delta')).toContainText(
+      'The “At 5% · 4w” group is screened by distance, at the distance the rail held before it switched to delta',
+    )
+    await sortTo(page, 'Best return')
+    await expect(page.getByTestId('rank-strike-note')).toHaveText(' Best-return rows don’t depend on the strike.')
+  })
+
   test('the best-return table has exactly the strategy columns', async ({ page }) => {
     await openBestReturn(page)
     await expect(bestTable(page).locator('thead th')).toHaveText([
@@ -247,6 +274,17 @@ test.describe('with the shared fixture', () => {
     const tsla = LEADERBOARD.ranked.find((r) => r.asset === 'tsla')!
     await expand(page)
     await expect(page.getByTestId('screened-biggest-tsla')).toContainText(`${tsla.biggest_payoff_mult.toFixed(1)}×`)
+    // The accessible name replaces the cell text for a screen reader: same cell.
+    await expect(page.getByTestId('screened-biggest-tsla')).toHaveAttribute(
+      'aria-label',
+      `Biggest payoff ${tsla.biggest_payoff_mult.toFixed(2)} times its premium`,
+    )
+    // Bars are on a log scale, as the legend says.
+    const spy = LEADERBOARD.ranked.find((r) => r.asset === 'spy')!
+    const max = Math.max(...LEADERBOARD.ranked.map((r) => r.biggest_payoff_mult))
+    const w = (a: string) =>
+      page.getByTestId(`screened-biggest-${a}`).locator('.pl-mini-bar').evaluate((el) => (el as HTMLElement).offsetWidth)
+    expect(Math.abs((await w('spy')) - Math.round((Math.log1p(spy.biggest_payoff_mult) / Math.log1p(max)) * 40))).toBeLessThanOrEqual(1)
     await sortTo(page, 'Best return')
     const tslaRow = bestTable(page).locator('tbody tr').filter({ hasText: 'TSLA' })
     await expect(tslaRow.locator('td.pl-rec-biggest')).toContainText(`${tsla.best_biggest_payoff_mult!.toFixed(1)}×`)
@@ -524,6 +562,8 @@ test.describe('with a response of its own', () => {
       await mockPutLabApi(page, opts)
       await page.goto('/')
       await expect(strip(page).getByTestId('rank-status')).toContainText(text)
+      // During a cold re-screen this line is all the strip shows: readable.
+      expect(await textContrastOnPage(strip(page).getByTestId('rank-status'))).toBeGreaterThanOrEqual(4.5)
       await expect(page.getByRole('radiogroup', { name: 'Sort the screen' })).toBeVisible()
       await expect(picks(page)).toHaveCount(0)
       if (state === 'loading') {
@@ -584,6 +624,10 @@ test.describe('with a response of its own', () => {
     await expect(fragTable(page).getByRole('columnheader', { name: 'At 7.5% · 8w', exact: true })).toBeVisible()
     await sortTo(page, 'Best return')
     await expect(page.getByTestId('best-return')).toContainText('own $2,500 per roll')
+    const top = topByReturn()
+    await expect(bestTable(page).locator('tbody tr').first().locator('td.pl-rec-premium')).toContainText(
+      `$${(2500 * top.best_n_cycles!).toLocaleString('en-US')}`,
+    )
   })
 
   test('the fragility table’s q = 0 note follows the screened cells', async ({ page }) => {
@@ -608,7 +652,47 @@ test.describe('with a response of its own', () => {
       snapshot_ids: METRIC_SCREEN_WINNER.snapshot_ids.map((s) => s.replace('2026-08-21', '2026-08-20')),
     })
     await page.goto('/')
-    await expect(strip(page).getByTestId('rank-bakeoff')).toContainText('Not the settings of the screen above')
+    await expect(strip(page).getByTestId('rank-bakeoff')).toContainText(
+      'From a different day (2026-08-20) than the screen above.',
+    )
+  })
+
+  test('the best-return q = 0 note follows the best cells', async ({ page }) => {
+    // Only a best cell priced at q = 0: the best-return tag's note must show.
+    await mockPutLabApi(page)
+    await serveLeaderboard(page, () => ({
+      ...LEADERBOARD,
+      ranked: LEADERBOARD.ranked.map((r) => ({ ...r, q_source: 'measured' as const })),
+    }))
+    await page.goto('/')
+    await openBestReturn(page)
+    await expect(page.getByTestId('best-q-source-xlf')).toBeVisible()
+    await expect(page.getByTestId('best-q-zero-note')).toBeVisible()
+  })
+
+  test('a losing pick prints its loss in the loss colour', async ({ page }) => {
+    await mockPutLabApi(page)
+    await serveLeaderboard(page, () => ({
+      ...LEADERBOARD,
+      ranked: LEADERBOARD.ranked.map((r) => (r.asset === 'tsla' ? { ...r, best_annualized: -0.05 } : r)),
+    }))
+    await page.goto('/')
+    await expect(picks(page).first().locator('.pl-neg')).toHaveText('−5%')
+  })
+
+  test('the bake-off line keeps a tenth of a point', async ({ page }) => {
+    // The "no difference" bar is half a tenth; a full tenth is a difference.
+    await mockPutLabApi(page)
+    await serveBakeoff(page, {
+      ...METRIC_SCREEN_WINNER,
+      entries: METRIC_SCREEN_WINNER.entries.map((e) =>
+        e.metric === 'fragility_score'
+          ? { ...e, roi_on_premium: METRIC_SCREEN_WINNER.baseline_roi + 0.001, lift_vs_baseline: 0.001 }
+          : e,
+      ),
+    })
+    await page.goto('/')
+    await expect(strip(page).getByTestId('rank-bakeoff')).toContainText('0.1 pts better.')
   })
 
   test('the best-return Market tag is the best cell’s own', async ({ page }) => {

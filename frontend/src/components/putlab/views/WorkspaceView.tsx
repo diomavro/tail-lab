@@ -95,6 +95,7 @@ export function WorkspaceView({
         requested={{ moneyness_pct: controls.moneyness_pct, tenor_weeks: controls.tenor_weeks, years: controls.years }}
         currentAsset={controls.asset}
         onSelect={onSelectAsset}
+        deltaMode={controls.strike_rule === 'delta'}
         onOpenBakeOff={onOpenBakeOff}
       />
 

@@ -536,8 +536,14 @@
 .pl-rank-table td:nth-child(2) { position: sticky; left: 0; background: var(--paper); z-index: 1; }
 .pl-rank-groups th:nth-child(2) { position: static; }
 /* The pinned cell is opaque, so it carries the current row's tint itself. */
-.pl-rank-table tr.is-current td:nth-child(2) { background: color-mix(in srgb, var(--cyan) 12%, var(--paper)); }
 .pl-rank-table tr:hover td:nth-child(2) { background: color-mix(in srgb, var(--ink) 4%, var(--paper)); }
+.pl-rank-table tr.is-current td:nth-child(2) { background: color-mix(in srgb, var(--cyan) 12%, var(--paper)); }
+/* The pinned cell paints over the row's outline, so it draws its own share
+   of it: the current row's cyan, and keyboard focus's heavier ink. */
+.pl-rank-table tr.is-current td:nth-child(2) { box-shadow: inset 0 2px 0 var(--cyan), inset 0 -2px 0 var(--cyan); }
+.putlab-root .pl-rank-table tr.pick:focus-visible td:nth-child(2) {
+  box-shadow: inset 0 3px 0 var(--ink), inset 0 -3px 0 var(--ink);
+}
 /* Keyboard focus must out-rank the current row's outline (same 2px cyan),
    or tabbing onto the current row would change nothing on screen. */
 .putlab-root .pl-table tr.pick:focus-visible { outline: 3px solid var(--ink); outline-offset: -3px; }
