@@ -438,7 +438,8 @@ test.describe('with the shared fixture', () => {
       () => {},
     )
     await rail(page).getByRole('radiogroup', { name: 'Strike presets' }).getByText('10%').click()
-    await expect(strip(page).getByTestId('rank-status')).toContainText('Screening the universe')
+    // A strike-only change in this order holds its (identical) rows.
+    await expect(strip(page).getByTestId('rank-status')).toContainText('Re-screening at the new strike')
     await expect(page.getByTestId('rank-strike-note')).toBeVisible()
   })
 
