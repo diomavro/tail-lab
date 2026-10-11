@@ -135,26 +135,27 @@ export function RankingStrip({
   const data = ranking.status === 'ready' ? ranking.data : held
   const rows: RankedAsset[] = data == null ? [] : sort === 'return' ? bestReturnRows(data.ranked) : data.ranked
 
-  // A row opened from the table re-screens and remounts it, which drops focus
-  // to the page. When the table returns, focus goes back to that row -- but
-  // only if focus is still lost: a reader who has moved on (the rail, the
-  // expand button) keeps their place. One attempt, then the target is gone.
-  const tablesRef = useRef<HTMLDivElement>(null)
+  // A name opened from the keyboard (a pick or a table row) re-screens, which
+  // unmounts what was focused and drops focus to the page. When the screen
+  // returns, focus goes back to the same control -- but only if focus is
+  // still lost: a reader who has moved on (the rail, the expand button) keeps
+  // their place. One attempt on the next screen shown, then the target is gone.
+  const stripRef = useRef<HTMLDivElement>(null)
   const refocus = useRef<string | null>(null)
   useEffect(() => {
-    if (refocus.current == null || !open || data == null) return
+    if (refocus.current == null || data == null) return
     const target = refocus.current
     refocus.current = null
     const active = document.activeElement
     if (active != null && active !== document.body) return
-    tablesRef.current?.querySelector<HTMLElement>(`tr[data-asset="${target}"]`)?.focus()
+    stripRef.current?.querySelector<HTMLElement>(`[data-refocus="${target}"]`)?.focus()
   }, [data, open, sort])
 
-  // Armed only from the keyboard: a mouse click also focuses the row (it has
-  // tabIndex), and restoring focus then would scroll a reader who has moved on
-  // to the result back up to the table.
-  const pick = (r: RankedAsset, byKeyboard = false) => {
-    refocus.current = byKeyboard ? r.asset : null
+  // Armed only from the keyboard: a mouse click also focuses the control,
+  // and restoring focus then would scroll a reader who has moved on to the
+  // result back up to the strip. `where` names the control: a pick or a row.
+  const pick = (r: RankedAsset, byKeyboard = false, where: 'pick' | 'row' = 'row') => {
+    refocus.current = byKeyboard ? `${where}-${r.asset}` : null
     onSelect(
       r.asset,
       r.best_moneyness_pct != null && r.best_tenor_weeks != null
@@ -172,7 +173,7 @@ export function RankingStrip({
     axes.years === STRIP_BAKEOFF.years
 
   return (
-    <>
+    <div ref={stripRef}>
       <div className="pl-rank-strip" role="group" aria-label="Screen">
         <span className="pl-kicker">Screen · by {sort === 'return' ? 'best return' : 'fragility'}</span>
         <div className="pl-seg pl-rank-sort" role="radiogroup" aria-label="Sort the screen">
@@ -211,12 +212,25 @@ export function RankingStrip({
         )}
         {data &&
           rows.slice(0, 3).map((r, i) => (
-            <button key={r.asset} type="button" className="pl-rank-pick" data-testid="rank-pick" onClick={() => pick(r)}>
+            <button
+              key={r.asset}
+              type="button"
+              className="pl-rank-pick"
+              data-testid="rank-pick"
+              data-refocus={`pick-${r.asset}`}
+              // detail 0: activated from the keyboard (Enter or Space), not a pointer.
+              onClick={(e) => pick(r, e.detail === 0, 'pick')}
+            >
               <span className="pl-rank-n">{i + 1}</span> <strong>{r.asset.toUpperCase()}</strong>{' '}
               <span className={r.best_annualized == null ? 'pl-rank-at' : r.best_annualized >= 0 ? 'pl-pos' : 'pl-neg'}>
                 {r.best_annualized == null ? '—' : fmtPct(r.best_annualized)}
               </span>{' '}
               <span className="pl-rank-at">{at(r)}</span>
+              {r.best_priced_from === 'market' && (
+                <span className="pl-tag pl-tag-ok pl-rank-pick-q" data-testid={`pick-basis-${r.asset}`}>
+                  Market
+                </span>
+              )}
               {r.best_q_source === 'none' && (
                 <span
                   className="pl-tag pl-tag-bad pl-rank-pick-q"
@@ -276,7 +290,7 @@ export function RankingStrip({
       <div className="pl-rule-hair" />
 
       {open && data && rows.length > 0 && (
-        <div style={{ padding: '4px 0 20px' }} ref={tablesRef}>
+        <div style={{ padding: '4px 0 20px' }}>
           {sort === 'return' ? (
             <BestReturnTable data={data} rows={rows as BestRow[]} currentAsset={currentAsset} onPick={pick} />
           ) : (
@@ -289,7 +303,7 @@ export function RankingStrip({
           </p>
         </div>
       )}
-    </>
+    </div>
   )
 }
 
@@ -400,6 +414,7 @@ function FragilityTable({
             <tr
               key={r.asset}
               data-asset={r.asset}
+              data-refocus={`row-${r.asset}`}
               className={`pick${r.asset === currentAsset ? ' is-current' : ''}`}
               tabIndex={0}
               aria-label={`Open ${r.asset.toUpperCase()}`}

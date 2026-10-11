@@ -180,8 +180,9 @@ ordering, and the best cell's own dividend and pricing basis.
   keeps its rows up during the re-screen: in the best-return order, with the
   tenor and years unchanged, the rows cannot change. Any other re-screen shows
   the status line, since the tenor and years change coverage and values. A row
-  opened from a table gets focus back when the table returns, if focus was
-  lost in the remount (a reader who has moved on keeps their place).
+  opened from the keyboard gets focus back when its table returns, if focus
+  was lost in the remount (a reader who has moved on keeps their place; a
+  mouse click does not pull the page back to the table).
 * **Universe screens take one at a time.** Each memo already single-flights
   its own keys, but the ranking and the bake-off would otherwise screen in
   parallel on the app's one shared CPU -- the 2026-10-08 health-check failure.
@@ -190,8 +191,9 @@ ordering, and the best cell's own dividend and pricing basis.
   running after the client leaves, so an abandoned screen stays queued, and
   `threading.Lock` is not fair, so a live reader can wait behind it. The wait
   is logged (`putlab.screen_slot_wait`). The health check is a sync route too,
-  so enough queued screens on distinct keys (about 40, the threadpool's size)
-  would starve it -- the same thread occupancy as the parallel screens this
+  so enough requests waiting on screens (about 40, the threadpool's size --
+  queued on the slot, or waiting on another request's compute of the same
+  key) would starve it -- the same thread occupancy as the parallel screens this
   replaces, but now spent waiting rather than computing.
 * **The bake-off line is not a verdict on the list above it.** The strip's
   settings follow the rail and every row click, and even at the same settings

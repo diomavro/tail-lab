@@ -503,8 +503,13 @@ def _patch_warm_memos(
     *,
     leaderboard_get: Callable[[object, object], object] | None = None,
 ) -> None:
-    def get(key: object, compute: object) -> object:
-        calls.append(("leaderboard.get", key))
+    def get(key: object, compute: object, *, miss_reason: str = "miss") -> object:
+        # Recorded, not asserted here: warm_leaderboard's broad except would
+        # swallow an assertion. A warm labelled as a visitor's miss shows up
+        # in the call log the tests compare.
+        calls.append(
+            ("leaderboard.get" if miss_reason == "warm" else "leaderboard.get (miss)", key)
+        )
         return leaderboard_get(key, compute) if leaderboard_get else None
 
     monkeypatch.setattr(putlab_routes._LEADERBOARD_CACHE, "get", get)
@@ -573,7 +578,7 @@ def test_the_warm_computes_hold_the_screen_slot(monkeypatch: pytest.MonkeyPatch)
     monkeypatch.setattr(
         putlab_routes._LEADERBOARD_CACHE,
         "get",
-        lambda key, compute: computes.setdefault("leaderboard", compute),
+        lambda key, compute, **_kw: computes.setdefault("leaderboard", compute),
     )
     monkeypatch.setattr(
         putlab_routes._METRIC_SCREEN_CACHE,

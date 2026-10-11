@@ -128,6 +128,7 @@ export function BestReturnTable({ data, rows, currentAsset, onPick }: Props) {
               <tr
                 key={r.asset}
                 data-asset={r.asset}
+                data-refocus={`row-${r.asset}`}
                 className={`pick${r.asset === currentAsset ? ' is-current' : ''}`}
                 tabIndex={0}
                 aria-label={`Open ${r.asset.toUpperCase()} at its best cell`}

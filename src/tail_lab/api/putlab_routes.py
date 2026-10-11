@@ -142,8 +142,8 @@ _REGIME_VERDICT_CACHE: dict[
 _REGIME_VERDICT_TTL_S = 120.0
 
 #: The metric bake-off (one backtest per screened name, up to the 70-name
-#: universe), keyed by (rule, tenor, years, top_k, as_of). The same memo as
-#: the leaderboard and for the same reasons: the Workspace now reads one
+#: universe), keyed by (rule, tenor, years, top_k, as_of). A RefreshingMemo
+#: like the leaderboard's, for the same reasons: the Workspace now reads one
 #: fixed-parameter bake-off on every page load (`_WARM_BAKEOFF`), so a stale
 #: entry is served at once while one refresh recomputes it.
 _METRIC_SCREEN_CACHE: RefreshingMemo[
@@ -748,7 +748,7 @@ def warm_leaderboard(store: LakeStore) -> None:
     """
     key = (*_WARM_SCREEN, _resolve_as_of(None).isoformat())
     try:
-        _LEADERBOARD_CACHE.get(key, _screen(store, key))
+        _LEADERBOARD_CACHE.get(key, _screen(store, key), miss_reason="warm")
     except Exception:
         # Deliberately broad (Rule 14's process-boundary case): the daily
         # warm's daemon thread has no caller to raise to, and one failed

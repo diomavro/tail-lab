@@ -520,6 +520,49 @@ test.describe('with the shared fixture', () => {
     await expect(strike).toBeFocused()
   })
 
+  test('a pick opened from the keyboard gets focus back when the screen returns', async ({ page }) => {
+    // The collapsed strip's picks are what a keyboard reader meets first.
+    const tslaPick = strip(page).getByTestId('rank-pick').filter({ hasText: 'TSLA' })
+    await tslaPick.focus()
+    const landed = page.waitForResponse(
+      (r) => new URL(r.url()).pathname === '/api/putlab/leaderboard' && new URL(r.url()).searchParams.get('tenor_weeks') === '12',
+    )
+    await page.keyboard.press('Enter')
+    await landed
+    await expect(strip(page).getByTestId('rank-pick').filter({ hasText: 'TSLA' })).toBeFocused()
+  })
+
+  test('the restore makes one attempt, then lets go', async ({ page }) => {
+    await openBestReturn(page)
+    await bestTable(page).getByRole('row', { name: 'Open TSLA at its best cell' }).focus()
+    const landed = page.waitForResponse(
+      (r) => new URL(r.url()).pathname === '/api/putlab/leaderboard' && new URL(r.url()).searchParams.get('tenor_weeks') === '12',
+    )
+    await page.keyboard.press('Enter')
+    await landed
+    await expect(bestTable(page).getByRole('row', { name: 'Open TSLA at its best cell' })).toBeFocused()
+    // Then behave like a browser that does not focus a clicked button (Safari):
+    // focus stays on the page while the table is collapsed, reopened and the
+    // order switched -- each a chance for a stale target to pull focus back.
+    await page.evaluate(() => {
+      document.addEventListener(
+        'focusin',
+        (e) => {
+          const el = e.target as HTMLElement
+          if (el.tagName === 'BUTTON' || el.tagName === 'INPUT') el.blur()
+        },
+        true,
+      )
+      ;(document.activeElement as HTMLElement | null)?.blur()
+    })
+    await page.getByRole('button', { name: 'Collapse the screen' }).click()
+    await expand(page)
+    await page.getByRole('radiogroup', { name: 'Sort the screen' }).getByText('Fragility').click()
+    await sortTo(page, 'Best return')
+    await page.waitForTimeout(300)
+    await expect(bestTable(page).getByRole('row', { name: 'Open TSLA at its best cell' })).not.toBeFocused()
+  })
+
   test('a row opened from the keyboard gets focus back when its table returns', async ({ page }) => {
     await openBestReturn(page)
     const tsla = bestTable(page).getByRole('row', { name: 'Open TSLA at its best cell' })
@@ -875,6 +918,8 @@ test.describe('with a response of its own', () => {
     await page.goto('/')
     await openBestReturn(page)
     await expect(page.getByTestId('best-basis-gld')).toHaveText('Market')
+    // ...and on its pick (GLD leads the best-return order).
+    await expect(page.getByTestId('pick-basis-gld')).toHaveText('Market')
     await expect(page.getByTestId('best-basis-tsla')).toHaveCount(0)
     // ...and the fragility table tags GLD's best-cell figure, not its
     // screened cells, and no longer claims every figure is model-priced.

@@ -373,3 +373,16 @@ def test_a_misconfigured_lake_does_not_stop_the_app_starting(
     with caplog.at_level(logging.ERROR, logger="tail_lab.api.main"), TestClient(main.app) as client:
         assert client.get("/api/health").status_code == 200
     assert "api.warm_ranking_failed" in caplog.text
+
+
+def test_a_blocking_warm_is_logged_as_a_warm_not_a_miss(caplog: pytest.LogCaptureFixture) -> None:
+    """The daily warm waits for the ranking (``get``) so the bake-off can
+    follow it; the log must still count it a warm, or every 00:01 UTC would
+    read as a visitor hitting a cold screen."""
+    memo: RefreshingMemo[str, int] = RefreshingMemo(name="t", fresh_s=10.0, serve_stale_s=100.0)
+    with caplog.at_level(logging.INFO, logger="tail_lab.api.memo"):
+        assert memo.get("warmed", lambda: 1, miss_reason="warm") == 1
+        assert memo.get("visited", lambda: 2) == 2
+    lines = [r.getMessage() for r in caplog.records if "memo.compute_start" in r.getMessage()]
+    assert any("key=warmed" in ln and "reason=warm" in ln for ln in lines)
+    assert any("key=visited" in ln and "reason=miss" in ln for ln in lines)
