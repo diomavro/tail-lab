@@ -620,6 +620,21 @@ test.describe('with the shared fixture', () => {
     await expect(fragTable(page).getByRole('row', { name: 'Open IWM' })).toBeFocused()
   })
 
+  test('a tenor-only keyboard open gets focus back too', async ({ page }) => {
+    // SPY's best cell is 5% · 12w: only the tenor differs from the 5% · 4w screen.
+    await expand(page)
+    await fragTable(page).getByRole('row', { name: 'Open SPY' }).focus()
+    const landed = page.waitForResponse(
+      (r) =>
+        new URL(r.url()).pathname === '/api/putlab/leaderboard' &&
+        new URL(r.url()).searchParams.get('moneyness_pct') === '5' &&
+        new URL(r.url()).searchParams.get('tenor_weeks') === '12',
+    )
+    await page.keyboard.press('Enter')
+    await landed
+    await expect(fragTable(page).getByRole('row', { name: 'Open SPY' })).toBeFocused()
+  })
+
   test('the restore does not scroll a reader who moved down the page', async ({ page }) => {
     await page.setViewportSize({ width: 1280, height: 700 })
     await page.route(
@@ -1054,6 +1069,24 @@ test.describe('with a response of its own', () => {
     await page.goto('/')
     await expand(page)
     await expect(fragTable(page).getByRole('columnheader', { name: 'Basis' })).toBeVisible()
+    // Basis sits under the screened group's band, and the bands still cover
+    // every column (the band widens by one rather than pushing Basis under
+    // "Fragility measures").
+    const bands = await fragTable(page).evaluate((table) => {
+      const [groups, heads] = [...table.querySelectorAll('thead tr')] as HTMLTableRowElement[]
+      let at = 0
+      const spans = [...groups!.cells].map((c) => {
+        const band = { text: c.textContent!.trim(), start: at, end: at + c.colSpan }
+        at += c.colSpan
+        return band
+      })
+      const basis = [...heads!.cells].findIndex((c) => c.textContent!.trim() === 'Basis')
+      return { spans, basis, columns: heads!.cells.length }
+    })
+    const screened = bands.spans.find((b) => b.text.startsWith('At '))!
+    expect(bands.basis).toBeGreaterThanOrEqual(screened.start)
+    expect(bands.basis).toBeLessThan(screened.end)
+    expect(bands.spans.at(-1)!.end).toBe(bands.columns)
     await expect(page.getByTestId('basis-gld')).toHaveText('Market')
     await expect(page.getByTestId('basis-tsla')).toHaveText('Model')
     // The best cell is model-priced: no Market tag beside its figure or pick.
