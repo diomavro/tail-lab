@@ -190,6 +190,7 @@ export function RankingStrip({ ranking, bakeoff, sort, onSort, requested, curren
             bakeoff={bakeoff}
             sameAsList={sameAsBakeoff}
             screenShown={data != null && rows.length > 0}
+            listAsOf={data?.as_of ?? null}
             onOpen={onOpenBakeOff}
           />
         )}
@@ -247,6 +248,9 @@ function FragilityTable({
   const qZeroNoteId = useId()
   const ranked = data.ranked
   const anyQZero = ranked.some((r) => r.q_source === 'none')
+  // Read from the response, like the shading: the legend must not keep its
+  // own copy of which way is fragile.
+  const fragileLow = METRICS.filter((m) => data.fragile_high[m.key] === false).map((m) => m.head)
   // While every row is model-priced (the ranking passes no real quotes yet)
   // a Basis column would repeat one word per row; one printed line says it,
   // and the column appears the day a row is market-priced.
@@ -335,8 +339,11 @@ function FragilityTable({
               }}
             >
               <td className="num dimmer">{i + 1}</td>
-              <td className="nowrap">
-                <strong className="bold">{r.asset.toUpperCase()}</strong> <span className="dimmer">{r.name}</span>
+              {/* Ticker only: the table is wider than a laptop's page, and the
+                  pinned column's width decides how much of the strategy groups
+                  fits. The full name is in the best-return table and the hover. */}
+              <td className="nowrap" title={r.name}>
+                <strong className="bold">{r.asset.toUpperCase()}</strong>
               </td>
               <td className="num dim">{fmtPrice(r.spot)}</td>
               <td
@@ -413,8 +420,8 @@ function FragilityTable({
         </tbody>
       </table>
       <p className="pl-micro pl-rank-legend" style={{ padding: '6px 2px 0' }} data-testid="rank-legend">
-        Stronger shade = more fragile on that measure (each column ranked on its own; co-skew and vol β are fragile
-        when low). Magenta = a loss, deeper for a larger one. Biggest-payoff bars are on a log scale.
+        Stronger shade = more fragile on that measure (each column ranked on its own
+        {fragileLow.length > 0 && `; ${fragileLow.join(' and ')} ${fragileLow.length === 1 ? 'is' : 'are'} fragile when low`}). Magenta = a loss, deeper for a larger one. Biggest-payoff bars are on a log scale.
         {!anyMarket && <span data-testid="rank-model-priced"> Every row is model-priced, not quoted.</span>}
         {METRICS.map((m) => (
           <span key={m.key} className="pl-rank-legend-item">
@@ -441,12 +448,16 @@ function BakeoffLine({
   bakeoff,
   sameAsList,
   screenShown,
+  listAsOf,
   onOpen,
 }: {
   bakeoff: ResourceState<MetricScreenComparison>
   sameAsList: boolean
   /** Whether a screen is on the page to compare with, or only asked for. */
   screenShown: boolean
+  /** The shown screen's as-of: a page left open across midnight can hold a
+   *  list and a bake-off from different days. */
+  listAsOf: string | null
   onOpen: () => void
 }) {
   const b = STRIP_BAKEOFF
@@ -501,7 +512,9 @@ function BakeoffLine({
       ? 'Its correlation with payoff could not be tested (too few names, or no variation to rank).'
       : `Its ranking's correlation with payoff (ρ = ${fmtFixed(rho)}) is ${composite.significant_corrected ? '' : 'not '}significant after FDR correction across ${data.n_comparisons} screens${composite.significant_corrected && rho < 0 ? ': it ordered names the wrong way, more fragile paying less' : ''}.`
   const which = screenShown ? 'the screen above' : 'the screen asked for'
-  const scope = sameAsList
+  const sameDay = listAsOf == null || listAsOf === data.as_of
+  const scope =
+    sameAsList && sameDay
     ? `Same settings as ${which}; its universe can differ.`
     : `Not the settings of ${which}.`
   return (

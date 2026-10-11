@@ -133,7 +133,7 @@ ordering, and the best cell's own dividend and pricing basis.
   Recommendations tab, its `RAIL` row and its spec are removed. The table row
   above for Recommendations, and "a Recommendations click still opens the
   Workspace", no longer apply: a click in either order loads that name's best
-  cell below.
+  cell below (just the name, for a row with no scored best cell).
 * **One screen for both orders, keyed on the rail's strike.** The
   strike-independence argument in the Consequences above (each row's best
   cell is an argmax over a fixed grid; the screening roll's dates depend on

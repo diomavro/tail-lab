@@ -544,8 +544,9 @@ export async function fetchPutLabLeaderboard(
 // An in-sample cross-sectional association (a screen chooser), NOT a forward
 // predictive backtest. One backtest per screened name server-side (up to the
 // 70-name universe). The tab runs it on its button; the Workspace reads one
-// fixed-parameter bake-off the server pre-computes daily. A run on parameters
-// already computed that day is served from the server's memo.
+// fixed-parameter bake-off, which the server pre-computes daily when
+// TAIL_LAB_WARM_RANKING is on (fly.toml). A run on parameters already computed
+// that day is served from the server's memo.
 
 export interface MetricScreenEntry {
   metric: string

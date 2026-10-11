@@ -356,7 +356,7 @@ def test_the_best_cells_dividend_basis_is_the_best_cells_own(
     def fake(*args: object, **kwargs: object) -> object:
         result = real(*args, **kwargs)  # type: ignore[arg-type]
         if kwargs.get("include_curves") is False:
-            return result.model_copy(update={"q_source": "measured"})
+            return result.model_copy(update={"q_source": "measured", "priced_from": "market"})
         return result
 
     monkeypatch.setattr(ranking_mod, "run_put_roll", fake)
@@ -370,8 +370,10 @@ def test_the_best_cells_dividend_basis_is_the_best_cells_own(
     ).ranked[0]
     assert row.best_q_source == "measured"
     assert row.q_source == "none"
-    # Always model-priced in the ranking today; plumbed for when it is not.
-    assert row.best_priced_from == "model"
+    # The pricing tag follows the same run (the ranking is model-priced today;
+    # the fake makes the best cell's run "market" so the two can differ).
+    assert row.best_priced_from == "market"
+    assert row.priced_from == "model"
 
 
 def _metric_row(asset: str, **metrics: float) -> RankedAsset:

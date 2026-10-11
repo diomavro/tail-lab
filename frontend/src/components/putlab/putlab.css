@@ -537,6 +537,10 @@
 .pl-rank-groups th:nth-child(2) { position: static; }
 /* The pinned cell is opaque, so it carries the current row's tint itself. */
 .pl-rank-table tr.is-current td:nth-child(2) { background: color-mix(in srgb, var(--cyan) 12%, var(--paper)); }
+.pl-rank-table tr:hover td:nth-child(2) { background: color-mix(in srgb, var(--ink) 4%, var(--paper)); }
+/* Keyboard focus must out-rank the current row's outline (same 2px cyan),
+   or tabbing onto the current row would change nothing on screen. */
+.putlab-root .pl-table tr.pick:focus-visible { outline: 3px solid var(--ink); outline-offset: -3px; }
 
 /* Shading: each class sets ONLY the background, so the text keeps the cell's
    own ink, never --mag-2 or --ink-70 (both fall under 4.5:1 on a shade). The

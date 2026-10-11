@@ -480,7 +480,8 @@ def compare_metric_screens(
         n_comparisons=n_comparisons,
         fdr_alpha=_FDR_ALPHA,
         entries=entries,
-        snapshot_ids=snapshot_ids_for(store, as_of, (s.symbol for s in scored)),
+        # The benchmark is read whether or not it was scored: cite it either way.
+        snapshot_ids=snapshot_ids_for(store, as_of, (BENCHMARK, *(s.symbol for s in scored))),
     )
 
 

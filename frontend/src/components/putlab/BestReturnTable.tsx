@@ -1,7 +1,9 @@
 import { type CSSProperties, useId } from 'react'
 import type { PutLabLeaderboardResponse, RankedAsset, Verdict } from '../../api/client'
 import { UNKNOWN_Q_CAUSES } from '../../content/concepts'
-import { fmtDollar, fmtMult, fmtPct } from './format'
+import { fmtDollar, fmtFixed, fmtMult, fmtPct } from './format'
+
+const f2 = (v: number | null) => (v == null ? '—' : fmtFixed(v, 2))
 import { type BestRow, VERDICT_TITLE } from './rankOrder'
 import { biggestBarWidth, lossHeat } from './rankShade'
 
@@ -208,7 +210,7 @@ export function BestReturnTable({ data, rows, currentAsset, onPick }: Props) {
                     rounding it unscaled puts the whole universe on 0 and 1. */}
                 <td
                   className="num dim pl-rec-frag"
-                  title={`Dn β ${r.downside_beta ?? '—'} · Co-skew ${r.co_skewness ?? '—'} · Co-kurt ${r.co_kurtosis ?? '—'} · Tail β ${r.tail_beta ?? '—'} · Dn cap ${r.downside_capture ?? '—'} · Vol β ${r.vol_beta ?? '—'}`}
+                  title={`Dn β ${f2(r.downside_beta)} · Co-skew ${f2(r.co_skewness)} · Co-kurt ${f2(r.co_kurtosis)} · Tail β ${f2(r.tail_beta)} · Dn cap ${f2(r.downside_capture)} · Vol β ${f2(r.vol_beta)}`}
                 >
                   {r.fragility_score == null ? '—' : Math.round(r.fragility_score * 100)}
                   {r.fragility_score != null && (
@@ -230,7 +232,7 @@ export function BestReturnTable({ data, rows, currentAsset, onPick }: Props) {
         </table>
       </div>
       <p className="pl-micro pl-rank-legend" style={{ padding: '6px 2px 0' }}>
-        Magenta = a loss, deeper for a larger one. Biggest-payoff bars are on a log scale.
+        Magenta in Per year = a loss, deeper for a larger one. Biggest-payoff bars are on a log scale.
       </p>
       {anyQZero && (
         <p id={qZeroNoteId} className="pl-micro pl-rank-ref" style={{ padding: '4px 2px 0' }} data-testid="best-q-zero-note">

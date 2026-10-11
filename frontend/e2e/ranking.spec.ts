@@ -155,12 +155,22 @@ test.describe('with the shared fixture', () => {
     await page.setViewportSize({ width: 1280, height: 900 })
     await expand(page)
     const scroller = (await fragTable(page).locator('xpath=..').boundingBox())!
-    for (const name of ['Per year at best cell', 'Per year at 5% · 4w', 'Verdict']) {
+    // Every column of both strategy groups, the screened group's last (q, which
+    // carries the q = 0 warning) included.
+    for (const name of ['Per year at best cell', 'At', 'Per year at 5% · 4w', 'Hit', 'Biggest', 'Verdict', 'q']) {
       const box = (await fragTable(page).getByRole('columnheader', { name, exact: true }).boundingBox())!
       expect(box.x + box.width, name).toBeLessThanOrEqual(scroller.x + scroller.width)
     }
     // The pinned name and the current row's outline survive a sideways scroll.
     await expect(fragTable(page).locator('tbody tr.is-current')).toHaveCSS('outline-style', 'solid')
+    // Keyboard focus on the current row must show: it out-ranks that outline.
+    const current = fragTable(page).locator('tbody tr.is-current')
+    const before = await current.evaluate((el) => getComputedStyle(el).outlineWidth)
+    await current.focus()
+    await page.keyboard.press('Shift+Tab')
+    await page.keyboard.press('Tab')
+    await expect(current).toBeFocused()
+    expect(await current.evaluate((el) => getComputedStyle(el).outlineWidth)).not.toBe(before)
     await expect(fragTable(page).locator('tbody tr').first().locator('td').nth(1)).toHaveCSS('position', 'sticky')
   })
 
@@ -283,9 +293,10 @@ test.describe('with the shared fixture', () => {
       const d = (id: string) =>
         page.getByTestId(id).evaluate((el) => Number((el as HTMLElement).style.getPropertyValue('--pl-d')))
       expect(await d('best-ann-spy')).toBe(1)
-      const eem = await d('best-ann-eem')
-      expect(eem).toBeGreaterThan(0)
-      expect(eem).toBeLessThan(0.5)
+      // EEM's best-cell loss over the column's largest (SPY's): 0.022 / 0.081 --
+      // its own column's depth, not the screened column's (0.052 / 0.111).
+      expect(await d('best-ann-eem')).toBeCloseTo(0.022 / 0.081, 2)
+      expect(await d('screened-ann-eem')).toBeCloseTo(0.052 / 0.111, 2)
       const plain = await cellPaint(fragTable(page).locator('tbody tr').first().locator('td').nth(0))
       for (const id of ['best-ann-spy', 'screened-ann-spy', 'shade-co_skewness-tsla']) {
         const p = await cellPaint(page.getByTestId(id))
@@ -575,6 +586,31 @@ test.describe('with a response of its own', () => {
     await expect(page.getByTestId('best-return')).toContainText('own $2,500 per roll')
   })
 
+  test('the fragility table’s q = 0 note follows the screened cells', async ({ page }) => {
+    // Screened EEM priced at q = 0 while no best cell did: the tag in the
+    // fragility table must point at a note that is on the page.
+    await mockPutLabApi(page)
+    await serveLeaderboard(page, () => ({
+      ...LEADERBOARD,
+      ranked: LEADERBOARD.ranked.map((r) => ({ ...r, best_q_source: 'measured' as const })),
+    }))
+    await page.goto('/')
+    await expand(page)
+    await expect(page.getByTestId('q-source-eem')).toContainText('q = 0 rolls')
+    await expect(page.getByTestId('q-zero-note')).toBeVisible()
+  })
+
+  test('the bake-off line will not call two days’ results the same settings', async ({ page }) => {
+    await mockPutLabApi(page)
+    await serveBakeoff(page, {
+      ...METRIC_SCREEN_WINNER,
+      as_of: '2026-08-20',
+      snapshot_ids: METRIC_SCREEN_WINNER.snapshot_ids.map((s) => s.replace('2026-08-21', '2026-08-20')),
+    })
+    await page.goto('/')
+    await expect(strip(page).getByTestId('rank-bakeoff')).toContainText('Not the settings of the screen above')
+  })
+
   test('the best-return Market tag is the best cell’s own', async ({ page }) => {
     await mockPutLabApi(page)
     await serveLeaderboard(page, () => ({
@@ -637,6 +673,9 @@ test.describe('with a response of its own', () => {
     // GLD has the most positive co-skewness: now the most fragile.
     expect(await r('gld')).toBe(1)
     expect(await r('tsla')).toBe(0)
+    // ...and the legend says what the shading does, from the same response.
+    await expect(page.getByTestId('rank-legend')).toContainText('Vol β is fragile when low')
+    await expect(page.getByTestId('rank-legend')).not.toContainText('Co-skew and')
   })
 
   test('the bake-off line reads the composite entry, wherever it sorts', async ({ page }) => {

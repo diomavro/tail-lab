@@ -102,12 +102,12 @@ roll schedule and hypothesis memory — reads `moneyness_pct` alone. So on the
 Workspace in delta mode the headline, tape, ledger and regime verdict are by
 delta while the ranking strip, its bake-off line (which `/metric-screen` is
 asked for by distance, whatever the rail says), sweep grid and accuracy panel
-beside them are by distance, and the page says so beside each.
+beside them are by distance, and the page says so beside each. A delta
+backtest's strikes are solved from realised vol; the market's delta strike
+appears only in `/strike-preview`, from one Cboe chain session.
 
 The ranking strip has no per-name sparklines: `RankedAsset` carries scalars
-only, and a series per name would bloat the universe-wide response. A delta backtest's strikes are
-solved from realised vol; the market's delta strike appears only in
-`/strike-preview`, from one Cboe chain session.
+only, and a series per name would bloat the universe-wide response.
 
 **The accuracy panel is the densest node in the graph.** It renders under every
 backtest result and, alone in the app, reads *four* datasets at once — the

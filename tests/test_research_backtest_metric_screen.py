@@ -364,3 +364,20 @@ def test_the_bakeoff_cites_the_snapshots_it_read(tmp_path: Path) -> None:
     )
     # VIX first, then each SCORED name (not the one with no data).
     assert [s.split("@")[0] for s in cmp.snapshot_ids] == ["vix", "ohlcv_spy", "ohlcv_wild"]
+
+
+def test_the_bakeoff_cites_its_benchmark_even_when_it_is_not_scored(tmp_path: Path) -> None:
+    """The fragility metrics are read against SPY whether or not SPY is one of
+    the screened names, so its snapshot is cited either way."""
+    ingest = dt.date(2026, 3, 2)
+    store = _seeded_store(tmp_path, ingest)
+    cmp = compare_metric_screens(
+        store,
+        symbols=("wild", "calm", "mid"),
+        as_of=ingest,
+        rule=ByMoneyness(10.0),
+        tenor_weeks=4.0,
+        years=1.0,
+        top_k=2,
+    )
+    assert "ohlcv_spy" in [s.split("@")[0] for s in cmp.snapshot_ids]
