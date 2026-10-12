@@ -63,7 +63,7 @@ regimes where it passes.
 |---|---|---|
 | Self-financed: premium paid from the book | Book tab, lump sum and monthly contributions | Cboe real-quote programs |
 | Contribution-funded: a chosen share of each month's `X` buys puts, payoffs reinvested in the S&P 500 | Book tab, monthly contributions, "model" source | Black-Scholes at VIX (below) |
-| Standalone: a fixed premium budget, no book | Workspace backtests and sweep, Recommendations, Portfolio, Bake-off (existing) | the backtester's own model |
+| Standalone: a fixed premium budget, no book | Workspace backtests and sweep, Recommendations (since 2026-10-11 the Workspace strip's best-return order, `docs/adr/0028`), Portfolio, Bake-off (existing) | the backtester's own model |
 
 The Book tab gains a *Plan* switch: lump sum (the existing growth verdicts) or
 monthly contributions (starting book `E0`, monthly `X`, hedge ratio).

@@ -1,11 +1,12 @@
 import { expect, test } from '@playwright/test'
 import { apiRequests, mockPutLabApi } from './fixtures/mock-api'
 
-// The metric bake-off — the panel the API already served and nothing called.
+// The metric bake-off tab.
 //
-// `fetchMetricScreen` existed in api/client.ts and was never invoked anywhere,
-// so `spearman_vs_payoff`, `lift_vs_baseline` and `combined_max_drawdown` were
-// computed server-side and thrown away. This is the first caller.
+// `spearman_vs_payoff`, `lift_vs_baseline` and `combined_max_drawdown` were
+// once computed server-side and thrown away; this tab shows them. The
+// Workspace's ranking strip also reads one fixed-parameter bake-off for its
+// verdict line, so the tab is no longer the endpoint's only caller.
 //
 // The question it answers sits UPSTREAM of the fragility ranking: the ranking
 // assumes these metrics are worth ranking on, and the bake-off tests that by
@@ -14,17 +15,34 @@ import { apiRequests, mockPutLabApi } from './fixtures/mock-api'
 test.beforeEach(async ({ page }) => {
   await mockPutLabApi(page)
   await page.goto('/')
+  // The Workspace's strip reads its fixed-parameter bake-off on load; let it
+  // land first, or leaving the Workspace inside its 250ms debounce would
+  // sometimes cancel it and sometimes not, and the count below would flicker.
+  await expect(page.getByTestId('rank-bakeoff')).toContainText('Bake-off · 5% · 4w · 4y')
   await page.getByRole('tab', { name: 'Bake-off' }).click()
 })
 
-test('stays idle until asked — roughly 35 backtests run server-side', async ({ page }) => {
+const metricScreenReads = (page: import('@playwright/test').Page) =>
+  apiRequests(page).filter((p) => p === '/api/putlab/metric-screen').length
+
+test('stays idle until asked — one backtest per screened name runs server-side', async ({ page }) => {
   await expect(page.getByRole('button', { name: 'Run the bake-off' })).toBeVisible()
   await expect(page.getByRole('table')).toHaveCount(0)
-  expect(apiRequests(page)).not.toContain('/api/putlab/metric-screen')
+  // Counted from the tab's arrival: the Workspace's own read came before.
+  const before = metricScreenReads(page)
+  await page.waitForTimeout(600)
+  expect(metricScreenReads(page)).toBe(before)
 
   await page.getByRole('button', { name: 'Run the bake-off' }).click()
   await expect(page.getByRole('table')).toBeVisible()
-  expect(apiRequests(page)).toContain('/api/putlab/metric-screen')
+  expect(metricScreenReads(page)).toBe(before + 1)
+})
+
+test('cites the snapshots and code behind its result', async ({ page }) => {
+  await page.getByRole('button', { name: 'Run the bake-off' }).click()
+  const provenance = page.getByTestId('bake-provenance')
+  await expect(provenance).toContainText('bk00000')
+  await expect(provenance).toContainText('4 bronze snapshots')
 })
 
 test('puts the in-sample caveat above the table, in the loss colour', async ({ page }) => {

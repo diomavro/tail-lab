@@ -303,3 +303,81 @@ def test_bakeoff_multiple_testing_correction_on_pure_noise(tmp_path: Path) -> No
     # given the fixed seeds above, not a hand-derived value.
     assert not any(e.significant_corrected for e in cmp.entries)
     assert any(e.significant_raw for e in cmp.entries)
+
+
+def test_the_bakeoff_reads_its_directions_from_ranking_fragile_high(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The bake-off ranks each metric by the one shared table of directions
+    (``ranking.FRAGILE_HIGH``), not a private copy: flipping it flips which
+    end of vol beta the screen calls fragile, and so its correlation's sign."""
+    from tail_lab.research.backtest.ranking import FRAGILE_HIGH
+
+    ingest = dt.date(2026, 3, 2)
+    store = _seeded_store(tmp_path, ingest)
+
+    def rhos() -> tuple[float, float]:
+        cmp = compare_metric_screens(
+            store,
+            symbols=("spy", "wild", "calm", "mid"),
+            as_of=ingest,
+            rule=ByMoneyness(10.0),
+            tenor_weeks=4.0,
+            years=1.0,
+            top_k=2,
+        )
+        (entry,) = [e for e in cmp.entries if e.metric == "vol_beta"]
+        (composite,) = [e for e in cmp.entries if e.metric == "fragility_score"]
+        assert entry.spearman_vs_payoff is not None and entry.spearman_vs_payoff != 0.0
+        assert composite.spearman_vs_payoff is not None
+        return entry.spearman_vs_payoff, composite.spearman_vs_payoff
+
+    before, composite_before = rhos()
+    monkeypatch.setitem(FRAGILE_HIGH, "vol_beta", not FRAGILE_HIGH["vol_beta"])
+    after, _ = rhos()
+    assert after == pytest.approx(-before)
+    # ...and the composite -- the row the Workspace's verdict line reads -- is
+    # built from the same table: flipping every composite direction reverses
+    # its order, so its correlation changes sign.
+    from tail_lab.research.backtest.ranking import COMPOSITE_METRICS
+
+    for m in COMPOSITE_METRICS:
+        monkeypatch.setitem(FRAGILE_HIGH, m, not FRAGILE_HIGH[m])
+    monkeypatch.setitem(
+        FRAGILE_HIGH, "vol_beta", not FRAGILE_HIGH["vol_beta"]
+    )  # undo the first flip
+    _, composite_flipped = rhos()
+    assert composite_flipped == pytest.approx(-composite_before)
+
+
+def test_the_bakeoff_cites_the_snapshots_it_read(tmp_path: Path) -> None:
+    ingest = dt.date(2026, 3, 2)
+    store = _seeded_store(tmp_path, ingest)
+    cmp = compare_metric_screens(
+        store,
+        symbols=("spy", "wild", "missing"),
+        as_of=ingest,
+        rule=ByMoneyness(10.0),
+        tenor_weeks=4.0,
+        years=1.0,
+        top_k=2,
+    )
+    # VIX first, then each SCORED name (not the one with no data).
+    assert [s.split("@")[0] for s in cmp.snapshot_ids] == ["vix", "ohlcv_spy", "ohlcv_wild"]
+
+
+def test_the_bakeoff_cites_its_benchmark_even_when_it_is_not_scored(tmp_path: Path) -> None:
+    """The fragility metrics are read against SPY whether or not SPY is one of
+    the screened names, so its snapshot is cited either way."""
+    ingest = dt.date(2026, 3, 2)
+    store = _seeded_store(tmp_path, ingest)
+    cmp = compare_metric_screens(
+        store,
+        symbols=("wild", "calm", "mid"),
+        as_of=ingest,
+        rule=ByMoneyness(10.0),
+        tenor_weeks=4.0,
+        years=1.0,
+        top_k=2,
+    )
+    assert "ohlcv_spy" in [s.split("@")[0] for s in cmp.snapshot_ids]

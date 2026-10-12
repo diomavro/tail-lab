@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import datetime as dt
 import logging
+import threading
 import time
 from collections.abc import Callable, Mapping, Sequence
 from functools import lru_cache
@@ -140,12 +141,51 @@ _REGIME_VERDICT_CACHE: dict[
 ] = {}
 _REGIME_VERDICT_TTL_S = 120.0
 
-#: Short-TTL memo of the (~35-backtest) metric bake-off, keyed by
-#: (moneyness, tenor, years, top_k, as_of).
-_METRIC_SCREEN_CACHE: dict[
-    tuple[StrikeRule, float, float, int, str], tuple[float, MetricScreenComparison]
-] = {}
-_METRIC_SCREEN_TTL_S = 120.0
+#: The metric bake-off (one backtest per screened name, up to the 70-name
+#: universe), keyed by (rule, tenor, years, top_k, as_of). A RefreshingMemo
+#: like the leaderboard's, for the same reasons: the Workspace now reads one
+#: fixed-parameter bake-off on every page load (`_WARM_BAKEOFF`), so a stale
+#: entry is served at once while one refresh recomputes it.
+_METRIC_SCREEN_CACHE: RefreshingMemo[
+    tuple[StrikeRule, float, float, int, str], MetricScreenComparison
+] = RefreshingMemo(name="metric_screen", fresh_s=15 * 60.0, serve_stale_s=24 * 3600.0)
+#: The bake-off the Workspace's ranking strip reads: the composite fragility
+#: screen at the app's opening screen (`_WARM_SCREEN`), top 5. Warmed after
+#: the leaderboard each day.
+_WARM_BAKEOFF: tuple[StrikeRule, float, float, int] = (
+    ByMoneyness(_WARM_SCREEN[0]),
+    _WARM_SCREEN[1],
+    _WARM_SCREEN[2],
+    5,
+)
+
+#: Universe-wide screens (the ranking and the bake-off) take one at a time.
+#: Each memo already single-flights its own keys, but two memos -- or two keys
+#: -- would otherwise screen in parallel on the app's one shared CPU, which is
+#: what failed Fly's health check on 2026-10-08. Taken inside each compute, so
+#: it covers warms, misses and stale refreshes alike. A request waiting here
+#: holds a threadpool thread but no CPU; `threading.Lock` is not fair, so a
+#: live reader can wait behind an abandoned screen (docs/adr/0028 amendment).
+_SCREEN_SLOT = threading.Lock()
+
+
+def _in_screen_slot[T](what: str, compute: Callable[[], T]) -> Callable[[], T]:
+    """``compute``, run only while holding `_SCREEN_SLOT`; logs the wait so a
+    memo's ``compute_done`` seconds can be split into queueing and work."""
+
+    def run() -> T:
+        started = time.monotonic()
+        with _SCREEN_SLOT:
+            log_event(
+                logger,
+                "putlab.screen_slot_wait",
+                screen=what,
+                seconds=round(time.monotonic() - started, 3),
+            )
+            return compute()
+
+    return run
+
 
 #: The accuracy panel's residual comes from replaying 438 monthly PPUT rolls,
 #: which is far too expensive to redo per request and depends only on the
@@ -269,9 +309,9 @@ def _rule(
     return ByDelta(target_delta)
 
 
-def _cited_dividend_snapshot(ranking: UniverseRanking) -> str | None:
-    """The dividend snapshot a ranking cites in its own ``snapshot_ids``."""
-    return next((s for s in ranking.snapshot_ids if s.startswith("tiingo_eod@")), None)
+def _cited_dividend_snapshot(result: UniverseRanking | MetricScreenComparison) -> str | None:
+    """The dividend snapshot a screen cites in its own ``snapshot_ids``."""
+    return next((s for s in result.snapshot_ids if s.startswith("tiingo_eod@")), None)
 
 
 def _log_run(
@@ -702,10 +742,29 @@ def _rank_cached(
 
 
 def warm_leaderboard(store: LakeStore) -> None:
-    """Start screening the app's opening ranking in the background, so the
-    first visitor after a deploy does not wait for it."""
+    """Screen the app's opening ranking, then start warming the Workspace's
+    bake-off line, so the first visitor after a deploy waits for neither.
+
+    Called only from the daily warm's daemon thread, so it may block: the
+    ranking is computed first and in full (``get`` blocks), because the
+    landing view needs it and `_SCREEN_SLOT` is not fair -- two background
+    warms could let the bake-off take the slot first. A failed screen is
+    logged and does not stop the bake-off warm or the daily loop.
+    """
     key = (*_WARM_SCREEN, _resolve_as_of(None).isoformat())
-    _LEADERBOARD_CACHE.warm(key, _screen(store, key))
+    try:
+        _LEADERBOARD_CACHE.get(key, _screen(store, key), miss_reason="warm")
+    except Exception:
+        # Deliberately broad (Rule 14's process-boundary case): the daily
+        # warm's daemon thread has no caller to raise to, and one failed
+        # screen must not stop the bake-off warm or every later day's. Not
+        # silent -- the traceback is logged.
+        logger.exception("event=putlab.leaderboard_warm_failed")
+    # Read the date again: the ranking screen above blocks, and if it ran past
+    # midnight UTC the bake-off should warm the day that has begun, not the
+    # one that ended (which no reader will ask for).
+    bakeoff_key = (*_WARM_BAKEOFF, _resolve_as_of(None).isoformat())
+    _METRIC_SCREEN_CACHE.warm(bakeoff_key, _bakeoff(store, bakeoff_key))
 
 
 #: How long after midnight UTC the next day's ranking is warmed: past the date
@@ -720,22 +779,29 @@ def warm_leaderboard_daily(
     sleep: Callable[[float], None] = time.sleep,
     rounds: int | None = None,
 ) -> None:
-    """Warm the opening ranking now and again just after each UTC midnight.
+    """Warm the opening ranking and the Workspace's bake-off line now and
+    again just after each UTC midnight.
 
     The as-of date is in the memo key, so without this the first visitor of
     every day would wait for the cold screen. Runs in a daemon thread for the
     life of the process; ``rounds`` bounds it for tests.
+
+    The next warm is scheduled from the clock read *before* the warm, and the
+    sleep measured from a second read after it: the warm blocks for a whole
+    screen, so scheduling from the later read could skip a day when the warm
+    crosses midnight, and sleeping from the earlier read would drift later by
+    the warm's length every day.
     """
     done = 0
     while rounds is None or done < rounds:
-        warm_leaderboard(store)
-        current = now()
-        next_warm = (current + dt.timedelta(days=1)).replace(
+        started = now()
+        next_warm = (started + dt.timedelta(days=1)).replace(
             hour=0, minute=0, second=0, microsecond=0
         ) + _WARM_AFTER_MIDNIGHT
+        warm_leaderboard(store)
         log_event(logger, "putlab.leaderboard_warm_scheduled", next_warm=next_warm.isoformat())
         done += 1
-        sleep((next_warm - current).total_seconds())
+        sleep(max(0.0, (next_warm - now()).total_seconds()))
 
 
 def _screen(
@@ -743,14 +809,55 @@ def _screen(
 ) -> Callable[[], UniverseRanking]:
     """The universe screen a memo key stands for, as a deferred compute."""
     moneyness_pct, tenor_weeks, years, as_of = key
-    return lambda: rank_universe(
-        store,
-        symbols=universe_symbols(),
-        as_of=dt.date.fromisoformat(as_of),
-        moneyness_pct=moneyness_pct,
-        tenor_weeks=tenor_weeks,
-        years=years,
+    return _in_screen_slot(
+        "leaderboard",
+        lambda: rank_universe(
+            store,
+            symbols=universe_symbols(),
+            as_of=dt.date.fromisoformat(as_of),
+            moneyness_pct=moneyness_pct,
+            tenor_weeks=tenor_weeks,
+            years=years,
+        ),
     )
+
+
+def _bakeoff(
+    store: LakeStore, key: tuple[StrikeRule, float, float, int, str]
+) -> Callable[[], MetricScreenComparison]:
+    """The metric bake-off a memo key stands for, as a deferred compute.
+    Logs once per compute (memo hits are not new bake-offs)."""
+    rule, tenor_weeks, years, top_k, as_of = key
+
+    def compute() -> MetricScreenComparison:
+        comparison = compare_metric_screens(
+            store,
+            symbols=universe_symbols(),
+            as_of=dt.date.fromisoformat(as_of),
+            rule=rule,
+            tenor_weeks=tenor_weeks,
+            years=years,
+            top_k=top_k,
+        )
+        log_event(
+            logger,
+            "putlab.metric_screen",
+            # What this bake-off priced with, from its own provenance.
+            dividend_snapshot=_cited_dividend_snapshot(comparison),
+            as_of=as_of,
+            moneyness_pct=rule.pct if isinstance(rule, ByMoneyness) else None,
+            strike_rule=rule.kind,
+            target_delta=rule.target if isinstance(rule, ByDelta) else None,
+            tenor_weeks=tenor_weeks,
+            years=years,
+            top_k=top_k,
+            code_sha=get_settings().code_sha,
+            n_entries=len(comparison.entries),
+            winning_metric=comparison.entries[0].metric if comparison.entries else None,
+        )
+        return comparison
+
+    return _in_screen_slot("metric_screen", compute)
 
 
 @router.get("/api/putlab/roll-schedule/marked")
@@ -963,45 +1070,22 @@ def putlab_metric_screen(
     metric best sorted realized OOM-put payoffs over the lookback. An in-sample
     cross-sectional association (a screen chooser), not a forward backtest."""
     resolved = _resolve_as_of(as_of)
-    # ~35 backtests; deterministic given the immutable bronze, so a short TTL
-    # cache makes repeat clicks instant (mirrors the leaderboard).
+    # One backtest per screened name (up to the 70-name universe);
+    # deterministic given the immutable bronze, so the memo (stale-while-
+    # revalidate, single flight, shared screen slot) serves repeats at once.
+    # A run on parameters already computed today returns that result, until a
+    # deploy or restart empties the in-process memo.
     rule = _rule(strike_rule, moneyness_pct, target_delta)
     cache_key = (rule, tenor_weeks, years, top_k, resolved.isoformat())
-    hit = _METRIC_SCREEN_CACHE.get(cache_key)
-    if hit is not None and hit[0] > time.monotonic():
-        return hit[1]
     try:
-        comparison = compare_metric_screens(
-            store,
-            symbols=universe_symbols(),
-            as_of=resolved,
-            rule=rule,
-            tenor_weeks=tenor_weeks,
-            years=years,
-            top_k=top_k,
-        )
+        comparison = _METRIC_SCREEN_CACHE.get(cache_key, _bakeoff(store, cache_key))
     except LookupError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     except UnreachableDeltaError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
-    _METRIC_SCREEN_CACHE[cache_key] = (time.monotonic() + _METRIC_SCREEN_TTL_S, comparison)
-    winner = comparison.entries[0].metric if comparison.entries else None
-    log_event(
-        logger,
-        "putlab.metric_screen",
-        dividend_snapshot=dividend_snapshot_id(store, resolved),
-        as_of=resolved,
-        moneyness_pct=rule.pct if isinstance(rule, ByMoneyness) else None,
-        strike_rule=rule.kind,
-        target_delta=rule.target if isinstance(rule, ByDelta) else None,
-        tenor_weeks=tenor_weeks,
-        years=years,
-        top_k=top_k,
-        code_sha=get_settings().code_sha,
-        n_entries=len(comparison.entries),
-        winning_metric=winner,
-    )
-    return comparison
+    # `code_sha` is a deploy identity, stamped here as the leaderboard does
+    # (`research/` may not import `config`; the memo key stays the params).
+    return comparison.model_copy(update={"code_sha": get_settings().code_sha})
 
 
 @router.get("/api/putlab/surface")

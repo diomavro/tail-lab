@@ -4,6 +4,7 @@ import {
   fetchAccuracy,
   fetchCadence,
   fetchDataQuality,
+  fetchMetricScreen,
   fetchPutBacktest,
   fetchPutLabLeaderboard,
   fetchRegimes,
@@ -15,6 +16,7 @@ import {
   type AccuracyResponse,
   type CadenceResponse,
   type DataQualityResponse,
+  type MetricScreenComparison,
   type PutBacktestResponse,
   type PutLabLeaderboardResponse,
   type RegimeTimelineView,
@@ -31,11 +33,18 @@ import './putlab.css'
 import { RAIL } from './rail'
 import { TAB_LABEL } from './tabs'
 import { TabNav } from './TabNav'
-import { deltaLabel, PUTLAB_DEFAULT_CONTROLS, PUTLAB_OOM_PRESETS, PUTLAB_TENORS, type PutLabControls } from './types'
+import {
+  deltaLabel,
+  PUTLAB_DEFAULT_CONTROLS,
+  PUTLAB_OOM_PRESETS,
+  PUTLAB_TENORS,
+  type PutLabControls,
+  type RankSort,
+  STRIP_BAKEOFF,
+} from './types'
 import { BakeOffView } from './views/BakeOffView'
 import { GlossaryView } from './views/GlossaryView'
 import { PortfolioView } from './views/PortfolioView'
-import { RecommendationsView } from './views/RecommendationsView'
 import { RegimeView } from './views/RegimeView'
 import { OverlayView } from './views/OverlayView'
 import { SurfaceView } from './views/SurfaceView'
@@ -63,7 +72,6 @@ import { WorkspaceView } from './views/WorkspaceView'
 
 export type TabId =
   | 'workspace'
-  | 'recommendations'
   | 'portfolio'
   | 'book'
   | 'bakeoff'
@@ -73,7 +81,7 @@ export type TabId =
 
 /** Tabs whose results come from the trailing-RV Black-Scholes backtester --
  *  the only ones the global "model-priced on trailing RV" notes describe. */
-const RV_PRICED_TABS: readonly TabId[] = ['workspace', 'recommendations', 'portfolio', 'bakeoff']
+const RV_PRICED_TABS: readonly TabId[] = ['workspace', 'portfolio', 'bakeoff']
 
 /** Paper is the light sheet, plate the negative. Persisted, never inferred from
  *  the OS: which sheet a trading page prints on is the reader's call. */
@@ -120,6 +128,7 @@ const DATA_QUALITY_CACHE = new Map<string, DataQualityResponse>()
 const REGIME_VERDICT_CACHE = new Map<string, RegimeVerdictResponse>()
 const ACCURACY_CACHE = new Map<string, AccuracyResponse>()
 const RANKING_CACHE = new Map<string, PutLabLeaderboardResponse>()
+const BAKEOFF_LINE_CACHE = new Map<string, MetricScreenComparison>()
 const SURFACE_CACHE = new Map<string, SurfaceResponse>()
 
 function cachePut<T>(cache: Map<string, T>, key: string, value: T): void {
@@ -232,6 +241,10 @@ function readSheet(): Sheet {
 export function PutLab() {
   const [controls, setControls] = useState<PutLabControls>(PUTLAB_DEFAULT_CONTROLS)
   const [tab, setTab] = useState<TabId>('workspace')
+  // Lives here, not in the strip, so a tab round trip (which unmounts the
+  // Workspace) keeps the order. Not persisted: a fresh visit opens on
+  // fragility, not on the in-sample-best view.
+  const [rankSort, setRankSort] = useState<RankSort>('fragility')
   const [universe, setUniverse] = useState<UniverseMember[]>([])
   const [regimes, setRegimes] = useState<RegimeTimelineView | null>(null)
   const [vix, setVix] = useState<VixStretchResponse | null>(null)
@@ -308,19 +321,21 @@ export function PutLab() {
   // data tag, on the tabs that carry the name (RAIL). Two cheap per-name reads,
   // left ungated so a tab switch never waits on them.
   const assetKey = JSON.stringify([controls.asset])
-  // The ranking feeds the Workspace's opening line and the whole
-  // Recommendations table -- Portfolio's fragile-basket button screens on its
-  // own fixed axes. It is by far the most expensive read in the app (a strike x
-  // tenor sweep per name across the universe), so it is gated to the two tabs
-  // that show it. Keyed on the screening axes only: which names are most
-  // fragile does not depend on how much premium you would spend.
-  const showsRanking = onWorkspace || tab === 'recommendations'
-  // Recommendations shows only each name's best cell over a fixed grid, which
-  // no screening strike changes (docs/adr/0028), so it screens at the default
-  // strike rather than re-running the universe for an identical table. The
-  // Workspace strip prints strike-dependent fields, so it keys on the rail's.
-  const rankStrike = tab === 'recommendations' ? PUTLAB_DEFAULT_CONTROLS.moneyness_pct : controls.moneyness_pct
-  const rankKey = showsRanking ? JSON.stringify([rankStrike, controls.tenor_weeks, controls.years]) : null
+  // The ranking feeds the Workspace's screen strip in both of its orders --
+  // Portfolio's fragile-basket button screens on its own fixed axes. It is by
+  // far the most expensive read in the app (a strike x tenor sweep per name
+  // across the universe), so it is gated to the Workspace. ONE key for both
+  // orders: the fragility table prints the screened cell's figures, so it keys
+  // on the rail's strike, and every best-return column is independent of the
+  // screening strike (docs/adr/0028 amendment), so the same read serves it and
+  // switching the order never refetches. Keyed on the screening axes only:
+  // which names are most fragile does not depend on how much premium you would
+  // spend.
+  const rankKey = onWorkspace ? JSON.stringify([controls.moneyness_pct, controls.tenor_weeks, controls.years]) : null
+  // The strip's bake-off verdict line: one fixed-parameter read (STRIP_BAKEOFF,
+  // the server's pre-warmed bake-off) that never follows the rail. Null off the
+  // Workspace, so coming back after a failed read tries again.
+  const bakeoffKey = onWorkspace ? 'strip' : null
 
   // The Surface reads one chain session, so it keys on the name and the anchor
   // only (the OOM control IS the anchor); the tenor is the rail's weeks in days.
@@ -377,9 +392,16 @@ export function PutLab() {
     rankKey,
     (s) =>
       fetchPutLabLeaderboard(
-        { moneyness_pct: rankStrike, tenor_weeks: controls.tenor_weeks, years: controls.years },
+        { moneyness_pct: controls.moneyness_pct, tenor_weeks: controls.tenor_weeks, years: controls.years },
         s,
       ),
+    DEBOUNCE_MS,
+  )
+
+  const bakeoffLine = useCachedResource(
+    BAKEOFF_LINE_CACHE,
+    bakeoffKey,
+    (s) => fetchMetricScreen(STRIP_BAKEOFF, s),
     DEBOUNCE_MS,
   )
 
@@ -455,9 +477,7 @@ export function PutLab() {
     ? btHere.as_of
     : sv && surface.status === 'ready'
       ? surface.data.as_of
-      : tab === 'recommendations' && ranking.status === 'ready'
-        ? ranking.data.as_of
-        : null
+      : null
   // One name's identity (and its data-quality tag) heads the dateline only on
   // the tabs that read that name: elsewhere it would describe a position the
   // tab is not showing. The backtest's spot, strike and r likewise only on the
@@ -575,15 +595,12 @@ export function PutLab() {
                 sweep={sweep}
                 accuracy={accuracy}
                 ranking={ranking}
+                bakeoffLine={bakeoffLine}
+                rankSort={rankSort}
+                onRankSort={setRankSort}
+                onOpenBakeOff={() => setTab('bakeoff')}
                 regimeVerdict={regimeVerdict}
                 regimes={regimes}
-                onSelectAsset={selectAsset}
-              />
-            )}
-            {tab === 'recommendations' && (
-              <RecommendationsView
-                ranking={ranking}
-                controls={controls}
                 onSelectAsset={selectAsset}
               />
             )}

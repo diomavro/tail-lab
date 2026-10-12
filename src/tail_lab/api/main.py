@@ -39,9 +39,10 @@ logger = logging.getLogger("tail_lab.api.main")
 
 @asynccontextmanager
 async def lifespan(_: FastAPI) -> AsyncIterator[None]:
-    """Warm the opening ranking in the background when enabled (config
-    ``warm_ranking``): a deploy restarts the process with an empty memo, and
-    the as-of date in its key rolls over every UTC midnight."""
+    """Warm the opening ranking and the Workspace's bake-off line in the
+    background when enabled (config ``warm_ranking``): a deploy restarts the
+    process with an empty memo, and the as-of date in its key rolls over every
+    UTC midnight."""
     warm = get_settings().warm_ranking
     log_event(logger, "api.startup", warm_ranking=warm)
     if warm:

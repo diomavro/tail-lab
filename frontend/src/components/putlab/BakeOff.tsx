@@ -7,16 +7,16 @@ import {
   type Verdict,
 } from '../../api/client'
 import { ConceptInfo } from './ConceptInfo'
-import { fmtDollar, fmtFixed, fmtPct } from './format'
+import { fmtDollar, fmtFixed, fmtPct, signedPts } from './format'
 import { deltaLabel, type PutLabControls } from './types'
 import { StandaloneNote } from './StandaloneNote'
 
-/* The metric bake-off — the panel the API already served and nothing called.
+/* The metric bake-off.
  *
- * `fetchMetricScreen` exists in api/client.ts and was never invoked anywhere in
- * the app, so `spearman_vs_payoff`, `lift_vs_baseline` and
- * `combined_max_drawdown` were computed server-side and thrown away. This
- * surfaces them.
+ * `spearman_vs_payoff`, `lift_vs_baseline` and `combined_max_drawdown` were
+ * once computed server-side and thrown away; this tab surfaces them. The
+ * Workspace's ranking strip also reads one fixed-parameter bake-off (its
+ * verdict line), so this is no longer `fetchMetricScreen`'s only caller.
  *
  * The question it answers sits UPSTREAM of the fragility ranking: the ranking
  * assumes these metrics are worth ranking on, and this tests that assumption by
@@ -28,8 +28,11 @@ import { StandaloneNote } from './StandaloneNote'
  * winner as a forward signal is the exact overreach the caveat exists to block,
  * and a caveat placed after the number it qualifies has already lost.
  *
- * One backtest per screened name runs server-side, so it stays an explicit
- * action rather than firing on every control change.
+ * One backtest per screened name runs server-side, so the tab runs it on its
+ * button rather than on every control change. The server pre-computes one
+ * fixed-parameter bake-off daily (the Workspace's line) and serves any run
+ * already computed that day from its memo (an in-process memo: a deploy or
+ * restart empties it).
  */
 
 type State =
@@ -45,11 +48,6 @@ const VERDICT_TAG: Record<Verdict, string> = {
   regime_only: 'pl-tag pl-tag-mute',
   failed: 'pl-tag pl-tag-bad',
   untested: 'pl-tag pl-tag-outline',
-}
-
-/** Lift is a difference of two rates, so it prints in points, not percent. */
-function signedPts(x: number): string {
-  return `${x >= 0 ? '+' : '−'}${Math.abs(x * 100).toFixed(1)}`
 }
 
 /** Raw-vs-corrected significance, so an uncorrected "winner" can't be read at
@@ -162,8 +160,9 @@ export function BakeOff({ controls }: { controls: PutLabControls }) {
       )}
       {state.status === 'idle' && (
         <p className="pl-status">
-          One backtest per screened name runs server-side, so this is an explicit action rather
-          than a live recompute.
+          One backtest per screened name runs server-side, so this runs on the button rather than
+          on every control change. Parameters already run today usually come back from the
+          server&rsquo;s stored result (not after a restart, which empties it).
         </p>
       )}
 
@@ -302,6 +301,11 @@ export function BakeOff({ controls }: { controls: PutLabControls }) {
               </p>
             </div>
           </div>
+          <p className="pl-micro" data-testid="bake-provenance">
+            As of {data.as_of} · {data.snapshot_ids.length} bronze snapshot
+            {data.snapshot_ids.length === 1 ? '' : 's'} ·{' '}
+            {data.code_sha === 'unknown' ? 'code sha unknown' : data.code_sha.slice(0, 7)}
+          </p>
         </>
       )}
     </div>

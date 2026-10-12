@@ -7,7 +7,8 @@ Date: 2026-10-07
 **Accepted.** Dio commissioned the Put Lab redesign handoff
 (`design_handoff_putlab_redesign`, 2026-10-07) and instructed that it be applied
 and merged. Amends `docs/adr/0017`'s "`ParamRail` ... present on every tab";
-everything else in 0017 stands.
+everything else in 0017 stands. **Amended 2026-10-11** (below): Recommendations
+folds into the Workspace's ranking strip.
 
 ## Context
 
@@ -109,3 +110,97 @@ would otherwise toggle the layout every frame.
   strike-dependent fields and keeps the rail's strike. The tenor stays on
   Recommendations: it decides, at the 90% coverage edge, which names cover
   the window. The handoff listed strike for this tab.
+
+## Amendment — 2026-10-11: Recommendations folds into the Workspace strip
+
+**Status: Proposed** -- for Dio's merge (this file is guarded).
+
+**Context.** The Recommendations tab read the same `/leaderboard` response as
+the Workspace's ranking strip. It filtered the rows to names with a scored
+best cell, sorted them by `best_annualized`, and wrote each one out as a
+strategy, with the in-sample caveat and the roll-schedule export. A reader had
+to leave the Workspace to re-sort a list the Workspace already showed. Dio
+asked for a "rank by return" switch on that list and for the tab to go, and
+for the strip to show what the split hid: each name's result at the rail's own
+strike, the biggest single payoff, the bake-off's verdict on the fragility
+ordering, and the best cell's own dividend and pricing basis.
+
+**Decision.**
+
+* **One strip, two orders over one read.** The strip gains a *Sort the
+  screen* switch: by fragility (the server's own order) or by best return
+  (the old Recommendations table as `BestReturnTable`: its columns, caveat,
+  notes and export kept, plus a biggest-payoff column, loss shading, and the
+  best cell's own q = 0 and Market tags). The
+  Recommendations tab, its `RAIL` row and its spec are removed. The table row
+  above for Recommendations, and "a Recommendations click still opens the
+  Workspace", no longer apply: a click in either order loads that name's best
+  cell below (just the name, for a row with no scored best cell).
+* **One screen for both orders, keyed on the rail's strike.** The
+  strike-independence argument in the Consequences above (each row's best
+  cell is an argmax over a fixed grid; the screening roll's dates depend on
+  the tenor alone) now justifies ONE read for both orders rather than a
+  separate default-strike screen: the fragility table prints the screened
+  cell's figures, so the key stays the rail's strike, tenor and years, and the
+  best-return order re-sorts the same response. Switching the order never
+  refetches.
+* **The fragility table names which strategy each figure comes from.** Two
+  column groups: "Best cell" (per year, where, and that cell's own q = 0 or
+  Market tag beside its figure) and "At N% · Tw" (the
+  screened cell -- per year, hit, biggest payoff, verdict, q, and basis once
+  any row is market-priced; until then one printed line says every row is
+  model-priced). Both come before the six fragility measures, so a laptop
+  shows them without a sideways scroll; the name column stays pinned.
+  Before, the argmax return sat beside the screened cell's hit rate on one
+  row.
+* **The best-return table keeps the same-cell rule for its tags too.**
+  `RankedAsset` gains `best_q_source` and `best_priced_from`.
+* **A bake-off verdict line, at fixed settings.** In the fragility order the
+  strip shows the composite fragility screen's result from a bake-off at 5% ·
+  4w · 4y, by distance, top 5 -- its lift, whether its rank correlation with
+  payoff survives FDR correction across the screens compared, and whether
+  those settings are the list's (or, when the two were read on different
+  days, that they were). Where `TAIL_LAB_WARM_RANKING` is on (fly.toml) the
+  server pre-computes it daily
+  (`_WARM_BAKEOFF`), after the opening ranking. The bake-off response gains
+  `snapshot_ids` and `code_sha` (`docs/STANDARDS.md`), shared with the
+  ranking through `ranking.snapshot_ids_for`.
+* **One table of fragility directions.** `ranking.FRAGILE_HIGH` serves the
+  composite, the bake-off and the strip's per-column shading
+  (`UniverseRanking.fragile_high`).
+
+**Consequences.**
+
+* **Cost: re-screens the Recommendations tab never paid.** Only the opening
+  screen (5% · 4w · 4y) is pre-warmed. A row click loads the row's best cell,
+  usually a different tenor, so the strip shows its status line through a
+  cold re-screen (~25 s alone). A strike change in the best-return order
+  re-screens too, for an identical table; the strip says so under the switch,
+  in the best-return order, while the re-screen runs as well. That one case
+  keeps its rows up during the re-screen: in the best-return order, with the
+  tenor and years unchanged, the rows cannot change with the strike (a new
+  day's or a new ingest's screen can still differ, and replaces them when it
+  lands; the provenance line dates the rows shown). Any other re-screen shows
+  the status line, since the tenor and years change coverage and values. A row
+  opened from the keyboard gets focus back when its table returns, if focus
+  was lost in the remount (a reader who has moved on keeps their place; a
+  mouse click does not pull the page back to the table).
+* **Universe screens take one at a time.** Each memo already single-flights
+  its own keys, but the ranking and the bake-off would otherwise screen in
+  parallel on the app's one shared CPU -- the 2026-10-08 health-check failure.
+  A shared `_SCREEN_SLOT` lock is taken inside both computes. A request
+  waiting on it holds a threadpool thread but no CPU; sync handlers keep
+  running after the client leaves, so an abandoned screen stays queued, and
+  `threading.Lock` is not fair, so a live reader can wait behind it. The wait
+  is logged (`putlab.screen_slot_wait`). The health check is a sync route too,
+  so enough requests waiting on screens (about 40, the threadpool's size --
+  queued on the slot, or waiting on another request's compute of the same
+  key) would starve it -- the same thread occupancy as the parallel screens this
+  replaces, but now spent waiting rather than computing.
+* **The bake-off line is not a verdict on the list above it.** The strip's
+  settings follow the rail and every row click, and even at the same settings
+  the bake-off's universe can differ from the ranking's (its coverage filter
+  is not the ranking's). The line states its own settings and says which case
+  holds.
+* The tab count is seven.
+

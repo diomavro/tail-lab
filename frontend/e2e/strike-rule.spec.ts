@@ -22,7 +22,7 @@ test('the switch is on Workspace and Bake-off only', async ({ page }) => {
   await expect(ruleSwitch(page)).toBeVisible()
   await page.getByRole('tab', { name: 'Bake-off' }).click()
   await expect(ruleSwitch(page)).toBeVisible()
-  for (const tab of ['Surface', 'Regime', 'Recommendations']) {
+  for (const tab of ['Surface', 'Regime']) {
     await page.getByRole('tab', { name: tab }).click()
     await expect(ruleSwitch(page), tab).toHaveCount(0)
   }
@@ -177,11 +177,14 @@ test('a typed delta runs only once it is committed, at two decimals', async ({ p
   expect(sent.filter((t) => t !== '0.1')).toEqual(['0.15'])
 })
 
-test('opening a Recommendations row switches the rule back to distance', async ({ page }) => {
+test('opening a best-return row switches the rule back to distance', async ({ page }) => {
+  // A row's best cell is a distance cell, so landing on it in delta mode has
+  // to switch the rule, or the page would open on a different strike.
   await page.goto('/')
   await toDelta(page)
-  await page.getByRole('tab', { name: 'Recommendations' }).click()
-  await page.locator('tr.pick').first().click()
+  await page.getByRole('radiogroup', { name: 'Sort the screen' }).getByText('Best return').click()
+  await page.getByRole('button', { name: /All \d+ names/ }).click()
+  await page.getByRole('table', { name: 'Ranked strategies' }).locator('tr.pick').first().click()
   await expect(ruleSwitch(page).getByRole('radio', { name: 'Distance' })).toBeChecked()
 })
 

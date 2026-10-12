@@ -7,7 +7,7 @@ import { mockPutLabApi } from './fixtures/mock-api'
 
 const STANDALONE = 'Accounting: standalone'
 
-for (const tab of ['Workspace', 'Recommendations', 'Portfolio', 'Bake-off'] as const) {
+for (const tab of ['Workspace', 'Portfolio', 'Bake-off'] as const) {
   test(`${tab} names the standalone accounting`, async ({ page }) => {
     await mockPutLabApi(page)
     await page.goto('/')

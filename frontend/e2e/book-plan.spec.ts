@@ -561,7 +561,7 @@ test('the trailing-RV badge and footer appear only on tabs that run that backtes
   await page.goto('/')
   const badge = page.getByText('Model-priced · Black–Scholes on trailing RV')
   const footer = page.locator('footer.pl-footer')
-  for (const tab of ['Recommendations', 'Portfolio', 'Bake-off', 'Workspace'] as const) {
+  for (const tab of ['Portfolio', 'Bake-off', 'Workspace'] as const) {
     await page.getByRole('tab', { name: tab }).click()
     await expect(badge).toBeVisible()
     await expect(footer).toContainText('trailing realized volatility')

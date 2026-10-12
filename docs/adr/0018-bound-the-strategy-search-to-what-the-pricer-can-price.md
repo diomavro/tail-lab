@@ -63,7 +63,9 @@ different code.
 **`best_point` is bounded to that band by default.** The ranking headline, the
 click-through target, and the Recommendations view can therefore never advertise
 a strategy whose return is a pricing artefact. `priced_only=False` still gives
-the raw grid maximum for anything that wants it.
+the raw grid maximum for anything that wants it. *(2026-10-11, `docs/adr/0028`
+amendment: the Recommendations view is now the Workspace strip's best-return
+order; the bound applies to it unchanged.)*
 
 **The grid itself goes deeper, not shallower** — out to 30% OOM. Seeing the deep
 tail is the point of a tail-hedge lab, and hiding the region would be its own
@@ -107,4 +109,6 @@ rate.
   other's and states it as an instruction (ticker, strike, roll cadence). It is
   labelled a screen and not advice, in sample, on the page — `docs/adr/0007`'s
   wall means this platform never places a trade, and a page with that title is
-  the single most misreadable surface here.
+  the single most misreadable surface here. *(2026-10-11, `docs/adr/0028`
+  amendment: that label now lives in the Workspace strip's best-return order,
+  and on its one-line picks.)*

@@ -72,25 +72,26 @@ number (`docs/DISCOVERIES.md` #2).
 
 ## 2. What feeds each page
 
-The app is one workspace with six tabs. Each row lists what the tab answers,
+The app is one workspace with seven tabs. Each row lists what the tab answers,
 the endpoints it calls, and the bronze datasets those endpoints ultimately read.
 
 Screen and Backtest used to be separate tabs, bridged by a fragility ranking
 pinned above both — you picked a name on one and read its result on the other.
 They are one **Workspace** now, with the ranking as a strip at its top, and the
 Screen tab's deeper "is the screen any good?" question moved to its own
-**Bake-off** tab (`docs/adr/0017`).
+**Bake-off** tab (`docs/adr/0017`). Recommendations folded into that strip on
+2026-10-11 as its best-return order (`docs/adr/0028` amendment).
 
 | Page / tab | The question it answers | Endpoints | Datasets read |
 |---|---|---|---|
-| **Workspace** | Which name, and what would that hedge have done? | `/api/putlab/leaderboard` (the ranking strip), `/backtest`, `/sweep`, `/regime-verdict`, **`/accuracy`**, `/strike-preview` ("How the strike is chosen": today's delta strike at realised vol beside the market's on the chain's IV) | `ohlcv_*` (whole screening universe + `ohlcv_spy` as benchmark), `vix`, `cboe_strategy`, `tiingo_eod` (q), `option_chain_snapshot` (the preview's market row only) |
-| **Recommendations** | Of every name's *best* strategy, which are the best? | `/api/putlab/leaderboard` (same read as the ranking strip — one strike x tenor sweep per name, bounded to the priced band per `docs/adr/0018`) | `ohlcv_*`, `vix` |
+| **Workspace** | Which name, and what would that hedge have done? | `/api/putlab/leaderboard` (the ranking strip, one read for both its orders: by fragility, and by best return -- the old Recommendations table, with the roll-schedule export -- bounded to the priced band per `docs/adr/0018`), `/api/putlab/metric-screen` (the strip's bake-off verdict line: one fixed-parameter read, 5% · 4w · 4y · top 5 by distance, once per page load when it succeeds (a failed read is retried on the next visit to the Workspace); pre-computed daily where `TAIL_LAB_WARM_RANKING` is on, as `fly.toml` sets it -- it is off by default, so a local first load of the day computes it cold, one backtest per screened name), `/backtest`, `/sweep`, `/regime-verdict`, **`/accuracy`**, `/strike-preview` ("How the strike is chosen": today's delta strike at realised vol beside the market's on the chain's IV) | `ohlcv_*` (whole screening universe + `ohlcv_spy` as benchmark), `vix`, `cboe_strategy`, `tiingo_eod` (q), `option_chain_snapshot` (the preview's market row only) |
 | **Portfolio** | What does a blend of legs do? | `/api/putlab/portfolio`, `/api/putlab/leaderboard` | `ohlcv_*` |
 | **Book** | How much of the book should carry the hedge? (Rodman's Paradox: does any mix out-grow both 0% and 100% hedged?) | `/api/putlab/hedge-overlay` (lump sum: one read per as-of date; 404 with no Cboe snapshot) and `/api/putlab/book-plan` (monthly contributions, `docs/adr/0027` §3: IRR per arm, rolling starts, comparators) and `/api/putlab/book-plan/model` (the opt-in model source: $X/month on S&P 500 puts priced by Black-Scholes at the VIX plus the measured skew gap) | `cboe_strategy` (`SPX` + `PPUT`, `PPUT3M`, `VXTH`, and the other Cboe indices as comparators); `tiingo_eod` (SPY only: the S&P 500 leg is SPY's measured total return, fee-adjusted — `research/backtest/index_leg.py`, one builder for the lump sum and the plan; SPX price fills at most 14 trailing days); `rates` (`DGS3MO`: the T-bill comparator, and the conservative leg's cash drag — point-in-time from 2005-06-28, latest vintage before it, `docs/adr/0027` amendment); `vix` (model source only). "How much to hold" (`OverlayWindow.sizing`, `research/backtest/hedge_sizing.py`) is computed from the same blend |
-| **Bake-off** | Which screen actually picks winners? | `/api/putlab/metric-screen` (explicit action — one backtest per screened name) | `ohlcv_*` |
+| **Bake-off** | Which screen actually picks winners? | `/api/putlab/metric-screen` (on the tab's button — one backtest per screened name, up to 70; a run on parameters already computed that day is served from the server's in-process memo (a deploy or restart empties it), and the Workspace line's fixed parameters are pre-computed daily when `TAIL_LAB_WARM_RANKING` is on) | `ohlcv_*` (+ `ohlcv_spy` as benchmark), `vix`, `tiingo_eod` (q) |
+| **Surface** | How fat a tail is the option market pricing, against the name's own history? | `/api/putlab/surface` (one chain session; the anchor is the rail's strike, the expiry its tenor) | `option_chain_snapshot`, `ohlcv_<asset>`, `tiingo_eod` (q) |
 | **Regime** | What market are we in? | `/api/putlab/regimes`, `/api/vix/stretch`, `/accuracy` (the per-regime residual) | `vix`, `cboe_strategy`, `credit` (widening, §3.2 — falls back to VIX-only until ingested) |
 | **Glossary** | — (renders `content/concepts.ts`, no network) | none | none |
-| **Roll schedule** (export, not a tab) | What would I actually place? | `/api/putlab/roll-schedule` (the ranking's read, reused from cache) | `ohlcv_*`, `vix` |
+| **Roll schedule** (export, not a tab) | What would I actually place? | `/api/putlab/roll-schedule` (the ranking's read at the rail's screen, reused from cache; its legs are each name's best cell, so the screen's strike is a label only) | `ohlcv_*`, `vix`, `tiingo_eod` (q, per leg) |
 | **Control rail** (the tabs that read it: `rail.ts`, `docs/adr/0028`) | What position am I asking about, and where did the data come from? | `/api/putlab/universe`, `/cadence`, `/data-quality` | `ohlcv_<asset>`, the options calendar |
 
 **A strike rule travels with the request on three routes only.** `/backtest`,
@@ -99,10 +100,14 @@ Screen tab's deeper "is the screen any good?" question moved to its own
 every other route — the ranking, sweep, Surface, accuracy,
 roll schedule and hypothesis memory — reads `moneyness_pct` alone. So on the
 Workspace in delta mode the headline, tape, ledger and regime verdict are by
-delta while the ranking strip, sweep grid and accuracy panel beside them are
-by distance, and the page says so beside each. A delta backtest's strikes are
-solved from realised vol; the market's delta strike appears only in
-`/strike-preview`, from one Cboe chain session.
+delta while the ranking strip, its bake-off line (which `/metric-screen` is
+asked for by distance, whatever the rail says), sweep grid and accuracy panel
+beside them are by distance, and the page says so beside each. A delta
+backtest's strikes are solved from realised vol; the market's delta strike
+appears only in `/strike-preview`, from one Cboe chain session.
+
+The ranking strip has no per-name sparklines: `RankedAsset` carries scalars
+only, and a series per name would bloat the universe-wide response.
 
 **The accuracy panel is the densest node in the graph.** It renders under every
 backtest result and, alone in the app, reads *four* datasets at once — the

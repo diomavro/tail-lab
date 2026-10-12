@@ -7,7 +7,7 @@ import { defineConfig, devices } from '@playwright/test'
 // lake, no backend, no network — so it runs as a CI gate (the `e2e` job in
 // .github/workflows/ci.yml, which a deploy is gated on) and its assertions are
 // about rendered behaviour rather than about whatever the lake happens to hold.
-// A live backtest takes seconds and the bake-off runs ~35 of them; mocking is
+// A live backtest takes seconds and the bake-off runs one per screened name (up to 70); mocking is
 // what makes it possible to assert on both branches of the bake-off verdict in
 // the same suite.
 //

@@ -3,7 +3,7 @@
 //
 // These exist so the UI suite can assert on *behaviour* -- which band a sweep
 // cell lands in, whether a tape marker is drawn, which bake-off branch renders
-// -- without a lake, a network, or 35 server-side backtests. Every number here
+// -- without a lake, a network, or a server-side backtest per screened name. Every number here
 // is invented; the shapes and the relationships between fields are not.
 //
 // The values are chosen to exercise the edges the redesign changed:
@@ -347,7 +347,9 @@ export const LEADERBOARD: PutLabLeaderboardResponse = {
       fragility_score: frag,
       roi_on_premium: bestAnn * 2.8,
       annualized_return: bestAnn - 0.03,
-      verdict: verdict as RegimeVerdictResponse['verdict'],
+      // IWM's screened cell failed where its best cell paid in one regime, so a
+      // table that printed the best verdict in the screened group is caught.
+      verdict: (asset === 'iwm' ? 'failed' : verdict) as RegimeVerdictResponse['verdict'],
       hit_rate: 0.08 + frag / 9,
       biggest_payoff_mult: 1 + frag * 4,
       n_cycles: 52,
@@ -359,17 +361,34 @@ export const LEADERBOARD: PutLabLeaderboardResponse = {
       best_annualized: bestAnn,
       best_moneyness_pct: bestM,
       best_tenor_weeks: bestT,
-      // All five below are measured at (bestM, bestT) -- the same cell -- which
-      // is what the recommendations view ranks on.
-      best_roi_on_premium: Number((bestAnn * 3.4).toFixed(4)),
+      // Every best_* field below is measured at (bestM, bestT) -- the same
+      // cell -- which is what the strip's best-return order ranks on.
+      // Not one factor for every row: QQQ's differs, so a loss shade scaled
+      // from this column instead of best_annualized reads differently.
+      best_roi_on_premium: Number((bestAnn * (asset === 'qqq' ? 4.2 : 3.4)).toFixed(4)),
       best_hit_rate: Number((0.06 + frag / 7).toFixed(4)),
       best_biggest_payoff_mult: Number((1.4 + frag * 5).toFixed(2)),
       best_n_cycles: Math.round((52 * 4) / bestT),
       best_verdict: verdict as RegimeVerdictResponse['verdict'],
+      // The best cell's own dividend basis. Deliberately NOT the screened
+      // cell's on two rows, both ways round, so a view that reads the wrong
+      // one is caught: EEM's best cell is measured though its screened cell
+      // is not, and XLF's best cell priced at q = 0 though its screened one did not.
+      best_q_source: asset === 'eem' ? ('measured' as const) : asset === 'xlf' ? ('none' as const) : ('measured' as const),
+      best_priced_from: 'model' as const,
     }
   }),
   snapshot_ids: ['vix@2026-08-21', 'ohlcv_tsla@2026-08-21', 'ohlcv_iwm@2026-08-21'],
   code_sha: 'e2e0000',
+  // ranking.FRAGILE_HIGH, as the server serves it.
+  fragile_high: {
+    downside_beta: true,
+    co_skewness: false,
+    co_kurtosis: true,
+    tail_beta: true,
+    downside_capture: true,
+    vol_beta: false,
+  },
 }
 
 const screenEntry = (
@@ -418,6 +437,10 @@ export const METRIC_SCREEN_WINNER: MetricScreenComparison = {
   baseline_roi: -0.241,
   n_comparisons: 7,
   fdr_alpha: 0.05,
+  // Its own provenance, distinct from the leaderboard's (sha, count), so a
+  // line that printed the ranking's would be caught.
+  snapshot_ids: ['vix@2026-08-21', 'ohlcv_spy@2026-08-21', 'ohlcv_tsla@2026-08-21', 'ohlcv_iwm@2026-08-21'],
+  code_sha: 'bk00000',
   entries: [
     screenEntry('fragility_score', 'Composite fragility', ['tsla', 'iwm', 'xlf', 'eem', 'qqq'], -0.225, 0.016, 0.34, 'confirmed', 0.018, true),
     screenEntry('downside_beta', 'Downside beta', ['tsla', 'iwm', 'qqq', 'xlf', 'spy'], -0.238, 0.003, 0.21, 'regime_only', 0.041, false),

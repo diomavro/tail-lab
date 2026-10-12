@@ -483,7 +483,7 @@ export interface RankedAsset {
    *
    *  EVERY `best_*` field is measured at the SAME cell. Never pair one of them
    *  with a figure from the screened cell above: that is two strategies on one
-   *  line, and the recommendations view ranks on exactly this row. */
+   *  line, and the Workspace's best-return view ranks on exactly this row. */
   best_annualized: number | null
   best_moneyness_pct: number | null
   best_tenor_weeks: number | null
@@ -492,6 +492,10 @@ export interface RankedAsset {
   best_biggest_payoff_mult: number | null
   best_n_cycles: number | null
   best_verdict: Verdict | null
+  /** The best cell's own dividend and pricing basis -- the same-cell rule
+   *  applies to these tags too. `null` when no best cell was scored. */
+  best_q_source: 'measured' | 'none' | null
+  best_priced_from: 'model' | 'market' | null
 }
 
 export interface PutLabLeaderboardResponse {
@@ -501,11 +505,17 @@ export interface PutLabLeaderboardResponse {
   lookback_years: number
   notional: number
   ranked: RankedAsset[]
-  /** The bronze snapshots this screen actually read (VIX + one per ranked
-   *  name) and the code that computed it -- docs/STANDARDS.md: "a result
-   *  without both is not trustworthy and should not be surfaced." */
+  /** The bronze snapshots this screen actually read (VIX, one per ranked
+   *  name, the SPY benchmark whenever it was loaded, and the dividend
+   *  snapshot once one exists) and the code that
+   *  computed it -- docs/STANDARDS.md: "a result without both is not
+   *  trustworthy and should not be surfaced." */
   snapshot_ids: string[]
   code_sha: string
+  /** Per metric, whether a higher raw value is more fragile (co-skewness and
+   *  vol beta are fragile when low). The server's one table of directions
+   *  (ranking.FRAGILE_HIGH); the strip shades by it rather than keeping a copy. */
+  fragile_high: Record<string, boolean>
 }
 
 export interface PutLabLeaderboardParams {
@@ -533,8 +543,12 @@ export async function fetchPutLabLeaderboard(
 // --- Metric bake-off (research/backtest/metric_screen.py) ---
 // "which fragility metric best sorted realized put payoffs over the lookback."
 // An in-sample cross-sectional association (a screen chooser), NOT a forward
-// predictive backtest. One backtest per screened name server-side, so an
-// explicit action rather than a live recompute.
+// predictive backtest. One backtest per screened name server-side (up to the
+// 70-name universe). The tab runs it on its button; the Workspace reads one
+// fixed-parameter bake-off, which the server pre-computes daily when
+// TAIL_LAB_WARM_RANKING is on (fly.toml). A run on parameters already computed
+// that day is served from the server's in-process memo, until a deploy or
+// restart empties it.
 
 export interface MetricScreenEntry {
   metric: string
@@ -575,6 +589,12 @@ export interface MetricScreenComparison {
   n_comparisons: number
   fdr_alpha: number
   entries: MetricScreenEntry[]
+  /** The bronze snapshots this bake-off read (VIX, the SPY benchmark whether
+   *  or not it was scored, one per scored name, and the dividend snapshot once
+   *  one exists) and the code that computed it --
+   *  docs/STANDARDS.md. */
+  snapshot_ids: string[]
+  code_sha: string
 }
 
 export interface MetricScreenParams extends StrikeRuleParams {

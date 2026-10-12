@@ -16,7 +16,8 @@ and failed Fly's health check (2026-10-08). Three changes, each logged
   refresh for it is already queued, the caller waits for that one).
 * **Warm.** :meth:`RefreshingMemo.warm` starts a background compute for a key
   nobody has asked for yet -- the app's startup uses it, since every deploy
-  restarts the process with an empty memo.
+  restarts the process with an empty memo. A caller that must wait for its
+  warm (the daily ranking warm) uses ``get(..., miss_reason="warm")``.
 
 Keys must carry everything the value depends on that can change the answer
 (for the ranking: its parameters and the as-of date), because a stale entry
@@ -30,6 +31,7 @@ import threading
 import time
 from collections.abc import Callable, Hashable
 from dataclasses import dataclass
+from typing import Literal
 
 from tail_lab.observability import log_event
 
@@ -86,8 +88,16 @@ class RefreshingMemo[K: Hashable, V]:
         with self._lock:
             self._entries.clear()
 
-    def get(self, key: K, compute: Callable[[], V]) -> V:
-        """The value for ``key``: memoised, stale-served, or computed once."""
+    def get(
+        self, key: K, compute: Callable[[], V], *, miss_reason: Literal["miss", "warm"] = "miss"
+    ) -> V:
+        """The value for ``key``: memoised, stale-served, or computed once.
+
+        ``miss_reason`` labels a compute this call leads: ``"warm"`` for a
+        caller that blocks on purpose to warm the key (the daily warm screens
+        the ranking in full before the bake-off), so the log does not count it
+        as a visitor's cold miss.
+        """
         while True:
             with self._lock:
                 entry = self._entries.get(key)
@@ -104,7 +114,7 @@ class RefreshingMemo[K: Hashable, V]:
                 else:
                     leader = False
             if leader:
-                return self._compute_and_store(key, compute, event, reason="miss")
+                return self._compute_and_store(key, compute, event, reason=miss_reason)
             event.wait()
             # Round again: the value if the compute stored one; if it failed,
             # exactly one waiter becomes the next leader and the rest wait on

@@ -13,7 +13,7 @@ import pytest
 from tail_lab.contracts.ohlcv import dataset_id
 from tail_lab.lake.store import DeltaLakeStore
 from tail_lab.research.backtest.put_roll import annualized_return
-from tail_lab.research.backtest.ranking import rank_universe
+from tail_lab.research.backtest.ranking import FRAGILE_HIGH, RankedAsset, rank_universe
 from tail_lab.research.backtest.sizing import FixedPremium, WealthFraction
 from tail_lab.research.backtest.strike_rule import ByMoneyness
 
@@ -102,7 +102,8 @@ def test_rank_universe_sorts_by_fragility_and_skips_missing(tmp_path: Path) -> N
 
 def test_rank_universe_snapshot_ids_cover_vix_and_every_ranked_name(tmp_path: Path) -> None:
     """`docs/STANDARDS.md`: a result without its bronze snapshot id(s) is not
-    trustworthy and should not be surfaced. `missing` never lands in `ranked`
+    trustworthy and should not be surfaced. The SPY benchmark is cited though
+    it is not ranked (every row read it). `missing` never lands in `ranked`
     (no data), so its snapshot must not appear either -- the list traces what
     was actually READ into the screen, not what was asked for."""
     store = DeltaLakeStore(tmp_path)
@@ -123,6 +124,10 @@ def test_rank_universe_snapshot_ids_cover_vix_and_every_ranked_name(tmp_path: Pa
 
     expected = {store.bronze_snapshot_id("vix", ingest)}
     expected |= {store.bronze_snapshot_id(dataset_id(r.asset), ingest) for r in ranking.ranked}
+    # SPY is not ranked here, but every row's fragility columns read it as the
+    # benchmark, so it was read into the screen and must be cited.
+    assert all(r.downside_beta is not None for r in ranking.ranked)
+    expected.add(store.bronze_snapshot_id(dataset_id("spy"), ingest))
     assert set(ranking.snapshot_ids) == expected
     assert len(ranking.snapshot_ids) == len(set(ranking.snapshot_ids))  # no duplicates
     assert dataset_id("missing") not in "".join(ranking.snapshot_ids)
@@ -247,8 +252,8 @@ def test_the_best_cells_stats_all_describe_the_best_cell(tmp_path: Path) -> None
     """A recommendation is a whole strategy, so every figure on its row has to
     come from the same (strike, tenor) run. Reporting `best_annualized` from
     the argmax next to a `hit_rate` from the screened cell describes two
-    different strategies in one line -- and the recommendations page ranks on
-    exactly that row.
+    different strategies in one line -- and the Workspace's best-return view
+    ranks on exactly that row.
     """
     from tail_lab.research.backtest.put_roll import load_asof_series, run_put_roll
 
@@ -341,3 +346,78 @@ def test_the_ranking_does_not_sweep_cells_it_could_never_pick(tmp_path: Path) ->
         ranking_mod.run_sweep = original  # type: ignore[assignment]
 
     assert swept == [MODEL_PRICED_SWEEP_MONEYNESS]
+
+
+def test_the_best_cells_dividend_basis_is_the_best_cells_own(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """``best_q_source`` must come from the re-roll at the best cell, not the
+    screened run. Unseeded, both runs price at an unknown q and agree, so the
+    re-roll (the only call passing ``include_curves=False``) is made to differ."""
+    from tail_lab.research.backtest import ranking as ranking_mod
+
+    real = ranking_mod.run_put_roll
+
+    def fake(*args: object, **kwargs: object) -> object:
+        result = real(*args, **kwargs)  # type: ignore[arg-type]
+        if kwargs.get("include_curves") is False:
+            return result.model_copy(update={"q_source": "measured", "priced_from": "market"})
+        return result
+
+    monkeypatch.setattr(ranking_mod, "run_put_roll", fake)
+    store = DeltaLakeStore(tmp_path)
+    ingest = dt.date(2026, 3, 2)
+    _seed_vix(store, ingest)
+    _seed_symbol(store, "spy", ingest, drift=0.1, vol=1.0)
+    _seed_symbol(store, "wild", ingest, drift=-0.1, vol=4.0)
+    row = rank_universe(
+        store, symbols=("wild",), as_of=ingest, moneyness_pct=2.0, tenor_weeks=1.0, years=1.0
+    ).ranked[0]
+    assert row.best_q_source == "measured"
+    assert row.q_source == "none"
+    # The pricing tag follows the same run (the ranking is model-priced today;
+    # the fake makes the best cell's run "market" so the two can differ).
+    assert row.best_priced_from == "market"
+    assert row.priced_from == "model"
+
+
+def _metric_row(asset: str, **metrics: float) -> RankedAsset:
+    # Unset metrics are None, so they drop out of the composite: equal values
+    # would not, because `_frac_rank` breaks ties by position.
+    base: dict[str, float | None] = dict.fromkeys(
+        ("downside_beta", "co_skewness", "co_kurtosis", "tail_beta", "downside_capture"), None
+    )
+    return RankedAsset(
+        asset=asset,
+        name=asset,
+        spot=100.0,
+        **{**base, **metrics},
+        fragility_score=None,
+        roi_on_premium=0.0,
+        annualized_return=0.0,
+        verdict="untested",
+        hit_rate=0.0,
+        biggest_payoff_mult=0.0,
+        n_cycles=1,
+        priced_from="model",
+    )
+
+
+def test_the_composite_reads_its_directions_from_fragile_high(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """One table of directions serves the composite, the bake-off and the
+    Workspace's shading: flipping it must flip the order here."""
+    from tail_lab.research.backtest.ranking import _score_and_sort
+
+    def rows() -> list[RankedAsset]:
+        # No other metric is set, so vol beta alone decides the order.
+        return [
+            _metric_row("a", vol_beta=-1.0),
+            _metric_row("b", vol_beta=0.0),
+            _metric_row("c", vol_beta=1.0),
+        ]
+
+    assert [r.asset for r in _score_and_sort(rows())] == ["a", "b", "c"]
+    monkeypatch.setitem(FRAGILE_HIGH, "vol_beta", True)
+    assert [r.asset for r in _score_and_sort(rows())] == ["c", "b", "a"]

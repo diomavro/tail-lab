@@ -18,6 +18,26 @@ a large one strictly in order.
 
 ## Next increments
 
+- [ ] **The strike × tenor grid scrolls a phone page sideways on real data**
+      (found 2026-10-11 while screenshotting the Workspace against a two-name
+      scratch lake). At 390px, `SweepGrid`'s `.pl-sweep-cell` buttons whose
+      label is "−100%" over "201 rolls" end at x = 413, so the page scrolls
+      23px. The hermetic `rail.spec.ts` "no tab scrolls the page sideways"
+      stays green because the fixture sweep never prints a −100% cell.
+      *Success*: the grid fits (or scrolls inside itself) at 390px with a
+      −100% cell, and the e2e check uses such a cell.
+
+- [ ] **Two small paint bugs carried over from Recommendations** (found by
+      a 2026-10-12 review; both predate the Workspace fold). (1) The
+      best-return "On premium" cell (`BestReturnTable.tsx`, `pl-rec-premium`)
+      sets `dim` beside `pl-neg`, and `dim` wins, so a losing return on
+      premium is never printed in the loss colour. (2) The `.pl-seg` focus
+      ring is cyan on the checked option's cyan fill (`putlab.css`), so a
+      keyboard reader cannot see focus on the selected option of any
+      segmented switch, the screen's sort switch included.
+      *Success*: a losing On premium prints magenta; the focused, checked
+      segment shows a visible ring (contrast-checked in both sheets).
+
 - [ ] **A 3D view of the real option surface** (from the 2026-10-07 redesign
       handoff, deliberately not shipped with it). The
       handoff's `Tail Surface 3D.html` drew a Black–Scholes surface from an
@@ -1414,7 +1434,10 @@ wrong side of the join.
       denominator is not a bias to adjust for — it is a different quantity.
       *Success*: a leg whose model price is some multiple of its market price
       (or which has no quote at all) cannot reach the top of the ranking
-      without that multiple being displayed beside it.
+      without that multiple being displayed beside it -- in both of the
+      Workspace strip's orders: the best-return order (the old
+      Recommendations tab, `docs/adr/0028` 2026-10-11 amendment) is exactly
+      where a mispriced leg's advertised return tops the list.
 
 - [x] **`roi_on_premium` needs its denominator named on the surface.**
       `put_roll.py:773` computes `net_pnl / total_premium` — return on

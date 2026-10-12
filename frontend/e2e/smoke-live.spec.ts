@@ -32,7 +32,12 @@ test('the deployed workspace reaches a real result', async ({ page }) => {
   // The sweep and the ranking are the two slowest reads; if either 500s, the
   // view says so rather than rendering blank.
   await expect(page.locator('.pl-sweep-cell').first()).toBeVisible({ timeout: 60_000 })
-  await expect(page.locator('.pl-rank-strip button').first()).toBeVisible({ timeout: 60_000 })
+  // `rank-pick`, not any strip button: the strip's bake-off line carries a
+  // button of its own that shows before the ranking lands. After a deploy or
+  // process restart (a Fly suspend/resume keeps the process, so no warm runs)
+  // this wait can queue behind the startup warms on the server's one screen
+  // slot.
+  await expect(page.getByTestId('rank-pick').first()).toBeVisible({ timeout: 60_000 })
 
   await expect(page.getByRole('region', { name: 'Result accuracy' })).toBeVisible()
 })
@@ -40,10 +45,15 @@ test('the deployed workspace reaches a real result', async ({ page }) => {
 test('the metric-screen endpoint answers the bake-off', async ({ page }) => {
   await page.goto('/')
   await page.getByRole('tab', { name: 'Bake-off' }).click()
+  // Top 3, not the tab's default Top 5: 5% · 4w · 4y · Top 5 is the bake-off
+  // the server pre-warms for the Workspace's line, so it would come from the
+  // memo and never exercise the compute this test exists to check. A same-day
+  // repeat of Top 3 may still be a memo hit (any key is served for 24h).
+  await page.getByRole('radiogroup', { name: 'Basket size' }).getByText('Top 3').click()
   await page.getByRole('button', { name: 'Run the bake-off' }).click()
 
-  // ~35 server-side backtests. This is the first frontend caller this endpoint
-  // has ever had, so it is the one worth exercising for real.
+  // One server-side backtest per screened name (up to 70). After a deploy or
+  // restart this can also queue behind the startup warms on the screen slot.
   await expect(page.getByRole('table', { name: 'Metric bake-off' })).toBeVisible({ timeout: 110_000 })
   await expect(page.locator('.pl-bake-verdict')).toBeVisible()
 })

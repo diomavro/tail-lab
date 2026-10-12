@@ -60,3 +60,20 @@ export const PUTLAB_DEFAULT_CONTROLS: PutLabControls = {
   tenor_weeks: 4,
   years: 4,
 }
+
+/** How the Workspace's ranking strip orders the screen. Fragility is the
+ *  server's own order; best return re-sorts the same response client-side. */
+export type RankSort = 'fragility' | 'return'
+
+/** The one bake-off the ranking strip's verdict line reads: the composite
+ *  fragility screen at the app's opening screen, by distance, top 5. It never
+ *  follows the rail, and it mirrors the server's pre-warmed `_WARM_BAKEOFF`
+ *  (api/putlab_routes.py), so the line is read from the server's memo. */
+export const STRIP_BAKEOFF = {
+  strike_rule: 'moneyness' as const,
+  moneyness_pct: 5,
+  target_delta: PUTLAB_DEFAULT_CONTROLS.target_delta,
+  tenor_weeks: 4,
+  years: 4,
+  top_k: 5,
+}
