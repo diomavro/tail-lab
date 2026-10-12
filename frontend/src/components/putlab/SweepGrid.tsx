@@ -168,6 +168,7 @@ export function SweepGrid({
         their returns are real.
       </p>
 
+      <div className="pl-sweep-scroll">
       <div
         className="pl-sweep"
         style={{ ['--pl-sweep-cols' as string]: String(strikes.length) }}
@@ -268,6 +269,7 @@ export function SweepGrid({
             })}
           </div>
         ))}
+      </div>
       </div>
 
       <div className="pl-sweep-foot">

@@ -18,7 +18,7 @@ a large one strictly in order.
 
 ## Next increments
 
-- [ ] **The strike × tenor grid scrolls a phone page sideways on real data**
+- [x] **The strike × tenor grid scrolls a phone page sideways on real data**
       (found 2026-10-11 while screenshotting the Workspace against a two-name
       scratch lake). At 390px, `SweepGrid`'s `.pl-sweep-cell` buttons whose
       label is "−100%" over "201 rolls" end at x = 413, so the page scrolls
@@ -26,6 +26,9 @@ a large one strictly in order.
       stays green because the fixture sweep never prints a −100% cell.
       *Success*: the grid fits (or scrolls inside itself) at 390px with a
       −100% cell, and the e2e check uses such a cell.
+      **Done 2026-10-12**: on `.is-narrow` the grid scrolls inside `.pl-sweep-scroll`
+      (52px column floor) and the hover popup is hidden there; the fixture now has
+      11 strikes incl. a −100% cell, and `rail.spec.ts` fails without the fix.
 
 - [ ] **Two small paint bugs carried over from Recommendations** (found by
       a 2026-10-12 review; both predate the Workspace fold). (1) The
