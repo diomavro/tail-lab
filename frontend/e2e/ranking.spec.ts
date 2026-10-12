@@ -279,6 +279,11 @@ test.describe('with the shared fixture', () => {
   })
 
   test('in delta mode the screened group says it is still by distance', async ({ page }) => {
+    // By distance the note would be false: it is absent.
+    await expand(page)
+    await expect(fragTable(page)).toBeVisible()
+    await expect(page.getByTestId('rank-screened-delta')).toHaveCount(0)
+    await page.getByRole('button', { name: 'Collapse the screen' }).click()
     await rail(page).getByRole('radiogroup', { name: 'Strike chosen by' }).getByText('Delta').click()
     await expand(page)
     await expect(page.getByTestId('rank-screened-delta')).toContainText(
@@ -909,6 +914,24 @@ test.describe('with a response of its own', () => {
     await sortTo(page, 'Best return')
     await expect(strip(page).getByTestId('rank-empty')).toHaveText('No name had enough history to score its grid.')
     await expect(picks(page)).toHaveCount(0)
+    // No name listed, so no note about opening one.
+    await expect(page.getByTestId('rank-click-note')).toHaveCount(0)
+  })
+
+  test('an expanded table that re-screens to nothing shows the empty line, not an empty table', async ({ page }) => {
+    await mockPutLabApi(page)
+    await serveLeaderboard(page, (u) => (u.searchParams.get('moneyness_pct') === '15' ? { ...LEADERBOARD, ranked: [] } : LEADERBOARD))
+    await page.goto('/')
+    await expand(page)
+    await expect(fragTable(page)).toBeVisible()
+    const empty = page.waitForResponse(
+      (r) => new URL(r.url()).pathname === '/api/putlab/leaderboard' && new URL(r.url()).searchParams.get('moneyness_pct') === '15',
+    )
+    await rail(page).getByRole('radiogroup', { name: 'Strike presets' }).getByText('15%').click()
+    await empty
+    await expect(strip(page).getByTestId('rank-empty')).toBeVisible()
+    await expect(fragTable(page)).toHaveCount(0)
+    await expect(page.getByTestId('rank-provenance')).toHaveCount(0)
   })
 
   test('the provenance dates the screen with its own as-of', async ({ page }) => {
