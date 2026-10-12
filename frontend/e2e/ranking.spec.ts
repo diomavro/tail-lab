@@ -934,6 +934,9 @@ test.describe('with a response of its own', () => {
     await expect(fragTable(page).getByRole('columnheader', { name: 'At 7.5% · 8w', exact: true })).toBeVisible()
     await sortTo(page, 'Best return')
     await expect(page.getByTestId('best-return')).toContainText('own $2,500 per roll')
+    // The export names the screen shown, not the default strike.
+    const href = (await page.getByRole('link', { name: /roll schedule/i }).getAttribute('href'))!
+    expect(new URL(href, 'http://localhost').searchParams.get('moneyness_pct')).toBe('7.5')
     const top = topByReturn()
     await expect(bestTable(page).locator('tbody tr').first().locator('td.pl-rec-premium')).toContainText(
       `$${(2500 * top.best_n_cycles!).toLocaleString('en-US')}`,
@@ -1161,9 +1164,14 @@ test.describe('with a response of its own', () => {
       )
       ;(document.activeElement as HTMLElement | null)?.blur()
     })
-    await sortTo(page, 'Best return')
-    await page.waitForTimeout(300)
-    await expect(bestTable(page).getByRole('row', { name: 'Open EEM at its best cell' })).not.toBeFocused()
+    // A real re-screen, from the mouse: a wrongly armed target would fire on it.
+    const again = page.waitForResponse(
+      (r) => new URL(r.url()).pathname === '/api/putlab/leaderboard' && new URL(r.url()).searchParams.get('moneyness_pct') === '15',
+    )
+    await rail(page).getByRole('radiogroup', { name: 'Strike presets' }).getByText('15%').click()
+    await again
+    await expect(picks(page).first()).toBeVisible()
+    await expect(eem).not.toBeFocused()
   })
 
   test('each metric column is ranked on its own, not by the composite', async ({ page }) => {
