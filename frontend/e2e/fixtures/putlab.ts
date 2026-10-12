@@ -363,7 +363,9 @@ export const LEADERBOARD: PutLabLeaderboardResponse = {
       best_tenor_weeks: bestT,
       // Every best_* field below is measured at (bestM, bestT) -- the same
       // cell -- which is what the strip's best-return order ranks on.
-      best_roi_on_premium: Number((bestAnn * 3.4).toFixed(4)),
+      // Not one factor for every row: QQQ's differs, so a loss shade scaled
+      // from this column instead of best_annualized reads differently.
+      best_roi_on_premium: Number((bestAnn * (asset === 'qqq' ? 4.2 : 3.4)).toFixed(4)),
       best_hit_rate: Number((0.06 + frag / 7).toFixed(4)),
       best_biggest_payoff_mult: Number((1.4 + frag * 5).toFixed(2)),
       best_n_cycles: Math.round((52 * 4) / bestT),

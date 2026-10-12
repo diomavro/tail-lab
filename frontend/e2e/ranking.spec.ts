@@ -588,6 +588,26 @@ test.describe('with the shared fixture', () => {
     await expect(strip(page).getByTestId('rank-pick').filter({ hasText: 'TSLA' })).toBeFocused()
   })
 
+  test('a restored target is spent: a later re-screen leaves focus alone', async ({ page }) => {
+    const tslaPick = strip(page).getByTestId('rank-pick').filter({ hasText: 'TSLA' })
+    await tslaPick.focus()
+    const landed = page.waitForResponse(
+      (r) => new URL(r.url()).pathname === '/api/putlab/leaderboard' && new URL(r.url()).searchParams.get('tenor_weeks') === '12',
+    )
+    await page.keyboard.press('Enter')
+    await landed
+    await expect(tslaPick).toBeFocused()
+    // An unrelated re-screen from the mouse, with focus left on the page.
+    const again = page.waitForResponse(
+      (r) => new URL(r.url()).pathname === '/api/putlab/leaderboard' && new URL(r.url()).searchParams.get('moneyness_pct') === '15',
+    )
+    await rail(page).getByRole('radiogroup', { name: 'Strike presets' }).getByText('15%').click()
+    await page.evaluate(() => (document.activeElement as HTMLElement | null)?.blur())
+    await again
+    await expect(picks(page).first()).toBeVisible()
+    await expect(tslaPick).not.toBeFocused()
+  })
+
   test('the restore makes one attempt, then lets go', async ({ page }) => {
     await openBestReturn(page)
     await bestTable(page).getByRole('row', { name: 'Open TSLA at its best cell' }).focus()
