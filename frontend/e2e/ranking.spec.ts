@@ -248,6 +248,18 @@ test.describe('with the shared fixture', () => {
     }
   })
 
+  test('a gain prints in the gain colour, in every place a return is shown', async ({ page }) => {
+    // TSLA gains in both its best and its screened cell; GLD tops Best return.
+    await expect(picks(page).first().locator('.pl-pos')).toHaveText(fmtPct(LEADERBOARD.ranked[0]!.best_annualized!))
+    await expand(page)
+    const tsla = fragTable(page).locator('tbody tr').filter({ hasText: 'TSLA' }).locator('td')
+    expect(LEADERBOARD.ranked[0]!.annualized_return).toBeGreaterThan(0)
+    await expect(tsla.nth(4)).toHaveClass(/pl-pos/) // Per year, best cell
+    await expect(tsla.nth(6)).toHaveClass(/pl-pos/) // Per year, screened cell
+    await sortTo(page, 'Best return')
+    await expect(bestTable(page).locator('tbody tr').first().locator('td.pl-rec-ann')).toHaveClass(/pl-pos/)
+  })
+
   test('every name advertises its own best cell, in both orders', async ({ page }) => {
     const cell = (r: RankedAsset) => `${r.best_moneyness_pct}% · ${r.best_tenor_weeks}w`
     const byFragility = LEADERBOARD.ranked
