@@ -40,7 +40,7 @@ test('sorts every cell into loss, under-benchmark, or beat', async ({ page }) =>
   await expect(sweep.getByRole('button', { name: /^5% OOM · 1 week/ })).toHaveClass(/is-loss/)
   await expect(sweep.getByRole('button', { name: /^10% OOM · 1 month/ })).toHaveClass(/is-under/)
   await expect(sweep.getByRole('button', { name: /^15% OOM · 1 month/ })).toHaveClass(/is-beat/)
-  await expect(sweep.locator('.pl-sweep-cell')).toHaveCount(12)
+  await expect(sweep.locator('.pl-sweep-cell')).toHaveCount(33)
 })
 
 test('keeps loss, interactive and elevated on three separate inks', async ({ page }) => {

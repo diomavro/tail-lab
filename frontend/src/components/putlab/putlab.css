@@ -735,6 +735,15 @@
   display: grid;
   grid-template-columns: 92px repeat(var(--pl-sweep-cols, 4), minmax(0, 1fr));
 }
+/* On a phone the 11 strike columns are narrower than a "−100%" label, so the
+   grid keeps a readable column floor and scrolls inside its own box instead of
+   widening the page. The hover popup would be clipped there, and hover does not
+   exist on touch anyway: the aria-label carries the same reading. */
+.is-narrow .pl-sweep-scroll { overflow-x: auto; }
+.is-narrow .pl-sweep {
+  min-width: calc(92px + var(--pl-sweep-cols, 4) * 52px);
+}
+.is-narrow .pl-tip { display: none; }
 .pl-sweep-row { display: grid; grid-column: 1 / -1; grid-template-columns: inherit; }
 .pl-sweep-head { text-align: center; font-size: 11.5px; color: var(--ink-45); padding-bottom: 5px; }
 .pl-sweep-rowhead {

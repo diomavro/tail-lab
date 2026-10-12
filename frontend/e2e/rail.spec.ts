@@ -285,6 +285,19 @@ test.describe('on a phone-width page', () => {
       expect(overflow, name).toBeLessThanOrEqual(1)
     }
   })
+
+  test('the strike × tenor grid scrolls inside itself, −100% cell and all', async ({ page }) => {
+    await page.goto('/')
+    const grid = page.getByRole('group', { name: 'Annualized return by strike and tenor' })
+    await expect(grid.getByRole('button', { name: /−100%/ }).first()).toBeVisible()
+    const scroller = page.locator('.pl-sweep-scroll')
+    const [inner, outer] = await scroller.evaluate((el) => [el.scrollWidth, el.clientWidth])
+    expect(inner).toBeGreaterThan(outer)
+    const overflow = await page.evaluate(
+      () => document.documentElement.scrollWidth - document.documentElement.clientWidth,
+    )
+    expect(overflow).toBeLessThanOrEqual(1)
+  })
 })
 
 test('the narrow layout follows the page’s own width, not the window’s', async ({ page }) => {
