@@ -164,7 +164,8 @@ differently:
   If you fix it, **resolve it in the same run** — but only after `gh pr
   create` succeeded **and** the PR is not a draft (a draft may never land;
   list the issue ids in its body as `Feedback-issues: <ids>` and leave them
-  open; once Dio merges the draft, the next run resolves them):
+  open; once Dio merges the draft, a later run checks each on main and
+  resolves it):
   ```
   curl -s -X POST -H "Authorization: Bearer $TAIL_LAB_FEEDBACK_TOKEN" \
     https://tail-lab.fly.dev/api/feedback/<id>/resolve

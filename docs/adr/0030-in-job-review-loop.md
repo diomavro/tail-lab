@@ -45,9 +45,9 @@ agents did none of that:
    when the PR is opened.
 3. **A draft is the honest outcome when review did not come back clean.** A PR
    whose last round was not clean, or that ran no round, opens as a draft and
-   waits for Dio. Feedback issues it touches stay open until Dio merges it; the
-   next daily run then resolves them, reading the merged PR's `Feedback-issues:`
-   line.
+   waits for Dio. Feedback issues it fixes stay open until Dio merges it; a
+   later daily run reads the merged PR's `Feedback-issues:` line, checks on main
+   that each is really fixed, and resolves it.
    **Amends `docs/adr/0025` §Decision 1:** `agent-review` skips drafts and runs
    when one is marked ready, so the CI fixer never rewrites a PR Dio is meant to
    judge as it stands.

@@ -89,8 +89,9 @@ jobs:
           # issues open (only Dio can land it), so once Dio merges one, its ids
           # must be resolved, not fixed a second time.
           {
-            echo "MERGED agent PRs' Feedback-issues (already fixed on main):"
-            gh pr list --repo "$GITHUB_REPOSITORY" --state merged --limit 30 \
+            echo "MERGED agent PRs' Feedback-issues (claimed fixed; check on main):"
+            gh pr list --repo "$GITHUB_REPOSITORY" --state merged --limit 200 \
+              --search "merged:>=$(date -u -d '-60 days' +%F)" \
               --json number,headRefName,body,isCrossRepository,author \
               --jq '.[] | select(.isCrossRepository | not) | select(.author.login == "claude")
                         | select(.headRefName | startswith("agent/"))
@@ -179,9 +180,10 @@ jobs:
                 `AGENT_TODO-item:` lines. NEVER pick an `AGENT_TODO.md` item or feedback issue
                 that an open PR already covers — that is how the same work got proposed three
                 times. Pick the next thing instead. The file ends with the `Feedback-issues:`
-                lines of recently MERGED agent PRs: an issue still open but listed there is
-                already fixed on main (Dio merged a draft) — resolve it with the step-1 call
-                instead of fixing it again.
+                lines of recently MERGED agent PRs. An issue still open but listed there was
+                claimed fixed by a PR Dio merged: check on main that it really is fixed; if so,
+                resolve it with the step-1 call instead of fixing it again, and if not, treat it
+                as open.
             2b. If `$SCRATCH_RUN` is set, skip this step (verification runs must not act on
                 real advisories). Otherwise, pick up the design reviewer's unaddressed findings:
                   gh pr list --state merged --limit 6 --json number,headRefName \
