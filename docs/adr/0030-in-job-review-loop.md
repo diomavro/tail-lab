@@ -51,11 +51,16 @@ agents did none of that:
    judge as it stands.
 4. **`.claude/**` joins the constitution.** The reviewers are the agent's own
    quality gate, so an agent may not edit them. It is added to `automerge.yml`'s
-   guarded paths and to CI's `constitution-guard`. That makes three kinds of
+   guarded paths and to CI's `constitution-guard`. Root `CLAUDE.md` is loaded as
+   instructions too, so `constitution-guard` also blocks agent PRs that touch
+   it. It stays off `automerge.yml`'s list, because Dio's own PRs edit it
+   routinely. That makes three kinds of
    change `docs/adr/0025` lists as stopping an auto-merge: drafts, the existing
    constitution, and now `.claude/**`.
 5. **Neither agent redoes an open PR.** Both workflows list open `agent/*` PRs
-   before the agent runs. The weekly agent runs only when no `agent/cleanup-*` PR
+   authored by `claude` in this repo before the agent runs. Fork PRs are
+   ignored: the repo is public, and a fork branch named `agent/*` must not be
+   able to stall an agent or put text in its prompt. The weekly agent runs only when no `agent/cleanup-*` PR
    is open. The daily agent skips anything an open PR covers, and stops while
    three or more of its drafts are open.
 

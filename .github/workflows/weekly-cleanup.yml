@@ -60,8 +60,9 @@ jobs:
         run: |
           set -euo pipefail
           n=$(gh pr list --repo "$GITHUB_REPOSITORY" --state open --limit 100 \
-                --json headRefName \
-                --jq '[.[] | select(.headRefName | startswith("agent/cleanup-"))] | length')
+                --json headRefName,isCrossRepository,author \
+                --jq '[.[] | select(.isCrossRepository | not) | select(.author.login == "claude")
+                           | select(.headRefName | startswith("agent/cleanup-"))] | length')
           echo "count=$n"
           echo "count=$n" >> "$GITHUB_OUTPUT"
           if [ "$n" != "0" ]; then
@@ -91,7 +92,7 @@ jobs:
             `AGENT_TODO.md` first. Everything in the daily agent's charter still binds you:
             the wall (never trade, never touch credentials), the constitution rule (never edit
             README.md, ARCHITECTURE.md, docs/STANDARDS.md, docs/AGENT_MISSION.md,
-            docs/END_STATE.md, docs/adr/**, .github/workflows/** or .claude/**), and PRs-only.
+            docs/END_STATE.md, CLAUDE.md, docs/adr/**, .github/workflows/** or .claude/**), and PRs-only.
 
             **The safety property that makes this sane: `tests/` is almost untouchable.**
             A refactor that preserves behaviour does not need the tests to change — that is

@@ -233,7 +233,7 @@ differently:
    action from you.
    A `constitution-guard` check blocks auto-merge on any PR of yours that
    edits `docs/adr/**`, `ARCHITECTURE.md`, `docs/STANDARDS.md`,
-   `README.md`, `docs/AGENT_MISSION.md`, `docs/END_STATE.md`,
+   `README.md`, `docs/AGENT_MISSION.md`, `docs/END_STATE.md`, `CLAUDE.md`,
    `.github/workflows/**` or `.claude/**` — so don't; propose those for a
    human instead.
 5. **Data changes:** there is no data-branching layer to stage them on

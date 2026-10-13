@@ -140,8 +140,8 @@ jobs:
           fi
           changed=$(git diff --name-only "$BASE_SHA...HEAD")
           echo "Changed files:"; echo "$changed"
-          if echo "$changed" | grep -qE '^docs/adr/|^\.github/workflows/|^\.claude/|^ARCHITECTURE\.md$|^docs/STANDARDS\.md$|^README\.md$|^docs/AGENT_MISSION\.md$|^docs/END_STATE\.md$'; then
-            echo "::error::This agent PR edits the constitution (docs/adr, ARCHITECTURE.md, STANDARDS.md, README.md, AGENT_MISSION.md, END_STATE.md), .github/workflows (where the agent's own instructions and this guard live) or .claude/ (the agent's own reviewers, docs/adr/0030). A human must review + merge it — auto-merge is blocked."
+          if echo "$changed" | grep -qE '^docs/adr/|^\.github/workflows/|^\.claude/|^CLAUDE\.md$|^ARCHITECTURE\.md$|^docs/STANDARDS\.md$|^README\.md$|^docs/AGENT_MISSION\.md$|^docs/END_STATE\.md$'; then
+            echo "::error::This agent PR edits the constitution (docs/adr, ARCHITECTURE.md, STANDARDS.md, README.md, AGENT_MISSION.md, END_STATE.md), .github/workflows (where the agent's own instructions and this guard live) or .claude/ and CLAUDE.md (the agent's own reviewers and the project memory it loads as instructions, docs/adr/0030). A human must review + merge it — auto-merge is blocked."
             exit 1
           fi
           echo "OK: agent PR leaves the constitution untouched."
@@ -515,8 +515,8 @@ jobs:
 
             Everything in `docs/AGENT_MISSION.md` still binds you — above all the constitution
             rule: never edit `README.md`, `ARCHITECTURE.md`, `docs/STANDARDS.md`,
-            `docs/AGENT_MISSION.md`, `docs/END_STATE.md`, `docs/adr/**`, `.github/workflows/**`
-            or `.claude/**`.
+            `docs/AGENT_MISSION.md`, `docs/END_STATE.md`, `CLAUDE.md`, `docs/adr/**`,
+            `.github/workflows/**` or `.claude/**`.
             If a finding can only be resolved by editing one of those, do not: say so in a
             comment and stop.
 

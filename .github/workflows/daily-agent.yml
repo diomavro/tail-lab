@@ -66,7 +66,9 @@ jobs:
       # What open agent PRs already cover, so this run never redoes one
       # (2026-10-12: the weekly agent opened the same refactor three times).
       # Title, draft flag, files, and the two fixed body lines every agent PR
-      # carries — nothing else from the body.
+      # carries — nothing else from the body. Only the agent's own PRs (author
+      # `claude`, same repo): this repo is public, and a fork PR named
+      # `agent/*` must not be able to stall the agent or put text in its prompt.
       - name: List open agent PRs
         env:
           GH_TOKEN: ${{ github.token }}
@@ -76,15 +78,17 @@ jobs:
           set -euo pipefail
           out="${{ runner.temp }}/open-prs.txt"
           gh pr list --repo "$GITHUB_REPOSITORY" --state open --limit 100 \
-            --json number,title,headRefName,isDraft,files,body \
-            --jq '.[] | select(.headRefName | startswith("agent/"))
+            --json number,title,headRefName,isDraft,files,body,isCrossRepository,author \
+            --jq '.[] | select(.isCrossRepository | not) | select(.author.login == "claude")
+                      | select(.headRefName | startswith("agent/"))
                       | select(.headRefName | startswith("agent/cleanup-") | not)
                       | "#\(.number) \(.headRefName) draft=\(.isDraft)\n  title: \(.title)\n  "
                         + ([.body | splits("\n") | select(test("^(Feedback-issues|AGENT_TODO-item):"))] | join("\n  "))
                         + "\n  files: \([.files[].path] | join(", "))"' > "$out"
           drafts=$(gh pr list --repo "$GITHUB_REPOSITORY" --state open --limit 100 \
-            --json headRefName,isDraft \
-            --jq '[.[] | select(.headRefName | startswith("agent/"))
+            --json headRefName,isDraft,isCrossRepository,author \
+            --jq '[.[] | select(.isCrossRepository | not) | select(.author.login == "claude")
+                       | select(.headRefName | startswith("agent/"))
                        | select(.headRefName | startswith("agent/cleanup-") | not)
                        | select(.isDraft)] | length')
           {
@@ -157,7 +161,7 @@ jobs:
                daily sweep is broken, and diagnosing it is the highest-value thing available
                to you today — ahead of whatever is at the top of `AGENT_TODO.md`. Say so in
                the PR. If it is fresh, note the last session and move on.
-            1b. Read what open agent PRs already cover:
+            2a. Read what open agent PRs already cover:
                   cat "$RUNNER_TEMP/open-prs.txt"
                 Each entry shows a PR's title, draft flag, files, and its `Feedback-issues:` and
                 `AGENT_TODO-item:` lines. NEVER pick an `AGENT_TODO.md` item or feedback issue
@@ -241,8 +245,8 @@ jobs:
                "Auto-generated daily; draft: waits for Dio (open review findings above)."
                NOTE: a `constitution-guard` check blocks auto-merge for any agent PR that edits the
                constitution (docs/adr/**, ARCHITECTURE.md, docs/STANDARDS.md, README.md,
-               docs/AGENT_MISSION.md, docs/END_STATE.md) **or `.github/workflows/**` or
-               `.claude/**`** — the last two because that is where this prompt, your reviewers,
+               docs/AGENT_MISSION.md, docs/END_STATE.md, CLAUDE.md) **or `.github/workflows/**`
+               or `.claude/**`** — the last two because that is where this prompt, your reviewers,
                the auto-merge rule and the guard itself live, so an unreviewed edit there could
                quietly widen everything else (`docs/adr/0022`, `docs/adr/0030`).
                Do NOT edit those — if a change needs one, describe it in the PR body / propose an
