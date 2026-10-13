@@ -69,7 +69,7 @@ ahead of whatever is at the top of `AGENT_TODO.md`. Say so in the PR.
 no PR is a successful run if nothing on the backlog clears the bar or fits
 in a well-scoped increment. Do not manufacture busywork, refactor for its
 own sake, or pad a small change with unrelated cleanup to look productive.
-Noise is a real cost — your PRs **auto-merge on green CI**, so a marginal
+Noise is a real cost — your non-draft PRs **auto-merge on green CI**, so a marginal
 change lands on `main` without a human catching it; a string of them erodes
 the codebase. The bar is higher, not lower, because no one is gating each
 one. When in doubt, don't.
@@ -80,7 +80,8 @@ Two things changed on 2026-08-28 (`docs/adr/0023`), because 75% of merged PRs
 here are yours and CI was the only thing reading them.
 
 **An adversarial design reviewer runs on every PR in this repo** — yours and
-everyone else's since `docs/adr/0025` — and can block auto-merge. Its findings
+everyone else's since `docs/adr/0025` — and can block auto-merge. (A draft
+is reviewed when it is marked ready, not before — `docs/adr/0030`.) Its findings
 go to a fixer that may apply them or record a reasoned disagreement, and the
 loop repeats until the review is clean or the round bound is hit. It does not
 re-check correctness, types, layering or style — other jobs prove those. It looks for duplication, dead or speculative code,
@@ -160,7 +161,11 @@ differently:
 - **`issues`** (`kind: "issue"`) — **transient** bug/small-fix notes. If
   one clearly fits this run's scope and clears the value bar below, prefer
   it over the next `AGENT_TODO.md` item (say why, in the PR description).
-  If you fix it, **resolve it in the same run**:
+  If you fix it, **resolve it in the same run** — but only after `gh pr
+  create` succeeded **and** the PR is not a draft (a draft may never land;
+  list the issue ids in its body as `Feedback-issues: <ids>` and leave them
+  open; once Dio merges the draft, a later run checks each on main and
+  resolves it):
   ```
   curl -s -X POST -H "Authorization: Bearer $TAIL_LAB_FEEDBACK_TOKEN" \
     https://tail-lab.fly.dev/api/feedback/<id>/resolve
@@ -180,18 +185,65 @@ differently:
    if you deviate from the top of the list, say why in the PR description.
 3. Build it to the standard in `docs/STANDARDS.md`: typed, tested (a
    synthetic case with a known answer for anything numeric), point-in-time
-   safe if it touches backtest data paths, coverage floor met.
-4. **Code changes:** open a PR against `main` with `gh pr create` and do
-   nothing further — the `automerge` workflow squash-merges it once every CI
-   check is green, and leaves it open if any fails. Never push directly to
+   safe if it touches backtest data paths, coverage floor met. Update
+   `AGENT_TODO.md` now, in the same change (check off what you did, add what
+   you learned), so the review below sees it too.
+
+   **3a. Review before you propose (`docs/adr/0030`).** The CI reviewer only
+   reads design. Nothing else checks correctness or test strength before your
+   change merges, so you do, with fresh eyes:
+   - Commit locally to your `agent/<slug>` branch. **Do not push yet.**
+   - Write the PR body now — everything except the Review log, including the
+     `Feedback-issues:` and `AGENT_TODO-item:` lines — to
+     `$RUNNER_TEMP/pr-body.md`, so the claims reviewer can check it. Keep it
+     current after each fix; step 4 opens the PR with `--body-file` from it.
+   - Start three `adversarial-reviewer` subagents **in parallel**, one per
+     dimension: `correctness` (including point-in-time safety), `test-strength`
+     (mutation testing; tell it the round number `<N>`), and `claims`
+     (`$RUNNER_TEMP/pr-body.md`, `AGENT_TODO.md` and docs versus
+     what the code does, and whether it traces to `docs/END_STATE.md`). Every
+     reviewer reviews `git diff origin/main...HEAD`.
+   - Afterwards `git status --porcelain` must be empty and `HEAD` unchanged; if
+     not, a reviewer touched your tree — discard that round and say so.
+   - Re-check each finding yourself before acting on it: reviewers overstate.
+     Fix what is real with new commits (never amend), and re-run the gate.
+     No line of a commit message may begin with `[review-fix]` — that prefix
+     is CI's round counter.
+
+   **3b. Loop, within a budget.** Run a fresh round (new subagents, never the
+   same one twice). Stop when a round comes back clean, or after **two
+   rounds**. Your step has an 80-minute timeout counted from `$START` (epoch
+   seconds): start a round only while `$(date +%s) - $START` is under 2700
+   (45 minutes), and past 4320 (72 minutes) stop fixing. A timeout loses the
+   whole run, so leave room for the PR.
+   - §3a–3b and the push-at-the-end rule are the **daily** agent's. The
+     weekly cleanup agent has no reviewers and opens an ordinary PR.
+   - A round is **clean** only if all three reviewers end with
+     `VERDICT: CLEAN`. A missing verdict counts as not clean.
+   - The PR is a **draft unless the most recent round was clean**. Zero
+     rounds, a missing verdict, or fixes made after the last round all count
+     as not clean. A draft lists the open findings and waits for Dio.
+   - Write every round — each reviewer's verdict line, its
+     `tail_lab.__file__` line and its mutation results — to
+     `$GITHUB_STEP_SUMMARY` and to a "Review log" section in the PR body.
+     Never turn on full output: this repo is public and you read private
+     feedback.
+4. **Code changes:** push only now — `git push -u origin HEAD`
+   immediately before `gh pr create`, never earlier (if `gh pr create` then
+   fails, `git push origin --delete <branch>`), so a run that ends without a
+   PR leaves nothing behind. Then do nothing further — the `automerge`
+   workflow squash-merges a non-draft PR once every CI check is green, and
+   leaves it open if any fails; a draft (3b) waits for Dio. Never push directly to
    `main`, never merge it yourself, never force/`--admin` a merge, never
    bypass a red check. Never run a deploy yourself — deployment is
    automatic: the `deploy` workflow ships every green `main` commit
    (`docs/adr/0016`), so your merged PR reaches prod without any deploy
    action from you.
    A `constitution-guard` check blocks auto-merge on any PR of yours that
-   edits `docs/adr/**`, `ARCHITECTURE.md`, `docs/STANDARDS.md`, or
-   `README.md` — so don't; propose those for a human instead.
+   edits `docs/adr/**`, `ARCHITECTURE.md`, `docs/STANDARDS.md`,
+   `README.md`, `docs/AGENT_MISSION.md`, `docs/END_STATE.md`, `CLAUDE.md`,
+   `.github/workflows/**` or `.claude/**` — so don't; propose those for a
+   human instead.
 5. **Data changes:** there is no data-branching layer to stage them on
    (`docs/adr/0012`) — bronze writes go straight through `LakeStore`, which
    is safe by construction: a write is either a new immutable snapshot or a
@@ -202,8 +254,7 @@ differently:
    any other. You do not currently have data-source credentials in this
    workflow, so in practice your data-shaped increments are the adapter
    code itself, not a live ingestion run.
-6. Update `AGENT_TODO.md` in the same PR: check off what you did, add
-   anything you learned that belongs on the backlog.
+6. (`AGENT_TODO.md` is updated in step 3, before the review.)
 7. If nothing clears the value bar, do nothing — no PR, no filler commit.
    (If your run has a status/log surface, a one-line "nothing proposed
    today, reason: ..." note there is fine; it does not need a PR.)
@@ -226,7 +277,7 @@ are not.
 - Never write data that isn't point-in-time safe into a path a backtest
   reads. (`docs/adr/0009`)
 - Never overwrite bronze.
-- Enable auto-merge on your PR; never force it, never bypass a red check, never run a deploy yourself (CD ships green `main` automatically — `docs/adr/0016`).
+- Let auto-merge take your non-draft PR (a draft from 3b is the one exception); never force it, never bypass a red check, never run a deploy yourself (CD ships green `main` automatically — `docs/adr/0016`).
 - Log everything you automate, in detail (`docs/STANDARDS.md` §f, `docs/adr/0016`): a PR that adds automated behavior without a reviewable record of what it does at runtime is below the bar.
 - Never edit `ARCHITECTURE.md`, `docs/adr/*`, or `docs/STANDARDS.md`
   directly — propose, don't enact.
@@ -235,4 +286,5 @@ are not.
   research question in its §4.
 - Never resolve a `big_picture` feedback record — only Dio retires a
   standing directive (`docs/adr/0014`). Resolve `issue` records only when
-  you actually fixed them, in the same run.
+  you actually fixed them, in the same run, and only once a non-draft PR
+  exists.

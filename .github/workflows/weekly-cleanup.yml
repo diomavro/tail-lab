@@ -29,6 +29,7 @@ concurrency:
 jobs:
   simplify:
     runs-on: ubuntu-latest
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
@@ -49,13 +50,33 @@ jobs:
           pip install -e ".[dev]"
           cd frontend && npm ci
 
+      # One cleanup PR at a time. Ratchet PRs touch pyproject.toml, so they
+      # wait for Dio; without this the agent re-proposed the same refactor
+      # every Sunday while the last one sat open (#126, #135, #160).
+      - name: Count open cleanup PRs
+        id: open
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          n=$(gh pr list --repo "$GITHUB_REPOSITORY" --state open --limit 100 \
+                --json headRefName,isCrossRepository,author \
+                --jq '[.[] | select(.isCrossRepository | not) | select(.author.login == "claude")
+                           | select(.headRefName | startswith("agent/cleanup-"))] | length')
+          echo "count=$n"
+          echo "count=$n" >> "$GITHUB_OUTPUT"
+          if [ "$n" != "0" ]; then
+            echo "Skipped: $n open \`agent/cleanup-*\` PR(s) still waiting — one at a time." >> "$GITHUB_STEP_SUMMARY"
+          fi
+
       - name: Run the cleanup agent
+        if: steps.open.outputs.count == '0'
         uses: anthropics/claude-code-action@cab360f6565aa35a51d6ce9e43f1f4287c0a32ea # v1
         env:
           GH_TOKEN: ${{ github.token }}
         with:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
-          claude_args: '--allowedTools Bash,Read,Write,Edit,Grep,Glob'
+          claude_args: '--model claude-opus-5-5 --allowedTools Bash,Read,Write,Edit,Grep,Glob'
           prompt: |
             You are the tail-lab **weekly cleanup agent**. You are the counterweight to the
             daily agent, which adds 15.8 lines for every 1 it removes because its charter
@@ -71,7 +92,9 @@ jobs:
             `AGENT_TODO.md` first. Everything in the daily agent's charter still binds you:
             the wall (never trade, never touch credentials), the constitution rule (never edit
             README.md, ARCHITECTURE.md, docs/STANDARDS.md, docs/AGENT_MISSION.md,
-            docs/END_STATE.md, docs/adr/** or .github/workflows/**), and PRs-only.
+            docs/END_STATE.md, CLAUDE.md, docs/adr/**, .github/workflows/** or .claude/**), and PRs-only.
+            The charter's review loop (§Workflow 3a–3b) is the daily agent's, not yours: you open
+            an ordinary, non-draft PR.
 
             **The safety property that makes this sane: `tests/` is almost untouchable.**
             A refactor that preserves behaviour does not need the tests to change — that is
@@ -115,4 +138,6 @@ jobs:
             PR. Title: what you removed. Body: what you deleted and why it was safe, the
             before/after line count, whether any ratchet number moved, and confirmation that
             `tests/` is unchanged (or exactly which test died with which code). Close with
-            "Auto-generated weekly; auto-merges on green CI."
+            "Auto-generated weekly; auto-merges on green CI." — unless you changed
+            `pyproject.toml` (a ratchet), which automerge always holds: then close with
+            "Auto-generated weekly; touches pyproject.toml, so it waits for Dio."

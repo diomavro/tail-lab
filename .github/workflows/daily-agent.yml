@@ -21,7 +21,12 @@ name: Daily platform agent
 on:
   schedule:
     - cron: "0 7 * * *"   # daily 07:00 UTC = 09:00 Europe/Budapest (summer)
-  workflow_dispatch: {}
+  workflow_dispatch:
+    inputs:
+      no_feedback:
+        description: "Scratch/verification run: withhold the feedback token and skip merged-PR advisories"
+        type: boolean
+        default: false
 
 permissions:
   contents: write        # push the agent/* branch
@@ -36,6 +41,7 @@ concurrency:
 jobs:
   improve:
     runs-on: ubuntu-latest
+    timeout-minutes: 90
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
@@ -57,17 +63,79 @@ jobs:
           pip install -e ".[dev]"
           cd frontend && npm ci
 
+      # What open agent PRs already cover, so this run never redoes one
+      # (2026-10-12: the weekly agent opened the same refactor three times).
+      # Title, draft flag, files, and the two fixed body lines every agent PR
+      # carries — nothing else from the body. Only the agent's own PRs (author
+      # `claude`, same repo): this repo is public, and a fork PR named
+      # `agent/*` must not be able to stall the agent or put text in its prompt.
+      - name: List open agent PRs
+        env:
+          GH_TOKEN: ${{ github.token }}
+          NO_FEEDBACK: ${{ inputs.no_feedback }}
+          TAIL_LAB_FEEDBACK_TOKEN: ${{ !inputs.no_feedback && secrets.TAIL_LAB_FEEDBACK_TOKEN || '' }}
+        run: |
+          set -euo pipefail
+          out="${{ runner.temp }}/open-prs.txt"
+          gh pr list --repo "$GITHUB_REPOSITORY" --state open --limit 100 \
+            --json number,title,headRefName,isDraft,files,body,isCrossRepository,author \
+            --jq '.[] | select(.isCrossRepository | not) | select(.author.login == "claude")
+                      | select(.headRefName | startswith("agent/"))
+                      | select(.headRefName | startswith("agent/cleanup-") | not)
+                      | "#\(.number) \(.headRefName) draft=\(.isDraft)\n  title: \(.title)\n  "
+                        + ([.body | splits("\n") | select(test("^\\s*(Feedback-issues|AGENT_TODO-item):"))] | join("\n  "))
+                        + "\n  files: \([.files[].path] | join(", "))"' > "$out"
+          # Feedback issues a merged agent PR already fixed. A draft leaves its
+          # issues open (only Dio can land it), so once Dio merges one, its ids
+          # must be resolved, not fixed a second time.
+          {
+            echo "MERGED agent PRs' Feedback-issues (claimed fixed; check on main):"
+            gh pr list --repo "$GITHUB_REPOSITORY" --state merged --limit 200 \
+              --search "merged:>=$(date -u -d '-60 days' +%F)" \
+              --json number,headRefName,body,isCrossRepository,author \
+              --jq '.[] | select(.isCrossRepository | not) | select(.author.login == "claude")
+                        | select(.headRefName | startswith("agent/"))
+                        | {n: .number, l: [.body | splits("\n") | select(test("^\\s*Feedback-issues:"))]}
+                        | select(.l | length > 0) | "#\(.n) " + (.l | join(" "))'
+          } >> "$out"
+          drafts=$(gh pr list --repo "$GITHUB_REPOSITORY" --state open --limit 100 \
+            --json headRefName,isDraft,isCrossRepository,author \
+            --jq '[.[] | select(.isCrossRepository | not) | select(.author.login == "claude")
+                       | select(.headRefName | startswith("agent/"))
+                       | select(.headRefName | startswith("agent/cleanup-") | not)
+                       | select(.isDraft)] | length')
+          {
+            echo "### Open agent PRs"
+            echo '```'
+            cat "$out"
+            echo '```'
+            echo "open_drafts=$drafts"
+            echo "feedback_token_set=$([ -n "$TAIL_LAB_FEEDBACK_TOKEN" ] && echo yes || echo no)"
+          } >> "$GITHUB_STEP_SUMMARY"
+          echo "drafts=$drafts" >> "$GITHUB_OUTPUT"
+          if [ "$NO_FEEDBACK" = "true" ]; then echo "SCRATCH_RUN=1" >> "$GITHUB_ENV"; fi
+        id: open
+
+      # The in-job review loop budgets against this (AGENT_MISSION §Workflow 3b).
+      - name: Start the clock
+        if: steps.open.outputs.drafts < 3
+        run: echo "START=$(date +%s)" >> "$GITHUB_ENV"
+
       - name: Run the platform agent
+        # Three or more drafts waiting for Dio means stop adding more.
+        if: steps.open.outputs.drafts < 3
+        timeout-minutes: 80
         uses: anthropics/claude-code-action@cab360f6565aa35a51d6ce9e43f1f4287c0a32ea # v1
         env:
           GH_TOKEN: ${{ github.token }}
           # The ONE new secret this agent gets, alongside the OAuth token
           # above — read-only feedback pull + resolving issues it fixes.
           # Deliberately NOT FRED/AWS/deploy creds (least privilege).
-          TAIL_LAB_FEEDBACK_TOKEN: ${{ secrets.TAIL_LAB_FEEDBACK_TOKEN }}
+          # Withheld on a `no_feedback` dispatch (verification runs).
+          TAIL_LAB_FEEDBACK_TOKEN: ${{ !inputs.no_feedback && secrets.TAIL_LAB_FEEDBACK_TOKEN || '' }}
         with:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
-          claude_args: '--allowedTools Bash,Read,Write,Edit,Grep,Glob'
+          claude_args: '--model claude-opus-5-5 --allowedTools Bash,Read,Write,Edit,Grep,Glob,Agent'
           prompt: |
             You are the tail-lab **daily platform agent**. Your complete operating charter is
             `docs/AGENT_MISSION.md` in this repo — read it FIRST and follow it EXACTLY: the value
@@ -91,7 +159,8 @@ jobs:
                    he retires them.
                  - `issues` (`kind: "issue"`) — transient bug/small-fix notes. If one clearly fits
                    this run's scope and value bar, prefer it over the next `AGENT_TODO.md` item and
-                   say so in the PR description; if you fix it, resolve it in the SAME run via
+                   say so in the PR description; if you fix it, resolve it in the SAME run — but
+                   only after `gh pr create` succeeded AND the PR is not a draft (step 7) — via
                      curl -s -X POST -H "Authorization: Bearer $TAIL_LAB_FEEDBACK_TOKEN" \
                        https://tail-lab.fly.dev/api/feedback/<id>/resolve
                    so it drops out of the open list. If an issue needs a human decision or a
@@ -105,7 +174,18 @@ jobs:
                daily sweep is broken, and diagnosing it is the highest-value thing available
                to you today — ahead of whatever is at the top of `AGENT_TODO.md`. Say so in
                the PR. If it is fresh, note the last session and move on.
-            2b. Pick up the design reviewer's unaddressed findings:
+            2a. Read what open agent PRs already cover:
+                  cat "$RUNNER_TEMP/open-prs.txt"
+                Each entry shows a PR's title, draft flag, files, and its `Feedback-issues:` and
+                `AGENT_TODO-item:` lines. NEVER pick an `AGENT_TODO.md` item or feedback issue
+                that an open PR already covers — that is how the same work got proposed three
+                times. Pick the next thing instead. The file ends with the `Feedback-issues:`
+                lines of recently MERGED agent PRs. An issue still open but listed there was
+                claimed fixed by a PR Dio merged: check on main that it really is fixed; if so,
+                resolve it with the step-1 call instead of fixing it again, and if not, treat it
+                as open.
+            2b. If `$SCRATCH_RUN` is set, skip this step (verification runs must not act on
+                real advisories). Otherwise, pick up the design reviewer's unaddressed findings:
                   gh pr list --state merged --limit 6 --json number,headRefName \
                     --jq '.[]|select(.headRefName|startswith("agent/"))|.number' \
                   | while read p; do gh pr view "$p" --json comments \
@@ -155,22 +235,36 @@ jobs:
                and, only if you touched the frontend:
                  cd frontend && npm run typecheck && npm run build
                If any of these fail, fix it or reduce the change until they pass. Never open a red PR.
-            7. Open ONE pull request from a branch named `agent/<short-slug>` using `gh pr create`,
-               ALWAYS passing `--assignee diomavro`. That assignment is the only thing that puts
+            6b. REVIEW LOOP — `docs/AGENT_MISSION.md` §Workflow steps 3a and 3b, exactly: commit
+               locally (do not push), run the three `adversarial-reviewer` subagents in parallel,
+               re-check and fix, at most two rounds, inside the `$START` time budget. It decides
+               whether step 7's PR is a draft.
+            7. Push and open ONE pull request, in that order and only now:
+                 git push -u origin HEAD && gh pr create --assignee diomavro --body-file "$RUNNER_TEMP/pr-body.md" ...
+               (if `gh pr create` fails, `git push origin --delete <branch>`). The branch is named
+               `agent/<short-slug>`; never reuse a slug that already exists on the remote. Add
+               `--draft` unless your last review round was clean (step 6b). ALWAYS pass
+               `--assignee diomavro`. That assignment is the only thing that puts
                the PR in Dio's notification stream: since these PRs are authored by `claude[bot]`
                and nobody watches the repo, an unassigned agent PR opens, merges and deploys
                completely silently. Assigning him makes him a participant, so he gets the open and the
                merge mail. Never skip it.
-               Do NOT merge it yourself — a separate `automerge` workflow squash-merges it
-               automatically once CI is fully green, and leaves it open if any check fails. You
+               Do NOT merge it yourself — a separate `automerge` workflow squash-merges a
+               non-draft PR once CI is fully green, and leaves it open if any check fails; a
+               draft waits for Dio. You
                never merge manually, never `--admin`/force a merge, never bypass a red check.
                Title: a one-line summary of the increment. Body: what you changed and WHY (which
-               research question or cockpit improvement it serves), how you validated it, and the
-               closing line "Auto-generated daily; auto-merges on green CI."
+               research question or cockpit improvement it serves), how you validated it, the
+               "Review log" from step 6b, and these two lines verbatim (use `none` if empty):
+                 Feedback-issues: <comma-separated feedback ids this PR fixes>
+                 AGENT_TODO-item: <the AGENT_TODO.md heading this PR checks off>
+               Close with "Auto-generated daily; auto-merges on green CI." — or, on a draft,
+               "Auto-generated daily; draft: waits for Dio (open review findings above)."
                NOTE: a `constitution-guard` check blocks auto-merge for any agent PR that edits the
                constitution (docs/adr/**, ARCHITECTURE.md, docs/STANDARDS.md, README.md,
-               docs/AGENT_MISSION.md, docs/END_STATE.md) **or `.github/workflows/**`** — the last
-               because that is where this prompt, the auto-merge rule and the guard itself live,
-               so an unreviewed edit there could quietly widen everything else (`docs/adr/0022`).
+               docs/AGENT_MISSION.md, docs/END_STATE.md, CLAUDE.md) **or `.github/workflows/**`
+               or `.claude/**`** — the last two because that is where this prompt, your reviewers,
+               the auto-merge rule and the guard itself live, so an unreviewed edit there could
+               quietly widen everything else (`docs/adr/0022`, `docs/adr/0030`).
                Do NOT edit those — if a change needs one, describe it in the PR body / propose an
                ADR for a human.

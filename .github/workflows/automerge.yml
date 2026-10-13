@@ -18,6 +18,7 @@ name: Auto-merge reviewed PRs
 # TWO things still stop an auto-merge, deliberately:
 #   * a DRAFT PR, which is a proposal and not a request to merge;
 #   * a PR touching the constitution (`docs/adr/**`, all of `.github/**`,
+#     all of `.claude/**` (the agents' own reviewers, `docs/adr/0030`),
 #     `pyproject.toml`, README/ARCHITECTURE/STANDARDS/AGENT_MISSION/END_STATE)
 #     — the rules that
 #     govern the agents cannot be changed by the agents, so a human merges
@@ -114,7 +115,7 @@ jobs:
           # the list because it holds the mypy strictness, the ruff rule set,
           # the import-linter contracts and the coverage floor -- flipping
           # `strict = false` turns three gates green by removing them.
-          if printf '%s\n' "$files" | grep -qiE '^docs/adr/|^\.github/|^ARCHITECTURE\.md$|^docs/STANDARDS\.md$|^README\.md$|^docs/AGENT_MISSION\.md$|^docs/END_STATE\.md$|^pyproject\.toml$'; then
+          if printf '%s\n' "$files" | grep -qiE '^docs/adr/|^\.github/|^\.claude/|^ARCHITECTURE\.md$|^docs/STANDARDS\.md$|^README\.md$|^docs/AGENT_MISSION\.md$|^docs/END_STATE\.md$|^pyproject\.toml$'; then
             echo "PR #$pr edits the constitution — leaving it for a human."
             exit 0
           fi
