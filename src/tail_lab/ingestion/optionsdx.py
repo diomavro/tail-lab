@@ -400,6 +400,34 @@ def validate_and_quarantine(df: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFram
         return OptionsDxQuoteSchema.validate(kept, lazy=True), quarantined
 
 
+def _read_frames(
+    symbol: str, vendor_dir: Path, months: Sequence[tuple[str, str]] | None
+) -> tuple[list[pd.DataFrame], int, int]:
+    """Parse every month into non-empty frames: ``(frames, unparsable, archives)``.
+
+    ``months`` (in-memory text) bypasses the vendor directory entirely.
+    """
+    frames: list[pd.DataFrame] = []
+    unparsable = 0
+    archives = 0
+    if months is None:
+        found = _dedupe_archives(sorted(vendor_dir.glob(f"{symbol.lower()}_eod_*.7z")))
+        if not found:
+            raise FileNotFoundError(
+                f"no optionsDX archives for {symbol!r} in {vendor_dir} — this adapter "
+                "reads a hand-downloaded, licence-limited corpus (HUMAN_TODO.md)."
+            )
+        archives = len(found)
+        parsed = [_read_month_file(symbol, m) for a in found for _n, m in read_archive_months(a)]
+    else:
+        parsed = [parse_optionsdx_month(symbol, text) for _n, text in months]
+    for frame, bad in parsed:
+        unparsable += bad
+        if not frame.empty:
+            frames.append(frame)
+    return frames, unparsable, archives
+
+
 def ingest_optionsdx(
     store: LakeStore,
     symbol: str,
@@ -416,29 +444,7 @@ def ingest_optionsdx(
     vendor_dir = vendor_dir or DEFAULT_VENDOR_DIR
     ingest_date = ingest_date or dt.date.today()
 
-    frames: list[pd.DataFrame] = []
-    unparsable = 0
-    archives = 0
-    if months is None:
-        found = _dedupe_archives(sorted(vendor_dir.glob(f"{symbol.lower()}_eod_*.7z")))
-        if not found:
-            raise FileNotFoundError(
-                f"no optionsDX archives for {symbol!r} in {vendor_dir} — this adapter "
-                "reads a hand-downloaded, licence-limited corpus (HUMAN_TODO.md)."
-            )
-        for archive in found:
-            archives += 1
-            for _name, member in read_archive_months(archive):
-                frame, bad = _read_month_file(symbol, member)
-                unparsable += bad
-                if not frame.empty:
-                    frames.append(frame)
-    else:
-        for _name, text in months:
-            frame, bad = parse_optionsdx_month(symbol, text)
-            unparsable += bad
-            if not frame.empty:
-                frames.append(frame)
+    frames, unparsable, archives = _read_frames(symbol, vendor_dir, months)
 
     combined = _concat_and_free(frames)
     # Filename dedup handles re-downloads; this handles OVERLAPPING archives,
