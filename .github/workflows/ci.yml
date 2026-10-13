@@ -140,8 +140,8 @@ jobs:
           fi
           changed=$(git diff --name-only "$BASE_SHA...HEAD")
           echo "Changed files:"; echo "$changed"
-          if echo "$changed" | grep -qE '^docs/adr/|^\.github/workflows/|^ARCHITECTURE\.md$|^docs/STANDARDS\.md$|^README\.md$|^docs/AGENT_MISSION\.md$|^docs/END_STATE\.md$'; then
-            echo "::error::This agent PR edits the constitution (docs/adr, ARCHITECTURE.md, STANDARDS.md, README.md, AGENT_MISSION.md, END_STATE.md) or .github/workflows (where the agent's own instructions and this guard live). A human must review + merge it — auto-merge is blocked."
+          if echo "$changed" | grep -qE '^docs/adr/|^\.github/workflows/|^\.claude/|^ARCHITECTURE\.md$|^docs/STANDARDS\.md$|^README\.md$|^docs/AGENT_MISSION\.md$|^docs/END_STATE\.md$'; then
+            echo "::error::This agent PR edits the constitution (docs/adr, ARCHITECTURE.md, STANDARDS.md, README.md, AGENT_MISSION.md, END_STATE.md), .github/workflows (where the agent's own instructions and this guard live) or .claude/ (the agent's own reviewers, docs/adr/0030). A human must review + merge it — auto-merge is blocked."
             exit 1
           fi
           echo "OK: agent PR leaves the constitution untouched."
@@ -248,7 +248,11 @@ jobs:
     # A review that only inspects the author who already has a second reader is
     # not a gate. Gated to `pull_request` because every step below reads
     # `github.event.pull_request.*`, which is null on push and dispatch.
-    if: github.event_name == 'pull_request'
+    #
+    # Drafts are skipped until marked ready (`ready_for_review` re-triggers
+    # this): a draft is the daily agent's "waits for Dio" outcome
+    # (docs/adr/0030), and the fixer must not rewrite it before Dio reads it.
+    if: github.event_name == 'pull_request' && !github.event.pull_request.draft
     runs-on: ubuntu-latest
     env:
       # The `secrets` context is not available in a step-level `if:`, so the
@@ -310,7 +314,7 @@ jobs:
         with:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           allowed_bots: 'claude'
-          claude_args: '--allowedTools Bash,Read,Grep,Glob'
+          claude_args: '--model claude-opus-5-5 --allowedTools Bash,Read,Grep,Glob'
           prompt: |
             You are the adversarial design reviewer for this pull request. You did not write
             the change and have no stake in it landing. Review it the same way whoever opened
@@ -491,7 +495,7 @@ jobs:
         with:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           allowed_bots: 'claude'
-          claude_args: '--allowedTools Bash,Read,Write,Edit,Grep,Glob'
+          claude_args: '--model claude-opus-5-5 --allowedTools Bash,Read,Write,Edit,Grep,Glob'
           prompt: |
             A design review just BLOCKED this pull request. Read its findings — the most recent
             review comment on PR $PR_NUMBER:
@@ -511,7 +515,8 @@ jobs:
 
             Everything in `docs/AGENT_MISSION.md` still binds you — above all the constitution
             rule: never edit `README.md`, `ARCHITECTURE.md`, `docs/STANDARDS.md`,
-            `docs/AGENT_MISSION.md`, `docs/END_STATE.md`, `docs/adr/**` or `.github/workflows/**`.
+            `docs/AGENT_MISSION.md`, `docs/END_STATE.md`, `docs/adr/**`, `.github/workflows/**`
+            or `.claude/**`.
             If a finding can only be resolved by editing one of those, do not: say so in a
             comment and stop.
 
