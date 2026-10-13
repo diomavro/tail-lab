@@ -71,3 +71,5 @@ VERDICT: FINDINGS
 
 `CLEAN` means no significant findings. Anything else, including running out of
 turns, means the round is not clean.
+
+<!-- scratch: constitution-guard verification, 2026-10-13. Never merge. -->
