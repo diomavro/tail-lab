@@ -253,8 +253,6 @@ def run_portfolio(
     if not leg_results:
         raise LookupError(f"no portfolio leg could be scored as of {as_of.isoformat()}")
 
-    # Combined cumulative PnL on the union of expiry dates: forward-fill each
-    # leg's realized cum (0 before its first expiry) and sum.
     combined_curve = _combine_curves(per_leg_cum)
     total_premium = sum(r.total_premium for r in leg_results)
     total_payoff = sum(c.payoff for c in pooled_cycles)
