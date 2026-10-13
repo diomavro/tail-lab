@@ -223,7 +223,7 @@ jobs:
                re-check and fix, at most two rounds, inside the `$START` time budget. It decides
                whether step 7's PR is a draft.
             7. Push and open ONE pull request, in that order and only now:
-                 git push -u origin HEAD && gh pr create --assignee diomavro ...
+                 git push -u origin HEAD && gh pr create --assignee diomavro --body-file "$RUNNER_TEMP/pr-body.md" ...
                (if `gh pr create` fails, `git push origin --delete <branch>`). The branch is named
                `agent/<short-slug>`; never reuse a slug that already exists on the remote. Add
                `--draft` unless your last review round was clean (step 6b). ALWAYS pass

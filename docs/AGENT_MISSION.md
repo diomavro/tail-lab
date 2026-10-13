@@ -192,9 +192,14 @@ differently:
    reads design. Nothing else checks correctness or test strength before your
    change merges, so you do, with fresh eyes:
    - Commit locally to your `agent/<slug>` branch. **Do not push yet.**
+   - Write the PR body now — everything except the Review log, including the
+     `Feedback-issues:` and `AGENT_TODO-item:` lines — to
+     `$RUNNER_TEMP/pr-body.md`, so the claims reviewer can check it. Keep it
+     current after each fix; step 4 opens the PR with `--body-file` from it.
    - Start three `adversarial-reviewer` subagents **in parallel**, one per
      dimension: `correctness` (including point-in-time safety), `test-strength`
-     (mutation testing), and `claims` (PR body, `AGENT_TODO.md` and docs versus
+     (mutation testing; tell it the round number `<N>`), and `claims`
+     (`$RUNNER_TEMP/pr-body.md`, `AGENT_TODO.md` and docs versus
      what the code does, and whether it traces to `docs/END_STATE.md`). Every
      reviewer reviews `git diff origin/main...HEAD`.
    - Afterwards `git status --porcelain` must be empty and `HEAD` unchanged; if
@@ -210,6 +215,8 @@ differently:
    seconds): start a round only while `$(date +%s) - $START` is under 2700
    (45 minutes), and past 4320 (72 minutes) stop fixing. A timeout loses the
    whole run, so leave room for the PR.
+   - §3a–3b and the push-at-the-end rule are the **daily** agent's. The
+     weekly cleanup agent has no reviewers and opens an ordinary PR.
    - A round is **clean** only if all three reviewers end with
      `VERDICT: CLEAN`. A missing verdict counts as not clean.
    - The PR is a **draft unless the most recent round was clean**. Zero

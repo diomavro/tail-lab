@@ -49,19 +49,18 @@ agents did none of that:
    **Amends `docs/adr/0025` §Decision 1:** `agent-review` skips drafts and runs
    when one is marked ready, so the CI fixer never rewrites a PR Dio is meant to
    judge as it stands.
-4. **`.claude/**` joins the constitution.** The reviewers are the agent's own
-   quality gate, so an agent may not edit them. It is added to `automerge.yml`'s
-   guarded paths and to CI's `constitution-guard`. Root `CLAUDE.md` is loaded as
-   instructions too, so `constitution-guard` also blocks agent PRs that touch
-   it. It stays off `automerge.yml`'s list, because Dio's own PRs edit it
-   routinely. That makes three kinds of
-   change `docs/adr/0025` lists as stopping an auto-merge: drafts, the existing
-   constitution, and now `.claude/**`.
+4. **`.claude/**` joins the constitution's path list.** The reviewers are the
+   agent's own quality gate, so an agent may not edit them. The path is added to
+   `automerge.yml`'s guarded paths and to CI's `constitution-guard`; the two
+   things `docs/adr/0025` says stop an auto-merge are still drafts and the
+   constitution. Root `CLAUDE.md` is loaded as instructions too, so
+   `constitution-guard` also blocks agent PRs that touch it. It stays off
+   `automerge.yml`'s list because Dio's own PRs edit it routinely.
 5. **Neither agent redoes an open PR.** Both workflows list open `agent/*` PRs
    authored by `claude` in this repo before the agent runs. Fork PRs are
    ignored: the repo is public, and a fork branch named `agent/*` must not be
-   able to stall an agent or put text in its prompt. The weekly agent runs only when no `agent/cleanup-*` PR
-   is open. The daily agent skips anything an open PR covers, and stops while
+   able to stall an agent or put text in its prompt. The weekly agent runs only
+   when no `agent/cleanup-*` PR is open. The daily agent skips anything an open PR covers, and stops while
    three or more of its drafts are open.
 
 ## Consequences

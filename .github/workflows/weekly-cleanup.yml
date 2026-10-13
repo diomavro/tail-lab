@@ -93,6 +93,8 @@ jobs:
             the wall (never trade, never touch credentials), the constitution rule (never edit
             README.md, ARCHITECTURE.md, docs/STANDARDS.md, docs/AGENT_MISSION.md,
             docs/END_STATE.md, CLAUDE.md, docs/adr/**, .github/workflows/** or .claude/**), and PRs-only.
+            The charter's review loop (§Workflow 3a–3b) is the daily agent's, not yours: you open
+            an ordinary, non-draft PR.
 
             **The safety property that makes this sane: `tests/` is almost untouchable.**
             A refactor that preserves behaviour does not need the tests to change — that is

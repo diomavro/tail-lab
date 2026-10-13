@@ -48,7 +48,7 @@ the Python change (the frontend has only e2e tests; skip it and say so):
 5. `git worktree remove --force .claude/worktrees/rev-test-strength-r<N>`
    before you return.
 
-**claims** — Is every statement true? The PR body (if drafted), `AGENT_TODO.md`
+**claims** — Is every statement true? The draft PR body at `$RUNNER_TEMP/pr-body.md`, `AGENT_TODO.md`
 check-offs, docstrings, comments and docs touched by the diff, checked against
 what the code actually does. Also: does the change trace to a specific paragraph
 of `docs/END_STATE.md` (§1 cockpit or §4 research question)? If it cannot, that
