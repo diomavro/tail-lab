@@ -270,6 +270,10 @@ test.describe('with the shared fixture', () => {
       await expect(best).toBeChecked()
       expect(await best.evaluate((el) => el.matches(':focus-visible'))).toBe(true)
       const option = best.locator('..')
+      // A computed outline-color exists even when no ring is drawn: check it paints, inside the fill.
+      await expect(option).toHaveCSS('outline-style', 'solid')
+      await expect(option).toHaveCSS('outline-width', '2px')
+      await expect(option).toHaveCSS('outline-offset', '-4px')
       expect(await outlineContrast(option)).toBeGreaterThanOrEqual(3)
     })
   }
