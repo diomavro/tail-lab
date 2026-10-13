@@ -45,7 +45,9 @@ agents did none of that:
    when the PR is opened.
 3. **A draft is the honest outcome when review did not come back clean.** A PR
    whose last round was not clean, or that ran no round, opens as a draft and
-   waits for Dio. Feedback issues it touches stay open.
+   waits for Dio. Feedback issues it touches stay open until Dio merges it; the
+   next daily run then resolves them, reading the merged PR's `Feedback-issues:`
+   line.
    **Amends `docs/adr/0025` §Decision 1:** `agent-review` skips drafts and runs
    when one is marked ready, so the CI fixer never rewrites a PR Dio is meant to
    judge as it stands.
@@ -56,8 +58,9 @@ agents did none of that:
    constitution. Root `CLAUDE.md` is loaded as instructions too, so
    `constitution-guard` also blocks agent PRs that touch it. It stays off
    `automerge.yml`'s list because Dio's own PRs edit it routinely.
-5. **Neither agent redoes an open PR.** Both workflows list open `agent/*` PRs
-   authored by `claude` in this repo before the agent runs. Fork PRs are
+5. **Neither agent redoes an open PR.** Before the agent runs, the daily
+   workflow lists open `agent/*` PRs authored by `claude` in this repo, and the
+   weekly one counts open `agent/cleanup-*` PRs. Fork PRs are
    ignored: the repo is public, and a fork branch named `agent/*` must not be
    able to stall an agent or put text in its prompt. The weekly agent runs only
    when no `agent/cleanup-*` PR is open. The daily agent skips anything an open PR covers, and stops while
