@@ -1,5 +1,5 @@
 import { expect, test, type Page, type Route } from '@playwright/test'
-import { cellContrast, cellPaint, textContrastOnPage } from './contrast'
+import { cellContrast, cellPaint, outlineContrast, textContrastOnPage } from './contrast'
 import { LEADERBOARD, METRIC_SCREEN_NO_WINNER, METRIC_SCREEN_WINNER, MODEL_PRICED_MAX } from './fixtures/putlab'
 import { type MockOptions, mockPutLabApi } from './fixtures/mock-api'
 import { fmtPct } from '../src/components/putlab/format'
@@ -25,6 +25,11 @@ const expand = (page: Page) => page.getByRole('button', { name: /All \d+ names/ 
 const picks = (page: Page) => strip(page).getByTestId('rank-pick')
 const bestTable = (page: Page) => page.getByRole('table', { name: 'Ranked strategies' })
 const fragTable = (page: Page) => page.getByRole('table', { name: /fragility ranking/i })
+
+async function plate(page: Page) {
+  await page.getByRole('radiogroup', { name: 'Sheet' }).getByText('Plate').click()
+  await expect(page.locator('.putlab-root')).toHaveAttribute('data-theme', 'plate')
+}
 
 const cellContrastOnPage = (page: Page, testid: string) => textContrastOnPage(page.getByTestId(testid))
 
@@ -234,6 +239,41 @@ test.describe('with the shared fixture', () => {
     expect(await cellContrast(spy)).toBeGreaterThanOrEqual(4.5)
   })
 
+  for (const sheet of ['paper', 'plate'] as const) {
+    test(`a losing return on premium prints in the loss colour, on the ${sheet}`, async ({ page }) => {
+      if (sheet === 'plate') await plate(page)
+      await openBestReturn(page)
+      const premium = (asset: string) =>
+        bestTable(page).locator('tbody tr').filter({ hasText: asset }).locator('td.pl-rec-premium')
+      // The sheet's loss ink, read off a probe so the test holds if the token moves.
+      const loss = await page.locator('.putlab-root').evaluate((root) => {
+        const probe = document.createElement('span')
+        probe.style.color = 'var(--mag-2)'
+        root.appendChild(probe)
+        const c = getComputedStyle(probe).color
+        probe.remove()
+        return c
+      })
+      expect(LEADERBOARD.ranked.find((r) => r.asset === 'spy')!.best_roi_on_premium).toBeLessThan(0)
+      await expect(premium('SPY')).toHaveCSS('color', loss)
+      // A gain stays dimmed ink, not loss ink.
+      await expect(premium('TSLA')).not.toHaveCSS('color', loss)
+    })
+
+    test(`the focused option of a checked segment shows its ring, on the ${sheet}`, async ({ page }) => {
+      if (sheet === 'plate') await plate(page)
+      const sort = page.getByRole('radiogroup', { name: 'Sort the screen' })
+      // From the keyboard, so :focus-visible matches: the arrow checks and focuses.
+      await sort.getByRole('radio', { name: 'Fragility' }).focus()
+      await page.keyboard.press('ArrowRight')
+      const best = sort.getByRole('radio', { name: 'Best return' })
+      await expect(best).toBeChecked()
+      expect(await best.evaluate((el) => el.matches(':focus-visible'))).toBe(true)
+      const option = best.locator('..')
+      expect(await outlineContrast(option)).toBeGreaterThanOrEqual(3)
+    })
+  }
+
   test('every best-return row’s loss shade is scaled within the best cells', async ({ page }) => {
     // SPY is the worst row in both cells, so it reads 1 either way; EEM and QQQ
     // shade differently if the heat were taken from the screened cells.
@@ -378,10 +418,7 @@ test.describe('with the shared fixture', () => {
 
   for (const sheet of ['paper', 'plate'] as const) {
     test(`shaded cells keep readable text and actually paint, on the ${sheet}`, async ({ page }) => {
-      if (sheet === 'plate') {
-        await page.getByRole('radiogroup', { name: 'Sheet' }).getByText('Plate').click()
-        await expect(page.locator('.putlab-root')).toHaveAttribute('data-theme', 'plate')
-      }
+      if (sheet === 'plate') await plate(page)
       await expand(page)
       // Gains take no heat; losses do.
       await expect(page.getByTestId('best-ann-tsla')).not.toHaveClass(/pl-heat-loss/)

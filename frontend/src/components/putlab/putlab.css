@@ -409,6 +409,9 @@
   background: color-mix(in srgb, var(--ink) 7%, transparent);
 }
 .pl-seg-opt:has(input:focus-visible) { outline: 2px solid var(--cyan); outline-offset: -2px; }
+/* The checked option is filled cyan, so a cyan ring on it is invisible. Paper,
+   inset, clears 3:1 on the fill in both sheets (3.7 on paper, 7.2 on plate). */
+.pl-seg-opt:has(input:checked:focus-visible) { outline-color: var(--paper); outline-offset: -4px; }
 
 .pl-two-col { display: grid; grid-template-columns: 1fr 1fr; gap: var(--space-2); }
 
@@ -491,6 +494,8 @@
 
 .pl-pos { color: var(--ink); }
 .pl-neg { color: var(--mag-2); }
+/* `.pl-table .dim` outranks a bare class, so a dimmed loss would print grey. */
+.pl-table .pl-neg { color: var(--mag-2); }
 
 /* ------------------------------------------------------- ranking strip --- */
 
@@ -743,7 +748,7 @@
 .is-narrow .pl-sweep {
   min-width: calc(92px + var(--pl-sweep-cols, 4) * 52px);
 }
-.is-narrow .pl-tip { display: none; }
+.is-narrow .pl-sweep .pl-tip { display: none; }
 .pl-sweep-row { display: grid; grid-column: 1 / -1; grid-template-columns: inherit; }
 .pl-sweep-head { text-align: center; font-size: 11.5px; color: var(--ink-45); padding-bottom: 5px; }
 .pl-sweep-rowhead {

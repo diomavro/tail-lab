@@ -30,7 +30,7 @@ a large one strictly in order.
       (52px column floor) and the hover popup is hidden there; the fixture now has
       11 strikes incl. a −100% cell, and `rail.spec.ts` fails without the fix.
 
-- [ ] **Two small paint bugs carried over from Recommendations** (found by
+- [x] **Two small paint bugs carried over from Recommendations** (found by
       a 2026-10-12 review; both predate the Workspace fold). (1) The
       best-return "On premium" cell (`BestReturnTable.tsx`, `pl-rec-premium`)
       sets `dim` beside `pl-neg`, and `dim` wins, so a losing return on
@@ -40,6 +40,16 @@ a large one strictly in order.
       segmented switch, the screen's sort switch included.
       *Success*: a losing On premium prints magenta; the focused, checked
       segment shows a visible ring (contrast-checked in both sheets).
+      **Done 2026-10-13**: `.pl-table .pl-neg` now outranks `.pl-table .dim`
+      (any dimmed loss in a table, not only this cell); a focused checked
+      segment takes an inset paper ring (3.7:1 on the cyan fill on paper,
+      7.2:1 on plate). Both pinned in `ranking.spec.ts` on both sheets, and
+      both tests fail without the CSS. Same change scoped the sweep's
+      narrow-page `.pl-tip` hiding to `.pl-sweep` (#163 advisory) and dropped a
+      comment that repeated `_combine_curves`' docstring (#160 advisory).
+      Not done: #163's "re-indent the `pl-sweep-scroll` wrapper" -- the
+      frontend has no formatter configured, and a ~100-line whitespace diff
+      for it is noise.
 
 - [ ] **A 3D view of the real option surface** (from the 2026-10-07 redesign
       handoff, deliberately not shipped with it). The
