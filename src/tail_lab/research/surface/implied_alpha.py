@@ -137,13 +137,7 @@ def fit_implied_alpha(
     def refuse(reason: str, rmse: float | None = None) -> ImpliedAlphaFit:
         return ImpliedAlphaFit(anchor, None, rmse, len(strikes), span, reason)
 
-    reason = _anchor_refusal(anchor)
-    if reason is None and len(strikes) < MIN_STRIKES:
-        reason = f"only {len(strikes)} usable strikes below the anchor (need {MIN_STRIKES})"
-    if reason is None and span < MIN_STRIKE_SPAN:
-        reason = (
-            f"usable strikes reach {span:.3f} of spot below the anchor (need {MIN_STRIKE_SPAN})"
-        )
+    reason = _data_refusal(anchor, n_strikes=len(strikes), span=span)
     if reason is not None:
         return refuse(reason)
 
@@ -192,7 +186,7 @@ def _require_caller_contract(
         raise ValueError("quotes carry duplicate strikes for one session and expiry")
 
 
-def _anchor_refusal(anchor: Anchor) -> str | None:
+def _data_refusal(anchor: Anchor, *, n_strikes: int, span: float) -> str | None:
     if anchor.underlying.upper() in REFUSED_UNDERLYINGS:
         return f"{anchor.underlying}: chain spot is not the settlement basis of its options"
     if anchor.price < MIN_ANCHOR_PRICE:
@@ -201,6 +195,10 @@ def _anchor_refusal(anchor: Anchor) -> str | None:
         )
     if not _is_clean(bid=anchor.bid, ask=anchor.ask):
         return "the anchor quote itself fails hygiene (tick-pinned bid or spread too wide)"
+    if n_strikes < MIN_STRIKES:
+        return f"only {n_strikes} usable strikes below the anchor (need {MIN_STRIKES})"
+    if span < MIN_STRIKE_SPAN:
+        return f"usable strikes reach {span:.3f} of spot below the anchor (need {MIN_STRIKE_SPAN})"
     return None
 
 

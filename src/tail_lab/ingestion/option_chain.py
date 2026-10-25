@@ -195,6 +195,14 @@ def _greek(value: object, iv: float) -> float | None:
         return None
 
 
+def _in_put_wing(right: str, *, tenor_days: int, moneyness: float) -> bool:
+    return (
+        right == "P"
+        and 0 <= tenor_days <= MAX_TENOR_DAYS
+        and MONEYNESS_MIN <= moneyness <= MONEYNESS_MAX
+    )
+
+
 def parse_cboe_chain(payload: Mapping[str, object]) -> tuple[pd.DataFrame, int]:
     """Turn one symbol's Cboe payload into the put-wing slice.
 
@@ -231,12 +239,8 @@ def parse_cboe_chain(payload: Mapping[str, object]) -> tuple[pd.DataFrame, int]:
             unparsed += 1
             continue
         _root, expiration, right, strike = parsed
-        if right != "P":
-            continue
         tenor_days = (expiration - quote_date.date()).days
-        if not 0 <= tenor_days <= MAX_TENOR_DAYS:
-            continue
-        if not MONEYNESS_MIN <= strike / spot_price <= MONEYNESS_MAX:
+        if not _in_put_wing(right, tenor_days=tenor_days, moneyness=strike / spot_price):
             continue
         try:
             iv = to_float(contract.get("iv") or 0.0, "iv")
