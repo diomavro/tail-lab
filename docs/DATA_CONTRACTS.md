@@ -423,8 +423,10 @@ the same 24 symbols. Schema `OptionCallChainSnapshotSchema` is the table above
 with one change: `delta` is **0 to 1** when present. Same key, same one
 partition per session, same zero-fill rule, same session plan and floor. It
 is written by `POST /api/ingest/option-chain-calls` or by the `--local` sweep.
-Each route refuses a body whole when most of its signed deltas are the other
-wing's: a null delta passes both contracts, so the contracts alone cannot.
+Both writers quarantine every row of a symbol when more than 1% of its rows
+with a non-null, non-zero delta carry the other wing's sign (`Wing.split`,
+`MAX_WRONG_SIGN_SHARE`): a null delta passes both contracts, so the
+contracts alone cannot keep the wings apart.
 
 **Never union it** with `option_chain_snapshot`, `option_quotes` or
 `optionsdx`. They share the key `(underlying, quote_date, expiration,

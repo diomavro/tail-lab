@@ -16,7 +16,6 @@ have skipped the call POST entirely.
 
 from __future__ import annotations
 
-import dataclasses
 import datetime as dt
 import http.client
 import importlib.util
@@ -175,7 +174,59 @@ def test_unsettled_calls_after_settled_puts_are_red(
     assert _main() == 1
     captured = capsys.readouterr()
     assert "calls: SKIPPED" not in captured.out
-    assert "::error::calls: session still in progress after the puts settled" in captured.err
+    assert "::error::calls: session still in progress" in captured.err
+    assert "the wings disagree" in captured.err
+
+
+def test_unsettled_calls_after_failed_puts_claim_no_disagreement(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A put 409 (its previous session missing) then a call 425: both wings
+    are still trading, so "the wings disagree" would send the operator after
+    a disagreement that does not exist. Red all the same."""
+    _server(monkeypatch, _raise(_http_error(409)), _raise(_http_error(425)))
+    assert _main() == 1
+    err = capsys.readouterr().err
+    assert "::error::calls: session still in progress" in err
+    assert "disagree" not in err
+    assert "neither wing landed" in err
+
+
+def test_a_refusal_whose_body_cannot_be_read_still_sends_the_calls(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """The connection can drop while the error body is read; that must read
+    as a failed put wing, not a traceback that skips the call POST."""
+
+    class _Dropping(io.BytesIO):
+        def read(self, *_a: object) -> bytes:
+            raise http.client.IncompleteRead(b"")
+
+    exc = urllib.error.HTTPError("http://x", 502, "bad", {}, _Dropping())  # type: ignore[arg-type]
+    sent = _server(monkeypatch, _raise(exc), _ok())
+    monkeypatch.setattr(chain_snapshot, "POST_ATTEMPTS", 1)
+    assert _main() == 1
+    assert (len(sent[PUTS]), len(sent[CALLS])) == (1, 1)
+    assert "::error::puts: app rejected the sweep: HTTP 502 b''" in capsys.readouterr().err
+
+
+def test_a_retry_warning_names_its_wing(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Two POSTs per run: an unlabelled retry cannot say which wing is retrying."""
+    flaky: list[int] = []
+
+    def once_then_ok() -> object:
+        flaky.append(1)
+        if len(flaky) == 1:
+            raise urllib.error.URLError("reset")
+        return _answer()
+
+    _server(monkeypatch, _ok(), once_then_ok)
+    assert _main() == 0
+    out = capsys.readouterr().err
+    assert "::warning::calls: attempt 1/" in out
+    assert "::warning::puts: attempt" not in out
 
 
 def test_a_call_answer_naming_another_dataset_is_red(
@@ -246,15 +297,21 @@ def test_exactly_the_floor_is_posted(monkeypatch: pytest.MonkeyPatch) -> None:
     assert (len(sent[PUTS]), len(sent[CALLS])) == (1, 1)
 
 
+@pytest.mark.parametrize(("short", "full"), [("puts", "calls"), ("calls", "puts")])
 def test_a_symbol_missing_from_one_wing_is_warned_for_that_wing(
-    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], short: str, full: str
 ) -> None:
-    calls = [{"underlying": "SPY"}] * 10_000 + [{"underlying": "QQQ"}] * 10_000
-    _server(monkeypatch, _ok(), _ok(), calls=calls)  # puts: SPY only
+    """Each wing reports its own sweep: the positive line for the full one,
+    and the missing symbol named for the short one only."""
+    both = [{"underlying": "SPY"}] * 10_000 + [{"underlying": "QQQ"}] * 10_000
+    wings = {short: ROWS, full: both}  # ROWS: SPY only
+    _server(monkeypatch, _ok(), _ok(), puts=wings["puts"], calls=wings["calls"])
     assert _main() == 0
     out = capsys.readouterr().out
-    assert "::warning::puts: no quotes for QQQ" in out
-    assert "::warning::calls: no quotes for" not in out
+    assert f"::warning::{short}: no quotes for QQQ" in out
+    assert f"{short}: swept 1/2 chains -> 20000 quotes" in out
+    assert f"{full}: swept 2/2 chains -> 20000 quotes" in out
+    assert f"::warning::{full}: no quotes for" not in out
 
 
 def test_an_undeployed_call_route_is_named_as_one(
@@ -497,142 +554,3 @@ def test_both_wings_carry_one_witness_read_once(monkeypatch: pytest.MonkeyPatch)
     (put_body,), (call_body,) = sent[PUTS], sent[CALLS]
     assert put_body["symbols"] == call_body["symbols"] == ["spy", "qqq"]
     assert put_body["market_session"] == call_body["market_session"] == "2026-10-26"
-
-
-# ---- --local -----------------------------------------------------------------
-
-
-@dataclasses.dataclass
-class _Result:
-    """Enough of ``IngestResult`` for ``_run_local``; kept honest by
-    ``test_the_local_stub_invents_no_fields`` below."""
-
-    valid_rows: int = 19_525
-    symbols_ok: tuple[str, ...] = ("SPY", "QQQ")
-    symbols_failed: tuple[str, ...] = ()
-    symbols_off_session: tuple[str, ...] = ()
-    committed: bool = True
-    quote_date: dt.date = dt.date(2026, 10, 26)
-    bronze_path: str = "s3://lake/bronze/x"
-
-
-def test_the_local_stub_invents_no_fields() -> None:
-    from tail_lab.ingestion.option_chain import IngestResult
-
-    real = {f.name for f in dataclasses.fields(IngestResult)}
-    assert {f.name for f in dataclasses.fields(_Result)} <= real
-
-
-def _local(
-    monkeypatch: pytest.MonkeyPatch, put: Callable[[], _Result], call: Callable[[], _Result]
-) -> list[dict[str, object]]:
-    """Stub the lake and the ingest per right; return each ingest's kwargs."""
-    seen: list[dict[str, object]] = []
-
-    def ingest(_store: object, _symbols: object, **kw: object) -> _Result:
-        seen.append(kw)
-        return (put if kw["right"] == "P" else call)()
-
-    monkeypatch.setattr("tail_lab.config.get_lake_store", lambda: object())
-    monkeypatch.setattr("tail_lab.ingestion.option_chain.ingest_option_chain", ingest)
-    return seen
-
-
-def _local_raise(exc: Exception) -> Callable[[], _Result]:
-    def behaviour() -> _Result:
-        raise exc
-
-    return behaviour
-
-
-def _run_local() -> int:
-    rc: int = chain_snapshot.main(["--local", "--symbols", "spy,qqq"])
-    return rc
-
-
-def test_local_fetches_once_and_hands_the_same_payloads_to_both_wings(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    fetched: list[list[str]] = []
-    payloads = {"spy": {"data": {}}}
-
-    def fetch_chains(symbols: list[str], *_a: object) -> dict[str, object]:
-        fetched.append(list(symbols))
-        return payloads
-
-    monkeypatch.setattr("tail_lab.ingestion.option_chain.fetch_chains", fetch_chains)
-    seen = _local(monkeypatch, _Result, _Result)
-    assert _run_local() == 0
-    assert fetched == [["spy", "qqq"]]
-    assert [kw["right"] for kw in seen] == ["P", "C"]
-    assert all(kw["payloads"] is payloads for kw in seen)
-    assert seen[0]["now"] is seen[1]["now"]
-
-
-def test_local_unsettled_puts_skip_the_calls_and_say_so(
-    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
-) -> None:
-    from tail_lab.contracts.option_chain import SessionInProgress
-
-    seen = _local(monkeypatch, _local_raise(SessionInProgress("still trading")), _Result)
-    assert _run_local() == 0
-    assert [kw["right"] for kw in seen] == ["P"]
-    assert "calls: not attempted -- the session is still trading" in capsys.readouterr().out
-
-
-def test_local_refused_puts_still_land_the_calls(
-    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
-) -> None:
-    from tail_lab.contracts.option_chain import IncompleteSweepError
-
-    seen = _local(monkeypatch, _local_raise(IncompleteSweepError("15 of 24")), _Result)
-    assert _run_local() == 1
-    assert [kw["right"] for kw in seen] == ["P", "C"]
-    captured = capsys.readouterr()
-    assert "calls: swept" in captured.out
-    assert "puts failed; calls landed" in captured.err
-    assert "puts landed" not in captured.err.replace("puts failed; calls landed", "")
-
-
-def test_local_neither_wing_landing_never_says_the_puts_landed(
-    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
-) -> None:
-    from tail_lab.contracts.option_chain import IncompleteSweepError
-
-    refused = _local_raise(IncompleteSweepError("15 of 24"))
-    _local(monkeypatch, refused, refused)
-    assert _run_local() == 1
-    err = capsys.readouterr().err
-    assert "neither wing landed" in err
-    assert "puts landed" not in err
-
-
-def test_local_a_put_lake_write_failure_still_lands_the_calls(
-    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
-) -> None:
-    """``LAKE_WRITE_ERRORS`` used to escape ``_run_local`` as a traceback,
-    which would now also skip the call ingest."""
-    seen = _local(monkeypatch, _local_raise(OSError("disk full")), _Result)
-    assert _run_local() == 1
-    assert [kw["right"] for kw in seen] == ["P", "C"]
-    assert "::error::puts:" in capsys.readouterr().err
-
-
-@pytest.mark.parametrize(
-    "failure",
-    ["refused", "lake", "floor", "unsettled"],
-)
-def test_local_a_call_failure_is_red_and_says_the_puts_landed(
-    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], failure: str
-) -> None:
-    from tail_lab.contracts.option_chain import IncompleteSweepError, SessionInProgress
-
-    call: Callable[[], _Result] = {
-        "refused": _local_raise(IncompleteSweepError("15 of 24")),
-        "lake": _local_raise(OSError("disk full")),
-        "floor": lambda: _Result(valid_rows=3),
-        "unsettled": _local_raise(SessionInProgress("still trading")),
-    }[failure]
-    _local(monkeypatch, _Result, call)
-    assert _run_local() == 1
-    assert "calls only; puts landed" in capsys.readouterr().err

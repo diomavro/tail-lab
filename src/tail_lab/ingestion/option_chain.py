@@ -448,7 +448,17 @@ def ingest_option_chain(
     """
     wing = WINGS[right]
     parsed = _parse_symbols(symbols, payloads, right)
-    valid, quarantined = validate_and_quarantine(parsed.combined(), wing.schema)
+    # Per symbol, as the route does (``Wing.split``): a chain whose deltas are
+    # the other wing's is quarantined whole, so both writers agree on what a
+    # Cboe sign glitch costs -- that symbol, never the session.
+    valid, quarantined, misrouted = wing.split(parsed.combined())
+    if misrouted:
+        _LOGGER.warning(
+            "event=ingestion.option_chain.misrouted dataset=%s symbols=%s -- their deltas "
+            "are the other wing's; quarantined whole",
+            wing.dataset,
+            ",".join(misrouted),
+        )
 
     # Partition by the SESSION the quotes belong to, never by the clock --
     # see the note in ``api/ingest_routes``. Shared with that route so the two

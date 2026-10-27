@@ -247,11 +247,40 @@ def test_wrong_sign_share_counts_only_rows_with_a_signed_delta(
 
 
 @pytest.mark.parametrize(("wrong", "misrouted"), [(0, False), (1, False), (2, True), (43, True)])
-def test_misrouted_is_more_than_one_percent_of_signed_deltas(wrong: int, misrouted: bool) -> None:
+def test_misrouted_is_more_than_one_percent_of_one_symbols_signed_deltas(
+    wrong: int, misrouted: bool
+) -> None:
     """Pins MAX_WRONG_SIGN_SHARE from both sides: 1 in 100 is a stray row,
     2 in 100 is refused, and the 43% of a both-wings body is far past it."""
-    frame = pd.DataFrame({"delta": [-0.2] * (100 - wrong) + [0.3] * wrong + [None, 0.0]})
-    assert WINGS["P"].misrouted(frame) is misrouted
+    frame = pd.DataFrame(
+        {
+            "underlying": ["spy"] * 102,
+            "delta": [-0.2] * (100 - wrong) + [0.3] * wrong + [None, 0.0],
+        }
+    )
+    assert WINGS["P"].misrouted_symbols(frame) == (("SPY",) if misrouted else ())
+
+
+def test_one_symbols_wrong_signs_cost_that_symbol_and_no_other() -> None:
+    """The share is per SYMBOL. Pooled over a body, one glitching chain among
+    many is a small share, and refusing the body whole lost the session on
+    the POST path while the local writer kept the rest. Every row of the
+    glitching symbol is quarantined -- its null-delta row too, which the
+    contract alone would keep -- and nothing of the others is."""
+    spy = [_row(strike=600.0 + i) for i in range(50)]
+    xle = [_row(underlying="XLE", strike=80.0, delta=0.3), _row(underlying="XLE", delta=None)]
+    valid, quarantined, misrouted = WINGS["P"].split(_frame(*spy, *xle))
+
+    assert misrouted == ("XLE",)
+    assert set(valid["underlying"]) == {"SPY"}
+    assert len(valid) == 50
+    assert sorted(quarantined["underlying"]) == ["XLE", "XLE"]
+
+
+def test_split_without_a_misrouted_symbol_is_the_contract_split() -> None:
+    frame = _frame(_row(strike=600.0), _row(strike=610.0, ask=0.0))
+    valid, quarantined, misrouted = WINGS["P"].split(frame)
+    assert (len(valid), len(quarantined), misrouted) == (1, 1, ())
 
 
 def test_the_call_schema_differs_from_the_put_schema_only_in_delta() -> None:

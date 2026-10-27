@@ -169,20 +169,49 @@ class Wing:
         wrong = signed > 0.0 if self.right == "P" else signed < 0.0
         return float(wrong.mean())
 
-    def misrouted(self, frame: pd.DataFrame) -> bool:
-        """Whether ``frame`` carries enough of the other wing's rows to be
-        refused whole (:data:`MAX_WRONG_SIGN_SHARE`)."""
-        return self.wrong_sign_share(frame) > MAX_WRONG_SIGN_SHARE
+    def misrouted_symbols(self, frame: pd.DataFrame) -> tuple[str, ...]:
+        """The underlyings in ``frame`` whose :meth:`wrong_sign_share` is past
+        :data:`MAX_WRONG_SIGN_SHARE`, upper-cased and sorted."""
+        if frame.empty:
+            return ()
+        names = frame["underlying"].astype(str).str.upper()
+        return tuple(
+            sorted(
+                str(name)
+                for name, rows in frame.groupby(names, sort=False)
+                if self.wrong_sign_share(rows) > MAX_WRONG_SIGN_SHARE
+            )
+        )
+
+    def split(self, frame: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame, tuple[str, ...]]:
+        """``(valid, quarantined, misrouted)``: every row of a
+        :meth:`misrouted_symbols` symbol is quarantined -- its null-delta rows
+        too, which the contract alone would keep -- and the rest is split
+        against this wing's contract (:func:`split_valid_and_quarantined`).
+
+        Per symbol, not per body, and run by BOTH writers: a body refused
+        whole turned one symbol's Cboe sign glitch into a lost session on the
+        ``--post`` path while ``--local`` kept the other 23. A body that is
+        the other wing's, or both wings concatenated, still lands nothing:
+        every symbol in it trips, and the symbol floor refuses the rest.
+        """
+        misrouted = self.misrouted_symbols(frame)
+        if not misrouted:
+            valid, quarantined = split_valid_and_quarantined(frame, self.schema)
+            return valid, quarantined, ()
+        bad = frame["underlying"].astype(str).str.upper().isin(misrouted)
+        valid, quarantined = split_valid_and_quarantined(frame.loc[~bad], self.schema)
+        return valid, pd.concat([frame.loc[bad], quarantined]), misrouted
 
 
-#: Above this :meth:`Wing.wrong_sign_share`, a body is refused whole as
-#: (partly) the other wing's rows rather than split into quarantine plus a
-#: committed null-delta remainder of the other wing. A correct live body
-#: measures 0. Not 0.5: a writer that concatenated both wings sends the call
-#: route a body scoring 0.43 (16,665 puts against 21,942 calls), which a
-#: half threshold accepted, committing the null-delta puts as calls. Not 0
-#: either: one stray wrong-sign row from Cboe would then cost the whole
-#: session, which nobody can re-collect; at 1% such rows are quarantined.
+#: Above this :meth:`Wing.wrong_sign_share`, ONE SYMBOL's rows are taken for
+#: (partly) the other wing's and quarantined whole, rather than split into
+#: quarantine plus a committed null-delta remainder of the other wing. A
+#: correct live symbol measures 0. Not 0.5: a writer that concatenated both
+#: wings sends the call route a body scoring 0.43 (16,665 puts against 21,942
+#: calls), which a half threshold accepted, committing the null-delta puts as
+#: calls. Not 0 either: one stray wrong-sign row from Cboe would then cost the
+#: symbol; at 1% such rows are quarantined alone.
 MAX_WRONG_SIGN_SHARE = 0.01
 
 

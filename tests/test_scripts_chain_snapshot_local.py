@@ -22,6 +22,7 @@ from __future__ import annotations
 import dataclasses
 import datetime as dt
 import importlib.util
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
@@ -243,3 +244,125 @@ def test_local_passes_the_clock_so_the_mid_session_guard_is_live(
 
     assert chain_snapshot.main(["--local", "--symbols", "spy"]) == 0
     assert isinstance(seen.get("now"), dt.datetime) and seen["now"].tzinfo is not None
+
+
+# ---- both wings (docs/adr/0031) ----------------------------------------------
+
+
+class _ShortSweep(_Result):
+    valid_rows = 3
+
+
+def _local(
+    monkeypatch: pytest.MonkeyPatch, put: Callable[[], _Result], call: Callable[[], _Result]
+) -> list[dict[str, object]]:
+    """Stub the lake and the ingest per right; return each ingest's kwargs."""
+    seen: list[dict[str, object]] = []
+
+    def ingest(_store: object, _symbols: object, **kw: object) -> _Result:
+        seen.append(kw)
+        return (put if kw["right"] == "P" else call)()
+
+    monkeypatch.setattr("tail_lab.config.get_lake_store", lambda: object())
+    monkeypatch.setattr("tail_lab.ingestion.option_chain.ingest_option_chain", ingest)
+    return seen
+
+
+def _local_raise(exc: Exception) -> Callable[[], _Result]:
+    def behaviour() -> _Result:
+        raise exc
+
+    return behaviour
+
+
+def _run_local() -> int:
+    rc: int = chain_snapshot.main(["--local", "--symbols", "spy,qqq"])
+    return rc
+
+
+def test_local_fetches_once_and_hands_the_same_payloads_to_both_wings(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fetched: list[list[str]] = []
+    payloads = {"spy": {"data": {}}}
+
+    def fetch_chains(symbols: list[str], *_a: object) -> dict[str, object]:
+        fetched.append(list(symbols))
+        return payloads
+
+    monkeypatch.setattr("tail_lab.ingestion.option_chain.fetch_chains", fetch_chains)
+    seen = _local(monkeypatch, _Result, _Result)
+    assert _run_local() == 0
+    assert fetched == [["spy", "qqq"]]
+    assert [kw["right"] for kw in seen] == ["P", "C"]
+    assert all(kw["payloads"] is payloads for kw in seen)
+    assert seen[0]["now"] is seen[1]["now"]
+
+
+def test_local_unsettled_puts_skip_the_calls_and_say_so(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    from tail_lab.contracts.option_chain import SessionInProgress
+
+    seen = _local(monkeypatch, _local_raise(SessionInProgress("still trading")), _Result)
+    assert _run_local() == 0
+    assert [kw["right"] for kw in seen] == ["P"]
+    assert "calls: not attempted -- the session is still trading" in capsys.readouterr().out
+
+
+def test_local_refused_puts_still_land_the_calls(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    from tail_lab.contracts.option_chain import IncompleteSweepError
+
+    seen = _local(monkeypatch, _local_raise(IncompleteSweepError("15 of 24")), _Result)
+    assert _run_local() == 1
+    assert [kw["right"] for kw in seen] == ["P", "C"]
+    captured = capsys.readouterr()
+    assert "calls: swept" in captured.out
+    assert "puts failed; calls landed" in captured.err
+    assert "puts landed" not in captured.err.replace("puts failed; calls landed", "")
+
+
+def test_local_neither_wing_landing_never_says_the_puts_landed(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    from tail_lab.contracts.option_chain import IncompleteSweepError
+
+    refused = _local_raise(IncompleteSweepError("15 of 24"))
+    _local(monkeypatch, refused, refused)
+    assert _run_local() == 1
+    err = capsys.readouterr().err
+    assert "neither wing landed" in err
+    assert "puts landed" not in err
+
+
+def test_local_a_put_lake_write_failure_still_lands_the_calls(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """``LAKE_WRITE_ERRORS`` used to escape ``_run_local`` as a traceback,
+    which would now also skip the call ingest."""
+    seen = _local(monkeypatch, _local_raise(OSError("disk full")), _Result)
+    assert _run_local() == 1
+    assert [kw["right"] for kw in seen] == ["P", "C"]
+    assert "::error::puts:" in capsys.readouterr().err
+
+
+@pytest.mark.parametrize(
+    "failure",
+    ["refused", "lake", "floor", "unsettled"],
+)
+def test_local_a_call_failure_is_red_and_says_the_puts_landed(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], failure: str
+) -> None:
+    from tail_lab.contracts.option_chain import IncompleteSweepError, SessionInProgress
+
+    call: Callable[[], _Result] = {
+        "refused": _local_raise(IncompleteSweepError("15 of 24")),
+        "lake": _local_raise(OSError("disk full")),
+        "floor": _ShortSweep,
+        "unsettled": _local_raise(SessionInProgress("still trading")),
+    }[failure]
+    _local(monkeypatch, _Result, call)
+    assert _run_local() == 1
+    assert "calls only; puts landed" in capsys.readouterr().err

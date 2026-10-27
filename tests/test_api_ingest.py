@@ -509,7 +509,7 @@ def test_the_call_route_validates_against_the_call_contract(
     """A put-signed delta is quarantined on the call route -- into the CALL
     quarantine -- and a call-signed one is kept; the put route would do the
     reverse. A hundred calls carry the one stray row: alone it would be a
-    misrouted body (MAX_WRONG_SIGN_SHARE), refused whole."""
+    misrouted symbol (MAX_WRONG_SIGN_SHARE), quarantined whole."""
     _set_token(monkeypatch, TOKEN)
     calls = [_call_row(strike=900.0 + i) for i in range(100)]
     resp = _post_calls(client, _body(*calls, _call_row(strike=810.0, delta=-0.3)))
@@ -573,9 +573,10 @@ def test_the_wrong_sign_guard_tolerates_one_percent_and_no_more(
     wrong: int,
     status: int,
 ) -> None:
-    """The guard is a share, not "any": one garbled row in a hundred must
-    never cost a whole unrecoverable session, and is quarantined. Two in a
-    hundred is past MAX_WRONG_SIGN_SHARE, and the body is refused whole."""
+    """The guard is a share, not "any": one garbled row in a hundred is
+    quarantined alone. Two in a hundred is past MAX_WRONG_SIGN_SHARE, so the
+    symbol is quarantined whole -- and as the body's only symbol, nothing
+    lands."""
     _set_token(monkeypatch, TOKEN)
     rows = [_row(strike=500.0 + i) for i in range(100 - wrong)]
     rows += [_row(strike=700.0 + i, delta=0.4) for i in range(wrong)]
@@ -586,6 +587,39 @@ def test_the_wrong_sign_guard_tolerates_one_percent_and_no_more(
         assert (resp.json()["rows"], resp.json()["quarantined"]) == (99, 1)
     else:
         assert not store.bronze_partition_exists(DATASET, dt.date(2026, 8, 26))
+
+
+@pytest.mark.parametrize("wing", ["P", "C"])
+def test_one_symbols_wrong_signs_cost_that_symbol_not_the_session(
+    client: TestClient, store: DeltaLakeStore, monkeypatch: pytest.MonkeyPatch, wing: str
+) -> None:
+    """24 chains, one of which Cboe serves with the other wing's delta sign
+    (4% of the body's signed rows). Refusing the body whole lost the session
+    on this path while the local writer committed the other 23. The glitching
+    symbol is quarantined whole -- its null-delta row too -- and the floor
+    lets the other 23 land."""
+    _set_token(monkeypatch, TOKEN)
+    sign, post, dataset, quarantine = (
+        (-1.0, _post, DATASET, QUARANTINE_DATASET)
+        if wing == "P"
+        else (1.0, _post_calls, CALL_DATASET, CALL_QUARANTINE_DATASET)
+    )
+    names = [f"S{i:02d}" for i in range(23)] + ["XLE"]
+    rows = [
+        _row(underlying=name, strike=700.0 + k, delta=sign * 0.19 * (-1 if name == "XLE" else 1))
+        for name in names
+        for k in range(20)
+    ]
+    rows.append(_row(underlying="XLE", strike=650.0, delta=None, iv=None))
+    resp = post(client, _body(*rows))
+
+    assert resp.status_code == 200, resp.text
+    answer = resp.json()
+    assert (answer["rows"], answer["quarantined"]) == (460, 21)
+    assert answer["symbols_failed"] == ["XLE"]
+    day = dt.date(2026, 8, 26)
+    assert "XLE" not in set(store.read_bronze_as_of(dataset, day)["underlying"])
+    assert set(store.read_bronze_as_of(quarantine, day)["underlying"]) == {"XLE"}
 
 
 def test_a_body_carrying_both_wings_is_refused_by_the_call_route(

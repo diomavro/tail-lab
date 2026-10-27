@@ -21,7 +21,8 @@ Two modes, one code path:
 
 Both modes fetch each chain ONCE and write two wings (``docs/adr/0031``): the
 puts to ``option_chain_snapshot``, then the calls to
-``option_chain_call_snapshot``. Every line is prefixed ``puts:`` or ``calls:``.
+``option_chain_call_snapshot``. Every per-wing line, retries included, is
+prefixed ``puts:`` or ``calls:``.
 
 Exit codes are the contract with the scheduler: non-zero whenever a session
 may be lost -- a sweep that returns nothing, too few chains, a feed behind the
@@ -30,9 +31,11 @@ already captured), or the session is still trading and the previous session
 is confirmed in the PUT lake. The calls, sliced from the same payloads, are
 then not attempted, so that 0 vouches for the put dataset only: a call
 session lost earlier went red on the run that lost it (``docs/adr/0031``
-§6). A put failure still sends the calls (each session is unrecoverable),
-and a call-only failure prints ``calls only; puts landed`` so an alert can
-tell it from a lost put session.
+§6). A put failure this script recognises (an HTTP refusal, a transport
+fault, a refused or failed lake write) still sends the calls (each session
+is unrecoverable); an unforeseen exception is a bug and ends the run. A
+call-only failure prints ``calls only; puts landed`` so an alert can tell it
+from a lost put session.
 """
 
 from __future__ import annotations
@@ -81,11 +84,12 @@ _CALLS_NOT_ATTEMPTED = "calls: not attempted -- the session is still trading"
 class Outcome(enum.Enum):
     """What one wing's write came to. ``SKIPPED`` is the session still
     trading, and only the puts produce it: an unsettled call wing is
-    ``FAILED`` (see :func:`_unsettled`)."""
+    ``UNSETTLED``, a failure (see :func:`_unsettled`)."""
 
     SKIPPED = "skipped"
     OK = "ok"
     FAILED = "failed"
+    UNSETTLED = "unsettled"
 
 
 #: A connection that dropped AFTER the request went out. urllib wraps only
@@ -172,6 +176,7 @@ def _post(
     echo of that attempt's own commit.
     """
     dropped = False
+    label = next((_LABEL[r] for r, p in _PATH.items() if p == path), path)
     for attempt in range(1, POST_ATTEMPTS + 1):
         try:
             return _post_once(base_url, path, token, payload, timeout), dropped
@@ -182,7 +187,7 @@ def _post(
             detail = getattr(exc, "code", None) or getattr(exc, "reason", exc)
             wait = POST_BACKOFF_S[min(attempt - 1, len(POST_BACKOFF_S) - 1)]
             print(
-                f"::warning::attempt {attempt}/{POST_ATTEMPTS} failed ({detail}); "
+                f"::warning::{label}: attempt {attempt}/{POST_ATTEMPTS} failed ({detail}); "
                 f"retrying in {wait}s — an abandoned session cannot be re-collected",
                 file=sys.stderr,
             )
@@ -218,7 +223,7 @@ def _run_local(symbols: list[str]) -> int:
     Kept out of ``main`` so ``main`` stays under the complexity ratchet, and
     because this half must never run the ``--post`` path's ``sweep_to_records``
     first. It used to: ``main`` swept unconditionally and THEN called
-    ``ingest_option_chain``, which does its own fetch -- every chain fetched
+    ``ingest_option_chain``, which then did its own fetch -- every chain fetched
     TWICE, 48 requests where 24 were needed, back to back.
 
     That was invisible on a GitHub runner and bit immediately on a workstation.
@@ -298,19 +303,15 @@ def _unsettled(right: Right, detail: str) -> Outcome:
     """A session still trading (a 425 / ``SessionInProgress``).
 
     For the puts that is a SKIP: nothing is written and nothing is at risk.
-    The calls are attempted only once the puts' session settled, so for them
-    it means the two wings disagreed about the session -- a failure, and the
-    log says so rather than printing a benign-looking ``calls: SKIPPED``.
+    For the calls it is a failure, and the log says so rather than printing a
+    benign-looking ``calls: SKIPPED``. Whether it also means the wings
+    disagree depends on how the puts ended, which :func:`_finish` knows.
     """
     if right == "P":
         print(f"puts: SKIPPED: {detail}")
         return Outcome.SKIPPED
-    print(
-        "::error::calls: session still in progress after the puts settled -- the wings "
-        f"disagree about the session: {detail}",
-        file=sys.stderr,
-    )
-    return Outcome.FAILED
+    print(f"::error::calls: session still in progress: {detail}", file=sys.stderr)
+    return Outcome.UNSETTLED
 
 
 def _report_local(result: IngestResult, label: str, requested: int) -> None:
@@ -341,8 +342,17 @@ def _report_local(result: IngestResult, label: str, requested: int) -> None:
 def _finish(put: Outcome, call: Outcome) -> int:
     """The exit code once both wings were attempted: 0 only if both landed.
 
-    The calls have no "skipped": :func:`_unsettled` maps theirs to FAILED.
+    The calls have no "skipped": :func:`_unsettled` maps theirs to UNSETTLED,
+    a failure.
     """
+    if call is Outcome.UNSETTLED and put is Outcome.OK:
+        # Only after puts that LANDED: then the wings' voters disagreed about
+        # the session. After a put failure nothing says they did.
+        print(
+            "::error::calls: still trading after the puts settled -- the wings disagree "
+            "about the session",
+            file=sys.stderr,
+        )
     if call is not Outcome.OK and put is Outcome.OK:
         # Distinct on purpose: the chain-loss alert must not tell the operator
         # the PUT session was lost when it landed (AGENT_TODO, ADR 0031).
@@ -412,10 +422,20 @@ def _post_sweep(args: argparse.Namespace, right: Right, payload: dict[str, objec
     return _report_post(response, label, dropped=dropped)
 
 
+def _error_body(exc: urllib.error.HTTPError) -> bytes:
+    """The refusal's body, or ``b""`` when the connection drops mid-read: a
+    lost detail must not become a traceback that skips the other wing."""
+    try:
+        return exc.read()[:400]
+    except (OSError, http.client.HTTPException):
+        return b""
+
+
 def _refused(exc: urllib.error.HTTPError, right: Right, label: str) -> Outcome:
+    detail = _error_body(exc)
     if exc.code == 425:
         # SessionInProgress on the app side: nothing written.
-        return _unsettled(right, repr(exc.read()[:400]))
+        return _unsettled(right, repr(detail))
     # Between a merge and its deploy, the SPA's StaticFiles mount (mounted at
     # "/" in api/main.py) answers a POST to the unknown call path with 405.
     # Named, so the red run explains itself. Only 405: a 404 is what the auth
@@ -426,7 +446,7 @@ def _refused(exc: urllib.error.HTTPError, right: Right, label: str) -> Outcome:
         else ""
     )
     print(
-        f"::error::{label}: app rejected the sweep: HTTP {exc.code} {exc.read()[:400]!r}{hint}",
+        f"::error::{label}: app rejected the sweep: HTTP {exc.code} {detail!r}{hint}",
         file=sys.stderr,
     )
     return Outcome.FAILED

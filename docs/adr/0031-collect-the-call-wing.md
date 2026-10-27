@@ -93,16 +93,21 @@ buys puts.
    Both log `api.ingest.option_chain` and tell the wings apart by `dataset=`,
    as the ingestion events do. Neither contract can keep a call out of the
    put dataset on its own: there is no `right` column, and a zero-filled row
-   has a null (or exactly zero) delta, which both contracts accept. So each
-   route refuses a body whole (422, nothing written) when more than 1% of its
-   rows with a non-null, non-zero delta carry the other wing's sign
-   (`Wing.misrouted`, `MAX_WRONG_SIGN_SHARE`). Measured on the 2026-10-26
-   live bodies, a correct body scores 0 (0 of 16,665 puts, 0 of 21,942
-   calls) and a misrouted body scores 1; a body carrying both wings scores
-   0.43 on the call route, which a first threshold of one half let through.
-   1% rather than zero, so one stray row from Cboe is quarantined instead of
-   costing the session. Without the guard, the fixture's call body POSTed to
-   the put route committed its two null-delta ITM calls as puts.
+   has a null (or exactly zero) delta, which both contracts accept. So both
+   writers, each route and the local ingest, quarantine every row of a SYMBOL
+   (null-delta rows included) when more than 1% of that symbol's rows with a
+   non-null, non-zero delta carry the other wing's sign (`Wing.split`,
+   `MAX_WRONG_SIGN_SHARE`), logged with `dataset=`; the symbol floor then
+   decides the session. Measured on the 2026-10-26 live bodies, a correct
+   body scores 0 (0 of 16,665 puts, 0 of 21,942 calls) and a misrouted body
+   scores 1; a body carrying both wings scores 0.43 on the call route, which
+   a first threshold of one half let through. A misrouted or two-wing body
+   therefore lands nothing (every symbol trips; 422 on a route). Per symbol,
+   not per body: a whole-body refusal turned one symbol's Cboe sign glitch
+   (4% of a body) into a lost session on the `--post` path while `--local`
+   kept the other 23. 1% rather than zero, so one stray row is quarantined
+   alone. Without the guard, the fixture's call body POSTed to the put route
+   committed its two null-delta ITM calls as puts.
 
 6. **Script exit contract** (`scripts/chain_snapshot.py`, both modes):
 
@@ -117,12 +122,14 @@ buys puts.
    call dataset's own witness turn a benign skip into a red 409. The exit 0
    on that row therefore vouches for the PUT dataset's previous session
    only: a call session lost earlier went red on the run that lost it. A
-   call 425 after the puts landed means the two wings disagreed about the
-   session, so it is a failure, logged as an `::error::`, never as
-   `calls: SKIPPED`. One witness read serves both bodies. The `--token` check
+   call 425 is a failure, logged as an `::error::`, never as
+   `calls: SKIPPED`; after puts that landed it also says the two wings
+   disagreed about the session. One witness read serves both bodies. The `--token` check
    now runs first. Every transport failure maps to a failed wing and never to
    a traceback that skips the other wing. That includes the dropped
-   connections and non-JSON 200s that urllib leaves unwrapped. A call-only
+   connections and non-JSON 200s that urllib leaves unwrapped, and a refusal
+   whose body cannot be read. An unforeseen exception (a bug) still ends
+   the run. A call-only
    failure prints `calls only; puts landed`.
 
 7. **Accepted gaps.**
@@ -146,8 +153,8 @@ buys puts.
 ## Body-size gate (measured before writing this ADR)
 
 The production app is one 1 GB machine with no swap (`fly.toml`), and the
-2026-09-04 transient 500 was attributed to memory pressure parsing a ~5 MB
-body. The call body is larger than the put body, so it was measured first.
+2026-09-04 transient 500 has two plausible causes, a cold start or memory
+pressure parsing a ~5 MB body (`scripts/chain_snapshot.py`). The call body is larger than the put body, so it was measured first.
 
 **Rows and bytes.** Live session 2026-10-26, fetched 2026-10-27 08:20 UTC,
 24 symbols, both wings sliced from the same 24 payloads:
