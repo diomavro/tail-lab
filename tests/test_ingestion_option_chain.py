@@ -1587,6 +1587,33 @@ def test_a_call_ingest_writes_only_the_call_dataset(tmp_path: Path) -> None:
     assert store.read_bronze_as_of(CALL_DATASET, day)["strike"].tolist() == [105.0]
 
 
+def test_a_failed_call_quarantine_write_logs_the_call_dataset(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    """STANDARDS §f: the --local sweep's audit line for a lost quarantine
+    write must name the wing it lost. Logging the put quarantine's name on a
+    call failure would send whoever reads it to the wrong table."""
+
+    class _QuarantineIsBroken(DeltaLakeStore):
+        def write_bronze(self, dataset: str, ingest_date: dt.date, df: pd.DataFrame) -> str:
+            if dataset.endswith("__quarantine"):
+                raise SchemaMismatchError("SchemaMismatchError: 13 vs 14")
+            return super().write_bronze(dataset, ingest_date, df)
+
+    payload = _payload(_call(105.0, delta=0.3), _call(106.0, delta=0.2, ask=0.0), symbol="SPY")
+    with caplog.at_level("ERROR"):
+        result = _ingest_with_fetch(
+            _QuarantineIsBroken(tmp_path), ["SPY"], payloads={"SPY": payload}, right="C"
+        )
+
+    assert result.committed is True
+    assert result.quarantine_path is None
+    failure = next(r for r in caplog.records if "quarantine_write_failed" in r.getMessage())
+    assert failure.getMessage().startswith(
+        f"event=ingestion.option_chain.quarantine_write_failed dataset={CALL_QUARANTINE_DATASET} "
+    )
+
+
 def test_a_call_ingest_validates_against_the_call_contract(tmp_path: Path) -> None:
     """Under the put contract every call fails its delta sign and the whole
     wing would land in quarantine."""
