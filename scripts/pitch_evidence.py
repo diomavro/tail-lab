@@ -64,6 +64,7 @@ import sys
 from collections.abc import Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import NamedTuple
 from unittest.mock import patch
 
 import numpy as np
@@ -420,6 +421,37 @@ def bootstrap_p(draws: np.ndarray) -> float:
     a bootstrap of R draws cannot resolve anything finer than 1 / (R + 1),
     and a p of exactly 0 would pass any Benjamini-Hochberg line it meets."""
     return float((np.sum(draws <= 0) + 1) / (len(draws) + 1))
+
+
+def null_centred_p(draws: np.ndarray, observed: float) -> float:
+    """One-sided p for "the effect is <= 0" under an IMPOSED null: the
+    bootstrap distribution is shifted to centre on zero (``draws - observed``)
+    and p is the share of it at or above ``observed``, with the same
+    (b + 1) / (R + 1) correction. Unlike ``bootstrap_p`` it does not assume
+    the distribution is symmetric about its centre; on a right-skewed one it
+    is the larger of the two."""
+    return float((np.sum(draws - observed >= observed) + 1) / (len(draws) + 1))
+
+
+def skewness(draws: np.ndarray) -> float:
+    """Sample skewness of a bootstrap distribution (0 when symmetric): how far
+    ``bootstrap_p`` can be from ``null_centred_p``."""
+    sd = float(draws.std())
+    return float(((draws - draws.mean()) ** 3).mean() / sd**3) if sd > 0 else float("nan")
+
+
+class Boot(NamedTuple):
+    """One test's bootstrap: its 95% interval, the percentile p, the
+    null-centred p, and the skewness that separates the two."""
+
+    ci: list[float]
+    p: float
+    p_null: float
+    skew: float
+
+
+def boot_summary(draws: np.ndarray, observed: float) -> Boot:
+    return Boot(ci95(draws), bootstrap_p(draws), null_centred_p(draws, observed), skewness(draws))
 
 
 def longest_losing_streak(roi: np.ndarray) -> int:
@@ -785,25 +817,22 @@ def roi_diff(roi: np.ndarray, take: np.ndarray) -> float:
     return float(roi[take].mean() - roi.mean()) if take.sum() else float("nan")
 
 
-def boot_roi_diff(
-    roi: np.ndarray, take: np.ndarray, rng: np.random.Generator
-) -> tuple[list[float], float]:
+def boot_roi_diff(roi: np.ndarray, take: np.ndarray, rng: np.random.Generator) -> Boot:
     ds = []
     for _ in range(P_REPS):
         i = block_bootstrap_idx(len(roi), BLOCK, rng)
         if take[i].sum():
             ds.append(roi[i][take[i]].mean() - roi[i].mean())
-    d = np.array(ds)
-    return ci95(d), bootstrap_p(d)
+    return boot_summary(np.array(ds), roi_diff(roi, take))
 
 
-def boot_dg(terms: np.ndarray, yrs: float, rng: np.random.Generator) -> tuple[list[float], float]:
+def boot_dg(terms: np.ndarray, yrs: float, rng: np.random.Generator) -> Boot:
     """CI and p for the annualised growth difference: per-roll terms
     resampled in blocks of ``BLOCK`` rolls, like every other interval here."""
     bs = np.array(
         [terms[block_bootstrap_idx(len(terms), BLOCK, rng)].sum() / yrs for _ in range(P_REPS)]
     )
-    return ci95(bs), bootstrap_p(bs)
+    return boot_summary(bs, float(terms.sum() / yrs))
 
 
 def hedge_diff_terms(eq: np.ndarray, roi: np.ndarray, take: np.ndarray) -> np.ndarray:
@@ -910,14 +939,21 @@ def underlying_gross(df: pd.DataFrame) -> np.ndarray:
 
 
 def _select(rows: list[tuple[Combo, Json, Json]], key: str) -> list[tuple[Combo, Json, Json]]:
+    """Eligible combinations, best in-sample first, judged on IN-SAMPLE
+    fields only: whether a filter turns out testable out of sample (it took
+    some, and for growth not every, out-of-sample roll) must not decide what
+    was picked."""
     ok = [
         r
         for r in rows
-        if int(str(r[1]["taken"])) >= MIN_IS_TAKEN
-        and not math.isnan(_as_float(r[1][key]))
-        and not math.isnan(_as_float(r[2][key]))
+        if int(str(r[1]["taken"])) >= MIN_IS_TAKEN and not math.isnan(_as_float(r[1][key]))
     ]
     return sorted(ok, key=lambda r: -_as_float(r[1][key]))
+
+
+def _testable(rows: list[tuple[Combo, Json, Json]], key: str) -> list[tuple[Combo, Json, Json]]:
+    """The rows whose out-of-sample statistic is defined."""
+    return [r for r in rows if not math.isnan(_as_float(r[2][key]))]
 
 
 def _spearman(ok: list[tuple[Combo, Json, Json]], key: str) -> float:
@@ -940,24 +976,35 @@ def timing(combos: list[Combo], rng: np.random.Generator) -> Json:
     for key in ("roi_diff", "dg"):
         ok = _select(rows, key)
         c, is_s, oos_s = ok[0]
+        if math.isnan(_as_float(oos_s[key])):
+            raise RuntimeError(
+                f"the in-sample pick {c.rule} {c.gate} has no out-of-sample {key}: "
+                "its filter took no (or, for growth, every) out-of-sample roll"
+            )
         o = ~c.is_
         if key == "roi_diff":
-            ci, p = boot_roi_diff(c.roi[o], c.take[o], rng)
+            b = boot_roi_diff(c.roi[o], c.take[o], rng)
         else:
-            ci, p = boot_dg(hedge_diff_terms(c.eq[o], c.roi[o], c.take[o]), c.yrs_oos, rng)
+            b = boot_dg(hedge_diff_terms(c.eq[o], c.roi[o], c.take[o]), c.yrs_oos, rng)
         out[key] = {
             "eligible": len(ok),
             "rule": c.rule,
             "gate": c.gate,
             "is": is_s,
             "oos": oos_s,
-            "oos_ci95": ci,
-            "oos_p": p,
+            "oos_ci95": b.ci,
+            "oos_p": b.p,
+            "oos_p_null": b.p_null,
+            "oos_skew": b.skew,
             **sign_persistence(ok, key),
             "spearman_is_oos": _spearman(ok, key),
             "oos_mean_taken_without_best": _mean_without_best(c.roi[o][c.take[o]]),
         }
-    out["bh"] = benjamini_hochberg_oos(_select(rows, "roi_diff"), rng)
+    eligible = _select(rows, "roi_diff")
+    out["bh"] = {
+        **benjamini_hochberg_oos(_testable(eligible, "roi_diff"), rng),
+        "untestable_oos": len(eligible) - len(_testable(eligible, "roi_diff")),
+    }
     return out
 
 
@@ -1049,11 +1096,14 @@ def benjamini_hochberg_oos(ok: list[tuple[Combo, Json, Json]], rng: np.random.Ge
     alone, and a perfect-foresight filter per rule -- the power check: a rule
     whose oracle cannot reach significance contributes tests that could not
     have passed."""
-    ps = [boot_roi_diff(c.roi[~c.is_], c.take[~c.is_], rng)[1] for c, _, _ in ok]
+    boots = [boot_roi_diff(c.roi[~c.is_], c.take[~c.is_], rng) for c, _, _ in ok]
+    ps = [b.p for b in boots]
+    p_null = [b.p_null for b in boots]
+    skews = [b.skew for b in boots if math.isfinite(b.skew)]
     sig = benjamini_hochberg(ps, alpha=FDR)
     survivors = [
-        {"rule": c.rule, "gate": c.gate, "oos": o, "oos_p": p}
-        for (c, _, o), p, s in zip(ok, ps, sig, strict=True)
+        {"rule": c.rule, "gate": c.gate, "oos": o, "oos_p": b.p, "oos_p_null": b.p_null}
+        for (c, _, o), b, s in zip(ok, boots, sig, strict=True)
         if s
     ]
     sell = [p for (c, _, _), p in zip(ok, ps, strict=True) if is_sell_rule(c.rule)]
@@ -1064,7 +1114,7 @@ def benjamini_hochberg_oos(ok: list[tuple[Combo, Json, Json]], rng: np.random.Ge
         roi = c.roi[~c.is_]
         oracle[name] = {
             "oos_winners": int((roi > 0).sum()),
-            "p": boot_roi_diff(roi, oracle_take(roi), rng)[1],
+            "p": boot_roi_diff(roi, oracle_take(roi), rng).p,
         }
     return {
         "tested": len(ps),
@@ -1072,6 +1122,10 @@ def benjamini_hochberg_oos(ok: list[tuple[Combo, Json, Json]], rng: np.random.Ge
         "survivors": survivors,
         "min_p": min(ps),
         "p_below_05": sum(p < 0.05 for p in ps),
+        "min_p_null": min(p_null),
+        "p_null_below_05": sum(p < 0.05 for p in p_null),
+        "survivors_null": int(sum(benjamini_hochberg(p_null, alpha=FDR))),
+        "skew_range": [min(skews), float(np.median(skews)), max(skews)] if skews else None,
         "p_floor": 1 / (P_REPS + 1),
         "sell_rules": {
             "tested": len(sell),
@@ -1090,6 +1144,8 @@ def benjamini_hochberg_oos(ok: list[tuple[Combo, Json, Json]], rng: np.random.Ge
                 ],
                 "oos": ok[i][2],
                 "oos_p": ps[i],
+                "oos_p_null": p_null[i],
+                "oos_skew": boots[i].skew,
             }
             for i in order
         ],
@@ -1420,9 +1476,12 @@ def check_imports_from(root: Path, imported: Path) -> None:
 
 
 def code_version(root: Path) -> Json:
-    """The commit that produced the file, the git TREE hashes of src/ and
-    scripts/ (a squash merge keeps a tree, not a branch commit), and whether
-    the code that ran differed from them (README constitution, rule 4)."""
+    """The commit that produced the file, the git TREE hash of src/ and the
+    BLOB hash of this script (a squash merge keeps a tree, not a branch
+    commit; the script alone, not all of scripts/, so an unrelated script
+    landing on main does not orphan it -- it imports nothing else from
+    scripts/), and whether the code that ran differed from them (README
+    constitution, rule 4)."""
 
     def git(*args: str) -> str:
         return subprocess.run(
@@ -1431,12 +1490,14 @@ def code_version(root: Path) -> Json:
 
     return {
         "sha": git("rev-parse", "HEAD"),
-        "tree": {d: git("rev-parse", f"HEAD:{d}") for d in ("src", "scripts")},
-        "dirty": bool(git("status", "--porcelain", "--", "scripts", "src")),
+        "tree": {"src": git("rev-parse", "HEAD:src")},
+        "script": git("rev-parse", f"HEAD:{SCRIPT}"),
+        "dirty": bool(git("status", "--porcelain", "--", SCRIPT, "src")),
     }
 
 
 ROOT = Path(__file__).resolve().parents[1]
+SCRIPT = "scripts/pitch_evidence.py"
 
 
 def run(store: LakeStore, as_of: dt.date) -> Json:

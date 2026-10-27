@@ -386,9 +386,48 @@ def test_a_resample_that_takes_no_roll_is_skipped_not_averaged() -> None:
     roi[4] = 9.0
     take = np.zeros(30, dtype=bool)
     take[4] = True  # most resamples miss it entirely
-    ci, p = pe.boot_roi_diff(roi, take, np.random.default_rng(1))
-    assert all(math.isfinite(x) for x in ci)
-    assert 0 < p <= 1
+    b = pe.boot_roi_diff(roi, take, np.random.default_rng(1))
+    assert all(math.isfinite(x) for x in b.ci)
+    assert 0 < b.p <= 1
+
+
+def test_the_null_centred_p_is_the_share_of_the_centred_draws_at_or_above_the_effect() -> None:
+    # Draws centred on the observed 1.0: shifted to centre on zero they are
+    # -1, -1, 0, 0, 2, 5; two (2 and 5) reach 1.0. The percentile p sees no
+    # draw at or below zero. On a right-skewed distribution the two differ,
+    # which is why the page prints both.
+    d = np.array([0.0, 0.0, 1.0, 1.0, 3.0, 6.0])
+    assert pe.null_centred_p(d, 1.0) == pytest.approx((2 + 1) / 7)
+    assert pe.bootstrap_p(d) == pytest.approx((2 + 1) / 7)  # the two zeros
+    d = d + 0.5
+    assert pe.bootstrap_p(d) == pytest.approx(1 / 7)
+    assert pe.null_centred_p(d, 1.5) == pytest.approx(3 / 7)
+    # "At or above", like bootstrap_p's "at or below": a tie counts.
+    assert pe.null_centred_p(np.array([1.0, 2.0, 3.0]), 1.0) == pytest.approx(3 / 4)
+    b = pe.boot_summary(d, 1.5)
+    assert (b.p, b.p_null) == (pe.bootstrap_p(d), pe.null_centred_p(d, 1.5))
+    assert b.skew > 0.5
+
+
+def test_skewness_is_zero_when_symmetric_and_signed_otherwise() -> None:
+    assert pe.skewness(np.array([-2.0, -1.0, 0.0, 1.0, 2.0])) == pytest.approx(0.0)
+    assert pe.skewness(np.array([0.0, 0.0, 0.0, 3.0])) == pytest.approx(2 / np.sqrt(3))
+    assert pe.skewness(-np.array([0.0, 0.0, 0.0, 3.0])) == pytest.approx(-2 / np.sqrt(3))
+    assert math.isnan(pe.skewness(np.ones(4)))
+
+
+def test_boot_roi_diff_centres_its_null_on_the_full_sample_effect(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # The null-centred p shifts the draws by the effect on the sample as
+    # observed, not by the mean of the draws.
+    seen: list[float] = []
+    monkeypatch.setattr(pe, "boot_summary", lambda d, obs: seen.append(obs))
+    roi = np.array([1.0, -1.0, 3.0, -1.0] * 3)
+    take = np.array([True, False, True, True] * 3)
+    pe.boot_roi_diff(roi, take, np.random.default_rng(0))
+    pe.boot_dg(np.array([0.5, -0.25, 1.0]), 2.0, np.random.default_rng(0))
+    assert seen == [pytest.approx(pe.roi_diff(roi, take)), pytest.approx(1.25 / 2.0)]
 
 
 def test_the_alpha_anchor_uses_an_expiry_at_least_28_days_out() -> None:
@@ -966,7 +1005,11 @@ def test_benjamini_hochberg_counts_raw_p_below_five_percent_and_lists_eight(
 ) -> None:
     # Ten tests with set p-values: two below 0.05; 0.05 itself and 0.08 are not.
     ps = iter([0.01, 0.04, 0.05, 0.08, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7])
-    monkeypatch.setattr(pe, "boot_roi_diff", lambda roi, take, rng: ([0.0, 0.0], next(ps, 0.5)))
+    monkeypatch.setattr(
+        pe,
+        "boot_roi_diff",
+        lambda roi, take, rng: pe.Boot([0.0, 0.0], (p := next(ps, 0.5)), min(1.0, 2 * p), 1.0),
+    )
     roi = [-1.0, 2.0] * 15
     ok = [
         (_combo(roi, roi, [True, False] * 30, "5pct_8w_sell4w"), {}, {"taken": 15})
@@ -975,6 +1018,10 @@ def test_benjamini_hochberg_counts_raw_p_below_five_percent_and_lists_eight(
     out = pe.benjamini_hochberg_oos(ok, np.random.default_rng(0))
     assert out["p_below_05"] == 2
     assert [s["oos_p"] for s in out["smallest_p"]] == [0.01, 0.04, 0.05, 0.08, 0.2, 0.3, 0.4, 0.5]
+    # The null-centred p is doubled here: only 0.01 -> 0.02 stays below 0.05.
+    assert out["p_null_below_05"] == 1
+    assert out["min_p_null"] == 0.02
+    assert [s["oos_p_null"] for s in out["smallest_p"]][:3] == [0.02, 0.08, 0.1]
 
 
 def test_every_benjamini_hochberg_pass_runs_at_the_stated_fdr(
@@ -993,7 +1040,7 @@ def test_every_benjamini_hochberg_pass_runs_at_the_stated_fdr(
     roi = [-1.0, 2.0] * 15
     c = _combo(roi, roi, [True, False] * 30, "5pct_8w_sell4w")
     out = pe.benjamini_hochberg_oos([(c, {}, {"taken": 15})], np.random.default_rng(0))
-    assert seen == [0.10, 0.10]
+    assert seen == [0.10, 0.10, 0.10]  # percentile, sold rules, null-centred
     assert out["fdr"] == 0.10
 
 
@@ -1008,21 +1055,45 @@ def _git(cwd: Path, *args: str) -> None:
     )
 
 
-def test_code_version_reports_dirty_src_and_survivable_tree_hashes(tmp_path: Path) -> None:
-    for d in ("src", "scripts", "docs"):
-        (tmp_path / d).mkdir()
-        (tmp_path / d / "f.py").write_text("x = 1\n")
+def test_code_version_names_src_by_tree_and_the_script_by_blob(tmp_path: Path) -> None:
+    import subprocess
+
+    for f in ("src/f.py", "scripts/other.py", pe.SCRIPT, "docs/f.py"):
+        (tmp_path / f).parent.mkdir(exist_ok=True)
+        (tmp_path / f).write_text("x = 1\n")
     _git(tmp_path, "init", "-q")
     _git(tmp_path, "add", ".")
     _git(tmp_path, "commit", "-q", "-m", "c")
     clean = pe.code_version(tmp_path)
     assert clean["dirty"] is False
     assert len(clean["sha"]) == 40
-    assert set(clean["tree"]) == {"src", "scripts"}
+    assert set(clean["tree"]) == {"src"}
+    blob = subprocess.run(
+        ["git", "hash-object", pe.SCRIPT], cwd=tmp_path, capture_output=True, text=True
+    ).stdout.strip()
+    assert clean["script"] == blob
+    # Another script landing (as one did on main) must not change the identity
+    # the page prints, nor count as running uncommitted code.
+    (tmp_path / "scripts" / "other.py").write_text("x = 2\n")
+    _git(tmp_path, "commit", "-qam", "d")
+    assert pe.code_version(tmp_path)["script"] == blob
+    (tmp_path / "scripts" / "other.py").write_text("x = 3\n")
     (tmp_path / "docs" / "f.py").write_text("x = 2\n")
-    assert pe.code_version(tmp_path)["dirty"] is False  # docs/ did not run
+    assert pe.code_version(tmp_path)["dirty"] is False  # neither ran
+    (tmp_path / pe.SCRIPT).write_text("x = 2\n")
+    assert pe.code_version(tmp_path)["dirty"] is True
+    _git(tmp_path, "checkout", "-q", "--", pe.SCRIPT)
     (tmp_path / "src" / "f.py").write_text("x = 2\n")
     assert pe.code_version(tmp_path)["dirty"] is True
+
+
+def test_the_generator_imports_nothing_else_from_scripts() -> None:
+    # code_version names this one file, not scripts/: true only while no
+    # other script is imported.
+    src = (Path(pe.__file__)).read_text()
+    others = {p.stem for p in Path(pe.__file__).parent.glob("*.py")} - {"pitch_evidence"}
+    imported = set(re.findall(r"^\s*(?:from|import)\s+([\w.]+)", src, re.M))
+    assert not {m.split(".")[0] for m in imported} & (others | {"scripts"})
 
 
 def test_the_generator_refuses_another_checkouts_tail_lab(tmp_path: Path) -> None:
@@ -1098,8 +1169,11 @@ def test_a_sold_put_with_no_qualifying_exit_bid_is_credited_intrinsic_and_flagge
 def test_overlap_says_when_several_tests_are_one_result() -> None:
     # Two rules on the same dates whose filters skip the same out-of-sample
     # roll: one effect seen twice. A third on other dates is not comparable.
-    a = _combo([0.0] * 4, [1.0, -1.0, 0.5, -0.5], [True] * 4 + [True, False, True, True], "a")
-    b = _combo([0.0] * 4, [2.0, -1.0, 0.4, -0.6], [True] * 4 + [True, False, True, True], "b")
+    # Both also skip their second IN-sample roll, which is not an
+    # out-of-sample date and must not be listed.
+    skip2 = [True, False, True, True]
+    a = _combo([0.0] * 4, [1.0, -1.0, 0.5, -0.5], skip2 + skip2, "a")
+    b = _combo([0.0] * 4, [2.0, -1.0, 0.4, -0.6], skip2 + skip2, "b")
     out = pe.overlap([a, b])
     assert out["same_oos_entries"] is True
     assert out["oos_entries"] == 4
@@ -1349,6 +1423,45 @@ def test_a_gate_is_eligible_from_exactly_min_is_taken_in_sample_rolls() -> None:
     assert [r[1]["taken"] for r in ok] == [pe.MIN_IS_TAKEN]
 
 
+def test_eligibility_and_rank_never_look_at_the_out_of_sample_result() -> None:
+    # A filter that takes no out-of-sample roll has an undefined OOS effect.
+    # It is still the in-sample best, and stays eligible and first: the
+    # out-of-sample data must not decide what was picked.
+    nan = float("nan")
+    rows = [
+        (object(), {"taken": pe.MIN_IS_TAKEN, "roi_diff": 0.1}, {"roi_diff": 0.5}),
+        (object(), {"taken": pe.MIN_IS_TAKEN, "roi_diff": 0.9}, {"roi_diff": nan}),
+    ]
+    ok = pe._select(rows, "roi_diff")  # type: ignore[arg-type]
+    assert [r[1]["roi_diff"] for r in ok] == [0.9, 0.1]
+    assert pe._testable(ok, "roi_diff") == [ok[1]]
+
+
+def test_a_combination_untestable_out_of_sample_stays_eligible_but_is_not_screened(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # The in-sample best is testable; the runner-up takes no out-of-sample
+    # roll. It counts as eligible, and is left out of the BH set -- and the
+    # page is told how many were.
+    monkeypatch.setattr(pe, "P_REPS", 50)
+    roi = [-1.0, 2.0] * pe.MIN_IS_TAKEN  # the best takes MIN_IS_TAKEN in sample
+    best = _combo(roi, roi, [False, True] * pe.MIN_IS_TAKEN * 2, "5pct_8w_sell4w")
+    blind = _combo(roi, roi, [True] * len(roi) + [False] * len(roi), "5pct_8w_sell4w")
+    out = pe.timing([best, blind], np.random.default_rng(0))
+    assert out["roi_diff"]["eligible"] == 2
+    assert out["bh"]["tested"] == 1
+    assert out["bh"]["untestable_oos"] == 1
+
+
+def test_timing_refuses_an_in_sample_pick_it_cannot_test_out_of_sample() -> None:
+    # 12 in-sample rolls the filter takes; it takes none of the 12
+    # out-of-sample ones, so its out-of-sample effect is undefined.
+    roi = [-1.0, 2.0] * 6
+    c = _combo(roi, roi, [True] * 12 + [False] * 12, "5pct_8w_sell4w")
+    with pytest.raises(RuntimeError, match="no out-of-sample roi_diff"):
+        pe.timing([c], np.random.default_rng(0))
+
+
 def test_every_refused_session_is_counted_under_the_guard_that_refused_it() -> None:
     # Weekly expiries; on most sessions only the 95 strike is listed. The
     # page says WHICH guard emptied the every-session sample, so each count
@@ -1380,6 +1493,30 @@ def test_every_refused_session_is_counted_under_the_guard_that_refused_it() -> N
     assert g["strike"] == 59 - 4 - 19
     assert sum(g.values()) == out["refused_days"]
     assert out["strike_refused_by_year"] == {"2020": g["strike"]}
+
+
+@pytest.mark.parametrize(
+    ("bid", "guard"),
+    [(0.55, "spread"), (0.7, "other")],
+    ids=["58pct_of_mid_45pct_of_ask", "35pct_of_mid"],
+)
+def test_the_spread_guard_is_measured_against_mid_as_the_fill_measures_it(
+    bid: float, guard: str
+) -> None:
+    # 0.55 / 1.00 is 45% of the ask but 58% of mid: over the 50% cap only if
+    # the spread is divided by mid, as the fill pipeline divides it. 0.70 /
+    # 1.00 passes every guard, so the fill buys it, and the classifier's
+    # "other" means "no guard refused this" -- a count there is a disagreement.
+    assert pe.MAX_RELATIVE_SPREAD == 0.5
+    sessions = pd.bdate_range("2020-01-06", periods=30)
+    panel = pd.DataFrame(
+        {"quote_date": sessions, "expiration": sessions[-1] + pd.Timedelta(days=40)}
+    ).assign(underlying="SPY", strike=80.0, bid=bid, ask=1.0, spot=100.0, iv=0.2)
+    mkt = pe.market_from_panel(panel, "SPY")
+    t = sessions[0]
+    f = mkt.src.fill(entry_date=t.date(), spot=100.0, moneyness_pct=20.0, tenor_weeks=4.0)
+    assert (f is None) == (guard == "spread")
+    assert pe.dx_refusal_guard(panel[panel.quote_date == t], t, 20.0) == guard
 
 
 def test_a_fill_whose_put_outlives_the_panel_is_refused_as_beyond_the_panel() -> None:
