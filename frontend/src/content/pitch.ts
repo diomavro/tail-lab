@@ -25,6 +25,10 @@ export interface Standalone {
   first_entry: string
   last_exit: string
   fill_skips: number
+  /** Sales whose exit bid the guards refused, credited intrinsic instead;
+   *  `_itm` = those where intrinsic was above zero. */
+  exits_at_intrinsic: number
+  exits_at_intrinsic_itm: number
   by_period: Record<string, { n: number; mean_roi: number; hits: number }>
 }
 
@@ -37,6 +41,9 @@ export interface HedgeConfig {
   max_dd: number
   /** [peak, trough] of the worst drawdown. */
   max_dd_span: string[]
+  /** The roll open on the drawdown's peak day (null if none was): its put's
+   *  value then and at exit, per unit of premium (1 = its cost). */
+  max_dd_peak_put: { entry: string; exit: string; mark_multiple: number; exit_multiple: number } | null
   drop_best?: { edge: number; edge_without_best: number; best_entry: string }
 }
 
@@ -155,8 +162,25 @@ export interface PitchEvidence {
     /** Days to the nearest listed expiry, min and max over the roll dates. */
     nearest_dte: number[]
     dates_with_two_expiries: string[]
+    /** 2008-01..2009-12 months with no roll date: unhedged. */
+    months_without_roll_date: string[]
     n_beat: number
     configs: number
+    /** The same check with the 50%-of-mid spread cap lifted (a wide quote bought at its ask). */
+    spread_guard_off: {
+      n_beat: number
+      depths: Record<
+        string,
+        {
+          filled: number
+          rolls: number
+          n_beat: number
+          best_entry: string
+          unhedged: { terminal: number; max_dd: number }
+          books: CrisisBook[]
+        }
+      >
+    }
   } & Record<'5pct' | '10pct' | '15pct' | '20pct', CrisisRule>
   timing: {
     combinations: number
@@ -164,6 +188,10 @@ export interface PitchEvidence {
     gates: number
     is_period: string[]
     oos_period: string[]
+    /** A combination is eligible only if its filter took at least this many in-sample rolls. */
+    min_is_taken: number
+    /** Share of entries with an implied-alpha reading, lowest and highest over the rules. */
+    alpha_coverage: number[]
     roi_diff: Selected
     dg: Selected
     bh: {
@@ -178,6 +206,16 @@ export interface PitchEvidence {
       smallest_p: PValued[]
       /** A perfect-foresight filter (the best third of out-of-sample rolls), per rule. */
       oracle: Record<string, { oos_winners: number; p: number }>
+      /** How alike the smallest-p tests are: one result seen several times, or several. */
+      smallest_p_overlap: {
+        tests: number
+        same_oos_entries: boolean
+        oos_entries: number
+        same_skipped: boolean
+        skipped: string[]
+        /** Pairwise correlation of out-of-sample roll returns: min, median (null unless same entries). */
+        roi_corr: number[] | null
+      }
     }
   }
 }

@@ -129,3 +129,48 @@ test('the data table shows what each dataset is without a sideways scroll on a p
     expect(box!.x + box!.width).toBeLessThanOrEqual(390)
   }
 })
+
+test('no 2008-09 refusal reason prints a quote', async ({ page }) => {
+  // option_quotes is cleared for private research only and this page is
+  // public: a reason names the guard, never a bid, ask or strike.
+  const text = await page.locator('#pitch-2008').innerText()
+  expect(text).not.toMatch(/\b(bid|ask|strike) \d/)
+})
+
+test('calls the smallest p-values one effect when they share their dates', async ({ page }) => {
+  // Eight tests on the same entry dates skipping the same dates are one
+  // result; the page once called them "a coherent effect" on every rule.
+  const o = EVIDENCE.timing.bh.smallest_p_overlap
+  const timing = page.locator('#pitch-timing')
+  await expect(timing).not.toContainText('coherent')
+  if (o.same_oos_entries && o.same_skipped) {
+    await expect(timing).toContainText(`These are not ${o.tests} confirmations`)
+    await expect(timing).toContainText(`skips the same ${o.skipped.length} of them`)
+  }
+})
+
+test('explains each deeper drawdown by the put open on its peak day', async ({ page }) => {
+  // A peak made of a put marked far above its cost is a paper gain given
+  // back, not premium spent through a falling market; read it from the file.
+  const h = EVIDENCE.SPY.hedge
+  const paper = h.configs.filter((c) => c.max_dd < h.unhedged_max_dd && (c.max_dd_peak_put?.mark_multiple ?? 0) > 2)
+  const section = page.locator('#pitch-hedge')
+  for (const c of paper) await expect(section).toContainText(`marked ${c.max_dd_peak_put!.mark_multiple.toFixed(1)}× its cost on ${c.max_dd_span[0]}`)
+  await expect(section).not.toContainText('premium spent through a falling market')
+})
+
+test('says how much of 2008-09 the spread guard decides', async ({ page }) => {
+  const off = EVIDENCE.crisis_2008.spread_guard_off
+  await expect(page.locator('#pitch-2008')).toContainText(
+    `with it lifted, so a wide quote is bought at its ask, ${off.n_beat} of ${EVIDENCE.crisis_2008.configs} books end ahead`,
+  )
+})
+
+test('on a phone the hedge table shows growth against unhedged without scrolling', async ({ page }) => {
+  // The column the section is about once started off-screen at 390px.
+  await page.setViewportSize({ width: 390, height: 800 })
+  const cell = page.getByTestId('pitch-hedge').locator('tbody tr').first().locator('td:nth-child(2)')
+  await expect(cell).toContainText('pp/yr')
+  const box = await cell.boundingBox()
+  expect(box!.x + box!.width).toBeLessThanOrEqual(390)
+})

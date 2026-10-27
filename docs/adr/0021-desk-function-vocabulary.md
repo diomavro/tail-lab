@@ -55,7 +55,7 @@ contradiction, it is the point.
 
 | Desk function | tail-lab | Status |
 |---|---|---|
-| **Research** | metrics, regimes, data quality, the model-vs-market residual | implemented |
+| **Research** | metrics, regimes, data quality, the model-vs-market residual, the **Pitch** (amendment 2026-10-27) | implemented |
 | **Signal** | the **Screen** (fragility ranking), the **Bake-off** (which metric sorts payoff), **Prior Art** (`docs/adr/0015` verdicts) | implemented |
 | **Risk** | the **Carry Budget** — what the book bleeds if nothing happens, and the caps that follow | **missing — see 4** |
 | **Execution** | order intent only (`/api/putlab/roll-schedule`); the crossing is `docs/adr/0019`'s separate process | walled |
@@ -68,7 +68,7 @@ backlog.
 
 **3. The vocabulary is closed.** New surfaces take a name from the desk list —
 Screen, Tape, Marks, Book, Blotter, Carry, Surface, Regime, Prior Art,
-Bake-off — or argue in an ADR for an addition. "Leaderboard", "dashboard",
+Bake-off, Pitch (amendment 2026-10-27) — or argue in an ADR for an addition. "Leaderboard", "dashboard",
 "panel" and "tool" are not desk words and do not describe what a thing is.
 
 **4. Add the Risk function, and make it about bleed.** For a long-put book the
@@ -129,9 +129,8 @@ none of them is allowed to say "there is no trade here".
 
 **Decision.** "Pitch" joins the closed list. It names one surface, the Pitch
 tab, which states the verdict on real quotes, how it was reached and what
-would change it. It is a **Research** function: §2's Research row now reads
-"metrics, regimes, data quality, the model-vs-market residual, the **Pitch**",
-and §3's closed list now reads "…, Prior Art, Bake-off, Pitch". It reports
+would change it. It is a **Research** function: §2's Research row and §3's closed list are
+edited in place to include it, each marked with this amendment's date. It reports
 what the evidence supports and recommends no trade; "the evidence supports
 none" is a finding, not an order. Its study figures are
 aggregates written by the human-run `scripts/pitch_evidence.py` into

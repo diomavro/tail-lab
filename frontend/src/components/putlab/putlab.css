@@ -1481,3 +1481,8 @@
   .pl-pitch-stack td:nth-child(3)::before { content: 'What it is'; }
   .pl-pitch-stack td:nth-child(4)::before { content: 'Known gaps'; }
 }
+/* On a phone the wide study tables scroll inside .pl-scroll; say so. */
+.pl-pitch-scrollhint { display: none; margin: 0; font-size: 12px; color: var(--ink-70); }
+@media (max-width: 640px) {
+  .pl-pitch-scrollhint { display: block; }
+}

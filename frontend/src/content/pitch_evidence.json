@@ -1,10 +1,10 @@
 {
  "as_of": "2026-10-27",
  "code": {
-  "sha": "07924088ae5604aa047166a8a4dcbc54a02f04ba",
+  "sha": "77b20a310a6f19230e48c622e5d7526230f5b228",
   "tree": {
    "src": "779cbbd61f91c40e7e510497c411fe23fa9dc5d1",
-   "scripts": "e3c39eb44f61fe599c7dbc6f9fb5f17c1a5a7edf"
+   "scripts": "dab43facf4e89d35c47237e93b59956ab06d8777"
   },
   "dirty": false
  },
@@ -105,7 +105,9 @@
       "hits": 3
      }
     },
-    "fill_skips": 1
+    "fill_skips": 1,
+    "exits_at_intrinsic": 0,
+    "exits_at_intrinsic_itm": 0
    },
    "10pct_4w_hold": {
     "n_rolls": 173,
@@ -145,7 +147,9 @@
       "hits": 0
      }
     },
-    "fill_skips": 12
+    "fill_skips": 12,
+    "exits_at_intrinsic": 0,
+    "exits_at_intrinsic_itm": 0
    },
    "15pct_4w_hold": {
     "n_rolls": 170,
@@ -185,7 +189,9 @@
       "hits": 0
      }
     },
-    "fill_skips": 67
+    "fill_skips": 67,
+    "exits_at_intrinsic": 0,
+    "exits_at_intrinsic_itm": 0
    },
    "20pct_4w_hold": {
     "n_rolls": 160,
@@ -225,7 +231,9 @@
       "hits": 0
      }
     },
-    "fill_skips": 216
+    "fill_skips": 216,
+    "exits_at_intrinsic": 0,
+    "exits_at_intrinsic_itm": 0
    },
    "5pct_8w_sell4w": {
     "n_rolls": 181,
@@ -265,7 +273,9 @@
       "hits": 9
      }
     },
-    "fill_skips": 0
+    "fill_skips": 0,
+    "exits_at_intrinsic": 8,
+    "exits_at_intrinsic_itm": 8
    },
    "10pct_8w_sell4w": {
     "n_rolls": 181,
@@ -305,7 +315,9 @@
       "hits": 8
      }
     },
-    "fill_skips": 0
+    "fill_skips": 0,
+    "exits_at_intrinsic": 3,
+    "exits_at_intrinsic_itm": 3
    },
    "15pct_8w_sell4w": {
     "n_rolls": 181,
@@ -345,7 +357,9 @@
       "hits": 6
      }
     },
-    "fill_skips": 0
+    "fill_skips": 0,
+    "exits_at_intrinsic": 0,
+    "exits_at_intrinsic_itm": 0
    },
    "20pct_8w_sell4w": {
     "n_rolls": 181,
@@ -385,7 +399,9 @@
       "hits": 5
      }
     },
-    "fill_skips": 0
+    "fill_skips": 0,
+    "exits_at_intrinsic": 3,
+    "exits_at_intrinsic_itm": 0
    },
    "5pct_12w_sell4w": {
     "n_rolls": 180,
@@ -425,7 +441,9 @@
       "hits": 11
      }
     },
-    "fill_skips": 17
+    "fill_skips": 17,
+    "exits_at_intrinsic": 8,
+    "exits_at_intrinsic_itm": 7
    },
    "10pct_12w_sell4w": {
     "n_rolls": 180,
@@ -465,7 +483,9 @@
       "hits": 11
      }
     },
-    "fill_skips": 17
+    "fill_skips": 17,
+    "exits_at_intrinsic": 4,
+    "exits_at_intrinsic_itm": 3
    },
    "15pct_12w_sell4w": {
     "n_rolls": 180,
@@ -505,7 +525,9 @@
       "hits": 9
      }
     },
-    "fill_skips": 17
+    "fill_skips": 17,
+    "exits_at_intrinsic": 1,
+    "exits_at_intrinsic_itm": 0
    },
    "20pct_12w_sell4w": {
     "n_rolls": 180,
@@ -545,7 +567,9 @@
       "hits": 6
      }
     },
-    "fill_skips": 17
+    "fill_skips": 17,
+    "exits_at_intrinsic": 2,
+    "exits_at_intrinsic_itm": 0
    }
   },
   "rolls_on_closed_days": {
@@ -574,7 +598,13 @@
      "max_dd_span": [
       "2020-02-19",
       "2020-03-23"
-     ]
+     ],
+     "max_dd_peak_put": {
+      "entry": "2020-02-05",
+      "exit": "2020-03-04",
+      "mark_multiple": 0.18304814962196575,
+      "exit_multiple": 2.347791484281726
+     }
     },
     {
      "rule": "5pct_4w_hold",
@@ -586,7 +616,13 @@
      "max_dd_span": [
       "2020-02-19",
       "2020-03-23"
-     ]
+     ],
+     "max_dd_peak_put": {
+      "entry": "2020-02-05",
+      "exit": "2020-03-04",
+      "mark_multiple": 0.18304814962196575,
+      "exit_multiple": 2.347791484281726
+     }
     },
     {
      "rule": "5pct_4w_hold",
@@ -598,7 +634,13 @@
      "max_dd_span": [
       "2018-01-26",
       "2020-03-23"
-     ]
+     ],
+     "max_dd_peak_put": {
+      "entry": "2018-01-05",
+      "exit": "2018-02-02",
+      "mark_multiple": 0.09787928221859707,
+      "exit_multiple": 0.0
+     }
     },
     {
      "rule": "10pct_4w_hold",
@@ -610,7 +652,13 @@
      "max_dd_span": [
       "2020-02-19",
       "2020-03-23"
-     ]
+     ],
+     "max_dd_peak_put": {
+      "entry": "2020-01-31",
+      "exit": "2020-02-28",
+      "mark_multiple": 0.030007501875468866,
+      "exit_multiple": 0.0
+     }
     },
     {
      "rule": "10pct_4w_hold",
@@ -622,7 +670,13 @@
      "max_dd_span": [
       "2020-02-19",
       "2020-03-23"
-     ]
+     ],
+     "max_dd_peak_put": {
+      "entry": "2020-01-31",
+      "exit": "2020-02-28",
+      "mark_multiple": 0.030007501875468866,
+      "exit_multiple": 0.0
+     }
     },
     {
      "rule": "10pct_4w_hold",
@@ -634,7 +688,13 @@
      "max_dd_span": [
       "2015-08-25",
       "2020-03-23"
-     ]
+     ],
+     "max_dd_peak_put": {
+      "entry": "2015-08-10",
+      "exit": "2015-09-11",
+      "mark_multiple": 35.871313672922255,
+      "exit_multiple": 0.0
+     }
     },
     {
      "rule": "15pct_4w_hold",
@@ -646,7 +706,13 @@
      "max_dd_span": [
       "2020-03-12",
       "2020-03-23"
-     ]
+     ],
+     "max_dd_peak_put": {
+      "entry": "2020-02-14",
+      "exit": "2020-03-13",
+      "mark_multiple": 236.9968051118211,
+      "exit_multiple": 89.84025559105432
+     }
     },
     {
      "rule": "15pct_4w_hold",
@@ -658,7 +724,13 @@
      "max_dd_span": [
       "2020-03-12",
       "2020-03-23"
-     ]
+     ],
+     "max_dd_peak_put": {
+      "entry": "2020-02-14",
+      "exit": "2020-03-13",
+      "mark_multiple": 236.9968051118211,
+      "exit_multiple": 89.84025559105432
+     }
     },
     {
      "rule": "15pct_4w_hold",
@@ -670,7 +742,13 @@
      "max_dd_span": [
       "2020-03-12",
       "2020-03-23"
-     ]
+     ],
+     "max_dd_peak_put": {
+      "entry": "2020-02-14",
+      "exit": "2020-03-13",
+      "mark_multiple": 236.9968051118211,
+      "exit_multiple": 89.84025559105432
+     }
     },
     {
      "rule": "20pct_4w_hold",
@@ -683,6 +761,12 @@
       "2021-12-29",
       "2022-10-12"
      ],
+     "max_dd_peak_put": {
+      "entry": "2021-12-03",
+      "exit": "2021-12-31",
+      "mark_multiple": 0.0,
+      "exit_multiple": 0.0
+     },
      "drop_best": {
       "edge": 0.014768793166262992,
       "edge_without_best": -0.028591975678238485,
@@ -700,6 +784,12 @@
       "2015-08-24",
       "2016-02-11"
      ],
+     "max_dd_peak_put": {
+      "entry": "2015-08-17",
+      "exit": "2015-09-18",
+      "mark_multiple": 61.0958904109589,
+      "exit_multiple": 0.0
+     },
      "drop_best": {
       "edge": 0.01295641369450766,
       "edge_without_best": -0.05725571734462041,
@@ -716,7 +806,13 @@
      "max_dd_span": [
       "2015-08-24",
       "2016-02-11"
-     ]
+     ],
+     "max_dd_peak_put": {
+      "entry": "2015-08-17",
+      "exit": "2015-09-18",
+      "mark_multiple": 61.0958904109589,
+      "exit_multiple": 0.0
+     }
     },
     {
      "rule": "5pct_8w_sell4w",
@@ -728,7 +824,13 @@
      "max_dd_span": [
       "2020-02-19",
       "2020-03-23"
-     ]
+     ],
+     "max_dd_peak_put": {
+      "entry": "2020-01-30",
+      "exit": "2020-02-27",
+      "mark_multiple": 0.31659882406151063,
+      "exit_multiple": 4.014322327755162
+     }
     },
     {
      "rule": "5pct_8w_sell4w",
@@ -740,7 +842,13 @@
      "max_dd_span": [
       "2020-02-19",
       "2020-03-23"
-     ]
+     ],
+     "max_dd_peak_put": {
+      "entry": "2020-01-30",
+      "exit": "2020-02-27",
+      "mark_multiple": 0.31659882406151063,
+      "exit_multiple": 4.014322327755162
+     }
     },
     {
      "rule": "5pct_8w_sell4w",
@@ -752,7 +860,13 @@
      "max_dd_span": [
       "2020-02-19",
       "2020-03-23"
-     ]
+     ],
+     "max_dd_peak_put": {
+      "entry": "2020-01-30",
+      "exit": "2020-02-27",
+      "mark_multiple": 0.31659882406151063,
+      "exit_multiple": 4.014322327755162
+     }
     },
     {
      "rule": "10pct_8w_sell4w",
@@ -764,7 +878,13 @@
      "max_dd_span": [
       "2020-02-19",
       "2020-03-23"
-     ]
+     ],
+     "max_dd_peak_put": {
+      "entry": "2020-01-30",
+      "exit": "2020-02-27",
+      "mark_multiple": 0.3013429413691451,
+      "exit_multiple": 7.103504749426793
+     }
     },
     {
      "rule": "10pct_8w_sell4w",
@@ -776,7 +896,13 @@
      "max_dd_span": [
       "2020-02-19",
       "2020-03-23"
-     ]
+     ],
+     "max_dd_peak_put": {
+      "entry": "2020-01-30",
+      "exit": "2020-02-27",
+      "mark_multiple": 0.3013429413691451,
+      "exit_multiple": 7.103504749426793
+     }
     },
     {
      "rule": "10pct_8w_sell4w",
@@ -788,7 +914,13 @@
      "max_dd_span": [
       "2020-02-19",
       "2020-03-23"
-     ]
+     ],
+     "max_dd_peak_put": {
+      "entry": "2020-01-30",
+      "exit": "2020-02-27",
+      "mark_multiple": 0.3013429413691451,
+      "exit_multiple": 7.103504749426793
+     }
     },
     {
      "rule": "15pct_8w_sell4w",
@@ -800,7 +932,13 @@
      "max_dd_span": [
       "2020-02-19",
       "2020-03-23"
-     ]
+     ],
+     "max_dd_peak_put": {
+      "entry": "2020-01-30",
+      "exit": "2020-02-27",
+      "mark_multiple": 0.3538570417551309,
+      "exit_multiple": 8.03043170559094
+     }
     },
     {
      "rule": "15pct_8w_sell4w",
@@ -812,7 +950,13 @@
      "max_dd_span": [
       "2020-02-19",
       "2020-03-23"
-     ]
+     ],
+     "max_dd_peak_put": {
+      "entry": "2020-01-30",
+      "exit": "2020-02-27",
+      "mark_multiple": 0.3538570417551309,
+      "exit_multiple": 8.03043170559094
+     }
     },
     {
      "rule": "15pct_8w_sell4w",
@@ -824,7 +968,8 @@
      "max_dd_span": [
       "2022-01-03",
       "2022-10-12"
-     ]
+     ],
+     "max_dd_peak_put": null
     },
     {
      "rule": "20pct_8w_sell4w",
@@ -836,7 +981,13 @@
      "max_dd_span": [
       "2020-02-19",
       "2020-03-23"
-     ]
+     ],
+     "max_dd_peak_put": {
+      "entry": "2020-01-30",
+      "exit": "2020-02-27",
+      "mark_multiple": 0.3547066848567531,
+      "exit_multiple": 7.813096862210096
+     }
     },
     {
      "rule": "20pct_8w_sell4w",
@@ -848,7 +999,13 @@
      "max_dd_span": [
       "2020-02-19",
       "2020-03-23"
-     ]
+     ],
+     "max_dd_peak_put": {
+      "entry": "2020-01-30",
+      "exit": "2020-02-27",
+      "mark_multiple": 0.3547066848567531,
+      "exit_multiple": 7.813096862210096
+     }
     },
     {
      "rule": "20pct_8w_sell4w",
@@ -860,7 +1017,8 @@
      "max_dd_span": [
       "2022-01-03",
       "2022-10-12"
-     ]
+     ],
+     "max_dd_peak_put": null
     },
     {
      "rule": "5pct_12w_sell4w",
@@ -872,7 +1030,13 @@
      "max_dd_span": [
       "2020-02-19",
       "2020-03-23"
-     ]
+     ],
+     "max_dd_peak_put": {
+      "entry": "2020-01-30",
+      "exit": "2020-02-27",
+      "mark_multiple": 0.49280541709771475,
+      "exit_multiple": 2.5041850841719167
+     }
     },
     {
      "rule": "5pct_12w_sell4w",
@@ -884,7 +1048,13 @@
      "max_dd_span": [
       "2020-02-19",
       "2020-03-23"
-     ]
+     ],
+     "max_dd_peak_put": {
+      "entry": "2020-01-30",
+      "exit": "2020-02-27",
+      "mark_multiple": 0.49280541709771475,
+      "exit_multiple": 2.5041850841719167
+     }
     },
     {
      "rule": "5pct_12w_sell4w",
@@ -896,7 +1066,13 @@
      "max_dd_span": [
       "2020-02-19",
       "2020-03-23"
-     ]
+     ],
+     "max_dd_peak_put": {
+      "entry": "2020-01-30",
+      "exit": "2020-02-27",
+      "mark_multiple": 0.49280541709771475,
+      "exit_multiple": 2.5041850841719167
+     }
     },
     {
      "rule": "10pct_12w_sell4w",
@@ -908,7 +1084,13 @@
      "max_dd_span": [
       "2020-02-19",
       "2020-03-23"
-     ]
+     ],
+     "max_dd_peak_put": {
+      "entry": "2020-01-30",
+      "exit": "2020-02-27",
+      "mark_multiple": 0.4723099950108099,
+      "exit_multiple": 4.5712622650923
+     }
     },
     {
      "rule": "10pct_12w_sell4w",
@@ -920,7 +1102,13 @@
      "max_dd_span": [
       "2020-02-19",
       "2020-03-23"
-     ]
+     ],
+     "max_dd_peak_put": {
+      "entry": "2020-01-30",
+      "exit": "2020-02-27",
+      "mark_multiple": 0.4723099950108099,
+      "exit_multiple": 4.5712622650923
+     }
     },
     {
      "rule": "10pct_12w_sell4w",
@@ -932,7 +1120,13 @@
      "max_dd_span": [
       "2020-02-19",
       "2020-03-23"
-     ]
+     ],
+     "max_dd_peak_put": {
+      "entry": "2020-01-30",
+      "exit": "2020-02-27",
+      "mark_multiple": 0.4723099950108099,
+      "exit_multiple": 4.5712622650923
+     }
     },
     {
      "rule": "15pct_12w_sell4w",
@@ -944,7 +1138,13 @@
      "max_dd_span": [
       "2020-02-19",
       "2020-03-23"
-     ]
+     ],
+     "max_dd_peak_put": {
+      "entry": "2020-01-30",
+      "exit": "2020-02-27",
+      "mark_multiple": 0.4668374608596641,
+      "exit_multiple": 4.994876174210077
+     }
     },
     {
      "rule": "15pct_12w_sell4w",
@@ -956,7 +1156,13 @@
      "max_dd_span": [
       "2020-02-19",
       "2020-03-23"
-     ]
+     ],
+     "max_dd_peak_put": {
+      "entry": "2020-01-30",
+      "exit": "2020-02-27",
+      "mark_multiple": 0.4668374608596641,
+      "exit_multiple": 4.994876174210077
+     }
     },
     {
      "rule": "15pct_12w_sell4w",
@@ -968,7 +1174,13 @@
      "max_dd_span": [
       "2020-02-19",
       "2020-03-23"
-     ]
+     ],
+     "max_dd_peak_put": {
+      "entry": "2020-01-30",
+      "exit": "2020-02-27",
+      "mark_multiple": 0.4668374608596641,
+      "exit_multiple": 4.994876174210077
+     }
     },
     {
      "rule": "20pct_12w_sell4w",
@@ -980,7 +1192,13 @@
      "max_dd_span": [
       "2020-02-19",
       "2020-03-23"
-     ]
+     ],
+     "max_dd_peak_put": {
+      "entry": "2020-01-30",
+      "exit": "2020-02-27",
+      "mark_multiple": 0.502092050209205,
+      "exit_multiple": 5.407650926479378
+     }
     },
     {
      "rule": "20pct_12w_sell4w",
@@ -992,7 +1210,13 @@
      "max_dd_span": [
       "2020-02-19",
       "2020-03-23"
-     ]
+     ],
+     "max_dd_peak_put": {
+      "entry": "2020-01-30",
+      "exit": "2020-02-27",
+      "mark_multiple": 0.502092050209205,
+      "exit_multiple": 5.407650926479378
+     }
     },
     {
      "rule": "20pct_12w_sell4w",
@@ -1004,7 +1228,13 @@
      "max_dd_span": [
       "2020-02-19",
       "2020-03-23"
-     ]
+     ],
+     "max_dd_peak_put": {
+      "entry": "2020-01-30",
+      "exit": "2020-02-27",
+      "mark_multiple": 0.502092050209205,
+      "exit_multiple": 5.407650926479378
+     }
     }
    ],
    "n_beat": 2,
@@ -1131,7 +1361,9 @@
       "hits": 5
      }
     },
-    "fill_skips": 0
+    "fill_skips": 0,
+    "exits_at_intrinsic": 0,
+    "exits_at_intrinsic_itm": 0
    },
    "10pct_4w_hold": {
     "n_rolls": 151,
@@ -1171,7 +1403,9 @@
       "hits": 3
      }
     },
-    "fill_skips": 9
+    "fill_skips": 9,
+    "exits_at_intrinsic": 0,
+    "exits_at_intrinsic_itm": 0
    },
    "15pct_4w_hold": {
     "n_rolls": 142,
@@ -1211,7 +1445,9 @@
       "hits": 0
      }
     },
-    "fill_skips": 105
+    "fill_skips": 105,
+    "exits_at_intrinsic": 0,
+    "exits_at_intrinsic_itm": 0
    },
    "20pct_4w_hold": {
     "n_rolls": 126,
@@ -1251,7 +1487,9 @@
       "hits": 0
      }
     },
-    "fill_skips": 368
+    "fill_skips": 368,
+    "exits_at_intrinsic": 0,
+    "exits_at_intrinsic_itm": 0
    },
    "5pct_8w_sell4w": {
     "n_rolls": 155,
@@ -1291,7 +1529,9 @@
       "hits": 11
      }
     },
-    "fill_skips": 0
+    "fill_skips": 0,
+    "exits_at_intrinsic": 8,
+    "exits_at_intrinsic_itm": 7
    },
    "10pct_8w_sell4w": {
     "n_rolls": 155,
@@ -1331,7 +1571,9 @@
       "hits": 11
      }
     },
-    "fill_skips": 0
+    "fill_skips": 0,
+    "exits_at_intrinsic": 2,
+    "exits_at_intrinsic_itm": 1
    },
    "15pct_8w_sell4w": {
     "n_rolls": 155,
@@ -1371,7 +1613,9 @@
       "hits": 8
      }
     },
-    "fill_skips": 0
+    "fill_skips": 0,
+    "exits_at_intrinsic": 4,
+    "exits_at_intrinsic_itm": 0
    },
    "20pct_8w_sell4w": {
     "n_rolls": 155,
@@ -1411,7 +1655,9 @@
       "hits": 5
      }
     },
-    "fill_skips": 10
+    "fill_skips": 10,
+    "exits_at_intrinsic": 8,
+    "exits_at_intrinsic_itm": 0
    },
    "5pct_12w_sell4w": {
     "n_rolls": 154,
@@ -1451,7 +1697,9 @@
       "hits": 10
      }
     },
-    "fill_skips": 28
+    "fill_skips": 28,
+    "exits_at_intrinsic": 9,
+    "exits_at_intrinsic_itm": 7
    },
    "10pct_12w_sell4w": {
     "n_rolls": 154,
@@ -1491,7 +1739,9 @@
       "hits": 12
      }
     },
-    "fill_skips": 29
+    "fill_skips": 29,
+    "exits_at_intrinsic": 3,
+    "exits_at_intrinsic_itm": 1
    },
    "15pct_12w_sell4w": {
     "n_rolls": 153,
@@ -1531,7 +1781,9 @@
       "hits": 10
      }
     },
-    "fill_skips": 49
+    "fill_skips": 49,
+    "exits_at_intrinsic": 2,
+    "exits_at_intrinsic_itm": 0
    },
    "20pct_12w_sell4w": {
     "n_rolls": 153,
@@ -1571,7 +1823,9 @@
       "hits": 8
      }
     },
-    "fill_skips": 46
+    "fill_skips": 46,
+    "exits_at_intrinsic": 2,
+    "exits_at_intrinsic_itm": 0
    }
   },
   "rolls_on_closed_days": {
@@ -1600,7 +1854,8 @@
      "max_dd_span": [
       "2021-11-19",
       "2022-12-28"
-     ]
+     ],
+     "max_dd_peak_put": null
     },
     {
      "rule": "5pct_4w_hold",
@@ -1612,7 +1867,8 @@
      "max_dd_span": [
       "2021-11-19",
       "2022-12-28"
-     ]
+     ],
+     "max_dd_peak_put": null
     },
     {
      "rule": "5pct_4w_hold",
@@ -1624,7 +1880,8 @@
      "max_dd_span": [
       "2021-11-19",
       "2022-12-28"
-     ]
+     ],
+     "max_dd_peak_put": null
     },
     {
      "rule": "10pct_4w_hold",
@@ -1636,7 +1893,13 @@
      "max_dd_span": [
       "2021-11-19",
       "2022-11-03"
-     ]
+     ],
+     "max_dd_peak_put": {
+      "entry": "2021-11-05",
+      "exit": "2021-12-03",
+      "mark_multiple": 0.25316455696202533,
+      "exit_multiple": 0.0
+     }
     },
     {
      "rule": "10pct_4w_hold",
@@ -1648,7 +1911,13 @@
      "max_dd_span": [
       "2021-11-19",
       "2022-11-03"
-     ]
+     ],
+     "max_dd_peak_put": {
+      "entry": "2021-11-05",
+      "exit": "2021-12-03",
+      "mark_multiple": 0.25316455696202533,
+      "exit_multiple": 0.0
+     }
     },
     {
      "rule": "10pct_4w_hold",
@@ -1660,7 +1929,13 @@
      "max_dd_span": [
       "2021-11-19",
       "2023-01-05"
-     ]
+     ],
+     "max_dd_peak_put": {
+      "entry": "2021-11-05",
+      "exit": "2021-12-03",
+      "mark_multiple": 0.25316455696202533,
+      "exit_multiple": 0.0
+     }
     },
     {
      "rule": "15pct_4w_hold",
@@ -1672,7 +1947,13 @@
      "max_dd_span": [
       "2021-11-19",
       "2022-12-28"
-     ]
+     ],
+     "max_dd_peak_put": {
+      "entry": "2021-11-05",
+      "exit": "2021-12-03",
+      "mark_multiple": 0.2279202279202279,
+      "exit_multiple": 0.0
+     }
     },
     {
      "rule": "15pct_4w_hold",
@@ -1684,7 +1965,13 @@
      "max_dd_span": [
       "2021-11-19",
       "2022-12-28"
-     ]
+     ],
+     "max_dd_peak_put": {
+      "entry": "2021-11-05",
+      "exit": "2021-12-03",
+      "mark_multiple": 0.2279202279202279,
+      "exit_multiple": 0.0
+     }
     },
     {
      "rule": "15pct_4w_hold",
@@ -1696,7 +1983,13 @@
      "max_dd_span": [
       "2021-11-19",
       "2023-01-05"
-     ]
+     ],
+     "max_dd_peak_put": {
+      "entry": "2021-11-05",
+      "exit": "2021-12-03",
+      "mark_multiple": 0.2279202279202279,
+      "exit_multiple": 0.0
+     }
     },
     {
      "rule": "20pct_4w_hold",
@@ -1708,7 +2001,8 @@
      "max_dd_span": [
       "2021-11-19",
       "2022-12-28"
-     ]
+     ],
+     "max_dd_peak_put": null
     },
     {
      "rule": "20pct_4w_hold",
@@ -1720,7 +2014,8 @@
      "max_dd_span": [
       "2021-11-19",
       "2022-12-28"
-     ]
+     ],
+     "max_dd_peak_put": null
     },
     {
      "rule": "20pct_4w_hold",
@@ -1732,7 +2027,8 @@
      "max_dd_span": [
       "2021-11-19",
       "2022-12-28"
-     ]
+     ],
+     "max_dd_peak_put": null
     },
     {
      "rule": "5pct_8w_sell4w",
@@ -1744,7 +2040,13 @@
      "max_dd_span": [
       "2021-12-27",
       "2022-11-03"
-     ]
+     ],
+     "max_dd_peak_put": {
+      "entry": "2021-12-06",
+      "exit": "2022-01-03",
+      "mark_multiple": 0.3280792523964224,
+      "exit_multiple": 0.25777082581317934
+     }
     },
     {
      "rule": "5pct_8w_sell4w",
@@ -1756,7 +2058,13 @@
      "max_dd_span": [
       "2021-12-27",
       "2022-11-03"
-     ]
+     ],
+     "max_dd_peak_put": {
+      "entry": "2021-12-06",
+      "exit": "2022-01-03",
+      "mark_multiple": 0.3280792523964224,
+      "exit_multiple": 0.25777082581317934
+     }
     },
     {
      "rule": "5pct_8w_sell4w",
@@ -1768,7 +2076,13 @@
      "max_dd_span": [
       "2021-12-27",
       "2022-12-28"
-     ]
+     ],
+     "max_dd_peak_put": {
+      "entry": "2021-12-06",
+      "exit": "2022-01-03",
+      "mark_multiple": 0.3280792523964224,
+      "exit_multiple": 0.25777082581317934
+     }
     },
     {
      "rule": "10pct_8w_sell4w",
@@ -1780,7 +2094,13 @@
      "max_dd_span": [
       "2021-12-27",
       "2022-11-03"
-     ]
+     ],
+     "max_dd_peak_put": {
+      "entry": "2021-12-06",
+      "exit": "2022-01-03",
+      "mark_multiple": 0.2820154379140582,
+      "exit_multiple": 0.20099677870297206
+     }
     },
     {
      "rule": "10pct_8w_sell4w",
@@ -1792,7 +2112,13 @@
      "max_dd_span": [
       "2021-12-27",
       "2022-11-03"
-     ]
+     ],
+     "max_dd_peak_put": {
+      "entry": "2021-12-06",
+      "exit": "2022-01-03",
+      "mark_multiple": 0.2820154379140582,
+      "exit_multiple": 0.20099677870297206
+     }
     },
     {
      "rule": "10pct_8w_sell4w",
@@ -1804,7 +2130,13 @@
      "max_dd_span": [
       "2021-12-27",
       "2022-11-03"
-     ]
+     ],
+     "max_dd_peak_put": {
+      "entry": "2021-12-06",
+      "exit": "2022-01-03",
+      "mark_multiple": 0.2820154379140582,
+      "exit_multiple": 0.20099677870297206
+     }
     },
     {
      "rule": "15pct_8w_sell4w",
@@ -1816,7 +2148,13 @@
      "max_dd_span": [
       "2021-12-27",
       "2022-11-03"
-     ]
+     ],
+     "max_dd_peak_put": {
+      "entry": "2021-12-06",
+      "exit": "2022-01-03",
+      "mark_multiple": 0.24927075046406788,
+      "exit_multiple": 0.16679925749138158
+     }
     },
     {
      "rule": "15pct_8w_sell4w",
@@ -1828,7 +2166,13 @@
      "max_dd_span": [
       "2021-12-27",
       "2022-11-03"
-     ]
+     ],
+     "max_dd_peak_put": {
+      "entry": "2021-12-06",
+      "exit": "2022-01-03",
+      "mark_multiple": 0.24927075046406788,
+      "exit_multiple": 0.16679925749138158
+     }
     },
     {
      "rule": "15pct_8w_sell4w",
@@ -1840,7 +2184,13 @@
      "max_dd_span": [
       "2021-12-27",
       "2022-11-03"
-     ]
+     ],
+     "max_dd_peak_put": {
+      "entry": "2021-12-06",
+      "exit": "2022-01-03",
+      "mark_multiple": 0.24927075046406788,
+      "exit_multiple": 0.16679925749138158
+     }
     },
     {
      "rule": "20pct_8w_sell4w",
@@ -1852,7 +2202,13 @@
      "max_dd_span": [
       "2021-11-19",
       "2022-12-28"
-     ]
+     ],
+     "max_dd_peak_put": {
+      "entry": "2021-11-11",
+      "exit": "2021-12-09",
+      "mark_multiple": 0.6256306760847629,
+      "exit_multiple": 0.6616212579885637
+     }
     },
     {
      "rule": "20pct_8w_sell4w",
@@ -1864,7 +2220,13 @@
      "max_dd_span": [
       "2021-11-19",
       "2022-12-28"
-     ]
+     ],
+     "max_dd_peak_put": {
+      "entry": "2021-11-11",
+      "exit": "2021-12-09",
+      "mark_multiple": 0.6256306760847629,
+      "exit_multiple": 0.6616212579885637
+     }
     },
     {
      "rule": "20pct_8w_sell4w",
@@ -1876,7 +2238,13 @@
      "max_dd_span": [
       "2021-11-19",
       "2022-12-28"
-     ]
+     ],
+     "max_dd_peak_put": {
+      "entry": "2021-11-11",
+      "exit": "2021-12-09",
+      "mark_multiple": 0.6256306760847629,
+      "exit_multiple": 0.6616212579885637
+     }
     },
     {
      "rule": "5pct_12w_sell4w",
@@ -1888,7 +2256,13 @@
      "max_dd_span": [
       "2021-12-27",
       "2022-10-14"
-     ]
+     ],
+     "max_dd_peak_put": {
+      "entry": "2021-12-14",
+      "exit": "2022-01-11",
+      "mark_multiple": 0.5384883585790106,
+      "exit_multiple": 0.687521791345446
+     }
     },
     {
      "rule": "5pct_12w_sell4w",
@@ -1900,7 +2274,13 @@
      "max_dd_span": [
       "2021-12-27",
       "2022-10-14"
-     ]
+     ],
+     "max_dd_peak_put": {
+      "entry": "2021-12-14",
+      "exit": "2022-01-11",
+      "mark_multiple": 0.5384883585790106,
+      "exit_multiple": 0.687521791345446
+     }
     },
     {
      "rule": "5pct_12w_sell4w",
@@ -1912,7 +2292,13 @@
      "max_dd_span": [
       "2021-11-19",
       "2022-10-14"
-     ]
+     ],
+     "max_dd_peak_put": {
+      "entry": "2021-11-16",
+      "exit": "2021-12-14",
+      "mark_multiple": 0.8514182138833097,
+      "exit_multiple": 1.1966393964630384
+     }
     },
     {
      "rule": "10pct_12w_sell4w",
@@ -1924,7 +2310,13 @@
      "max_dd_span": [
       "2021-12-27",
       "2022-11-03"
-     ]
+     ],
+     "max_dd_peak_put": {
+      "entry": "2021-12-14",
+      "exit": "2022-01-11",
+      "mark_multiple": 0.5150804097750816,
+      "exit_multiple": 0.5910261546385853
+     }
     },
     {
      "rule": "10pct_12w_sell4w",
@@ -1936,7 +2328,13 @@
      "max_dd_span": [
       "2021-11-19",
       "2022-11-03"
-     ]
+     ],
+     "max_dd_peak_put": {
+      "entry": "2021-11-16",
+      "exit": "2021-12-14",
+      "mark_multiple": 0.8635385963514698,
+      "exit_multiple": 1.176372181948538
+     }
     },
     {
      "rule": "10pct_12w_sell4w",
@@ -1948,7 +2346,13 @@
      "max_dd_span": [
       "2021-11-19",
       "2022-11-03"
-     ]
+     ],
+     "max_dd_peak_put": {
+      "entry": "2021-11-16",
+      "exit": "2021-12-14",
+      "mark_multiple": 0.8635385963514698,
+      "exit_multiple": 1.176372181948538
+     }
     },
     {
      "rule": "15pct_12w_sell4w",
@@ -1960,7 +2364,13 @@
      "max_dd_span": [
       "2021-12-27",
       "2022-11-03"
-     ]
+     ],
+     "max_dd_peak_put": {
+      "entry": "2021-12-14",
+      "exit": "2022-01-11",
+      "mark_multiple": 0.49425386675883526,
+      "exit_multiple": 0.4948587228894843
+     }
     },
     {
      "rule": "15pct_12w_sell4w",
@@ -1972,7 +2382,13 @@
      "max_dd_span": [
       "2021-11-19",
       "2022-11-03"
-     ]
+     ],
+     "max_dd_peak_put": {
+      "entry": "2021-11-16",
+      "exit": "2021-12-14",
+      "mark_multiple": 0.8785023859048084,
+      "exit_multiple": 1.1509849504465925
+     }
     },
     {
      "rule": "15pct_12w_sell4w",
@@ -1984,7 +2400,13 @@
      "max_dd_span": [
       "2021-11-19",
       "2022-11-03"
-     ]
+     ],
+     "max_dd_peak_put": {
+      "entry": "2021-11-16",
+      "exit": "2021-12-14",
+      "mark_multiple": 0.8785023859048084,
+      "exit_multiple": 1.1509849504465925
+     }
     },
     {
      "rule": "20pct_12w_sell4w",
@@ -1996,7 +2418,13 @@
      "max_dd_span": [
       "2021-11-19",
       "2022-11-03"
-     ]
+     ],
+     "max_dd_peak_put": {
+      "entry": "2021-11-16",
+      "exit": "2021-12-14",
+      "mark_multiple": 0.898876404494382,
+      "exit_multiple": 1.1289178001182734
+     }
     },
     {
      "rule": "20pct_12w_sell4w",
@@ -2008,7 +2436,13 @@
      "max_dd_span": [
       "2021-11-19",
       "2022-11-03"
-     ]
+     ],
+     "max_dd_peak_put": {
+      "entry": "2021-11-16",
+      "exit": "2021-12-14",
+      "mark_multiple": 0.898876404494382,
+      "exit_multiple": 1.1289178001182734
+     }
     },
     {
      "rule": "20pct_12w_sell4w",
@@ -2020,7 +2454,13 @@
      "max_dd_span": [
       "2021-11-19",
       "2022-11-03"
-     ]
+     ],
+     "max_dd_peak_put": {
+      "entry": "2021-11-16",
+      "exit": "2021-12-14",
+      "mark_multiple": 0.898876404494382,
+      "exit_multiple": 1.1289178001182734
+     }
     }
    ],
    "n_beat": 0,
@@ -2164,6 +2604,9 @@
    "2009-02-20",
    "2009-08-21"
   ],
+  "months_without_roll_date": [
+   "2008-03"
+  ],
   "5pct": {
    "unhedged": {
     "terminal": 0.890391392803009,
@@ -2267,7 +2710,7 @@
    "refused": [
     {
      "entry": "2008-04-18",
-     "reason": "spread 59% of mid (bid 0.06, ask 0.11, strike 118)"
+     "reason": "spread 59% of mid, over the 50% cap"
     }
    ],
    "last": "2010-01-16"
@@ -2304,25 +2747,147 @@
    "refused": [
     {
      "entry": "2008-01-18",
-     "reason": "spread 86% of mid (bid 0.04, ask 0.10, strike 106)"
+     "reason": "spread 86% of mid, over the 50% cap"
     },
     {
      "entry": "2008-04-18",
-     "reason": "spread 133% of mid (bid 0.01, ask 0.05, strike 111)"
+     "reason": "spread 133% of mid, over the 50% cap"
     },
     {
      "entry": "2008-06-20",
-     "reason": "spread 80% of mid (bid 0.03, ask 0.07, strike 105)"
+     "reason": "spread 80% of mid, over the 50% cap"
     },
     {
      "entry": "2008-09-19",
-     "reason": "spread 64% of mid (bid 0.16, ask 0.31, strike 99)"
+     "reason": "spread 64% of mid, over the 50% cap"
     }
    ],
    "last": "2010-01-16"
   },
   "n_beat": 7,
-  "configs": 12
+  "configs": 12,
+  "spread_guard_off": {
+   "n_beat": 9,
+   "depths": {
+    "5pct": {
+     "filled": 23,
+     "rolls": 23,
+     "n_beat": 2,
+     "best_entry": "2008-09-19",
+     "unhedged": {
+      "terminal": 0.890391392803009,
+      "max_dd": -0.45209762882858107
+     },
+     "books": [
+      {
+       "budget": 0.0025,
+       "terminal": 0.8923387725337208,
+       "max_dd": -0.432737292029171,
+       "terminal_without_best": 0.8598570279751628
+      },
+      {
+       "budget": 0.005,
+       "terminal": 0.8929289060751765,
+       "max_dd": -0.4135391042345168,
+       "terminal_without_best": 0.8302056249626918
+      },
+      {
+       "budget": 0.01,
+       "terminal": 0.8903526396174715,
+       "max_dd": -0.37565196725988736
+      }
+     ]
+    },
+    "10pct": {
+     "filled": 23,
+     "rolls": 23,
+     "n_beat": 2,
+     "best_entry": "2008-09-19",
+     "unhedged": {
+      "terminal": 0.890391392803009,
+      "max_dd": -0.45209762882858107
+     },
+     "books": [
+      {
+       "budget": 0.0025,
+       "terminal": 0.8933702855996674,
+       "max_dd": -0.43208155576273655,
+       "terminal_without_best": 0.8457955168252979
+      },
+      {
+       "budget": 0.005,
+       "terminal": 0.8936980203988698,
+       "max_dd": -0.4130339627029229,
+       "terminal_without_best": 0.8033261618574107
+      },
+      {
+       "budget": 0.01,
+       "terminal": 0.887368835894386,
+       "max_dd": -0.37774432022397975
+      }
+     ]
+    },
+    "15pct": {
+     "filled": 23,
+     "rolls": 23,
+     "n_beat": 3,
+     "best_entry": "2008-09-19",
+     "unhedged": {
+      "terminal": 0.890391392803009,
+      "max_dd": -0.45209762882858107
+     },
+     "books": [
+      {
+       "budget": 0.0025,
+       "terminal": 0.9060778712224072,
+       "max_dd": -0.4240033015682465,
+       "terminal_without_best": 0.8426841958780247
+      },
+      {
+       "budget": 0.005,
+       "terminal": 0.9174004478795273,
+       "max_dd": -0.39746660145215773,
+       "terminal_without_best": 0.7974229480557938
+      },
+      {
+       "budget": 0.01,
+       "terminal": 0.9285461986341831,
+       "max_dd": -0.3488692382889569,
+       "terminal_without_best": 0.7137649771331684
+      }
+     ]
+    },
+    "20pct": {
+     "filled": 23,
+     "rolls": 23,
+     "n_beat": 2,
+     "best_entry": "2008-09-19",
+     "unhedged": {
+      "terminal": 0.890391392803009,
+      "max_dd": -0.45209762882858107
+     },
+     "books": [
+      {
+       "budget": 0.0025,
+       "terminal": 0.8936614883882623,
+       "max_dd": -0.4318964371872449,
+       "terminal_without_best": 0.8426841958780247
+      },
+      {
+       "budget": 0.005,
+       "terminal": 0.893901470083993,
+       "max_dd": -0.4129003403240652,
+       "terminal_without_best": 0.7974229480557938
+      },
+      {
+       "budget": 0.01,
+       "terminal": 0.8864788179806014,
+       "max_dd": -0.3783684335346491
+      }
+     ]
+    }
+   }
+  }
  },
  "timing": {
   "combinations": 420,
@@ -2336,6 +2901,7 @@
    "2017-01-01",
    "2023-12-29"
   ],
+  "min_is_taken": 8,
   "roi_diff": {
    "eligible": 408,
    "rule": "20pct_12w_sell4w",
@@ -2585,7 +3151,37 @@
      "oos_winners": 1,
      "p": 0.35353535353535354
     }
+   },
+   "smallest_p_overlap": {
+    "tests": 8,
+    "same_oos_entries": true,
+    "oos_entries": 90,
+    "same_skipped": true,
+    "skipped": [
+     "2020-03-26",
+     "2020-04-23",
+     "2020-05-21",
+     "2020-06-19",
+     "2020-07-17",
+     "2020-09-11",
+     "2020-11-06",
+     "2021-02-01",
+     "2021-12-06",
+     "2022-01-31",
+     "2022-02-28",
+     "2022-05-23",
+     "2022-06-20",
+     "2022-10-10"
+    ],
+    "roi_corr": [
+     0.7004902696418267,
+     0.8807881425625145
+    ]
    }
-  }
+  },
+  "alpha_coverage": [
+   0.6944444444444444,
+   0.89375
+  ]
  }
 }
