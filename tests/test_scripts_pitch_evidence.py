@@ -211,6 +211,18 @@ def test_drawdown_episodes_need_a_full_recovery_between_them() -> None:
     assert eps[-1]["unrecovered"] is True
 
 
+def test_a_close_back_at_exactly_the_old_high_is_a_full_recovery() -> None:
+    # 100 -> 85 -> 100 (exactly the old high) -> 88: two separate 10%+
+    # declines, not one 15% episode that the second decline extends.
+    idx = pd.bdate_range("2020-01-01", periods=5)
+    spot = pd.Series([100, 85, 100, 88, 99], index=idx, dtype=float)
+    eps = pe.drawdown_episodes(spot, 0.10)
+    assert [(e["peak"], e["trough"]) for e in eps] == [
+        ("2020-01-01", "2020-01-02"),
+        ("2020-01-03", "2020-01-06"),
+    ]
+
+
 def test_losing_streak_and_unit_value() -> None:
     assert pe.longest_losing_streak(np.array([-1, -1, 2, -1, -1, -1, 0.5])) == 3
     assert pe.unit_value(1.0, 0.0, sold=True) == 0.0  # no fee on a worthless sale
@@ -359,6 +371,10 @@ def test_the_oracle_takes_the_best_third() -> None:
         False,
         False,
     ]
+    # Seven rolls: a third is 2.33, and "the best third" rounds UP to three,
+    # so the oracle is never handed fewer winners than a third of the rolls.
+    take = pe.oracle_take(np.array([-1.0, 3.0, -0.5, 0.2, -0.9, -0.1, 0.1]))
+    assert take.tolist() == [False, True, False, True, False, False, True]
 
 
 def test_ci95_is_the_two_and_a_half_percent_tails() -> None:
@@ -1328,3 +1344,93 @@ def test_a_gate_is_eligible_from_exactly_min_is_taken_in_sample_rolls() -> None:
     ]
     ok = pe._select(rows, "dg")  # type: ignore[arg-type]
     assert [r[1]["taken"] for r in ok] == [pe.MIN_IS_TAKEN]
+
+
+def test_every_refused_session_is_counted_under_the_guard_that_refused_it() -> None:
+    # Weekly expiries; on most sessions only the 95 strike is listed. The
+    # page says WHICH guard emptied the every-session sample, so each count
+    # must land under the guard the fill pipeline actually applied.
+    sessions = pd.bdate_range("2020-01-06", periods=60)
+    expiries = sessions[4::5]
+    rows = [
+        {"quote_date": d, "expiration": e, "strike": 95.0, "bid": 0.9, "ask": 1.0}
+        for d in sessions
+        for e in expiries
+        if e > d
+    ]
+    panel = pd.DataFrame(rows).assign(underlying="SPY", spot=100.0, iv=0.2)
+    deep = panel["quote_date"].isin(sessions[:3])  # 2020: strike 80 listed, no bid
+    panel = pd.concat([panel, panel[deep].assign(strike=80.0, bid=0.0)])
+    wide = panel["quote_date"] == sessions[3]  # strike 80 listed, spread 100% of mid
+    panel = pd.concat([panel, panel[wide].assign(strike=80.0, bid=0.5, ask=1.5)])
+    mkt = pe.market_from_panel(panel.reset_index(drop=True), "SPY")
+    out = pe.every_day_entries(mkt, 20.0, ("2020-01-06", "2020-03-27"))
+    g = out["refused_by_guard"]
+    assert out["entry_days"] == 0
+    assert g["no_bid"] == 3
+    assert g["spread"] == 1
+    # 59 quoted sessions (the 60th lists no live expiry). The last weeks list
+    # no expiry 28 days out; every other session lists only the 95 strike,
+    # 15pp from the 20% depth.
+    assert out["refused_days"] == 59
+    assert g["no_expiry"] == 19
+    assert g["strike"] == 59 - 4 - 19
+    assert sum(g.values()) == out["refused_days"]
+    assert out["strike_refused_by_year"] == {"2020": g["strike"]}
+
+
+def test_a_fill_whose_put_outlives_the_panel_is_refused_as_beyond_the_panel() -> None:
+    sessions = pd.bdate_range("2020-01-06", periods=10)
+    panel = pd.DataFrame(
+        {"quote_date": sessions, "expiration": sessions[-1] + pd.Timedelta(days=40)}
+    ).assign(underlying="SPY", strike=95.0, bid=0.9, ask=1.0, spot=100.0, iv=0.2)
+    out = pe.every_day_entries(
+        pe.market_from_panel(panel, "SPY"), 5.0, ("2020-01-06", "2020-01-17")
+    )
+    assert out["refused_by_guard"] == {"expiry_beyond_panel": 10}
+
+
+def test_the_smallest_p_tests_carry_their_in_sample_result_and_skipped_dates(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # The page reports a filter's in-sample sign next to its out-of-sample p:
+    # the entry must be the combination's own in-sample stats, and the dates
+    # its filter skipped in sample (never an out-of-sample one).
+    monkeypatch.setattr(pe, "P_REPS", 50)
+    roi = [-1.0, 2.0, -1.0]
+    c = _combo(roi, roi, [True, False, True, False, True, True], "5pct_8w_sell4w")
+    is_s = c.stats(oos=False)
+    out = pe.benjamini_hochberg_oos([(c, is_s, {"taken": 2})], np.random.default_rng(0))
+    row = out["smallest_p"][0]
+    assert row["is"] is is_s
+    assert row["is_skipped"] == [c.entries[1]]
+
+
+@pytest.mark.parametrize(
+    ("call", "n"),
+    [
+        (lambda rng: pe.boot_mean_ci(np.arange(12.0), rng, reps=3), 12),
+        (lambda rng: pe.boot_roi_diff(np.arange(12.0), np.arange(12) % 2 == 0, rng), 12),
+        (lambda rng: pe.boot_dg(np.arange(12.0), 1.0, rng), 12),
+    ],
+    ids=["mean_ci", "roi_diff", "dg"],
+)
+def test_every_interval_on_the_page_resamples_blocks_of_block_rolls(
+    monkeypatch: pytest.MonkeyPatch, call: object, n: int
+) -> None:
+    # The page says every interval and p is a block bootstrap in blocks of
+    # BLOCK rolls. A block of 1 would narrow every CI and lower every p.
+    monkeypatch.setattr(pe, "P_REPS", 3)
+    seen: list[tuple[int, int]] = []
+    real = pe.block_bootstrap_idx
+
+    def spy(n_: int, block: int, rng: np.random.Generator) -> np.ndarray:
+        seen.append((n_, block))
+        return real(n_, block, rng)
+
+    monkeypatch.setattr(pe, "block_bootstrap_idx", spy)
+    assert callable(call)
+    call(np.random.default_rng(0))
+    assert seen
+    assert set(seen) == {(n, pe.BLOCK)}
+    assert pe.BLOCK == 6

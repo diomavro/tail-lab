@@ -499,11 +499,41 @@ def phase_means(rois: pd.Series, period: int) -> list[float]:
     return [float(rois.iloc[k::period].dropna().mean()) for k in range(period)]
 
 
+def dx_refusal_guard(session: pd.DataFrame | None, entry: pd.Timestamp, m: float) -> str:
+    """Which ``OptionsDxQuoteSource.fill`` guard refused this session's
+    ``m``% OOM 4-week put, checked in the pipeline's own order: no quotes,
+    no expiry 28+ days out, no listed strike within ``MAX_SNAP_MONEYNESS_PP``
+    of the depth (deep strikes go unlisted in calm years), no bid, or a
+    spread over the cap. A count, never a quote, leaves the lake."""
+    if session is None or session.empty:
+        return "no_quotes"
+    exp = session["expiration"][session["expiration"] >= entry + pd.Timedelta(days=28)]
+    if exp.empty:
+        return "no_expiry"
+    at = session[session["expiration"] == exp.min()]
+    spot = float(at["spot"].iloc[0])
+    row = at.iloc[int((at["strike"] - spot * (1.0 - m / 100.0)).abs().to_numpy().argmin())]
+    if abs((1.0 - float(row["strike"]) / spot) * 100.0 - m) > MAX_SNAP_MONEYNESS_PP:
+        return "strike"
+    bid, ask = float(row["bid"]), float(row["ask"])
+    if bid <= 0.0 or ask <= 0.0:
+        return "no_bid"
+    if (ask - bid) / ((ask + bid) / 2) > MAX_RELATIVE_SPREAD:
+        return "spread"
+    return "other"
+
+
 def every_day_entries(mkt: Market, m: float, span: tuple[str, str]) -> Json:
     """The roll calendar is arbitrary: buy a 4-week put on EVERY session and
     hold it to expiry; phase k keeps every 20th entry from session k. With a
-    handful of tail events in the sample, the phase can decide the sign."""
+    handful of tail events in the sample, the phase can decide the sign.
+    Each refused session is counted under the guard that refused it, and the
+    strike-guard refusals by year: refusal is not random, so the mean is
+    over a sample the guards selected."""
     rois: list[float] = []
+    by_guard: dict[str, int] = {}
+    strike_by_year: dict[str, int] = {}
+    rows_of = mkt.chain.groupby("quote_date").indices
     for t in mkt.sessions[(mkt.sessions >= span[0]) & (mkt.sessions <= span[1])]:
         f = mkt.src.fill(
             entry_date=t.date(), spot=float(mkt.spot[t]), moneyness_pct=m, tenor_weeks=4.0
@@ -511,6 +541,15 @@ def every_day_entries(mkt: Market, m: float, span: tuple[str, str]) -> Json:
         settle = last_on_or_before(mkt.sessions, pd.Timestamp(f.expiry)) if f else None
         if f is None or settle is None or settle <= t or pd.Timestamp(f.expiry) > mkt.sessions[-1]:
             rois.append(float("nan"))
+            pos = rows_of.get(t)
+            guard = (
+                dx_refusal_guard(None if pos is None else mkt.chain.iloc[pos], t, m)
+                if f is None
+                else "expiry_beyond_panel"
+            )
+            by_guard[guard] = by_guard.get(guard, 0) + 1
+            if guard == "strike":
+                strike_by_year[str(t.year)] = strike_by_year.get(str(t.year), 0) + 1
             continue
         c = 1.0 / (100.0 * f.premium + COMMISSION_PER_CONTRACT)
         rois.append(c * 100.0 * max(f.strike - float(mkt.spot[settle]), 0.0) - 1.0)
@@ -520,6 +559,8 @@ def every_day_entries(mkt: Market, m: float, span: tuple[str, str]) -> Json:
     return {
         "entry_days": len(ok),
         "refused_days": int(g.isna().sum()),
+        "refused_by_guard": dict(sorted(by_guard.items())),
+        "strike_refused_by_year": strike_by_year,
         "mean_roi": float(ok.mean()),
         "hit_rate": float((ok > 0).mean()),
         "phases": PHASES,
@@ -756,6 +797,15 @@ def boot_roi_diff(
     return ci95(d), bootstrap_p(d)
 
 
+def boot_dg(terms: np.ndarray, yrs: float, rng: np.random.Generator) -> tuple[list[float], float]:
+    """CI and p for the annualised growth difference: per-roll terms
+    resampled in blocks of ``BLOCK`` rolls, like every other interval here."""
+    bs = np.array(
+        [terms[block_bootstrap_idx(len(terms), BLOCK, rng)].sum() / yrs for _ in range(P_REPS)]
+    )
+    return ci95(bs), bootstrap_p(bs)
+
+
 def hedge_diff_terms(eq: np.ndarray, roi: np.ndarray, take: np.ndarray) -> np.ndarray:
     """Per-roll log growth of the gated book minus a SPEND-MATCHED ungated
     book (same rule, budget x the share of rolls taken)."""
@@ -894,14 +944,7 @@ def timing(combos: list[Combo], rng: np.random.Generator) -> Json:
         if key == "roi_diff":
             ci, p = boot_roi_diff(c.roi[o], c.take[o], rng)
         else:
-            terms = hedge_diff_terms(c.eq[o], c.roi[o], c.take[o])
-            bs = np.array(
-                [
-                    terms[block_bootstrap_idx(len(terms), BLOCK, rng)].sum() / c.yrs_oos
-                    for _ in range(P_REPS)
-                ]
-            )
-            ci, p = ci95(bs), bootstrap_p(bs)
+            ci, p = boot_dg(hedge_diff_terms(c.eq[o], c.roi[o], c.take[o]), c.yrs_oos, rng)
         out[key] = {
             "eligible": len(ok),
             "rule": c.rule,
@@ -1036,7 +1079,18 @@ def benjamini_hochberg_oos(ok: list[tuple[Combo, Json, Json]], rng: np.random.Ge
             "min_p": min(sell),
         },
         "smallest_p": [
-            {"rule": ok[i][0].rule, "gate": ok[i][0].gate, "oos": ok[i][2], "oos_p": ps[i]}
+            {
+                "rule": ok[i][0].rule,
+                "gate": ok[i][0].gate,
+                "is": ok[i][1],
+                "is_skipped": [
+                    d
+                    for d, s, k in zip(ok[i][0].entries, ok[i][0].is_, ok[i][0].take, strict=True)
+                    if s and not k
+                ],
+                "oos": ok[i][2],
+                "oos_p": ps[i],
+            }
             for i in order
         ],
         "oracle": oracle,
