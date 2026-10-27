@@ -130,7 +130,7 @@ def cboe_chain_sample() -> dict[str, Any]:
 
 
 @pytest.fixture
-def cboe_chain_calls_sample() -> dict[str, Any]:
+def cboe_chain_calls_sample() -> dict[str, object]:
     """Real Cboe SPY contracts from the 2026-10-26 session (spot 765.37), chosen
     to straddle every call-wing filter (docs/adr/0031): in-band calls from
     ITM (0.85) to 1.31 x spot; one just below the 0.80 floor (610); one past
@@ -141,7 +141,7 @@ def cboe_chain_calls_sample() -> dict[str, Any]:
     (the live session had iv-zero ITM calls with real-looking deltas, but none
     below 0.9). The put-only ``cboe_chain_sample`` holds no in-band call at
     all, so call tests against it would pass vacuously."""
-    raw: dict[str, Any] = json.loads((FIXTURES_DIR / "cboe_chain_calls_sample.json").read_text())
+    raw: dict[str, object] = json.loads((FIXTURES_DIR / "cboe_chain_calls_sample.json").read_text())
     return raw
 
 

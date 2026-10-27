@@ -43,7 +43,6 @@ import datetime as dt
 import logging
 from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
-from typing import Final
 
 import pandas as pd
 import requests
@@ -93,14 +92,6 @@ _LOGGER = logging.getLogger(__name__)
 #: 200 is the worst failure a keyless source has -- see
 #: ``contracts.option_chain.plan_session_write`` for the check that catches it.
 CBOE_CHAIN_URL = "https://cdn-api.cboe.com/api/global/delayed_quotes/options/{symbol}.json"
-
-#: The per-symbol failure event for each wing's parse. The put name is the one
-#: this adapter always logged; the call wing gets its own so a call-only bug
-#: is legible as one (``docs/adr/0031``).
-_PARSE_FAILED_EVENT: Final[dict[Right, str]] = {
-    "P": "ingestion.option_chain.symbol_failed",
-    "C": "ingestion.option_chain.call_symbol_failed",
-}
 
 #: Cboe prefixes cash-settled index roots with an underscore (``_SPX``).
 #: Equities and ETFs use the bare root.
@@ -374,12 +365,25 @@ class _Parsed:
 
 
 def _parse_symbols(
-    symbols: Sequence[str], load: Callable[[str], Mapping[str, object]], right: Right
+    symbols: Sequence[str], load: Callable[[str], Mapping[str, object] | None], right: Right
 ) -> _Parsed:
     parsed = _Parsed()
+    dataset = WINGS[right].dataset
     for symbol in symbols:
         try:
-            frame, unparsed = parse_cboe_chain(load(symbol), right)
+            payload = load(symbol)
+            if payload is None:
+                # Absent from fetch_chains' payloads: its fetch failed, and
+                # fetch_chains already logged the traceback. A known case, so
+                # one line here, not a second traceback blaming the parse.
+                _LOGGER.warning(
+                    "event=ingestion.option_chain.symbol_unfetched symbol=%s dataset=%s",
+                    symbol,
+                    dataset,
+                )
+                parsed.failed.append(symbol.upper())
+                continue
+            frame, unparsed = parse_cboe_chain(payload, right)
         except Exception:
             # Deliberately broad (Rule 14's process-boundary case, not an
             # oversight): this loop is the one capture of an unrecoverable
@@ -390,7 +394,9 @@ def _parse_symbols(
             # the MIN_SYMBOL_FRACTION floor in plan_session_write and fails
             # the run red. A narrow catch would instead turn a one-symbol bug
             # into a whole lost session.
-            _LOGGER.exception("event=%s symbol=%s", _PARSE_FAILED_EVENT[right], symbol)
+            _LOGGER.exception(
+                "event=ingestion.option_chain.symbol_failed symbol=%s dataset=%s", symbol, dataset
+            )
             parsed.failed.append(symbol.upper())
             continue
         parsed.unparsed += unparsed
@@ -421,7 +427,8 @@ def ingest_option_chain(
     come from that one choice (``contracts.option_chain.WINGS``). Given
     ``payloads`` (from :func:`fetch_chains`), nothing is fetched: a symbol
     absent from it counts as failed, exactly as a fetch failure does. That is
-    how ``--local`` slices both wings out of one fetch per chain.
+    how ``--local`` slices both wings out of one fetch per chain. Passing
+    both ``payloads`` and ``fetch`` is a ``ValueError``: one would be ignored.
 
     ``fetch`` is injectable so tests drive the whole orchestration off canned
     payloads without a socket. A symbol whose fetch or parse fails is
@@ -442,10 +449,12 @@ def ingest_option_chain(
     partition; a re-run, a weekend or a holiday resolves to a session already
     captured and writes nothing.
     """
+    if payloads is not None and fetch is not None:
+        raise ValueError("pass payloads or fetch, not both: payloads are never re-fetched")
     wing = WINGS[right]
     fetcher = fetch or fetch_chain_raw
-    load: Callable[[str], Mapping[str, object]] = (
-        payloads.__getitem__
+    load: Callable[[str], Mapping[str, object] | None] = (
+        payloads.get
         if payloads is not None
         else (lambda symbol: _fetch_with_retry(fetcher, symbol))
     )
@@ -557,18 +566,11 @@ def sweep_to_records(
     wing -- a call-only fault can never push the put session under the
     symbol floor.
     """
-    fetcher = fetch or fetch_chain_raw
     puts: list[dict[str, object]] = []
     calls: list[dict[str, object]] = []
-    for symbol in symbols:
-        try:
-            payload = _fetch_with_retry(fetcher, symbol)
-        except Exception:
-            # Same boundary as ingest_option_chain's loop, for the --post
-            # writer: a dropped symbol is logged here and then counted
-            # against the symbol floor by the route that commits the rows.
-            _LOGGER.exception("event=ingestion.option_chain.symbol_failed symbol=%s", symbol)
-            continue
+    # A dropped symbol is logged by fetch_chains and then counted against the
+    # symbol floor by the route that commits the rows.
+    for symbol, payload in fetch_chains(symbols, fetch).items():
         puts.extend(_wing_records(payload, symbol, "P"))
         calls.extend(_wing_records(payload, symbol, "C"))
     return puts, calls
@@ -590,6 +592,10 @@ def _wing_records(
             row["expiration"] = str(row["expiration"].date())
             records.append(row)
     except Exception:
-        _LOGGER.exception("event=%s symbol=%s", _PARSE_FAILED_EVENT[right], symbol)
+        _LOGGER.exception(
+            "event=ingestion.option_chain.symbol_failed symbol=%s dataset=%s",
+            symbol,
+            WINGS[right].dataset,
+        )
         return []
     return records

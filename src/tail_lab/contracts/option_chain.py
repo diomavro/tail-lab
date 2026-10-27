@@ -148,6 +148,31 @@ class Wing:
     moneyness_min: float
     moneyness_max: float
 
+    def wrong_sign_share(self, frame: pd.DataFrame) -> float:
+        """Share of the rows with a non-zero delta whose sign is the OTHER
+        wing's -- 0.0 when no row has one.
+
+        The contracts alone cannot keep a body out of the wrong dataset: there
+        is no ``right`` column, and a row whose greeks Cboe zero-filled has a
+        null delta, which both wings accept. Measured 2026-10-26: 172 SPY
+        calls (mostly ITM, inside the put band) would pass the PUT contract
+        that way and be committed as puts, immutably. A correctly routed live
+        body has none of these (0 of 17,114 puts and 0 of 23,038 calls with a
+        delta); a misrouted one has all of them.
+        """
+        delta = pd.to_numeric(frame["delta"], errors="coerce")
+        signed = delta[delta.notna() & (delta != 0.0)]
+        if signed.empty:
+            return 0.0
+        wrong = signed > 0.0 if self.right == "P" else signed < 0.0
+        return float(wrong.mean())
+
+
+#: Above this :meth:`Wing.wrong_sign_share`, a body is refused whole as the
+#: other wing's rows rather than split into quarantine plus a committed
+#: null-delta remainder. Half: a correct body measures 0, a misrouted one 1.
+MAX_WRONG_SIGN_SHARE = 0.5
+
 
 WINGS: dict[Right, Wing] = {
     "P": Wing(

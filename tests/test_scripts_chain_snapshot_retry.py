@@ -155,8 +155,8 @@ def test_the_post_carries_the_floor_and_the_witness(monkeypatch: pytest.MonkeyPa
     sent: list[dict[str, Any]] = []
 
     def fake(
-        _url: str, _path: str, _token: str, payload: dict[str, Any], _timeout: int
-    ) -> dict[str, Any]:
+        _url: str, _path: str, _token: str, payload: dict[str, object], _timeout: int
+    ) -> dict[str, object]:
         sent.append(payload)
         return {
             "dataset": "option_chain_snapshot",
@@ -191,7 +191,8 @@ def test_a_no_op_is_reported_as_one(capsys: pytest.CaptureFixture[str]) -> None:
             quote_date=dt.date(2026, 9, 22),
             bronze_path="p",
             committed=False,
-        )
+        ),
+        "puts",
     )
     out = capsys.readouterr().out
     assert rc is chain_snapshot.Outcome.OK
@@ -206,7 +207,7 @@ def test_a_too_early_answer_is_a_quiet_skip(
 
     posts: dict[str, int] = {}
 
-    def fake(_url: str, path: str, *_a: Any, **_k: Any) -> dict[str, Any]:
+    def fake(_url: str, path: str, *_a: object, **_k: object) -> dict[str, object]:
         posts[path] = posts.get(path, 0) + 1
         raise urllib.error.HTTPError("http://x", 425, "Too Early", {}, io.BytesIO(b"still trading"))  # type: ignore[arg-type]
 

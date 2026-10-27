@@ -51,7 +51,7 @@ from typing import TYPE_CHECKING
 from pydantic import ValidationError
 
 from tail_lab.api.schemas import OptionChainSnapshotResponse
-from tail_lab.contracts.option_chain import DEFAULT_SNAPSHOT_SYMBOLS
+from tail_lab.contracts.option_chain import DEFAULT_SNAPSHOT_SYMBOLS, Right
 from tail_lab.ingestion.option_chain import latest_market_session, sweep_to_records
 from tail_lab.observability import configure_logging
 
@@ -68,7 +68,12 @@ MIN_PLAUSIBLE_ROWS = 200
 #: The two write routes (``api/ingest_routes``), one per wing.
 PUT_PATH = "/api/ingest/option-chain"
 CALL_PATH = "/api/ingest/option-chain-calls"
-_LABEL = {"P": "puts", "C": "calls"}
+_PATH: dict[Right, str] = {"P": PUT_PATH, "C": CALL_PATH}
+_LABEL: dict[Right, str] = {"P": "puts", "C": "calls"}
+
+#: Printed by both modes when the puts are SKIPPED, so the calls' absence is
+#: stated rather than left for the operator to infer.
+_CALLS_NOT_ATTEMPTED = "calls: not attempted -- the session is still trading"
 
 
 class Outcome(enum.Enum):
@@ -85,7 +90,9 @@ class Outcome(enum.Enum):
 #: raise these raw (CPython 3.12 urllib/request.py:1347-1348). Retried, because
 #: the POST is idempotent -- but such a drop may follow a commit, so the retry
 #: can truthfully answer "no-op" for rows the dropped attempt wrote.
-_DROPS: tuple[type[Exception], ...] = (http.client.RemoteDisconnected, http.client.IncompleteRead)
+#: ``ConnectionResetError`` covers both a peer RST (errno 104) and
+#: ``http.client.RemoteDisconnected``, which subclasses it.
+_DROPS: tuple[type[Exception], ...] = (ConnectionResetError, http.client.IncompleteRead)
 
 
 def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
@@ -230,11 +237,11 @@ def _run_local(symbols: list[str]) -> int:
     now = dt.datetime.now(dt.UTC)
     payloads = fetch_chains(symbols)
 
-    def ingest(right: str) -> IngestResult:
+    def ingest(right: Right) -> IngestResult:
         return ingest_option_chain(
             store,
             symbols,
-            right="C" if right == "C" else "P",
+            right=right,
             payloads=payloads,
             market_session=session,
             now=now,
@@ -242,11 +249,14 @@ def _run_local(symbols: list[str]) -> int:
 
     put = _ingest_wing(ingest, "P", symbols)
     if put is Outcome.SKIPPED:
+        print(_CALLS_NOT_ATTEMPTED)
         return 0
     return _finish(put, _ingest_wing(ingest, "C", symbols))
 
 
-def _ingest_wing(ingest: Callable[[str], IngestResult], right: str, symbols: list[str]) -> Outcome:
+def _ingest_wing(
+    ingest: Callable[[Right], IngestResult], right: Right, symbols: list[str]
+) -> Outcome:
     """Run one wing's local ingest and turn every way it ends into an outcome."""
     from tail_lab.ingestion.option_chain import IncompleteSweepError, SessionInProgress
     from tail_lab.lake.store import LAKE_WRITE_ERRORS
@@ -328,13 +338,13 @@ def _finish(put: Outcome, call: Outcome) -> int:
     return 0 if put is Outcome.OK and call is Outcome.OK else 1
 
 
-def _post_sweep(args: argparse.Namespace, path: str, payload: dict[str, object]) -> Outcome:
+def _post_sweep(args: argparse.Namespace, right: Right, payload: dict[str, object]) -> Outcome:
     """POST one wing and turn every way it can fail into an annotated outcome."""
-    label = _LABEL["C" if path == CALL_PATH else "P"]
+    label, path = _LABEL[right], _PATH[right]
     try:
         result_json, dropped = _post(args.post, path, args.token, payload, args.timeout)
     except urllib.error.HTTPError as exc:
-        return _refused(exc, path, label)
+        return _refused(exc, right, label)
     except urllib.error.URLError as exc:
         print(f"::error::{label}: could not reach {args.post}: {exc.reason}", file=sys.stderr)
         return Outcome.FAILED
@@ -374,17 +384,18 @@ def _post_sweep(args: argparse.Namespace, path: str, payload: dict[str, object])
     return _report_post(response, label, dropped=dropped)
 
 
-def _refused(exc: urllib.error.HTTPError, path: str, label: str) -> Outcome:
+def _refused(exc: urllib.error.HTTPError, right: Right, label: str) -> Outcome:
     if exc.code == 425:
         # SessionInProgress on the app side: nothing lost, nothing written.
         print(f"{label}: SKIPPED: {exc.read()[:400]!r}")
         return Outcome.SKIPPED
-    # Between a merge and its deploy, the SPA's StaticFiles mount answers the
-    # unknown call path with 405 (or 404). Named, so the red run explains
-    # itself. Never said of the put route, where a 404 is an unset token.
+    # Between a merge and its deploy, the SPA's StaticFiles mount (mounted at
+    # "/" in api/main.py) answers a POST to the unknown call path with 405.
+    # Named, so the red run explains itself. Only 405: a 404 is what the auth
+    # gate answers when the app's token is unset (api/auth.py), on either route.
     hint = (
         " -- call route not deployed yet (check deploy.yml)"
-        if path == CALL_PATH and exc.code in (404, 405)
+        if right == "C" and exc.code == 405
         else ""
     )
     print(
@@ -396,13 +407,13 @@ def _refused(exc: urllib.error.HTTPError, path: str, label: str) -> Outcome:
 
 def _post_wing(
     args: argparse.Namespace,
-    path: str,
+    right: Right,
     records: list[dict[str, object]],
     symbols: list[str],
     session: dt.date | None,
 ) -> Outcome:
     """Floor-check one wing, then POST it. A wing under the floor is not sent."""
-    label = _LABEL["C" if path == CALL_PATH else "P"]
+    label = _LABEL[right]
     if len(records) < MIN_PLAUSIBLE_ROWS:
         print(
             f"::error::{label}: only {len(records)} rows across {len(symbols)} chains — "
@@ -419,7 +430,7 @@ def _post_wing(
         "symbols": symbols,
         "market_session": session.isoformat() if session else None,
     }
-    return _post_sweep(args, path, payload)
+    return _post_sweep(args, right, payload)
 
 
 def _report_sweep(symbols: list[str], records: list[dict[str, object]], label: str) -> None:
@@ -451,15 +462,15 @@ def main(argv: list[str] | None = None) -> int:
 
     # ONE witness read for both wings, so they cannot straddle a session.
     session = _market_session()
-    put = _post_wing(args, PUT_PATH, puts, symbols, session)
+    put = _post_wing(args, "P", puts, symbols, session)
     if put is Outcome.SKIPPED:
-        print("calls: not attempted -- the session is still trading")
+        print(_CALLS_NOT_ATTEMPTED)
         return 0
-    return _finish(put, _post_wing(args, CALL_PATH, calls, symbols, session))
+    return _finish(put, _post_wing(args, "C", calls, symbols, session))
 
 
 def _report_post(
-    response: OptionChainSnapshotResponse, label: str = "puts", *, dropped: bool = False
+    response: OptionChainSnapshotResponse, label: str, *, dropped: bool = False
 ) -> Outcome:
     """Say which of the two things the app did -- commit or no-op.
 

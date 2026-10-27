@@ -423,6 +423,8 @@ the same 24 symbols. Schema `OptionCallChainSnapshotSchema` is the table above
 with one change: `delta` is **0 to 1** when present. Same key, same one
 partition per session, same zero-fill rule, same session plan and floor. It
 is written by `POST /api/ingest/option-chain-calls` or by the `--local` sweep.
+Each route refuses a body whole when most of its signed deltas are the other
+wing's: a null delta passes both contracts, so the contracts alone cannot.
 
 **Never union it** with `option_chain_snapshot`, `option_quotes` or
 `optionsdx`. They share the key `(underlying, quote_date, expiration,
@@ -440,7 +442,7 @@ bounds), risk reversals, and a model-free variance strip that is no longer
 truncated to one wing (`docs/PRIOR_ART.md` §16, `AGENT_TODO.md` PG1). No
 consumer reads it yet.
 
-**No freshness route yet.** The status route below covers puts only. A
+**No freshness route yet.** The status route above covers puts only. A
 calls-only failure is visible as a red `daily-chain-snapshot` run, whose
 annotation reads `calls only; puts landed`.
 

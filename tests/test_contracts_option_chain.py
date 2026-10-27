@@ -213,6 +213,39 @@ def test_a_call_delta_must_be_non_negative_and_a_put_delta_non_positive() -> Non
         OptionChainSnapshotSchema.validate(_frame(_row(delta=0.62)), lazy=True)
 
 
+@pytest.mark.parametrize("delta", [None, 0.0, 1.0])
+def test_the_call_contract_keeps_null_zero_and_unit_deltas(delta: float | None) -> None:
+    """Measured on the 2026-10-26 live call body: 1,096 calls with a null
+    delta (Cboe zero-filled, mapped to null) and 338 with delta exactly 0.0
+    (deep OTM). A contract that refused either would quarantine that many
+    real rows every session."""
+    OptionCallChainSnapshotSchema.validate(_frame(_row(delta=delta)), lazy=True)
+
+
+@pytest.mark.parametrize("delta", [-0.0001, 1.0001])
+def test_the_call_contract_refuses_a_delta_just_outside_zero_to_one(delta: float) -> None:
+    with pytest.raises(SchemaErrors):
+        OptionCallChainSnapshotSchema.validate(_frame(_row(delta=delta)), lazy=True)
+
+
+@pytest.mark.parametrize(
+    ("right", "deltas", "share"),
+    [
+        ("P", [-0.2, -0.5, None, 0.0], 0.0),  # a correct put body
+        ("P", [0.3, 0.6, None, 0.0], 1.0),  # calls sent to the put route
+        ("P", [-0.2, 0.4], 0.5),
+        ("C", [0.3, 0.6, None], 0.0),
+        ("C", [-0.2, -0.5, 0.1], 2 / 3),
+        ("C", [None, 0.0], 0.0),  # no signed delta: no evidence either way
+    ],
+)
+def test_wrong_sign_share_counts_only_rows_with_a_signed_delta(
+    right: str, deltas: list[float | None], share: float
+) -> None:
+    frame = pd.DataFrame({"delta": deltas})
+    assert WINGS["C" if right == "C" else "P"].wrong_sign_share(frame) == pytest.approx(share)
+
+
 def test_the_call_schema_differs_from_the_put_schema_only_in_delta() -> None:
     """Same columns, same key, same strictness -- a subclass, not a copy, so a
     later tightening of the put contract reaches the calls too."""

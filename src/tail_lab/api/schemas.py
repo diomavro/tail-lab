@@ -120,8 +120,9 @@ class OptionChainSnapshotRow(BaseModel):
 
     Mirrors ``contracts/option_chain.OptionChainSnapshotSchema`` field for
     field; the call wing (``docs/adr/0031``) uses the same row and is
-    validated server-side against ``OptionCallChainSnapshotSchema``. The three greek columns are optional because Cboe zero-fills what
-    it cannot compute and the adapter maps that to a typed absence — an
+    validated server-side against ``OptionCallChainSnapshotSchema``. The
+    three greek columns are optional because Cboe zero-fills what it cannot
+    compute and the adapter maps that to a typed absence — an
     omitted ``iv`` here means "the exchange did not publish one", never zero.
     """
 

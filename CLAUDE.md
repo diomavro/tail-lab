@@ -82,12 +82,15 @@ them.
   Cboe's keyless CDN every weekday at 21:30 UTC: puts into
   `option_chain_snapshot`, and calls (`docs/adr/0031`) into
   `option_chain_call_snapshot`, a separate dataset that put readers never see.
-  Never union the two: they share a key and neither has a `right` column. Every other source here serves
-  history on demand, so a skipped pull is a `make` invocation away from being
-  fixed; nobody sells a retroactive option chain, so a skipped session is gone at
-  any price. An empty sweep therefore **fails red on purpose** rather than
-  no-opping, and a red build here is the one that should interrupt a day. Check
-  `GET /api/ingest/option-chain/status` before assuming it is healthy. Two
+  Never union the two: they share a key and neither has a `right` column.
+  Every other source here serves history on demand, so a skipped pull is a
+  `make` invocation away from being fixed; nobody sells a retroactive option
+  chain, so a skipped session is gone at any price. An empty sweep therefore
+  **fails red on purpose** rather than no-opping, and a red build here is the
+  one that should interrupt a day. Check `GET /api/ingest/option-chain/status`
+  before assuming it is healthy. It covers the put wing only: a calls-only
+  loss shows only as a red `daily-chain-snapshot` run reading `calls only;
+  puts landed` (ADR 0031). Two
   gotchas: **GitHub drops scheduled runs** — the 2026-08-27 evening sweep never fired at all, and an absent run produces no red build, so a second catch-up cron at 05:00 UTC now covers it (free, because the write is idempotent); the sweep must write **one partition for all symbols** (bronze is
   immutable, so a per-symbol write persists only the first), and Cboe
   **zero-fills** `iv`/`delta`/`theo` it cannot compute — the adapter maps those to

@@ -54,7 +54,7 @@ def test_the_local_tests_never_reach_cboe(monkeypatch: pytest.MonkeyPatch) -> No
     """Guard for the fixture above: if ``_run_local`` ever fetches by another
     route, the raw fetch raises here instead of going to the network."""
 
-    def no_network(*_a: Any, **_k: Any) -> dict[str, Any]:
+    def no_network(*_a: object, **_k: object) -> dict[str, object]:
         raise AssertionError("a --local test reached Cboe")
 
     monkeypatch.setattr("tail_lab.ingestion.option_chain.fetch_chain_raw", no_network)
@@ -121,12 +121,12 @@ def test_local_does_not_also_run_the_post_paths_sweep(monkeypatch: pytest.Monkey
     swept = 0
     ingested: list[str] = []
 
-    def fake_sweep(symbols: Any, **_kw: Any) -> tuple[list[dict[str, Any]], ...]:
+    def fake_sweep(symbols: object, **_kw: object) -> tuple[list[dict[str, object]], ...]:
         nonlocal swept
         swept += 1
         return ([{"underlying": "SPY"}] * 20_000,) * 2
 
-    def fake_ingest(_store: Any, _symbols: Any, **kw: Any) -> _Result:
+    def fake_ingest(_store: object, _symbols: object, **kw: object) -> _Result:
         ingested.append(kw["right"])
         return _Result()
 

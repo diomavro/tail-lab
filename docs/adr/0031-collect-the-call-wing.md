@@ -75,8 +75,11 @@ buys puts.
    429 on 9 of 24) and draw the wings from different CDN snapshots. A failed
    fetch costs that symbol both wings. A failed put parse still parses the
    calls. A failed call parse, or a failed call record conversion, keeps the
-   puts and logs `event=ingestion.option_chain.call_symbol_failed`. So a
-   call-only bug cannot push the put session under `MIN_SYMBOL_FRACTION`. Each
+   puts and logs `event=ingestion.option_chain.symbol_failed` with
+   `dataset=option_chain_call_snapshot`. So a call-only bug cannot push the
+   put session under `MIN_SYMBOL_FRACTION`. In `--local`, a symbol whose fetch
+   failed logs one traceback in `fetch_chains` and then one
+   `symbol_unfetched` line per wing, with no second traceback. Each
    wing gets its own session plan, floor, write and audit record
    (`ingestion.option_chain.run` with `dataset=`). `unparsed_contracts` counts
    OSI-unparseable symbols before the right filter (so both records carry
@@ -84,8 +87,17 @@ buys puts.
 
 5. **Route.** `POST /api/ingest/option-chain-calls` uses the same token,
    session plan, witness and floor. Both routes run one shared body
-   (`_ingest_chain`), so the session rules cannot drift between the wings. It
-   logs `api.ingest.option_chain_calls`.
+   (`_ingest_chain`), so the session rules cannot drift between the wings.
+   Both log `api.ingest.option_chain` and tell the wings apart by `dataset=`,
+   as the ingestion events do. Neither contract can keep a call out of the
+   put dataset on its own: there is no `right` column, and a zero-filled row
+   has a null delta, which both contracts accept. So each route refuses a
+   body whole (422, nothing written) when more than half of its rows with a
+   non-zero delta carry the other wing's sign (`Wing.wrong_sign_share`).
+   Measured on the 2026-10-26 live bodies, a correct body scores 0 (0 of
+   17,114 puts, 0 of 23,038 calls) and a misrouted body scores 1. Without the
+   guard, the fixture's call body POSTed to the put route committed its two
+   null-delta ITM calls as puts.
 
 6. **Script exit contract** (`scripts/chain_snapshot.py`, both modes):
 
@@ -107,9 +119,11 @@ buys puts.
 
 7. **Accepted gaps.**
    - **Deploy lag.** The workflow runs main's script against the deployed app.
-     Until a merge is deployed, the call POST gets a 405 from the SPA mount
-     (or a 404). The run goes red with the puts landed, and the annotation says
-     "call route not deployed yet (check deploy.yml)". The first call capture
+     Until a merge is deployed, the call POST gets a 405 from the SPA mount.
+     The run goes red with the puts landed, and the annotation says
+     "call route not deployed yet (check deploy.yml)". A 404 never gets that
+     hint, because the auth gate answers 404 on both routes when the app's
+     token is unset. The first call capture
      therefore needs `deploy.yml` to have shipped the merge.
    - **No call freshness route.** `docs/adr/0020` §8 ("Freshness is public")
      and `docs/AGENT_MISSION.md`'s health check cover puts only. Until
@@ -155,6 +169,13 @@ process:
 | after the call POST (200, 23,376 rows) | 408.5 MiB |
 
 Both answered 200 and `oom_kill` stayed 0. **Pass.**
+
+**Worst case not measured.** 2026-10-26 was a light put day: 17,330 puts,
+against 20,882 puts / 4.68 MB on 2026-08-26 (`contracts/option_chain.py`). At
+the measured 1.35x call ratio and ~225 B per call row, a day like that sends
+about 28.2k calls, roughly **6.3 MB**. That is 20% above the call body that
+passed this gate. Budget any widening of the symbol set against 6.3 MB, not
+5.2 MB.
 
 **Caveat.** The lake was an empty temporary local one. There is no populated
 local lake, and the production lake's credentials were deliberately not used

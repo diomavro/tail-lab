@@ -1,10 +1,13 @@
 from __future__ import annotations
 
 import datetime as dt
-from collections.abc import Iterator
+import math
+from collections.abc import Iterator, Mapping
 from pathlib import Path
 from typing import Any
 
+import httpx
+import pandas as pd
 import pytest
 from deltalake.exceptions import SchemaMismatchError
 from fastapi.testclient import TestClient
@@ -476,11 +479,11 @@ def test_a_bug_in_the_quarantine_write_is_not_swallowed(
 CALLS = "/api/ingest/option-chain-calls"
 
 
-def _call_row(**overrides: Any) -> dict[str, Any]:
+def _call_row(**overrides: object) -> dict[str, object]:
     return _row(**{"strike": 800.0, "delta": 0.31, **overrides})
 
 
-def _post_calls(client: TestClient, body: dict[str, Any]) -> Any:
+def _post_calls(client: TestClient, body: Mapping[str, object]) -> httpx.Response:
     return client.post(CALLS, json=body, headers={"Authorization": f"Bearer {TOKEN}"})
 
 
@@ -514,6 +517,63 @@ def test_the_call_route_validates_against_the_call_contract(
     day = dt.date(2026, 8, 26)
     assert store.read_bronze_as_of(CALL_QUARANTINE_DATASET, day)["strike"].tolist() == [810.0]
     assert not store.bronze_partition_exists(QUARANTINE_DATASET, day)
+
+
+def test_call_rows_posted_to_the_put_route_are_refused_whole(
+    client: TestClient,
+    store: DeltaLakeStore,
+    monkeypatch: pytest.MonkeyPatch,
+    cboe_chain_calls_sample: dict[str, object],
+) -> None:
+    """The put contract has no ``right`` column and accepts a null delta, so
+    the fixture's zero-filled ITM calls (615, 660) pass it. Split-then-commit
+    used to write those two calls into ``option_chain_snapshot`` -- immutably,
+    for every put reader -- while quarantining the rest. The body must be
+    refused before anything is written."""
+    from tail_lab.ingestion.option_chain import sweep_to_records
+
+    _set_token(monkeypatch, TOKEN)
+    _puts, swept = sweep_to_records(["SPY"], fetch=lambda _s: cboe_chain_calls_sample)
+    # The script's json.dumps sends NaN; httpx refuses it, so send null instead.
+    calls = [
+        {k: None if isinstance(v, float) and math.isnan(v) else v for k, v in r.items()}
+        for r in swept
+    ]
+    assert any(r["delta"] is None for r in calls), "needs a zero-filled (null-delta) call"
+
+    resp = _post(client, _body(*calls, ingest_date=None))
+
+    assert resp.status_code == 422
+    assert "other wing" in resp.json()["detail"]
+    day = dt.date(2026, 10, 26)
+    assert not store.bronze_partition_exists(DATASET, day)
+    assert not store.bronze_partition_exists(QUARANTINE_DATASET, day)
+
+
+def test_put_rows_posted_to_the_call_route_are_refused_whole(
+    client: TestClient, store: DeltaLakeStore, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _set_token(monkeypatch, TOKEN)
+    puts = [_row(strike=700.0), _row(strike=710.0), _row(strike=720.0, delta=None, iv=None)]
+    resp = _post_calls(client, _body(*puts))
+
+    assert resp.status_code == 422
+    day = dt.date(2026, 8, 26)
+    assert not store.bronze_partition_exists(CALL_DATASET, day)
+    assert not store.bronze_partition_exists(CALL_QUARANTINE_DATASET, day)
+
+
+def test_a_minority_of_wrong_sign_rows_is_quarantined_not_refused(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The guard is a share, not "any": one garbled row must never cost a
+    whole unrecoverable session."""
+    _set_token(monkeypatch, TOKEN)
+    rows = [_row(strike=700.0), _row(strike=710.0), _row(strike=720.0, delta=0.4)]
+    resp = _post(client, _body(*rows))
+
+    assert resp.status_code == 200
+    assert (resp.json()["rows"], resp.json()["quarantined"]) == (2, 1)
 
 
 def test_a_call_rerun_is_a_no_op_and_independent_of_the_puts(
@@ -594,7 +654,7 @@ def test_each_route_logs_its_own_event(
         m.startswith("event=api.ingest.option_chain ") and f"dataset={DATASET} " in m for m in lines
     )
     assert any(
-        m.startswith("event=api.ingest.option_chain_calls ") and f"dataset={CALL_DATASET} " in m
+        m.startswith("event=api.ingest.option_chain ") and f"dataset={CALL_DATASET} " in m
         for m in lines
     )
 
@@ -608,7 +668,7 @@ def test_a_failed_call_quarantine_write_logs_the_call_event(
     _set_token(monkeypatch, TOKEN)
     real_write = store.write_bronze
 
-    def write(dataset: str, day: dt.date, frame: Any) -> str:
+    def write(dataset: str, day: dt.date, frame: pd.DataFrame) -> str:
         if dataset.endswith("__quarantine"):
             raise SchemaMismatchError("SchemaMismatchError: 13 vs 14")
         return real_write(dataset, day, frame)
@@ -620,5 +680,5 @@ def test_a_failed_call_quarantine_write_logs_the_call_event(
     assert resp.status_code == 200
     failure = next(r for r in caplog.records if "quarantine_write_failed" in r.getMessage())
     assert failure.getMessage().startswith(
-        "event=api.ingest.option_chain_calls.quarantine_write_failed "
+        f"event=api.ingest.option_chain.quarantine_write_failed dataset={CALL_QUARANTINE_DATASET} "
     )

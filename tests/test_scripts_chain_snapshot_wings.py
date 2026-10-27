@@ -22,9 +22,8 @@ import http.client
 import importlib.util
 import io
 import urllib.error
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from pathlib import Path
-from typing import Any
 
 import pytest
 from pydantic import ValidationError
@@ -38,7 +37,7 @@ _SPEC.loader.exec_module(chain_snapshot)
 
 PUTS = chain_snapshot.PUT_PATH
 CALLS = chain_snapshot.CALL_PATH
-ROWS = [{"underlying": "SPY"}] * 20_000
+ROWS: list[dict[str, object]] = [{"underlying": "SPY"}] * 20_000
 
 
 @pytest.fixture(autouse=True)
@@ -55,7 +54,7 @@ def test_the_two_routes_are_distinct() -> None:
 # ---- --post ------------------------------------------------------------------
 
 
-def _answer(committed: bool = True, dataset: str = "option_chain_snapshot") -> dict[str, Any]:
+def _answer(committed: bool = True, dataset: str = "option_chain_snapshot") -> dict[str, object]:
     return {
         "dataset": dataset,
         "ingest_date": "2026-10-26",
@@ -79,14 +78,16 @@ def _server(
     put: Behaviour,
     call: Behaviour,
     *,
-    puts: list[dict[str, Any]] = ROWS,
-    calls: list[dict[str, Any]] = ROWS,
-) -> dict[str, list[dict[str, Any]]]:
+    puts: list[dict[str, object]] = ROWS,
+    calls: list[dict[str, object]] = ROWS,
+) -> dict[str, list[Mapping[str, object]]]:
     """Stub the sweep and ``_post_once`` per route; return the bodies each
     route received (one entry per ATTEMPT)."""
-    sent: dict[str, list[dict[str, Any]]] = {PUTS: [], CALLS: []}
+    sent: dict[str, list[Mapping[str, object]]] = {PUTS: [], CALLS: []}
 
-    def post_once(_url: str, path: str, _token: str, payload: Any, _timeout: int) -> object:
+    def post_once(
+        _url: str, path: str, _token: str, payload: Mapping[str, object], _timeout: int
+    ) -> object:
         sent[path].append(payload)
         return (put if path == PUTS else call)()
 
@@ -151,7 +152,9 @@ def test_unsettled_puts_send_no_calls_and_stay_green(
     sent = _server(monkeypatch, _raise(_http_error(425)), _ok())
     assert _main() == 0
     assert (len(sent[PUTS]), len(sent[CALLS])) == (1, 0)
-    assert "SKIPPED" in capsys.readouterr().out
+    out = capsys.readouterr().out
+    assert "SKIPPED" in out
+    assert "calls: not attempted -- the session is still trading" in out
 
 
 def test_unsettled_calls_after_settled_puts_are_red(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -161,25 +164,62 @@ def test_unsettled_calls_after_settled_puts_are_red(monkeypatch: pytest.MonkeyPa
     assert _main() == 1
 
 
-@pytest.mark.parametrize("code", [404, 405])
 def test_an_undeployed_call_route_is_named_as_one(
-    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], code: int
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    """Between merge and deploy the SPA mount answers the unknown path with
-    405 (or a 404): red, with the puts landed, and a hint that says why."""
-    _server(monkeypatch, _ok(), _raise(_http_error(code)))
+    """Between merge and deploy the SPA's StaticFiles mount answers a POST to
+    the unknown path with 405: red, with the puts landed, and a hint."""
+    _server(monkeypatch, _ok(), _raise(_http_error(405)))
     assert _main() == 1
     err = capsys.readouterr().err
     assert "call route not deployed yet (check deploy.yml)" in err
     assert "calls only; puts landed" in err
 
 
-def test_a_put_404_is_not_blamed_on_the_deploy(
-    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+@pytest.mark.parametrize(
+    ("put", "call"),
+    [
+        (_raise(_http_error(404)), _ok()),  # a put 404
+        (_raise(_http_error(404)), _raise(_http_error(404))),  # unset app token: both 404
+        (_ok(), _raise(_http_error(404))),  # a call 404 is never the SPA mount
+        (_raise(_http_error(405)), _ok()),  # the put route is always deployed
+    ],
+)
+def test_only_a_call_405_is_blamed_on_the_deploy(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    put: Behaviour,
+    call: Behaviour,
 ) -> None:
-    _server(monkeypatch, _raise(_http_error(404)), _ok())
+    """``require_bearer_token`` answers 404 on BOTH routes when the app's token
+    is unset (api/auth.py); only the SPA mount's 405 on the CALL route means
+    "not deployed"."""
+    _server(monkeypatch, put, call)
     assert _main() == 1
     assert "not deployed yet" not in capsys.readouterr().err
+
+
+def test_puts_failed_and_calls_landed_never_says_the_puts_landed(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """The alert line is what tells a lost put session from a call-only loss
+    (ADR 0031): it must never claim the puts landed when they did not."""
+    _server(monkeypatch, _raise(_http_error(409)), _ok())
+    assert _main() == 1
+    err = capsys.readouterr().err
+    assert "puts failed; calls landed" in err
+    assert "puts landed" not in err.replace("puts failed; calls landed", "")
+
+
+def test_neither_wing_landing_never_says_the_puts_landed(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    _server(monkeypatch, _raise(_http_error(409)), _raise(_http_error(409)))
+    assert _main() == 1
+    err = capsys.readouterr().err
+    assert "neither wing landed" in err
+    assert "puts landed" not in err
+    assert "calls landed" not in err
 
 
 def test_a_call_wing_under_the_floor_is_red_and_never_posted(
@@ -236,9 +276,42 @@ def test_one_dropped_connection_is_retried_into_a_landing(
     assert (len(sent[PUTS]), len(sent[CALLS])) == (2, 1)
 
 
+def test_a_reset_after_the_send_is_retried_and_flagged_as_a_drop(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A peer RST while reading the answer raises a plain
+    ``ConnectionResetError`` (errno 104) from ``getresponse``: not wrapped in
+    ``URLError``, and not ``RemoteDisconnected``. It is a drop like the others:
+    retried, and a no-op after it is reported as a likely landing."""
+    attempts: list[int] = []
+
+    def reset_then_no_op() -> object:
+        attempts.append(1)
+        if len(attempts) == 1:
+            raise ConnectionResetError(104, "Connection reset by peer")
+        return _answer(committed=False)
+
+    sent = _server(monkeypatch, reset_then_no_op, _ok())
+    assert _main() == 0
+    assert len(sent[PUTS]) == 2
+    assert "likely committed it before the connection dropped" in capsys.readouterr().out
+
+
+def test_a_plain_os_error_is_an_annotated_failure_not_a_traceback(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Any other ``OSError`` raw from ``getresponse`` (not retryable) must
+    still map to FAILED so the call wing is attempted."""
+    sent = _server(monkeypatch, _raise(BrokenPipeError(32, "Broken pipe")), _ok())
+    assert _main() == 1
+    assert (len(sent[PUTS]), len(sent[CALLS])) == (1, 1)
+    assert "::error::puts: the POST to /api/ingest/option-chain failed" in capsys.readouterr().err
+
+
 def test_an_incomplete_read_is_retried_too() -> None:
     assert chain_snapshot._retryable(http.client.IncompleteRead(b"")) is True
     assert chain_snapshot._retryable(http.client.RemoteDisconnected("x")) is True
+    assert chain_snapshot._retryable(ConnectionResetError(104, "reset")) is True
     assert chain_snapshot._retryable(ValueError("not json")) is False
 
 
@@ -359,11 +432,11 @@ def test_the_local_stub_invents_no_fields() -> None:
 
 def _local(
     monkeypatch: pytest.MonkeyPatch, put: Callable[[], _Result], call: Callable[[], _Result]
-) -> list[dict[str, Any]]:
+) -> list[dict[str, object]]:
     """Stub the lake and the ingest per right; return each ingest's kwargs."""
-    seen: list[dict[str, Any]] = []
+    seen: list[dict[str, object]] = []
 
-    def ingest(_store: Any, _symbols: Any, **kw: Any) -> _Result:
+    def ingest(_store: object, _symbols: object, **kw: object) -> _Result:
         seen.append(kw)
         return (put if kw["right"] == "P" else call)()
 
@@ -390,7 +463,7 @@ def test_local_fetches_once_and_hands_the_same_payloads_to_both_wings(
     fetched: list[list[str]] = []
     payloads = {"spy": {"data": {}}}
 
-    def fetch_chains(symbols: list[str], *_a: Any) -> dict[str, Any]:
+    def fetch_chains(symbols: list[str], *_a: object) -> dict[str, object]:
         fetched.append(list(symbols))
         return payloads
 
@@ -403,12 +476,15 @@ def test_local_fetches_once_and_hands_the_same_payloads_to_both_wings(
     assert seen[0]["now"] is seen[1]["now"]
 
 
-def test_local_unsettled_puts_skip_the_calls(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_local_unsettled_puts_skip_the_calls_and_say_so(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
     from tail_lab.contracts.option_chain import SessionInProgress
 
     seen = _local(monkeypatch, _local_raise(SessionInProgress("still trading")), _Result)
     assert _run_local() == 0
     assert [kw["right"] for kw in seen] == ["P"]
+    assert "calls: not attempted -- the session is still trading" in capsys.readouterr().out
 
 
 def test_local_refused_puts_still_land_the_calls(
@@ -419,7 +495,23 @@ def test_local_refused_puts_still_land_the_calls(
     seen = _local(monkeypatch, _local_raise(IncompleteSweepError("15 of 24")), _Result)
     assert _run_local() == 1
     assert [kw["right"] for kw in seen] == ["P", "C"]
-    assert "calls: swept" in capsys.readouterr().out
+    captured = capsys.readouterr()
+    assert "calls: swept" in captured.out
+    assert "puts failed; calls landed" in captured.err
+    assert "puts landed" not in captured.err.replace("puts failed; calls landed", "")
+
+
+def test_local_neither_wing_landing_never_says_the_puts_landed(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    from tail_lab.contracts.option_chain import IncompleteSweepError
+
+    refused = _local_raise(IncompleteSweepError("15 of 24"))
+    _local(monkeypatch, refused, refused)
+    assert _run_local() == 1
+    err = capsys.readouterr().err
+    assert "neither wing landed" in err
+    assert "puts landed" not in err
 
 
 def test_local_a_put_lake_write_failure_still_lands_the_calls(

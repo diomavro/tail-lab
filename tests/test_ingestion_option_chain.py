@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import datetime as dt
 import math
+from collections.abc import Callable, Mapping
 from pathlib import Path
 from typing import Any
 from zoneinfo import ZoneInfo
@@ -1361,7 +1362,7 @@ def test_a_bug_in_one_symbol_costs_that_symbol_not_the_session(
 
 
 def test_the_call_parse_keeps_only_in_band_calls_within_the_tenor_cap(
-    cboe_chain_calls_sample: dict[str, Any],
+    cboe_chain_calls_sample: dict[str, object],
 ) -> None:
     """Against real contracts straddling every filter (see the fixture): the
     0.80 floor (610 out), the 2.50 cap (1913 in, 1914 out), the 180-day tenor
@@ -1383,7 +1384,7 @@ def test_the_call_parse_keeps_only_in_band_calls_within_the_tenor_cap(
 
 
 def test_a_zero_filled_call_takes_its_greeks_with_it(
-    cboe_chain_calls_sample: dict[str, Any],
+    cboe_chain_calls_sample: dict[str, object],
 ) -> None:
     """The house rule is unchanged on the call side: an iv of 0 nulls delta
     and theo too, even where Cboe printed a plausible delta beside it (the ITM
@@ -1396,8 +1397,24 @@ def test_a_zero_filled_call_takes_its_greeks_with_it(
     assert live["delta"] == pytest.approx(0.5426)
 
 
+def test_zero_filled_fixture_calls_land_valid_not_quarantined(
+    tmp_path: Path, cboe_chain_calls_sample: dict[str, object]
+) -> None:
+    """Null greeks are a typed absence, not a defect: the 0DTE 615 and the
+    iv-0 660 call must commit as rows, or every session loses ~1,100 calls."""
+    store = DeltaLakeStore(tmp_path)
+    result = ingest_option_chain(
+        store, ["SPY"], payloads={"SPY": cboe_chain_calls_sample}, right="C"
+    )
+    assert (result.valid_rows, result.quarantined_rows) == (8, 0)
+    stored = store.read_bronze_as_of(CALL_DATASET, result.quote_date)
+    for strike in (615.0, 660.0):
+        row = stored[stored["strike"] == strike].iloc[0]
+        assert pd.isna(row["delta"]) and pd.isna(row["iv"])
+
+
 def test_the_put_parse_is_unchanged_by_the_call_wing(
-    cboe_chain_calls_sample: dict[str, Any],
+    cboe_chain_calls_sample: dict[str, object],
 ) -> None:
     """Regression pin, values as the pre-0031 parser produced them: the
     default is the put wing, and it ignores every call in the payload."""
@@ -1435,18 +1452,20 @@ def test_the_put_band_still_drops_a_strike_the_call_band_keeps() -> None:
     assert calls["strike"].tolist() == [200.0]
 
 
-def _counting(**by_symbol: dict[str, Any]) -> tuple[Any, list[str]]:
+def _counting(
+    **by_symbol: dict[str, object],
+) -> tuple[Callable[[str], dict[str, object]], list[str]]:
     seen: list[str] = []
     inner = _fetcher(**by_symbol)
 
-    def fetch(symbol: str) -> dict[str, Any]:
+    def fetch(symbol: str) -> dict[str, object]:
         seen.append(symbol)
         return inner(symbol)
 
     return fetch, seen
 
 
-def _both(symbol: str) -> dict[str, Any]:
+def _both(symbol: str) -> dict[str, object]:
     return _payload(
         _contract(f"{symbol}{NEAR_EXPIRY}P00095000"),
         _contract(f"{symbol}{NEAR_EXPIRY}C00105000", delta=0.3),
@@ -1480,20 +1499,39 @@ def test_fetch_chains_fetches_each_chain_once_and_drops_a_dead_one(
     assert failure.exc_info is not None
 
 
-def test_ingest_from_prefetched_payloads_never_fetches(tmp_path: Path) -> None:
+def test_ingest_from_prefetched_payloads_never_fetches(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
     """Given ``payloads``, the ingest parses what it was handed. A symbol the
-    fetch lost counts as failed exactly as a fetch failure always did."""
+    fetch lost counts as failed exactly as a fetch failure always did -- and
+    is logged as one named line, not a second traceback that reads like a
+    parse bug (fetch_chains already logged the real cause)."""
+    import tail_lab.ingestion.option_chain as module
 
-    def no_network(symbol: str) -> dict[str, Any]:
+    def no_network(symbol: str) -> dict[str, object]:
         raise AssertionError(f"fetched {symbol} although payloads were given")
 
+    monkeypatch.setattr(module, "fetch_chain_raw", no_network)
     symbols = [f"S{i}" for i in range(20)]
     payloads = {s: _both(s) for s in symbols[:19]}
-    result = ingest_option_chain(
-        DeltaLakeStore(tmp_path), symbols, fetch=no_network, payloads=payloads, right="C"
-    )
+    with caplog.at_level("WARNING"):
+        result = ingest_option_chain(
+            DeltaLakeStore(tmp_path), symbols, payloads=payloads, right="C"
+        )
     assert result.symbols_failed == ("S19",)
     assert len(result.symbols_ok) == 19
+    unfetched = [r for r in caplog.records if "symbol_unfetched symbol=S19" in r.getMessage()]
+    assert len(unfetched) == 1
+    assert unfetched[0].exc_info is None
+    assert not [r for r in caplog.records if "symbol_failed" in r.getMessage()]
+
+
+def test_payloads_and_fetch_together_are_refused(tmp_path: Path) -> None:
+    """One of the two would be silently ignored."""
+    with pytest.raises(ValueError, match="payloads or fetch"):
+        ingest_option_chain(
+            DeltaLakeStore(tmp_path), ["SPY"], payloads={}, fetch=lambda _s: {}, right="P"
+        )
 
 
 def test_a_call_ingest_writes_only_the_call_dataset(tmp_path: Path) -> None:
@@ -1594,7 +1632,11 @@ def test_a_call_parse_bug_costs_the_calls_not_the_puts(
 
     assert puts == baseline_puts
     assert calls == []
-    failures = [r for r in caplog.records if "call_symbol_failed" in r.getMessage()]
+    failures = [
+        r
+        for r in caplog.records
+        if "symbol_failed" in r.getMessage() and f"dataset={CALL_DATASET}" in r.getMessage()
+    ]
     assert len(failures) == 2
     assert all(r.exc_info is not None for r in failures)
 
@@ -1610,7 +1652,9 @@ def test_a_call_record_conversion_bug_costs_the_calls_not_the_puts(
     baseline_puts, _ = sweep_to_records(["SPY"], fetch=fetch)
     real_parse = module.parse_cboe_chain
 
-    def call_frame_without_timestamps(payload: Any, right: str = "P") -> Any:
+    def call_frame_without_timestamps(
+        payload: Mapping[str, object], right: str = "P"
+    ) -> tuple[pd.DataFrame, int]:
         frame, unparsed = real_parse(payload, right=right)  # type: ignore[arg-type]
         if right == "C":
             frame["quote_date"] = "not a timestamp"

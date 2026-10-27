@@ -26,7 +26,6 @@ from __future__ import annotations
 
 import datetime as dt
 import logging
-from dataclasses import dataclass
 from functools import lru_cache
 
 import pandas as pd
@@ -42,6 +41,7 @@ from tail_lab.config import get_lake_store as _get_configured_lake_store
 from tail_lab.contracts.option_chain import (
     DATASET,
     DEFAULT_SNAPSHOT_SYMBOLS,
+    MAX_WRONG_SIGN_SHARE,
     WINGS,
     IncompleteSweepError,
     IngestDateMismatch,
@@ -56,28 +56,6 @@ from tail_lab.observability import log_event
 router = APIRouter()
 
 _LOGGER = logging.getLogger(__name__)
-
-
-@dataclass(frozen=True)
-class _ChainRoute:
-    """What differs between the put and call write routes: the wing (its
-    dataset, quarantine and contract) and the route's own log events. Both
-    routes run ONE body (``_ingest_chain``), so the session rules cannot
-    drift between the wings."""
-
-    wing: Wing
-    log_event: str
-    quarantine_failed_event: str
-
-
-_PUT_ROUTE = _ChainRoute(
-    WINGS["P"], "api.ingest.option_chain", "api.ingest.option_chain.quarantine_write_failed"
-)
-_CALL_ROUTE = _ChainRoute(
-    WINGS["C"],
-    "api.ingest.option_chain_calls",
-    "api.ingest.option_chain_calls.quarantine_write_failed",
-)
 
 
 def _utcnow() -> dt.datetime:
@@ -97,7 +75,7 @@ def ingest_option_chain_snapshot(
     store: LakeStore = Depends(get_lake_store),
 ) -> OptionChainSnapshotResponse:
     """Commit one day's put-wing slice to ``option_chain_snapshot``."""
-    return _ingest_chain(body, authorization, store, route=_PUT_ROUTE)
+    return _ingest_chain(body, authorization, store, wing=WINGS["P"])
 
 
 @router.post("/api/ingest/option-chain-calls")
@@ -108,7 +86,7 @@ def ingest_option_chain_call_snapshot(
 ) -> OptionChainSnapshotResponse:
     """Commit one day's call-wing slice to ``option_chain_call_snapshot``
     (``docs/adr/0031``) -- same token, same session rules, its own dataset."""
-    return _ingest_chain(body, authorization, store, route=_CALL_ROUTE)
+    return _ingest_chain(body, authorization, store, wing=WINGS["C"])
 
 
 def _ingest_chain(
@@ -116,17 +94,20 @@ def _ingest_chain(
     authorization: str | None,
     store: LakeStore,
     *,
-    route: _ChainRoute,
+    wing: Wing,
 ) -> OptionChainSnapshotResponse:
-    """Commit one day's slice of one wing to bronze.
+    """Commit one day's slice of one wing to bronze. Both routes run this ONE
+    body, so the session rules cannot drift between the wings.
 
     Rows arrive already sliced by the workflow; they are re-validated here
     against the wing's contract regardless, because the caller being trusted
     is not the same as the payload being well-formed, and bronze is immutable
-    once written.
+    once written. The contract cannot tell the wings apart on a row with a
+    null delta, so a body whose deltas mostly carry the other wing's sign is
+    refused whole (:meth:`Wing.wrong_sign_share`).
     """
     _require_token(authorization)
-    dataset = route.wing.dataset
+    dataset = wing.dataset
 
     if not body.rows:
         raise HTTPException(status_code=400, detail="no rows submitted")
@@ -135,6 +116,14 @@ def _ingest_chain(
     frame["quote_date"] = pd.to_datetime(frame["quote_date"])
     frame["expiration"] = pd.to_datetime(frame["expiration"])
 
+    # Before the split: quarantining the wrong-sign rows would leave their
+    # null-delta siblings valid, and commit the other wing's rows here for good.
+    if wing.wrong_sign_share(frame) > MAX_WRONG_SIGN_SHARE:
+        raise HTTPException(
+            status_code=422,
+            detail=f"these rows' deltas are the other wing's; not written to {dataset}",
+        )
+
     # Quarantine bad rows; do NOT reject the batch. The first version of this
     # endpoint validated all-or-nothing and threw away a whole 22,006-quote
     # sweep because a few dozen far-OTM strikes had no resting offer -- while
@@ -142,7 +131,7 @@ def _ingest_chain(
     # kept the rest. Two writers disagreeing about what a bad row costs is
     # how a session gets lost, which is the one thing this dataset cannot
     # afford. A 422 now means nothing at all validated.
-    valid, quarantined = split_valid_and_quarantined(frame, route.wing.schema)
+    valid, quarantined = split_valid_and_quarantined(frame, wing.schema)
     if valid.empty:
         raise HTTPException(
             status_code=422,
@@ -199,11 +188,12 @@ def _ingest_chain(
         # lake-write failures (`LAKE_WRITE_ERRORS`) are survived, anything else
         # is a bug and surfaces.
         try:
-            store.write_bronze(route.wing.quarantine_dataset, plan.ingest_date, plan.quarantined)
+            store.write_bronze(wing.quarantine_dataset, plan.ingest_date, plan.quarantined)
         except LAKE_WRITE_ERRORS:
             _LOGGER.exception(
-                "event=%s ingest_date=%s rows=%d",
-                route.quarantine_failed_event,
+                "event=api.ingest.option_chain.quarantine_write_failed dataset=%s "
+                "ingest_date=%s rows=%d",
+                wing.quarantine_dataset,
                 plan.ingest_date.isoformat(),
                 len(plan.quarantined),
             )
@@ -212,7 +202,7 @@ def _ingest_chain(
     quote_date = plan.valid["quote_date"].max().date() if not plan.valid.empty else plan.session
     log_event(
         _LOGGER,
-        route.log_event,
+        "api.ingest.option_chain",
         dataset=dataset,
         ingest_date=plan.ingest_date,
         rows=len(plan.valid),
