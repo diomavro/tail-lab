@@ -11,13 +11,15 @@ renders. No raw quote row is written -- no bid, ask or strike, refusal
 reasons included: the optionsDX licence forbids redistribution and
 ``option_quotes`` is cleared for private research only; aggregates are fine.
 
-Nothing here prices an option with a model. Every fill and every mark goes
-through the platform's own guard pipeline,
+Nothing here prices an option with a model. Every purchase goes through the
+platform's own guard pipeline,
 ``research.backtest.quote_fills.OptionsDxQuoteSource``: the exact session only
 (point in time), the nearest listed expiry AT OR AFTER the target, a listed
 strike within ``MAX_SNAP_MONEYNESS_PP`` (1pp) of the requested distance, bid
 > 0 and relative spread <= ``marks.MAX_RELATIVE_SPREAD`` (50%), bought at the
-ASK; a sale is at the BID. When there is no exit bid it is credited intrinsic
+ASK. A sale, and every daily mark of a hedge book, is at the BID of the exact
+contract bought (``OptionsDxQuoteSource.mark``), checked only for the session,
+an exact strike match and bid > 0 -- the spread cap does not apply on exit. When there is no exit bid it is credited intrinsic
 (the American put's exercise value), counted per rule as
 ``exits_at_intrinsic``. Almost all of those are not refused bids: the panel keeps
 only strikes within ``contracts.optionsdx`` MONEYNESS_MIN..MONEYNESS_MAX

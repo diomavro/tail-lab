@@ -365,7 +365,8 @@ export function PitchView() {
           {LIVE.read_on}:{' '}
           {LIVE.roll_schedule_legs.map((l) => (
             <span key={l.asset}>
-              leg #{l.rank} {l.asset} ({l.rule}) expected {backX(l.expected_roi)} at a model price of $
+              leg #{l.rank} {l.asset} ({l.rule}), whose best in-sample backtest made {backX(l.expected_roi)}{' '}
+              (pooled over its rolls, the field the API names “expected”; not a forecast) at a model price of $
               {l.model_premium < 0.01 ? l.model_premium.toFixed(4) : l.model_premium.toFixed(2)} a share, while the market quoted {l.market};{' '}
             </span>
           ))}
@@ -397,7 +398,9 @@ export function PitchView() {
             <tbody>
               {LIVE.spy_verdicts.map((v) => (
                 <tr key={v.as_of}>
-                  <td>{v.as_of}</td>
+                  <td>
+                    <D d={v.as_of} />
+                  </td>
                   <td>{v.verdict}</td>
                   <td className="num">{fmtFixed(v.calm)}</td>
                   <td className="num">{fmtFixed(v.elevated)}</td>
@@ -528,11 +531,13 @@ export function PitchView() {
         <h3>The method</h3>
         <ol className="pl-pitch-list">
           <li>
-            <strong>Fills.</strong> Every trade goes through the platform’s own quote guards
+            <strong>Fills.</strong> Every purchase goes through the platform’s own quote guards
             (research/backtest/quote_fills.py, <code>OptionsDxQuoteSource</code>): the exact session only, the
             nearest listed expiry on or after the target, a listed strike within 1 percentage point of the requested
-            distance from spot, bid above zero and spread at most 50% of mid. Buys pay the <strong>ask</strong>; sales get the{' '}
-            <strong>bid</strong>. When there is no exit bid, a sale is credited the put’s intrinsic value (strike −
+            distance from spot, bid above zero and spread at most 50% of mid; it pays the <strong>ask</strong>. A sale,
+            and each daily mark of a hedge book, gets the <strong>bid</strong> of the exact contract bought
+            (<code>OptionsDxQuoteSource.mark</code>), checked only for the session, the exact strike and a bid above
+            zero: the 50% spread cap applies to buys, not to sales or marks. When there is no exit bid, a sale is credited the put’s intrinsic value (strike −
             spot, what exercising the American put pays; nothing if it is out of the money): that happened on{' '}
             {intrinsicExits} in-the-money exits of {soldRolls.toLocaleString('en-US')} sold rolls
             {otmNoBid > 0 && <> (and {otmNoBid} out-of-the-money sales with no bid were credited zero)</>}.{' '}
@@ -540,8 +545,9 @@ export function PitchView() {
               ? `None of those ${beyondPanel} is a refused bid`
               : `${beyondPanel} of those in-the-money exits are not refused bids`}
             : the panel keeps only strikes 0.60–1.02 × spot, so a put more than 2% in the
-            money at exit has no quote at all. Intrinsic leaves out the time value such a put still has with 4 or 8
-            weeks to run, and it happens only after spot has fallen about 6% or more since entry (the shallowest
+            money at exit has no quote at all. Intrinsic leaves out the time value such a put still has with about{' '}
+            {Math.round(SPY.standalone['5pct_8w_sell4w']!.median_dte - 28)} or {Math.round(SPY.standalone['5pct_12w_sell4w']!.median_dte - 28)} days
+            to run at the median (entry days to expiry less the 28-day hold), and it happens only after spot has fallen about 6% or more since entry (the shallowest
             strike is within a point of 5% below spot, and the exit spot is over 2% below that strike).
             {bestBeyond.length > 0 &&
               (bestBeyond.length === 1

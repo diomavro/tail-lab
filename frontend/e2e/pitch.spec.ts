@@ -289,6 +289,8 @@ test('prints a roll-schedule leg as a return on premium, not as a payoff multipl
   const daily = page.locator('#pitch-daily')
   for (const l of LIVE.roll_schedule_legs) {
     await expect(daily).toContainText(`a return of +${l.expected_roi.toFixed(1)} on its premium (${(l.expected_roi + 1).toFixed(1)}× the premium back)`)
+    // The API's "expected" field is a pooled in-sample result, not a forecast.
+    await expect(daily).toContainText(`leg #${l.rank} ${l.asset} (${l.rule}), whose best in-sample backtest made`)
   }
 })
 
@@ -490,6 +492,25 @@ test('the timing correction is said to cover the mean-return objective only', as
   await expect(timing).toContainText(
     `${EVIDENCE.timing.bh.p_below_05} of ${EVIDENCE.timing.bh.tested} mean-return differences have a raw p below 0.05`,
   )
+  // Both comparisons are derived on the page; a wrong chance count or a
+  // ratio against the FDR instead of the first BH step would mislead.
+  const bh = EVIDENCE.timing.bh
+  await expect(timing).toContainText(`about the ${Math.round(bh.tested * 0.05)} that chance would give`)
+  const bestNotCrisis = Math.min(...bh.smallest_p.filter((x) => x.gate === 'regime=not_crisis').map((x) => x.oos_p))
+  await expect(timing).toContainText(`about ${Math.round(bestNotCrisis / (bh.fdr / bh.tested))}× the first BH`)
+})
+
+test('the fills step says the spread cap guards buys only, and how long a sold put still runs', async ({ page }) => {
+  // OptionsDxQuoteSource.mark has no spread check: a sale or daily mark takes
+  // any bid above zero. Saying the cap is symmetric overstates the guard.
+  const method = page.locator('#pitch-method')
+  await expect(method).toContainText('the 50% spread cap applies to buys, not to sales or marks')
+  // A sold put exits after a 28-day hold, so it still has entry DTE - 28 to run.
+  const spy = EVIDENCE.SPY.standalone
+  const left = (r: string) => Math.round(spy[r]!.median_dte - 28)
+  await expect(method).toContainText(
+    `time value such a put still has with about ${left('5pct_8w_sell4w')} or ${left('5pct_12w_sell4w')} days to run at the median`,
+  )
 })
 
 test('dates in the prose do not break at their hyphens on a phone', async ({ page }) => {
@@ -503,6 +524,11 @@ test('dates in the prose do not break at their hyphens on a phone', async ({ pag
   // wrapped span has more than one client rect).
   const dates = await page.locator('.pl-date').evaluateAll((els) =>
     els.map((e) => ({ text: e.textContent, ws: getComputedStyle(e).whiteSpace, rects: e.getClientRects().length })),
+  )
+  // The verdict-flips table is where the dates are the evidence: each as-of
+  // cell is a kept-whole date, so the check below covers it.
+  await expect(page.getByTestId('pitch-flips').locator('tbody tr td:first-child .pl-date')).toHaveCount(
+    LIVE.spy_verdicts.length,
   )
   expect(dates.length).toBeGreaterThan(20)
   for (const d of dates) {
