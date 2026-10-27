@@ -12,6 +12,8 @@ import requests
 from deltalake.exceptions import SchemaMismatchError
 
 from tail_lab.contracts.option_chain import (
+    CALL_DATASET,
+    CALL_QUARANTINE_DATASET,
     DATASET,
     DEFAULT_SNAPSHOT_SYMBOLS,
     MAX_TENOR_DAYS,
@@ -25,6 +27,7 @@ from tail_lab.ingestion.option_chain import (
     IncompleteSweepError,
     _fetch_with_retry,
     cboe_symbol,
+    fetch_chains,
     ingest_option_chain,
     parse_cboe_chain,
     parse_osi_symbol,
@@ -904,7 +907,10 @@ def test_quarantined_rows_are_persisted_for_inspection(tmp_path: Path) -> None:
 def test_sweep_to_records_emits_json_ready_rows() -> None:
     """The credential-free half of the scheduled sweep (docs/adr/0020): the
     workflow produces these, the app writes them."""
-    records = sweep_to_records(["SPY"], fetch=_fetcher(SPY=_payload(_put(95.0), symbol="SPY")))
+    records, calls = sweep_to_records(
+        ["SPY"], fetch=_fetcher(SPY=_payload(_put(95.0), symbol="SPY"))
+    )
+    assert calls == []
     assert len(records) == 1
     assert records[0]["quote_date"] == QUOTE_DAY
     assert records[0]["expiration"] == "2026-09-25"
@@ -912,10 +918,9 @@ def test_sweep_to_records_emits_json_ready_rows() -> None:
 
 
 def test_sweep_to_records_skips_a_failing_symbol() -> None:
-    records = sweep_to_records(
-        ["SPY", "BROKEN"], fetch=_fetcher(SPY=_payload(_put(95.0), symbol="SPY"))
-    )
+    records, calls = sweep_to_records(["SPY", "BROKEN"], fetch=_fetcher(SPY=_both("SPY")))
     assert [r["underlying"] for r in records] == ["SPY"]
+    assert [r["underlying"] for r in calls] == ["SPY"]
 
 
 def test_the_partition_is_the_session_not_the_clock(tmp_path: Path) -> None:
@@ -1346,3 +1351,325 @@ def test_a_bug_in_one_symbol_costs_that_symbol_not_the_session(
     assert store.bronze_partition_exists(DATASET, result.quote_date)
     failure = next(r for r in caplog.records if "symbol_failed" in r.getMessage())
     assert failure.exc_info is not None and failure.exc_info[0] is KeyError
+
+
+# ---- the call wing (docs/adr/0031) -------------------------------------------
+#
+# One fetch per symbol, two parses: the put wing (unchanged) and the call wing,
+# each validated against its own contract and committed to its own dataset. A
+# call-side fault must never cost the puts their session, and vice versa.
+
+
+def test_the_call_parse_keeps_only_in_band_calls_within_the_tenor_cap(
+    cboe_chain_calls_sample: dict[str, Any],
+) -> None:
+    """Against real contracts straddling every filter (see the fixture): the
+    0.80 floor (610 out), the 2.50 cap (1913 in, 1914 out), the 180-day tenor
+    cap (2027-04-30 out), and the right itself (both puts out)."""
+    frame, unparsed = parse_cboe_chain(cboe_chain_calls_sample, right="C")
+    assert not frame.empty, "a vacuous call frame proves nothing"
+    assert unparsed == 0
+    assert list(zip(frame["expiration"].dt.date.astype(str), frame["strike"], strict=True)) == [
+        ("2026-10-26", 615.0),
+        ("2026-11-20", 650.0),
+        ("2026-11-20", 660.0),
+        ("2026-11-20", 765.0),
+        ("2026-11-20", 800.0),
+        ("2026-11-20", 850.0),
+        ("2026-11-20", 1000.0),
+        ("2026-11-20", 1913.0),
+    ]
+    assert (frame["delta"].dropna() >= 0).all()
+
+
+def test_a_zero_filled_call_takes_its_greeks_with_it(
+    cboe_chain_calls_sample: dict[str, Any],
+) -> None:
+    """The house rule is unchanged on the call side: an iv of 0 nulls delta
+    and theo too, even where Cboe printed a plausible delta beside it (the ITM
+    660 call's 0.85) -- the block is computed together, so it dies together."""
+    frame, _ = parse_cboe_chain(cboe_chain_calls_sample, right="C")
+    for strike in (615.0, 660.0):
+        row = frame[frame["strike"] == strike].iloc[0]
+        assert pd.isna(row["iv"]) and pd.isna(row["delta"]) and pd.isna(row["theo"])
+    live = frame[frame["strike"] == 765.0].iloc[0]
+    assert live["delta"] == pytest.approx(0.5426)
+
+
+def test_the_put_parse_is_unchanged_by_the_call_wing(
+    cboe_chain_calls_sample: dict[str, Any],
+) -> None:
+    """Regression pin, values as the pre-0031 parser produced them: the
+    default is the put wing, and it ignores every call in the payload."""
+    default, unparsed = parse_cboe_chain(cboe_chain_calls_sample)
+    explicit, _ = parse_cboe_chain(cboe_chain_calls_sample, right="P")
+    pd.testing.assert_frame_equal(default, explicit)
+    assert unparsed == 0
+    assert default["strike"].tolist() == [700.0, 765.0]
+    assert default["delta"].tolist() == [-0.0764, -0.469]
+    assert default["iv"].tolist() == [0.2496, 0.148]
+    assert set(default["expiration"].dt.date.astype(str)) == {"2026-11-20"}
+
+
+def test_the_call_band_is_inclusive_at_both_edges() -> None:
+    frame, _ = parse_cboe_chain(
+        _payload(
+            _call(79.0, delta=0.9),
+            _call(80.0, delta=0.9),
+            _call(250.0, delta=0.01),
+            _call(251.0, delta=0.01),
+            _put(95.0),
+        ),
+        right="C",
+    )
+    assert frame["strike"].tolist() == [80.0, 250.0]
+
+
+def test_the_put_band_still_drops_a_strike_the_call_band_keeps() -> None:
+    """The bands are per right: a 2.0 x spot put is discounted stock, a 2.0 x
+    spot call is a far-OTM wing."""
+    payload = _payload(_put(200.0), _call(200.0, delta=0.01))
+    puts, _ = parse_cboe_chain(payload)
+    calls, _ = parse_cboe_chain(payload, right="C")
+    assert puts.empty
+    assert calls["strike"].tolist() == [200.0]
+
+
+def _counting(**by_symbol: dict[str, Any]) -> tuple[Any, list[str]]:
+    seen: list[str] = []
+    inner = _fetcher(**by_symbol)
+
+    def fetch(symbol: str) -> dict[str, Any]:
+        seen.append(symbol)
+        return inner(symbol)
+
+    return fetch, seen
+
+
+def _both(symbol: str) -> dict[str, Any]:
+    return _payload(
+        _contract(f"{symbol}{NEAR_EXPIRY}P00095000"),
+        _contract(f"{symbol}{NEAR_EXPIRY}C00105000", delta=0.3),
+        symbol=symbol,
+    )
+
+
+def test_the_post_sweep_fetches_each_chain_once_for_both_wings() -> None:
+    """A second fetch loop would repeat 2026-09-19 (48 requests, 429 on 9 of
+    24) and draw the wings from different CDN snapshots."""
+    fetch, seen = _counting(SPY=_both("SPY"), QQQ=_both("QQQ"))
+    puts, calls = sweep_to_records(["SPY", "QQQ"], fetch=fetch)
+    assert seen == ["SPY", "QQQ"]
+    assert [(r["underlying"], r["strike"]) for r in puts] == [("SPY", 95.0), ("QQQ", 95.0)]
+    assert [(r["underlying"], r["strike"]) for r in calls] == [("SPY", 105.0), ("QQQ", 105.0)]
+    assert calls[0]["quote_date"] == QUOTE_DAY and calls[0]["expiration"] == "2026-09-25"
+
+
+def test_fetch_chains_fetches_each_chain_once_and_drops_a_dead_one(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """The ``--local`` half of the same rule. A failed symbol is absent, and
+    logged with its traceback under the event the ingest loop always used."""
+    fetch, seen = _counting(SPY=_both("SPY"))
+    with caplog.at_level("ERROR"):
+        payloads = fetch_chains(["SPY", "DEAD"], fetch=fetch)
+    assert seen == ["SPY", "DEAD"]
+    assert set(payloads) == {"SPY"}
+    failure = next(r for r in caplog.records if "symbol_failed" in r.getMessage())
+    assert "DEAD" in failure.getMessage()
+    assert failure.exc_info is not None
+
+
+def test_ingest_from_prefetched_payloads_never_fetches(tmp_path: Path) -> None:
+    """Given ``payloads``, the ingest parses what it was handed. A symbol the
+    fetch lost counts as failed exactly as a fetch failure always did."""
+
+    def no_network(symbol: str) -> dict[str, Any]:
+        raise AssertionError(f"fetched {symbol} although payloads were given")
+
+    symbols = [f"S{i}" for i in range(20)]
+    payloads = {s: _both(s) for s in symbols[:19]}
+    result = ingest_option_chain(
+        DeltaLakeStore(tmp_path), symbols, fetch=no_network, payloads=payloads, right="C"
+    )
+    assert result.symbols_failed == ("S19",)
+    assert len(result.symbols_ok) == 19
+
+
+def test_a_call_ingest_writes_only_the_call_dataset(tmp_path: Path) -> None:
+    """Dataset isolation, against a real lake: every reader of
+    ``option_chain_snapshot`` assumes a put, so a call ingest must add nothing
+    to it -- or to its quarantine -- and must file under its own name."""
+    store = DeltaLakeStore(tmp_path)
+    payload = _payload(
+        _call(105.0, delta=0.3),
+        _call(106.0, delta=0.2, bid=0.0, ask=0.0),  # quarantined: no offer
+        _put(95.0),
+        symbol="SPY",
+    )
+    result = ingest_option_chain(store, ["SPY"], payloads={"SPY": payload}, right="C")
+    day = dt.date.fromisoformat(QUOTE_DAY)
+
+    assert result.dataset == CALL_DATASET
+    assert (result.valid_rows, result.quarantined_rows) == (1, 1)
+    assert store.bronze_partition_exists(CALL_DATASET, day)
+    assert store.bronze_partition_exists(CALL_QUARANTINE_DATASET, day)
+    assert not store.bronze_partition_exists(DATASET, day)
+    assert not store.bronze_partition_exists(QUARANTINE_DATASET, day)
+    assert store.read_bronze_as_of(CALL_DATASET, day)["strike"].tolist() == [105.0]
+
+
+def test_a_call_ingest_validates_against_the_call_contract(tmp_path: Path) -> None:
+    """Under the put contract every call fails its delta sign and the whole
+    wing would land in quarantine."""
+    result = ingest_option_chain(
+        DeltaLakeStore(tmp_path),
+        ["SPY"],
+        payloads={"SPY": _payload(_call(105.0, delta=0.3), _call(110.0, delta=0.1))},
+        right="C",
+    )
+    assert (result.valid_rows, result.quarantined_rows) == (2, 0)
+
+
+def test_a_put_ingest_still_writes_the_put_dataset(tmp_path: Path) -> None:
+    store = DeltaLakeStore(tmp_path)
+    result = ingest_option_chain(store, ["SPY"], fetch=_fetcher(SPY=_both("SPY")))
+    day = dt.date.fromisoformat(QUOTE_DAY)
+    assert result.dataset == DATASET
+    assert store.read_bronze_as_of(DATASET, day)["strike"].tolist() == [95.0]
+    assert not store.bronze_partition_exists(CALL_DATASET, day)
+
+
+def test_each_wing_logs_its_own_audit_record(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    """STANDARDS §f: one ``ingestion.option_chain.run`` per right, each naming
+    its dataset. ``unparsed_contracts`` = OSI-unparseable symbols (counted
+    before the right filter, so on both records) plus THIS right's rows with
+    an unparseable iv (counted after it)."""
+    payload = _payload(
+        _contract("!!broken!!"),
+        _put(95.0),
+        _call(105.0, delta=0.3),
+        _call(106.0, iv="N/A"),
+        symbol="SPY",
+    )
+    store = DeltaLakeStore(tmp_path)
+    with caplog.at_level("INFO"):
+        puts = ingest_option_chain(store, ["SPY"], payloads={"SPY": payload})
+        calls = ingest_option_chain(store, ["SPY"], payloads={"SPY": payload}, right="C")
+    assert (puts.unparsed_contracts, calls.unparsed_contracts) == (1, 2)
+    runs = [
+        r.getMessage() for r in caplog.records if "ingestion.option_chain.run" in r.getMessage()
+    ]
+    assert len(runs) == 2
+    assert f"dataset={DATASET} " in runs[0]
+    assert f"dataset={CALL_DATASET} " in runs[1]
+    assert "unparsed_contracts=1 " in runs[0]
+    assert "unparsed_contracts=2 " in runs[1]
+
+
+def _break_the_call_band(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Make the call parse raise (a TypeError comparing against a str bound)
+    while the put parse is untouched."""
+    import dataclasses
+
+    from tail_lab.contracts.option_chain import WINGS
+
+    monkeypatch.setitem(WINGS, "C", dataclasses.replace(WINGS["C"], moneyness_min="boom"))
+
+
+def test_a_call_parse_bug_costs_the_calls_not_the_puts(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    """Three failure boundaries, not one: a call-only bug must never push the
+    put session under MIN_SYMBOL_FRACTION. Merging the parse ``try`` blocks
+    makes this red."""
+    fetch = _fetcher(SPY=_both("SPY"), QQQ=_both("QQQ"))
+    baseline_puts, _ = sweep_to_records(["SPY", "QQQ"], fetch=fetch)
+
+    _break_the_call_band(monkeypatch)
+    with caplog.at_level("ERROR"):
+        puts, calls = sweep_to_records(["SPY", "QQQ"], fetch=fetch)
+
+    assert puts == baseline_puts
+    assert calls == []
+    failures = [r for r in caplog.records if "call_symbol_failed" in r.getMessage()]
+    assert len(failures) == 2
+    assert all(r.exc_info is not None for r in failures)
+
+
+def test_a_call_record_conversion_bug_costs_the_calls_not_the_puts(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The ``to_dict``/``.date()`` loop used to sit outside the try: a bug
+    there must stay inside the call wing's boundary too."""
+    import tail_lab.ingestion.option_chain as module
+
+    fetch = _fetcher(SPY=_both("SPY"))
+    baseline_puts, _ = sweep_to_records(["SPY"], fetch=fetch)
+    real_parse = module.parse_cboe_chain
+
+    def call_frame_without_timestamps(payload: Any, right: str = "P") -> Any:
+        frame, unparsed = real_parse(payload, right=right)  # type: ignore[arg-type]
+        if right == "C":
+            frame["quote_date"] = "not a timestamp"
+        return frame, unparsed
+
+    monkeypatch.setattr(module, "parse_cboe_chain", call_frame_without_timestamps)
+    puts, calls = sweep_to_records(["SPY"], fetch=fetch)
+    assert puts == baseline_puts
+    assert calls == []
+
+
+def test_a_put_parse_bug_costs_the_puts_not_the_calls(monkeypatch: pytest.MonkeyPatch) -> None:
+    import dataclasses
+
+    from tail_lab.contracts.option_chain import WINGS
+
+    fetch = _fetcher(SPY=_both("SPY"))
+    _, baseline_calls = sweep_to_records(["SPY"], fetch=fetch)
+    monkeypatch.setitem(WINGS, "P", dataclasses.replace(WINGS["P"], moneyness_min="boom"))
+    puts, calls = sweep_to_records(["SPY"], fetch=fetch)
+    assert puts == []
+    assert calls == baseline_calls
+    assert calls
+
+
+def test_a_call_parse_bug_in_the_local_ingest_leaves_the_put_commit_intact(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """``--local`` runs one ingest per right over the same payloads, so the
+    put commit is the no-calls baseline whatever the call side does."""
+    symbols = [f"S{i}" for i in range(20)]
+    payloads = {s: _both(s) for s in symbols}
+    baseline = ingest_option_chain(DeltaLakeStore(tmp_path / "a"), symbols, payloads=payloads)
+
+    _break_the_call_band(monkeypatch)
+    store = DeltaLakeStore(tmp_path / "b")
+    puts = ingest_option_chain(store, symbols, payloads=payloads)
+    with pytest.raises(IncompleteSweepError):
+        ingest_option_chain(store, symbols, payloads=payloads, right="C")
+
+    assert (puts.valid_rows, puts.symbols_ok, puts.committed) == (
+        baseline.valid_rows,
+        baseline.symbols_ok,
+        True,
+    )
+    day = dt.date.fromisoformat(QUOTE_DAY)
+    assert store.bronze_partition_exists(DATASET, day)
+    assert not store.bronze_partition_exists(CALL_DATASET, day)
+
+
+def test_captured_puts_do_not_make_the_first_call_ingest_a_no_op(tmp_path: Path) -> None:
+    """Each wing asks ITS OWN dataset whether the session is captured. Asking
+    the put dataset would read "already captured" on the first call session
+    and write nothing -- silently, every day, forever."""
+    store = DeltaLakeStore(tmp_path)
+    payloads = {"SPY": _both("SPY")}
+    assert ingest_option_chain(store, ["SPY"], payloads=payloads).committed
+    calls = ingest_option_chain(store, ["SPY"], payloads=payloads, right="C")
+    assert calls.committed
+    assert store.bronze_partition_exists(CALL_DATASET, dt.date.fromisoformat(QUOTE_DAY))
+    again = ingest_option_chain(store, ["SPY"], payloads=payloads, right="C")
+    assert not again.committed

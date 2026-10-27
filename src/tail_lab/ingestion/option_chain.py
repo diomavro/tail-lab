@@ -1,5 +1,5 @@
-"""Daily forward-collected put-wing snapshot -- bronze layer
-(``docs/DATA_CONTRACTS.md`` #6, ``docs/adr/0020``).
+"""Daily forward-collected option-chain snapshot, both wings -- bronze layer
+(``docs/DATA_CONTRACTS.md`` #6, ``docs/adr/0020``, ``docs/adr/0031``).
 
 Source: Cboe's public delayed-quote CDN,
 ``https://cdn-api.cboe.com/api/global/delayed_quotes/options/{SYMBOL}.json``.
@@ -15,16 +15,21 @@ is not: no free vendor sells a retroactive quote, so an un-snapshotted day is
 lost for good. That is why this runs on a schedule that treats an empty day
 as a failure, and why the slice below is tuned to be cheap enough to run
 every single day across the whole universe rather than rich enough to answer
-every possible question about one name.
+every possible question about one name. Each chain is fetched ONCE and sliced
+twice: the put wing into ``option_chain_snapshot`` and the call wing into its
+own ``option_chain_call_snapshot`` (``docs/adr/0031``), each with its own
+moneyness band, contract, and failure boundary.
 
 Same three-function split as every other adapter here, so tests never touch
 the network:
 
-- :func:`parse_cboe_chain` -- pure, turns one symbol's JSON into the slice.
+- :func:`parse_cboe_chain` -- pure, turns one symbol's JSON into one wing's
+  slice.
 - :func:`fetch_chain_raw` -- the HTTP call, exercised only by
   ``make ingest-option-chain`` and the scheduled workflow, never by CI.
-- :func:`ingest_option_chain` -- fetch -> parse -> validate/quarantine ->
-  commit one bronze partition for the whole universe.
+- :func:`ingest_option_chain` -- fetch (or take :func:`fetch_chains`'
+  payloads) -> parse -> validate/quarantine -> commit one bronze partition
+  for the whole universe, for one wing.
 
 The universe is committed as a **single partition per day**, not one per
 symbol: a half-finished sweep must not look like a complete one to an as-of
@@ -38,6 +43,7 @@ import datetime as dt
 import logging
 from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
+from typing import Final
 
 import pandas as pd
 import requests
@@ -46,9 +52,11 @@ from tail_lab.contracts.option_chain import (
     DATASET,
     MAX_TENOR_DAYS,
     MIN_SYMBOL_FRACTION,
-    MONEYNESS_MAX,
-    MONEYNESS_MIN,
+    QUARANTINE_DATASET,
+    WINGS,
     IncompleteSweepError,
+    OptionChainSnapshotSchema,
+    Right,
     SessionInProgress,
     plan_session_write,
     split_valid_and_quarantined,
@@ -68,6 +76,7 @@ __all__ = [
     "IngestResult",
     "SessionInProgress",
     "fetch_chain_raw",
+    "fetch_chains",
     "ingest_option_chain",
     "latest_market_session",
     "parse_cboe_chain",
@@ -84,7 +93,14 @@ _LOGGER = logging.getLogger(__name__)
 #: 200 is the worst failure a keyless source has -- see
 #: ``contracts.option_chain.plan_session_write`` for the check that catches it.
 CBOE_CHAIN_URL = "https://cdn-api.cboe.com/api/global/delayed_quotes/options/{symbol}.json"
-QUARANTINE_DATASET = f"{DATASET}__quarantine"
+
+#: The per-symbol failure event for each wing's parse. The put name is the one
+#: this adapter always logged; the call wing gets its own so a call-only bug
+#: is legible as one (``docs/adr/0031``).
+_PARSE_FAILED_EVENT: Final[dict[Right, str]] = {
+    "P": "ingestion.option_chain.symbol_failed",
+    "C": "ingestion.option_chain.call_symbol_failed",
+}
 
 #: Cboe prefixes cash-settled index roots with an underscore (``_SPX``).
 #: Equities and ETFs use the bare root.
@@ -130,6 +146,9 @@ _COLUMNS = [
 class IngestResult:
     """What one sweep committed, for the ``§f`` audit trail."""
 
+    #: Which wing's dataset this run wrote (``option_chain_snapshot`` or
+    #: ``option_chain_call_snapshot``) -- each wing logs its own record.
+    dataset: str
     bronze_path: str
     valid_rows: int
     quarantined_rows: int
@@ -195,21 +214,26 @@ def _greek(value: object, iv: float) -> float | None:
         return None
 
 
-def parse_cboe_chain(payload: Mapping[str, object]) -> tuple[pd.DataFrame, int]:
-    """Turn one symbol's Cboe payload into the put-wing slice.
+def parse_cboe_chain(payload: Mapping[str, object], right: Right = "P") -> tuple[pd.DataFrame, int]:
+    """Turn one symbol's Cboe payload into one wing's slice -- puts by
+    default, calls with ``right="C"`` (``docs/adr/0031``).
 
     Returns ``(frame, unparsed_contract_count)``. Pure: no clock, no network
     -- ``quote_date`` comes from the payload's own last-trade stamp, so a
     snapshot taken at an odd hour still lands on the session it belongs to.
 
     Only three filters are applied, and each drops rows that carry no
-    information rather than rows that look inconvenient: calls (the platform
-    buys puts), tenors past
-    :data:`~tail_lab.contracts.option_chain.MAX_TENOR_DAYS`, and strikes
-    outside the moneyness band. Everything surviving those goes to the
+    information rather than rows that look inconvenient: the other right,
+    tenors past :data:`~tail_lab.contracts.option_chain.MAX_TENOR_DAYS`, and
+    strikes outside that right's moneyness band
+    (:data:`~tail_lab.contracts.option_chain.WINGS`). ``unparsed`` counts
+    OSI-unparseable symbols BEFORE the right filter (so both wings report
+    them) plus this right's rows with an unparseable ``iv`` after it.
+    Everything surviving those goes to the
     schema, which is what decides valid-vs-quarantined. An envelope of the
     wrong shape raises ``ValueError`` naming the field.
     """
+    wing = WINGS[right]
     data = json_object(payload.get("data") or {}, "Cboe chain 'data'")
     underlying = str(data.get("symbol") or "").upper().lstrip("^_")
     spot = data.get("current_price")
@@ -230,13 +254,13 @@ def parse_cboe_chain(payload: Mapping[str, object]) -> tuple[pd.DataFrame, int]:
         if parsed is None:
             unparsed += 1
             continue
-        _root, expiration, right, strike = parsed
-        if right != "P":
+        _root, expiration, contract_right, strike = parsed
+        if contract_right != right:
             continue
         tenor_days = (expiration - quote_date.date()).days
         if not 0 <= tenor_days <= MAX_TENOR_DAYS:
             continue
-        if not MONEYNESS_MIN <= strike / spot_price <= MONEYNESS_MAX:
+        if not wing.moneyness_min <= strike / spot_price <= wing.moneyness_max:
             continue
         try:
             iv = to_float(contract.get("iv") or 0.0, "iv")
@@ -296,13 +320,87 @@ def _fetch_with_retry(
     )
 
 
-def validate_and_quarantine(df: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame]:
-    """Split ``df`` into (valid, quarantined) against the snapshot contract.
+def validate_and_quarantine(
+    df: pd.DataFrame, schema: type[OptionChainSnapshotSchema] = OptionChainSnapshotSchema
+) -> tuple[pd.DataFrame, pd.DataFrame]:
+    """Split ``df`` into (valid, quarantined) against ``schema`` -- the put
+    contract unless the call wing passes its own.
 
     Bad rows are never silently dropped: they come back in the second frame
     so the caller can persist them for inspection.
     """
-    return split_valid_and_quarantined(df)
+    return split_valid_and_quarantined(df, schema)
+
+
+def fetch_chains(
+    symbols: Iterable[str],
+    fetch: Callable[[str], Mapping[str, object]] | None = None,
+) -> dict[str, Mapping[str, object]]:
+    """Fetch each symbol's chain ONCE, for every wing to parse
+    (``docs/adr/0031``). A symbol whose fetch fails is absent from the result,
+    which :func:`ingest_option_chain` counts as a failed symbol.
+
+    One fetch, not one per wing: a second loop would repeat 2026-09-19 (48
+    requests, Cboe 429 on 9 of 24) and could draw the two wings from
+    different CDN snapshots.
+    """
+    fetcher = fetch or fetch_chain_raw
+    payloads: dict[str, Mapping[str, object]] = {}
+    for symbol in symbols:
+        try:
+            payloads[symbol] = _fetch_with_retry(fetcher, symbol)
+        except Exception:
+            # The ingest loop's process boundary (see ingest_option_chain),
+            # moved one seam earlier: a dead chain costs that symbol both
+            # wings, logged with its traceback, never the other symbols.
+            _LOGGER.exception("event=ingestion.option_chain.symbol_failed symbol=%s", symbol)
+    return payloads
+
+
+@dataclass
+class _Parsed:
+    """One wing's per-symbol harvest, before validation."""
+
+    frames: list[pd.DataFrame] = field(default_factory=list)
+    ok: list[str] = field(default_factory=list)
+    failed: list[str] = field(default_factory=list)
+    unparsed: int = 0
+    per_symbol: dict[str, int] = field(default_factory=dict)
+
+    def combined(self) -> pd.DataFrame:
+        if not self.frames:
+            return pd.DataFrame(columns=_COLUMNS)
+        return pd.concat(self.frames, ignore_index=True)
+
+
+def _parse_symbols(
+    symbols: Sequence[str], load: Callable[[str], Mapping[str, object]], right: Right
+) -> _Parsed:
+    parsed = _Parsed()
+    for symbol in symbols:
+        try:
+            frame, unparsed = parse_cboe_chain(load(symbol), right)
+        except Exception:
+            # Deliberately broad (Rule 14's process-boundary case, not an
+            # oversight): this loop is the one capture of an unrecoverable
+            # session (docs/adr/0020), so one symbol's unforeseen fault --
+            # a bug included -- must cost that symbol, not the other 23. It is
+            # not silent: the full traceback is logged, the symbol lands in
+            # ``symbols_failed``, and a fault that hits most symbols trips
+            # the MIN_SYMBOL_FRACTION floor in plan_session_write and fails
+            # the run red. A narrow catch would instead turn a one-symbol bug
+            # into a whole lost session.
+            _LOGGER.exception("event=%s symbol=%s", _PARSE_FAILED_EVENT[right], symbol)
+            parsed.failed.append(symbol.upper())
+            continue
+        parsed.unparsed += unparsed
+        if frame.empty:
+            parsed.failed.append(symbol.upper())
+            continue
+        parsed.frames.append(frame)
+        parsed.ok.append(symbol.upper())
+        parsed.per_symbol[symbol.upper()] = len(frame)
+    return parsed
 
 
 def ingest_option_chain(
@@ -314,8 +412,16 @@ def ingest_option_chain(
     min_symbol_fraction: float = MIN_SYMBOL_FRACTION,
     market_session: dt.date | None = None,
     now: dt.datetime | None = None,
+    right: Right = "P",
+    payloads: Mapping[str, Mapping[str, object]] | None = None,
 ) -> IngestResult:
     """Sweep ``symbols``, slice each chain, and commit ONE bronze partition.
+
+    ``right`` picks the wing -- its dataset, quarantine, contract and band all
+    come from that one choice (``contracts.option_chain.WINGS``). Given
+    ``payloads`` (from :func:`fetch_chains`), nothing is fetched: a symbol
+    absent from it counts as failed, exactly as a fetch failure does. That is
+    how ``--local`` slices both wings out of one fetch per chain.
 
     ``fetch`` is injectable so tests drive the whole orchestration off canned
     payloads without a socket. A symbol whose fetch or parse fails is
@@ -336,41 +442,15 @@ def ingest_option_chain(
     partition; a re-run, a weekend or a holiday resolves to a session already
     captured and writes nothing.
     """
+    wing = WINGS[right]
     fetcher = fetch or fetch_chain_raw
-
-    frames: list[pd.DataFrame] = []
-    ok: list[str] = []
-    failed: list[str] = []
-    unparsed_total = 0
-    per_symbol: dict[str, int] = {}
-
-    for symbol in symbols:
-        try:
-            payload = _fetch_with_retry(fetcher, symbol)
-            frame, unparsed = parse_cboe_chain(payload)
-        except Exception:
-            # Deliberately broad (Rule 14's process-boundary case, not an
-            # oversight): this loop is the one capture of an unrecoverable
-            # session (docs/adr/0020), so one symbol's unforeseen fault --
-            # a bug included -- must cost that symbol, not the other 23. It is
-            # not silent: the full traceback is logged, the symbol lands in
-            # ``symbols_failed``, and a fault that hits most symbols trips
-            # the MIN_SYMBOL_FRACTION floor in plan_session_write and fails
-            # the run red. A narrow catch would instead turn a one-symbol bug
-            # into a whole lost session.
-            _LOGGER.exception("event=ingestion.option_chain.symbol_failed symbol=%s", symbol)
-            failed.append(symbol.upper())
-            continue
-        unparsed_total += unparsed
-        if frame.empty:
-            failed.append(symbol.upper())
-            continue
-        frames.append(frame)
-        ok.append(symbol.upper())
-        per_symbol[symbol.upper()] = len(frame)
-
-    combined = pd.concat(frames, ignore_index=True) if frames else pd.DataFrame(columns=_COLUMNS)
-    valid, quarantined = validate_and_quarantine(combined)
+    load: Callable[[str], Mapping[str, object]] = (
+        payloads.__getitem__
+        if payloads is not None
+        else (lambda symbol: _fetch_with_retry(fetcher, symbol))
+    )
+    parsed = _parse_symbols(symbols, load, right)
+    valid, quarantined = validate_and_quarantine(parsed.combined(), wing.schema)
 
     # Partition by the SESSION the quotes belong to, never by the clock --
     # see the note in ``api/ingest_routes``. Shared with that route so the two
@@ -379,9 +459,9 @@ def ingest_option_chain(
         valid,
         quarantined,
         requested=symbols,
-        fetched_ok=ok,
-        fetch_failed=failed,
-        partition_exists=lambda day: store.bronze_partition_exists(DATASET, day),
+        fetched_ok=parsed.ok,
+        fetch_failed=parsed.failed,
+        partition_exists=lambda day: store.bronze_partition_exists(wing.dataset, day),
         min_symbol_fraction=min_symbol_fraction,
         ingest_date=ingest_date,
         market_session=market_session,
@@ -389,7 +469,7 @@ def ingest_option_chain(
     )
     valid, quarantined, ingest_date = plan.valid, plan.quarantined, plan.ingest_date
 
-    bronze_path = store.write_bronze(DATASET, ingest_date, valid)
+    bronze_path = store.write_bronze(wing.dataset, ingest_date, valid)
     quarantine_path: str | None = None
     if not quarantined.empty:
         # A failed QUARANTINE write must not fail the sweep. Quarantine is
@@ -411,18 +491,19 @@ def ingest_option_chain(
         # is a bug and fails loud -- the Rule 14 trade-off, accepted
         # explicitly: an unforeseen class raises here rather than hiding.
         try:
-            quarantine_path = store.write_bronze(QUARANTINE_DATASET, ingest_date, quarantined)
+            quarantine_path = store.write_bronze(wing.quarantine_dataset, ingest_date, quarantined)
         except LAKE_WRITE_ERRORS:
             _LOGGER.exception(
                 "event=ingestion.option_chain.quarantine_write_failed dataset=%s ingest_date=%s "
                 "rows=%d -- the session itself committed fine; these rows are not persisted",
-                QUARANTINE_DATASET,
+                wing.quarantine_dataset,
                 ingest_date.isoformat(),
                 len(quarantined),
             )
 
     quote_date = valid["quote_date"].max().date() if not valid.empty else ingest_date
     result = IngestResult(
+        dataset=wing.dataset,
         bronze_path=bronze_path,
         valid_rows=len(valid),
         quarantined_rows=len(quarantined),
@@ -430,8 +511,8 @@ def ingest_option_chain(
         quote_date=quote_date,
         symbols_ok=plan.symbols_ok,
         symbols_failed=plan.symbols_failed,
-        unparsed_contracts=unparsed_total,
-        per_symbol_rows=per_symbol,
+        unparsed_contracts=parsed.unparsed,
+        per_symbol_rows=parsed.per_symbol,
         committed=not plan.already_captured,
         symbols_off_session=plan.symbols_off_session,
     )
@@ -443,7 +524,7 @@ def _log_run(result: IngestResult, ingest_date: dt.date) -> None:
     log_event(
         _LOGGER,
         "ingestion.option_chain.run",
-        dataset=DATASET,
+        dataset=result.dataset,
         ingest_date=ingest_date,
         quote_date=result.quote_date,
         valid_rows=result.valid_rows,
@@ -461,28 +542,54 @@ def sweep_to_records(
     symbols: Iterable[str],
     *,
     fetch: Callable[[str], Mapping[str, object]] | None = None,
-) -> list[dict[str, object]]:
-    """Fetch + slice ``symbols`` and return plain JSON-ready records.
+) -> tuple[list[dict[str, object]], list[dict[str, object]]]:
+    """Fetch + slice ``symbols`` and return plain JSON-ready records, as
+    ``(put_records, call_records)``.
 
     The credential-free half of the scheduled sweep: the workflow runs this
     (it needs no lake access at all), then hands the rows to the live app,
     which owns the object-storage credentials and does the bronze write. See
     ``docs/adr/0020`` for why the write is delegated rather than granted.
+
+    Each chain is fetched ONCE and sliced into both wings (``docs/adr/0031``),
+    each in its own failure boundary: a dead fetch costs that symbol both
+    wings, but a bug in one wing's parse or record conversion costs only that
+    wing -- a call-only fault can never push the put session under the
+    symbol floor.
     """
     fetcher = fetch or fetch_chain_raw
-    records: list[dict[str, object]] = []
+    puts: list[dict[str, object]] = []
+    calls: list[dict[str, object]] = []
     for symbol in symbols:
         try:
-            frame, _unparsed = parse_cboe_chain(_fetch_with_retry(fetcher, symbol))
+            payload = _fetch_with_retry(fetcher, symbol)
         except Exception:
             # Same boundary as ingest_option_chain's loop, for the --post
             # writer: a dropped symbol is logged here and then counted
             # against the symbol floor by the route that commits the rows.
             _LOGGER.exception("event=ingestion.option_chain.symbol_failed symbol=%s", symbol)
             continue
+        puts.extend(_wing_records(payload, symbol, "P"))
+        calls.extend(_wing_records(payload, symbol, "C"))
+    return puts, calls
+
+
+def _wing_records(
+    payload: Mapping[str, object], symbol: str, right: Right
+) -> list[dict[str, object]]:
+    """One wing of one payload as JSON-ready records, or ``[]`` (logged with
+    its traceback) if that wing's parse or conversion fails. Broad for the
+    same process-boundary reason as the ingest loop: the other wing, and the
+    other symbols, must survive a bug that only this one trips."""
+    try:
+        frame, _unparsed = parse_cboe_chain(payload, right)
+        records: list[dict[str, object]] = []
         for raw in frame.to_dict(orient="records"):
             row = {str(k): v for k, v in raw.items()}
             row["quote_date"] = str(row["quote_date"].date())
             row["expiration"] = str(row["expiration"].date())
             records.append(row)
+    except Exception:
+        _LOGGER.exception("event=%s symbol=%s", _PARSE_FAILED_EVENT[right], symbol)
+        return []
     return records

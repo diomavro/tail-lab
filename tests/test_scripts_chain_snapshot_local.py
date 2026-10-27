@@ -42,6 +42,29 @@ def _no_market_reference(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(chain_snapshot, "latest_market_session", lambda: None)
 
 
+@pytest.fixture(autouse=True)
+def _no_cboe(monkeypatch: pytest.MonkeyPatch) -> None:
+    """``_run_local`` fetches every chain once (``fetch_chains``) before either
+    wing's ingest. The ingest is stubbed in every test here, the fetch is not
+    -- without this, these tests would reach the real Cboe CDN."""
+    monkeypatch.setattr("tail_lab.ingestion.option_chain.fetch_chains", lambda _s, *_a: {})
+
+
+def test_the_local_tests_never_reach_cboe(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Guard for the fixture above: if ``_run_local`` ever fetches by another
+    route, the raw fetch raises here instead of going to the network."""
+
+    def no_network(*_a: Any, **_k: Any) -> dict[str, Any]:
+        raise AssertionError("a --local test reached Cboe")
+
+    monkeypatch.setattr("tail_lab.ingestion.option_chain.fetch_chain_raw", no_network)
+    monkeypatch.setattr("tail_lab.config.get_lake_store", lambda: object())
+    monkeypatch.setattr(
+        "tail_lab.ingestion.option_chain.ingest_option_chain", lambda _s, _y, **_kw: _Result()
+    )
+    assert chain_snapshot.main(["--local", "--symbols", "spy"]) == 0
+
+
 class _Result:
     """Enough of ``IngestResult`` for the local path to report on.
 
@@ -96,16 +119,15 @@ def test_the_stub_still_matches_the_real_ingest_result() -> None:
 def test_local_does_not_also_run_the_post_paths_sweep(monkeypatch: pytest.MonkeyPatch) -> None:
     """The regression itself: one fetch per chain, not two."""
     swept = 0
-    ingested = 0
+    ingested: list[str] = []
 
-    def fake_sweep(symbols: Any, **_kw: Any) -> list[dict[str, Any]]:
+    def fake_sweep(symbols: Any, **_kw: Any) -> tuple[list[dict[str, Any]], ...]:
         nonlocal swept
         swept += 1
-        return [{"underlying": "SPY"}] * 20_000
+        return ([{"underlying": "SPY"}] * 20_000,) * 2
 
-    def fake_ingest(_store: Any, _symbols: Any, **_kw: Any) -> _Result:
-        nonlocal ingested
-        ingested += 1
+    def fake_ingest(_store: Any, _symbols: Any, **kw: Any) -> _Result:
+        ingested.append(kw["right"])
         return _Result()
 
     monkeypatch.setattr(chain_snapshot, "sweep_to_records", fake_sweep)
@@ -113,7 +135,7 @@ def test_local_does_not_also_run_the_post_paths_sweep(monkeypatch: pytest.Monkey
     monkeypatch.setattr("tail_lab.ingestion.option_chain.ingest_option_chain", fake_ingest)
 
     assert chain_snapshot.main(["--local", "--symbols", "spy,qqq"]) == 0
-    assert ingested == 1
+    assert ingested == ["P", "C"], "one ingest per wing, over one fetch"
     assert swept == 0, "--local must not run the --post path's sweep as well"
 
 
