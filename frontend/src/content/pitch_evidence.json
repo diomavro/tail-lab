@@ -1,10 +1,10 @@
 {
  "as_of": "2026-10-27",
  "code": {
-  "sha": "b08e951abc6d6ebef6a668d1a562507026bcc486",
+  "sha": "68ece5f070413a140b659e71fbeeb21c303fcc03",
   "tree": {
    "src": "779cbbd61f91c40e7e510497c411fe23fa9dc5d1",
-   "scripts": "c383f4e0a6ec76670d267b08d8a4b5bcc1a944e6"
+   "scripts": "b7cac8ae771084f9befd6f81cbca37f8f8f242f1"
   },
   "dirty": false
  },
@@ -2991,6 +2991,8 @@
    "is_positive_oos_positive": 113,
    "null_rotations": 79,
    "null_at_least_observed": 5,
+   "null_all_rotations": 89,
+   "null_all_at_least_observed": 6,
    "spearman_is_oos": 0.14160274573726728,
    "oos_mean_taken_without_best": -0.298657548039756
   },
@@ -3027,6 +3029,8 @@
    "is_positive_oos_positive": 113,
    "null_rotations": 79,
    "null_at_least_observed": 3,
+   "null_all_rotations": 89,
+   "null_all_at_least_observed": 4,
    "spearman_is_oos": 0.15736276624672463,
    "oos_mean_taken_without_best": -0.298657548039756
   },

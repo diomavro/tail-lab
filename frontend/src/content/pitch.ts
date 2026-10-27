@@ -142,6 +142,9 @@ export interface Selected {
    *  observed persistence. */
   null_rotations: number
   null_at_least_observed: number
+  /** The same null over every rotation 1..n-1, the window the first run printed. */
+  null_all_rotations: number
+  null_all_at_least_observed: number
   spearman_is_oos: number
   oos_mean_taken_without_best: number | null
 }

@@ -29,6 +29,10 @@ function D({ d }: { d: string }) {
 function pct(x: number, digits = 1): string {
   return `${x < 0 ? '−' : x > 0 ? '+' : ''}${Math.abs(x * 100).toFixed(digits)}%`
 }
+/** A level (a yield, a budget), unsigned: "+1.9%" would read as a change. */
+function level(x: number, digits = 1): string {
+  return `${(x * 100).toFixed(digits)}%`
+}
 /** Signed percentage points per year. */
 function pp(x: number | null, digits = 2): string {
   if (x === null) return '—'
@@ -503,13 +507,13 @@ export function PitchView() {
               <tr>
                 <td className="pl-pitch-id">{E.snapshots.cboe_strategy}</td>
                 <td>1986 → today</td>
-                <td>Cboe SPX, and three hedge-program indices Cboe prices from real trades: PPUT (S&amp;P 500 plus a monthly 5% OOM put), PPUT3M (a quarterly 10% OOM put), VXTH (monthly VIX calls); SPX also serves as the exchange session calendar</td>
+                <td>Cboe SPX, and three hedge-program indices Cboe prices from real OPRA data: PPUT (S&amp;P 500 plus a monthly 5% OOM put) and PPUT3M (a quarterly 10% OOM put) at traded prices, VXTH (monthly VIX calls) at quoted mid and ask; SPX also serves as the exchange session calendar</td>
                 <td>Benchmarks, not tradeable</td>
               </tr>
               <tr>
                 <td>tiingo_eod (dividends)</td>
                 <td>—</td>
-                <td>Not in the lake. Every comparison here accrues a flat {pct(E.dividend_yield_assumed)} a year</td>
+                <td>Not in the lake. Every comparison here accrues a flat {level(E.dividend_yield_assumed)} a year</td>
                 <td>Missing</td>
               </tr>
               <tr>
@@ -575,8 +579,8 @@ export function PitchView() {
             rolls is resampled together.
           </li>
           <li>
-            <strong>Hedge.</strong> A book holds SPY plus a flat {pct(E.dividend_yield_assumed)} dividend accrual
-            and spends b of its wealth on each roll’s puts, b = {[...new Set(SPY.hedge.configs.map((c) => c.budget))].map((b) => `${b * 100}%`).join(', ')} (
+            <strong>Hedge.</strong> A book holds SPY plus a flat {level(E.dividend_yield_assumed)} dividend accrual
+            and spends b of its wealth on each roll’s puts, b = {[...new Set(SPY.hedge.configs.map((c) => c.budget))].map((b) => level(b, 2)).join(', ')} (
             {premiumAtBudget.join(', ')} of wealth a year, before resale proceeds, depending on the rule): at
             each roll, b × current wealth goes into the new puts and the rest is held in SPY. It is marked daily at
             the bid. The yardstick is time-average growth, the annualised
@@ -614,7 +618,7 @@ export function PitchView() {
           <li>
             <strong>Signal definitions.</strong> <em>VIX stretch</em>: (VIX close − its 20-day mean) ÷ its 20-day
             standard deviation (transforms/vix.py). <em>Put IV ÷ VIX</em>: the bought put’s Black–Scholes implied vol
-            at its ask (3-month bill rate as published before the entry day; flat {pct(E.dividend_yield_assumed)} yield) over VIX ÷ 100.{' '}
+            at its ask (3-month bill rate as published before the entry day; flat {level(E.dividend_yield_assumed)} yield) over VIX ÷ 100.{' '}
             <em>Implied tail index α</em>: the Surface’s fit (research/surface/implied_alpha.py, docs/adr/0026) of
             the Pareto exponent that best prices the same session’s deeper put mids relative to one anchor — the
             listed put nearest 5% OOM on the first expiry at least 28 days out. A lower α means the market is
@@ -696,7 +700,7 @@ export function PitchView() {
         <h3>2. Puts as a hedge on the index</h3>
         <p className="pl-note">
           Unhedged SPY over {SPY.hedge.window[0]} to {SPY.hedge.window[1]} (price plus the flat{' '}
-          {pct(E.dividend_yield_assumed)} dividend accrual): log growth {pct(SPY.hedge.unhedged_growth, 2)} a year
+          {level(E.dividend_yield_assumed)} dividend accrual): log growth {pct(SPY.hedge.unhedged_growth, 2)} a year
           (price alone {pct(SPY.hedge.unhedged_growth - E.dividend_yield_assumed, 2)}), worst drawdown {pct(SPY.hedge.unhedged_max_dd)} ({SPY.hedge.unhedged_max_dd_span[0]} to{' '}
           {SPY.hedge.unhedged_max_dd_span[1]}). Growth is shown as the change against that; drawdown is each book’s
           own. Tinted rows grew faster than unhedged SPY.
@@ -767,9 +771,9 @@ export function PitchView() {
           configurations beat unhedged.
         </p>
         <p className="pl-note">
-          <strong>Cboe’s indices, priced from real trades, agree.</strong> PPUT, PPUT3M and VXTH are built on the
+          <strong>Cboe’s indices, priced from real OPRA trades and quotes, agree.</strong> PPUT, PPUT3M and VXTH are built on the
           S&amp;P 500 with dividends reinvested, so the yardstick is the SPX price index plus the same{' '}
-          {pct(E.dividend_yield_assumed)} yield the study accrues, as log growth: {pct(spxWithDiv, 2)} a year over {E.cboe.span[0]}{' '}
+          {level(E.dividend_yield_assumed)} yield the study accrues, as log growth: {pct(spxWithDiv, 2)} a year over {E.cboe.span[0]}{' '}
           to {E.cboe.span[1]} (the price index alone: {pct(E.cboe.SPX.growth, 2)}, drawdown {pct(E.cboe.SPX.max_dd)}).
           Against it: PPUT, the S&amp;P 500 with a monthly 5% OOM put, {pct(E.cboe.PPUT.growth, 2)} (
           {pp(E.cboe.PPUT.growth - spxWithDiv)}; drawdown {pct(E.cboe.PPUT.max_dd)}); PPUT3M{' '}
@@ -814,7 +818,9 @@ export function PitchView() {
               ))}
             </>
           )}
-          ; the licence is unresolved, so this is research use only. Unhedged, the book ends at{' '}
+          ; before 2015 a monthly SPY option expired on the Saturday after its last trading day, so the expiry
+          dates printed here are Saturdays, and a put is settled at the last close before its expiry (a Friday, or
+          the Thursday before Good Friday); the licence is unresolved, so this is research use only. Unhedged, the book ends at{' '}
           {fmtFixed(C08['5pct'].unhedged.terminal, 4)} of its starting wealth (<D d={C08.first} /> → <D d={C08['5pct'].last} />), with a {pct(C08['5pct'].unhedged.max_dd)} drawdown.
         </p>
         <p className="pl-pitch-scrollhint">The table scrolls sideways →</p>
@@ -838,7 +844,11 @@ export function PitchView() {
               {c08Rules.flatMap(([k, r]) =>
                 r.books.map((b, i) => (
                   <tr key={`${k}@${b.budget}`} className={b.terminal > r.unhedged.terminal ? 'is-winner' : undefined}>
-                    <td>{i === 0 ? `${k.replace('pct', '')}% OOM` : ''}</td>
+                    <td>
+                      <span className="pl-pitch-long">{i === 0 ? `${k.replace('pct', '')}% OOM` : ''}</span>
+                      {/* On a phone the budget column is off-screen: name it in every row. */}
+                      <span className="pl-pitch-short">{`${k.replace('pct', '')}% @${level(b.budget, 2)}`}</span>
+                    </td>
                     <td className="num">{i === 0 ? `${r.filled}/${r.rolls}` : ''}</td>
                     <td className={`num ${r.mean_roi < 0 ? 'pl-neg' : ''}`}>{i === 0 ? fmtFixed(r.mean_roi) : ''}</td>
                     <td className="num">{i === 0 ? r.hits : ''}</td>
@@ -950,7 +960,9 @@ export function PitchView() {
           one bootstrap block, leaves clustered outcomes nearly where they were, so it is no null) — which keeps that dependence and the outcomes’ own clustering and breaks only
           the link from signal to outcome: {sel.null_at_least_observed} of {sel.null_rotations} rotations reach{' '}
           {sel.is_positive_oos_positive}. On the growth objective {selDg.is_positive_oos_positive} of{' '}
-          {selDg.is_positive} persisted, reached by {selDg.null_at_least_observed} of {selDg.null_rotations}. That
+          {selDg.is_positive} persisted, reached by {selDg.null_at_least_observed} of {selDg.null_rotations}. (Counting
+          every rotation instead, the near-zero ones too, as the first run did: {sel.null_all_at_least_observed} of{' '}
+          {sel.null_all_rotations} and {selDg.null_all_at_least_observed} of {selDg.null_all_rotations}.) That
           is weak evidence that in-sample improvement carries forward a little; it makes no single filter
           significant (below). (The share
           of all combinations positive out of sample is no test: most filters come with their opposite in the set —
@@ -1054,7 +1066,7 @@ export function PitchView() {
             finds a hedge holding (VXTH, 2006–2016) also contains 2008.
           </li>
           <li>
-            <strong>Simplifications.</strong> Flat {pct(E.dividend_yield_assumed)} dividend on both arms (no
+            <strong>Simplifications.</strong> Flat {level(E.dividend_yield_assumed)} dividend on both arms (no
             measured dividends in the lake); fractional contracts; early exercise ignored, except that a sold put with no acceptable exit bid is
             credited its exercise value (method, Fills); expiry settled on the
             panel’s close; SPY and QQQ only — no single names, so no survivorship within the sample, but the choice
@@ -1069,7 +1081,8 @@ export function PitchView() {
           <li>
             <strong>Searched space, and what changed along the way.</strong> {spyRules.length} rules × 3 budgets on
             two underlyings, the 2008–09 check ({c08Rules.length} depths × {budgetsPerRule} budgets), then {T.combinations} timing combinations.
-            Every count is reported above. One change was made after seeing a result: an exploratory timing run drew
+            Every count is reported above. Four changes to what is printed were made after a result had been seen.
+            First, an exploratory timing run drew
             2,000 bootstrap resamples per test and wrote p = 0 when none fell at or below zero, and with that, one
             combination (5% OOM 8-week, not-crisis filter, p reported as 0) passed BH. A p of 0 claims more than 2,000
             draws can resolve, and the floor of 1/2,001 sat above the first BH step, so no honest p could pass at all.
@@ -1077,7 +1090,18 @@ export function PitchView() {
             the floor below the first step; under the correction the same combination’s p is{' '}
             {(T.bh.smallest_p.find((x) => x.rule === '5pct_8w_sell4w' && x.gate === 'regime=not_crisis')?.oos_p ?? NaN).toFixed(4)}.
             It is a correction of the method, not a search for a setting that kills the result — but a reader should
-            know the earlier run existed.
+            know the earlier run existed. Second, persistence was first reported as the share of all combinations
+            positive out of sample; it was replaced by the count of in-sample winners that stay winners, for the
+            reason given in section 3 (that share sits near half whatever the data). Third, that count’s null first
+            used every rotation and now drops those fewer than {E.block_rolls} rolls from zero; the change made the observed counts look
+            less likely by chance, so both are printed in section 3. On today’s code, over every rotation and then
+            over the narrower window: {sel.null_all_at_least_observed} of {sel.null_all_rotations}, then{' '}
+            {sel.null_at_least_observed} of {sel.null_rotations}, on mean return; {selDg.null_all_at_least_observed}{' '}
+            of {selDg.null_all_rotations}, then {selDg.null_at_least_observed} of {selDg.null_rotations}, on growth
+            (the first run, before the fourth change, printed 7 of 89 and 4 of 89).
+            Fourth, a bug fix: the put-IV signal first read the bill rate by observation date, a value not yet
+            published on some entry days; reading it as published before the entry moved the in-sample to
+            out-of-sample rank correlation by less than 0.001 and changed no selection.
           </li>
         </ul>
       </section>

@@ -236,10 +236,16 @@ test('explains each deeper drawdown by the put open on its peak day', async ({ p
   // A peak made of a put marked far above its cost is a paper gain given
   // back, not premium spent through a falling market; read it from the file.
   const h = EVIDENCE.SPY.hedge
-  const paper = h.configs.filter((c) => c.max_dd < h.unhedged_max_dd && (c.max_dd_peak_put?.mark_multiple ?? 0) > 2)
+  const deeper = h.configs.filter((c) => c.max_dd < h.unhedged_max_dd)
+  const paper = deeper.filter((c) => (c.max_dd_peak_put?.mark_multiple ?? 0) > 2)
+  const bled = deeper.filter((c) => !((c.max_dd_peak_put?.mark_multiple ?? 0) > 2))
   const section = page.locator('#pitch-hedge')
   for (const c of paper) await expect(section).toContainText(`marked ${c.max_dd_peak_put!.mark_multiple.toFixed(1)}× its cost on ${c.max_dd_span[0]}`)
-  await expect(section).not.toContainText('premium spent through a falling market')
+  // A book is either a paper peak or a bled one, never both: the page must not
+  // call a book a paper gain and then say no put was marked above 2× in it.
+  const name = (c: (typeof deeper)[number]) => `${ruleLabel(c.rule)}, at ${(c.budget * 100).toFixed(2)}%`
+  if (bled.length === 0) await expect(section).not.toContainText('no put was marked above')
+  else await expect(section).toContainText(`In ${bled.map(name).join('; ')} no put was marked above 2×`)
 })
 
 test('says how much of 2008-09 the spread guard decides', async ({ page }) => {
@@ -258,13 +264,29 @@ test('on a phone each hedge row names its budget on screen, so one rule’s book
   expect(box!.x + box!.width).toBeLessThanOrEqual(390)
 })
 
+test('on a phone each 2008-09 row names its depth and budget on screen, so one depth’s books differ', async ({ page }) => {
+  // The budget column is off-screen at 390px; a depth's 2nd and 3rd books
+  // once showed as blank tinted rows.
+  await page.setViewportSize({ width: 390, height: 800 })
+  const rows = page.getByTestId('pitch-2008').locator('tbody tr') // the 5% OOM books come first
+  for (const [i, b] of EVIDENCE.crisis_2008['5pct'].books.entries()) {
+    const cell = rows.nth(i).locator('td:nth-child(1)')
+    await expect(cell).toHaveText(`5% @${(b.budget * 100).toFixed(2)}%`, { useInnerText: true })
+    const box = await cell.boundingBox()
+    expect(box!.x + box!.width).toBeLessThanOrEqual(390)
+  }
+})
+
 test('unhedged SPY growth says it includes the dividend accrual and gives price alone', async ({ page }) => {
   const h = EVIDENCE.SPY.hedge
   const p = (x: number) => `${x < 0 ? '−' : '+'}${Math.abs(x * 100).toFixed(2)}%`
   await expect(page.locator('#pitch-hedge')).toContainText(
     `log growth ${p(h.unhedged_growth)} a year (price alone ${p(h.unhedged_growth - EVIDENCE.dividend_yield_assumed)})`,
   )
-  await expect(page.locator('#pitch-hedge')).toContainText('price plus the flat +1.9% dividend accrual')
+  // The yield is a level, printed unsigned: "+1.9%" reads as a change.
+  const y = `${(EVIDENCE.dividend_yield_assumed * 100).toFixed(1)}%`
+  await expect(page.locator('#pitch-hedge')).toContainText(`price plus the flat ${y} dividend accrual`)
+  await expect(page.locator('#pitch-hedge')).not.toContainText(`+${y}`)
 })
 
 test('on a phone the hedge table shows growth against unhedged without scrolling', async ({ page }) => {
@@ -607,4 +629,19 @@ test('the bill rate is described as published before entry, not as a first vinta
   const text = await page.locator('.pl-pitch').innerText()
   expect(text).not.toContain('first vintage')
   await expect(page.locator('#pitch-method')).toContainText('3-month bill rate as published before the entry day')
+})
+
+test('the forking-paths disclosure lists every post-hoc change and prints both persistence nulls', async ({ page }) => {
+  // The null's window was narrowed after its first result printed, and the
+  // narrowing made the result look less like chance; a reader must see both.
+  const r = EVIDENCE.timing.roi_diff
+  const g = EVIDENCE.timing.dg
+  const caveats = page.locator('#pitch-caveats')
+  await expect(caveats).toContainText('Four changes to what is printed were made after a result had been seen.')
+  await expect(caveats).toContainText(
+    `${r.null_all_at_least_observed} of ${r.null_all_rotations}, then ${r.null_at_least_observed} of ${r.null_rotations}, on mean return; ${g.null_all_at_least_observed} of ${g.null_all_rotations}, then ${g.null_at_least_observed} of ${g.null_rotations}, on growth`,
+  )
+  await expect(page.locator('#pitch-timing')).toContainText(
+    `as the first run did: ${r.null_all_at_least_observed} of ${r.null_all_rotations} and ${g.null_all_at_least_observed} of ${g.null_all_rotations}.)`,
+  )
 })
