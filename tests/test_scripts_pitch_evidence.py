@@ -15,7 +15,7 @@ import math
 import re
 import sys
 from pathlib import Path
-from types import ModuleType
+from types import ModuleType, SimpleNamespace
 
 import numpy as np
 import pandas as pd
@@ -508,10 +508,14 @@ def test_a_sold_put_never_exits_after_its_own_expiry() -> None:
 def test_missing_days_are_counted_against_the_exchange_calendar() -> None:
     # Cboe's VIX file has rows on exchange holidays since 2022; the SPX close
     # does not. 2023-01-16 (MLK) is not a missing session.
+    # The SPX history runs past the panel at both ends (on real data, years
+    # past it): only sessions inside the panel's span can be missing from it.
     cboe = pd.DataFrame(
         {
-            "index_symbol": ["SPX"] * 3 + ["PPUT"],
-            "trade_date": pd.to_datetime(["2023-01-13", "2023-01-17", "2023-01-18", "2023-01-16"]),
+            "index_symbol": ["SPX"] * 5 + ["PPUT"],
+            "trade_date": pd.to_datetime(
+                ["2023-01-12", "2023-01-13", "2023-01-17", "2023-01-18", "2023-01-19", "2023-01-16"]
+            ),
             "close": 1.0,
         }
     )
@@ -794,6 +798,46 @@ def test_the_persistence_null_rotates_outcomes_against_fixed_choices() -> None:
         assert out == {"null_rotations": 29, "null_at_least_observed": by_hand}, key
 
 
+def test_the_growth_null_rotates_each_rolls_index_move_with_its_put() -> None:
+    # A put's payoff and the index move over the same roll belong together:
+    # that pairing IS the hedge. The index falls 30% on exactly the rolls
+    # where the put pays most, so rotating the payoff without its index move
+    # would pair a crash payoff with a calm month. Count by hand with the two
+    # rotated together.
+    b = pe.TIMING_BUDGET
+    roi = [(i / 10) ** 1.5 - 1.0 for i in range(30)]
+    eq = [0.7 if r > 2.5 else 1.01 for r in roi]
+    take = [i % 3 == 0 for i in range(30)]
+    share = sum(take) / 30
+
+    def dg(k: int, rotate_eq: bool) -> float:
+        total = 0.0
+        for j in range(30):
+            r, e = roi[(j - k) % 30], eq[(j - k) % 30 if rotate_eq else j]
+            gated = b if take[j] else 0.0
+            total += math.log((1 - gated) * e + gated * (1 + r))
+            total -= math.log((1 - b * share) * e + b * share * (1 + r))
+        return total
+
+    by_hand = sum(dg(k, True) > 0 for k in range(1, 30))
+    # The fixture can tell the two apart: rotating roi alone counts differently.
+    assert by_hand != sum(dg(k, False) > 0 for k in range(1, 30))
+    days = tuple(str(d.date()) for d in pd.bdate_range("2010-01-04", periods=60))
+    c = pe.Combo(
+        "5pct_8w_sell4w",
+        "best",
+        np.array(roi * 2),
+        np.array(eq * 2),
+        np.array(take * 2),
+        np.array([True] * 30 + [False] * 30),
+        1.0,
+        1.0,
+        days,
+    )
+    out = pe._persistence_null([c], "dg", observed=1)
+    assert out == {"null_rotations": 29, "null_at_least_observed": by_hand}
+
+
 def test_benjamini_hochberg_counts_raw_p_below_five_percent_and_lists_eight(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -1046,8 +1090,56 @@ def test_the_timing_book_accrues_the_dividend_on_the_underlying() -> None:
 def test_a_missing_roll_month_leaves_unhedged_only_the_weeks_after_the_last_expiry() -> None:
     # Roll dates 02-15, 04-18, 05-16: the 02-15 put expires 03-22, so the
     # book is bare from 03-22 to 04-18 -- not "March".
-    dates = list(pd.to_datetime(["2008-02-15", "2008-04-18", "2008-05-16"]))
-    listed = pd.Series(pd.to_datetime(["2008-03-22", "2008-05-17", "2008-06-21"]), index=dates)
+    # The 05-16 put expires 06-20, the very day of the next roll: the book
+    # rolls straight into the new put, so no span (not a zero-length one).
+    dates = list(pd.to_datetime(["2008-02-15", "2008-04-18", "2008-05-16", "2008-06-20"]))
+    listed = pd.Series(
+        pd.to_datetime(["2008-03-22", "2008-05-17", "2008-06-20", "2008-07-19"]), index=dates
+    )
     assert pe.unhedged_spans(dates, listed) == [
         {"entry": "2008-02-15", "expiry": "2008-03-22", "next_entry": "2008-04-18"}
     ]
+
+
+def test_each_snapshot_id_is_taken_just_before_its_table_is_read(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # The timers ingest vix and cboe_strategy daily. An id taken after the
+    # hour-long panel runs can name a partition that landed mid-run and was
+    # never read: the cited id must come immediately before its own read.
+    calls: list[tuple[str, str]] = []
+
+    class Store:
+        def bronze_snapshot_id(self, ds: str, as_of: object) -> str:
+            calls.append(("id", ds))
+            return f"{ds}@x"
+
+        def read_bronze_as_of(self, ds: str, as_of: object) -> pd.DataFrame:
+            calls.append(("read", ds))
+            return pd.DataFrame()
+
+        def read_bronze_columns_as_of(self, ds: str, as_of: object, cols: object) -> pd.DataFrame:
+            calls.append(("read", ds))
+            return pd.DataFrame()
+
+    def heavy(*a: object, **k: object) -> dict[str, object]:
+        calls.append(("heavy", ""))
+        return {}
+
+    for name in ("check_imports_from", "timing_inputs", "cboe_benchmark", "crisis_2008"):
+        monkeypatch.setattr(pe, name, lambda *a, **k: {})
+    monkeypatch.setattr(pe, "exchange_calendar", lambda cboe: set())
+    monkeypatch.setattr(pe, "code_version", lambda root: {})
+    monkeypatch.setattr(
+        pe, "market_from_panel", lambda p, s: SimpleNamespace(sessions=[], spot=None)
+    )
+    monkeypatch.setattr(pe, "data_quality", lambda spot, cal: {})
+    monkeypatch.setattr(pe, "standalone_and_hedge", heavy)
+    monkeypatch.setattr(pe, "spy_hedge_window", lambda out: [])
+    monkeypatch.setattr(pe, "timing_combos", lambda *a: ([], {"x": 1.0}))
+    monkeypatch.setattr(pe, "timing", lambda combos, rng: {})
+    out = pe.run(Store(), pe.dt.date(2026, 10, 27))  # type: ignore[arg-type]
+    for ds in ("vix", "rates", "cboe_strategy", "option_quotes", "optionsdx_quotes_spy"):
+        i = calls.index(("id", ds))
+        assert calls[i + 1] == ("read", ds), ds
+    assert out["snapshots"] == {ds: f"{ds}@x" for _, ds in calls if _ == "id"}

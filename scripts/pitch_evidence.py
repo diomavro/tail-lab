@@ -844,6 +844,7 @@ def timing(combos: list[Combo], rng: np.random.Generator) -> Json:
         "is_period": ["2010-01-04", str(IS_END.date())],
         "oos_period": ["2017-01-01", "2023-12-29"],
         "min_is_taken": MIN_IS_TAKEN,
+        "budget": TIMING_BUDGET,
     }
     for key in ("roi_diff", "dg"):
         ok = _select(rows, key)
@@ -1322,9 +1323,18 @@ ROOT = Path(__file__).resolve().parents[1]
 def run(store: LakeStore, as_of: dt.date) -> Json:
     check_imports_from(ROOT, Path(tail_lab.__file__))
     rng = np.random.default_rng(SEED)
-    vix_bronze = store.read_bronze_as_of("vix", as_of)
-    rates = store.read_bronze_as_of("rates", as_of)
-    cboe = store.read_bronze_as_of("cboe_strategy", as_of)
+    snaps: Json = {}
+
+    def read(ds: str) -> pd.DataFrame:
+        # The id is taken next to the read, not after the long runs below: the
+        # main checkout's timers ingest vix and cboe_strategy daily, so a
+        # partition landing mid-run would otherwise be cited but never read.
+        snaps[ds] = store.bronze_snapshot_id(ds, as_of)
+        return store.read_bronze_as_of(ds, as_of)
+
+    vix_bronze = read("vix")
+    rates = read("rates")
+    cboe = read("cboe_strategy")
     calendar = exchange_calendar(cboe)
     out: Json = {
         "as_of": as_of.isoformat(),
@@ -1335,7 +1345,6 @@ def run(store: LakeStore, as_of: dt.date) -> Json:
         "snapshots": {},
         "panels": {},
     }
-    snaps: Json = {}
     panels: Json = {}
     spy: Market | None = None
     for sym, span in SPANS.items():
@@ -1348,14 +1357,13 @@ def run(store: LakeStore, as_of: dt.date) -> Json:
         out[sym] = standalone_and_hedge(mkt, span, rng, closed)
         if sym == "SPY":
             spy = mkt
-    for ds in ("vix", "rates", "cboe_strategy", "option_quotes"):
-        snaps[ds] = store.bronze_snapshot_id(ds, as_of)
-    out["snapshots"], out["panels"] = snaps, panels
+    out["panels"] = panels
     if spy is None:
         raise LookupError("the SPY panel did not load")
     hedge_window = spy_hedge_window(out)
     out["cboe"] = cboe_benchmark(cboe, hedge_window)
-    out["crisis_2008"] = crisis_2008(store.read_bronze_as_of("option_quotes", as_of), cboe)
+    out["crisis_2008"] = crisis_2008(read("option_quotes"), cboe)
+    out["snapshots"] = snaps
     combos, coverage = timing_combos(spy, timing_inputs(vix_bronze, rates), SPANS["SPY"])
     tm = timing(combos, rng)
     tm["alpha_coverage"] = [min(coverage.values()), max(coverage.values())]
