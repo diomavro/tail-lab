@@ -301,9 +301,10 @@ jobs:
       # agent reads private feedback. Tool INPUTS can carry that feedback too
       # (a grep pattern, a jq filter copied from it), so this prints only:
       # the result stats, the agent's own decision note (prompt step 8,
-      # written to be public), each main-agent tool call as its name plus a
-      # repo file path, a Bash command's first word or a subagent type -- no
-      # command text, no search pattern -- any background task, and the local
+      # written to be public), each main-agent tool call as its name plus its
+      # file_path argument, a Bash command's program name (a leading VAR=value
+      # is skipped, odd characters stripped) or a subagent type -- no command
+      # text, no search pattern -- any background task, and the local
       # git state. Known secrets are redacted and backticks neutralised
       # everywhere. A diagnostics step must never turn the run red.
       - name: Record the run's decision
@@ -318,7 +319,7 @@ jobs:
         run: |
           f="${EXEC_FILE:-$RUNNER_TEMP/claude-execution-output.json}"
           python3 -I - "$f" >> "$GITHUB_STEP_SUMMARY" <<'PY'
-          import json, os, subprocess, sys
+          import json, os, re, subprocess, sys
 
           secrets = [v for k, v in os.environ.items() if k.startswith("REDACT_") and len(v) >= 8]
 
@@ -345,7 +346,13 @@ jobs:
                   print("-- commits not pushed to the upstream:")
                   print(clean("\n".join(unpushed.splitlines()[:20]), 3000) or "(none: all pushed)")
               else:
-                  print("-- no upstream: this branch was never pushed. Commits not on origin/main:")
+                  # An upstream that is configured but no longer resolves means the
+                  # remote branch was deleted after a push (step 7's failure path).
+                  if git("config", "--get", f"branch.{branch}.merge").strip():
+                      print("-- pushed, then the remote branch was deleted (gh pr create likely"
+                            " failed). Commits not on origin/main:")
+                  else:
+                      print("-- no upstream: this branch was never pushed. Commits not on origin/main:")
                   local = git("log", "--oneline", "origin/main..HEAD")
                   print(clean("\n".join(local.splitlines()[:20]), 3000) or "(none)")
               print("```")
@@ -379,6 +386,14 @@ jobs:
                     f"cost=${res.get('total_cost_usd')}, "
                     f"minutes={round((res.get('duration_ms') or 0) / 60000, 1)}")
 
+              # The CLI's own words when IT backgrounds a Bash command (2.1.289):
+              # "Command did not complete within its Ns timeout and was moved to
+              # the background (ID: ..." or "Command was moved to the background
+              # (ID: ...". Anchored to the start of a Bash result, so a Read or
+              # grep of a file quoting the phrase (this one) is not a match.
+              auto_bg = re.compile(r"Command (did not complete within its \d+s timeout and was |was )"
+                                   r"moved to the background \(ID: ")
+              tools = {}  # tool_use id -> (name, explicitly run_in_background)
               trail, sub_calls, background = [], 0, []
               for m in msgs:
                   msg = m.get("message")
@@ -389,13 +404,18 @@ jobs:
                       # A command that outlives its timeout is backgrounded with no
                       # input flag; only its result says so. Match the marker, never
                       # print the result.
+                      # An explicit run_in_background call was already counted at its
+                      # input, so only a Bash call without that flag counts here.
                       tur = m.get("tool_use_result")
-                      moved = isinstance(tur, dict) and bool(tur.get("backgroundTaskId"))
-                      moved = moved or any(b.get("type") == "tool_result"
-                                           and "moved to the background" in text_of(b.get("content"))
-                                           for b in blocks)
-                      if moved:
-                          background.append(f"{who}: a command moved to the background")
+                      structured = isinstance(tur, dict) and bool(tur.get("backgroundTaskId"))
+                      for b in blocks:
+                          if b.get("type") != "tool_result":
+                              continue
+                          if tools.get(b.get("tool_use_id")) != ("Bash", False):
+                              continue
+                          if structured or auto_bg.match(text_of(b.get("content")).lstrip()):
+                              background.append(f"{who}: a command moved to the background")
+                              break
                       continue
                   if m.get("type") != "assistant":
                       continue
@@ -404,14 +424,15 @@ jobs:
                           continue
                       name = str(block.get("name"))
                       inp = block.get("input") if isinstance(block.get("input"), dict) else {}
+                      tools[block.get("id")] = (name, bool(inp.get("run_in_background")))
                       if inp.get("run_in_background"):
                           background.append(f"{who}: {name} with run_in_background")
                       if m.get("parent_tool_use_id"):
                           sub_calls += 1
                           continue
                       if name == "Bash":
-                          words = str(inp.get("command", "")).split()
-                          detail = words[0] if words else ""
+                          words = [w for w in str(inp.get("command", "")).split() if "=" not in w]
+                          detail = re.sub(r"[^A-Za-z0-9_./-]", "", words[0]) if words else ""
                       elif name in ("Agent", "Task"):
                           detail = str(inp.get("subagent_type", ""))
                       else:
@@ -431,8 +452,8 @@ jobs:
               else:
                   print("_none -- the run ended without a final message_")
 
-              print("\n<details><summary>Main-agent tool calls (name and file path, Bash first"
-                    " word, subagent type)</summary>\n")
+              print("\n<details><summary>Main-agent tool calls (name and file path, Bash program"
+                    " name, subagent type)</summary>\n")
               print("```\n" + "\n".join(trail[-200:]) + "\n```\n</details>")
 
           report()
