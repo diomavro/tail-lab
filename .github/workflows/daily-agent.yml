@@ -340,9 +340,11 @@ jobs:
       # and backticks neutralised everywhere. A diagnostics step must never
       # turn the run red.
       - name: Record the run's decision
-        if: always() && steps.agent.outcome != 'skipped'
+        if: always()
         continue-on-error: true
         env:
+          AGENT_OUTCOME: ${{ steps.agent.outcome }}
+          DRAFTS: ${{ steps.open.outputs.drafts }}
           EXEC_FILE: ${{ steps.agent.outputs.execution_file }}
           # Same expression as the agent step: a no_feedback run never sees it.
           REDACT_1: ${{ !inputs.no_feedback && secrets.TAIL_LAB_FEEDBACK_TOKEN || '' }}
@@ -406,9 +408,14 @@ jobs:
               """A model-chosen path or ref, printed only if it is plain path characters."""
               return text if SAFE.fullmatch(text) and len(text) <= 140 else "(other)"
 
-          # The agent had a shell on this workspace and controls .git/config, so
-          # git runs without the REDACT_* secrets and with fsmonitor (a configured
-          # command `git status` would run) switched off.
+          # NOT a security boundary. The agent step already held every REDACT_*
+          # token (GH_TOKEN, the OAuth token, the feedback token, the app token:
+          # the action passes its whole env to the CLI), and it can still steer
+          # this step through GITHUB_PATH/GITHUB_ENV, and git through .git/config
+          # and .gitattributes (a filter.*.clean runs on `git status` and can read
+          # this process's environ). Stripping REDACT_* and fsmonitor is only
+          # belt-and-braces. Rule: never pass this step a secret the agent step
+          # does not already hold.
           GIT_ENV = {k: v for k, v in os.environ.items() if not k.startswith("REDACT_")}
 
           def git(*args: str) -> str:
@@ -464,7 +471,8 @@ jobs:
                       messages = json.load(fh)
               except (OSError, ValueError) as exc:
                   print(f"No readable execution file ({type(exc).__name__}): the agent step timed "
-                        "out or crashed before the action wrote it. Nothing below is known.")
+                        "out or crashed before the action wrote it. No result, decision note or tool "
+                        "trail is available; the local git state below is still accurate.")
                   return
               if not isinstance(messages, list):
                   print("Execution file is not a message list.")
@@ -552,6 +560,14 @@ jobs:
                     " name, subagent type)</summary>\n")
               print("```\n" + "\n".join(trail[-200:]) + "\n```\n</details>")
 
-          report()
-          print_git_state()
+          if os.environ.get("AGENT_OUTCOME") == "skipped":
+              drafts = os.environ.get("DRAFTS", "")
+              print("### Agent decision")
+              if drafts.isdigit() and int(drafts) >= 3:
+                  print(f"Not run: {drafts} open agent drafts waiting for Dio (limit 3).")
+              else:
+                  print(f"Not run: an earlier step failed (open_drafts='{safe(drafts)}').")
+          else:
+              report()
+              print_git_state()
           PY
