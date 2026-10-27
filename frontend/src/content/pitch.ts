@@ -136,7 +136,8 @@ export interface Selected {
    *  sample": every gate's complement is in the set, so that is ~1/2.) */
   is_positive: number
   is_positive_oos_positive: number
-  /** The null: every rule's out-of-sample outcomes rotated 1..n-1 rolls
+  /** The null: every rule's out-of-sample outcomes rotated by BLOCK..n-BLOCK
+   *  rolls (every shift at least one bootstrap block from zero, mod n)
    *  against the filters' fixed choices; how many rotations reach the
    *  observed persistence. */
   null_rotations: number

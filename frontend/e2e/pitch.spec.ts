@@ -389,7 +389,8 @@ test('the hedge verdict names the rule that sometimes beats unhedged and at how 
     const k = cfg.filter((c) => c.rule === r && c.edge > 0).length
     await expect(verdict).toContainText(`(the other, ${ruleLabel(r)}, beat it at ${k} of ${budgets} budgets`)
   }
-  await expect(verdict.locator('span')).toHaveCount(some.length)
+  // The lede's dates are spans too (kept unbroken); count the rule clauses.
+  await expect(verdict.locator('span:not(.pl-date)')).toHaveCount(some.length)
 })
 
 test('Cboe index gaps are measured against the index plus the assumed dividend', async ({ page }) => {
@@ -446,13 +447,68 @@ test('counts derived from the standalone table match it', async ({ page }) => {
   // The intrinsic credits are mostly strikes the panel's 1.02 band dropped,
   // not refused bids, and the page must say which way that biases the result.
   const beyond = sold.reduce((k, s) => k + s.exits_beyond_panel, 0)
-  await expect(page.locator('#pitch-method')).toContainText(`${beyond} of those are not refused bids`)
+  // "21 of those" when it is all of them reads as a subset.
+  await expect(page.locator('#pitch-method')).toContainText(
+    beyond === itm ? `None of those ${beyond} is a refused bid: the panel` : `${beyond} of those in-the-money exits are not refused bids: the panel`,
+  )
   await expect(page.locator('#pitch-method')).toContainText('biased against the put')
+  // A no-bid sale out of the money is credited zero; those are counted too.
+  const otm = sold.reduce((k, s) => k + s.exits_at_intrinsic - s.exits_at_intrinsic_itm, 0)
+  if (otm > 0)
+    await expect(page.locator('#pitch-method')).toContainText(`(and ${otm} out-of-the-money sales with no bid were credited zero)`)
   const best = Object.entries(spy)
     .filter(([r, s]) => !r.includes('_4w_hold') && s.best_roll_beyond_panel)
     .map(([r]) => ruleLabel(r))
-  if (best.length > 0)
-    await expect(page.locator('#pitch-method')).toContainText(`the best roll of ${best.join('; ')} among them`)
+  // Which rules' Best column the understated exits reach, in its own sentence.
+  if (best.length > 1)
+    await expect(page.locator('#pitch-method')).toContainText(
+      `The best rolls of ${best.length} rules are among these exits (${best.join('; ')}), so their Best figures are understated.`,
+    )
+  else if (best.length === 1)
+    await expect(page.locator('#pitch-method')).toContainText(`The best roll of one rule is among these exits (${best[0]})`)
+  // Rolls complete at different dates, so the range is the earliest and latest
+  // last exit, whatever order the rules come in.
+  const lastExits = Object.values(spy).map((s) => s.last_exit)
+  const lo = lastExits.reduce((a, b) => (b < a ? b : a))
+  const hi = lastExits.reduce((a, b) => (b > a ? b : a))
+  await expect(page.locator('#pitch-method')).toContainText(`rules’ last exits fall between ${lo} and ${hi}`)
+})
+
+test('the timing correction is said to cover the mean-return objective only', async ({ page }) => {
+  // The Benjamini–Hochberg pass and the raw-p count run over the mean-return
+  // p-values only; the growth objective has one p (its pick's). A bare "0
+  // survived" would read as covering the hedge objective too.
+  const dg = EVIDENCE.timing.dg
+  await expect(page.getByTestId('pitch-verdict')).toContainText(
+    `sample on mean return (on hedge growth only the in-sample pick was tested, p = ${dg.oos_p.toFixed(3)}`,
+  )
+  await expect(page.locator('#pitch-verdict-detail')).toContainText('The multiple-testing correction covers the mean-return objective only')
+  const timing = page.locator('#pitch-timing')
+  await expect(timing).toContainText(
+    `${fmtFixed(EVIDENCE.timing.roi_diff.spearman_is_oos)} on mean return and ${fmtFixed(dg.spearman_is_oos)} on growth`,
+  )
+  await expect(timing).toContainText(
+    `${EVIDENCE.timing.bh.p_below_05} of ${EVIDENCE.timing.bh.tested} mean-return differences have a raw p below 0.05`,
+  )
+})
+
+test('dates in the prose do not break at their hyphens on a phone', async ({ page }) => {
+  // "2020-02-" / "21" misreads on a page whose evidence turns on single dates.
+  await page.setViewportSize({ width: 390, height: 844 })
+  const lede = page.getByTestId('pitch-verdict')
+  for (const d of [EVIDENCE.panels.SPY.first, EVIDENCE.panels.SPY.last]) {
+    await expect(lede.locator('.pl-date', { hasText: d }).first()).toBeVisible()
+  }
+  // Every date the page wraps is kept whole: nowrap, and one line box (a
+  // wrapped span has more than one client rect).
+  const dates = await page.locator('.pl-date').evaluateAll((els) =>
+    els.map((e) => ({ text: e.textContent, ws: getComputedStyle(e).whiteSpace, rects: e.getClientRects().length })),
+  )
+  expect(dates.length).toBeGreaterThan(20)
+  for (const d of dates) {
+    expect(d.text).toMatch(/^\d{4}-\d{2}-\d{2}$/)
+    expect(d, String(d.text)).toEqual({ text: d.text, ws: 'nowrap', rects: 1 })
+  }
 })
 
 test('the method states each budget’s yearly premium as the range over the rules', async ({ page }) => {

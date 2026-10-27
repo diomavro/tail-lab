@@ -486,6 +486,8 @@
 .pl-table .dimmer { color: var(--ink-45); }
 .pl-table .bold { font-weight: 600; }
 .pl-table .nowrap { white-space: nowrap; }
+/* An ISO date in prose: Chromium breaks after its hyphens ("2020-02-" / "21"). */
+.pl-date { white-space: nowrap; }
 .pl-scroll { overflow-x: auto; }
 .pl-scroll-y { max-height: 460px; overflow-y: auto; }
 /* Eleven columns of figures: a step down from the shared table size. */

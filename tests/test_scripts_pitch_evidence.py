@@ -628,6 +628,25 @@ def test_a_crisis_book_is_rerun_without_its_best_month() -> None:
     assert all("terminal_without_best" not in b for b in worthless["books"])
 
 
+def test_a_crisis_drawdown_is_measured_from_the_starting_wealth() -> None:
+    # The 2008 window opens with a losing month: the first roll date's wealth
+    # is already below the 1.0 the book started with, and that loss is a
+    # drawdown, even though wealth is never below its own first reading.
+    df = pd.DataFrame(
+        {
+            "entry": pd.to_datetime(["2008-01-18", "2008-02-15", "2008-03-21"]),
+            "filled": [True, True, True],
+            "roi": [-1.0, -1.0, -1.0],
+            "reason": [None, None, None],
+        }
+    )
+    out = pe.crisis_books(df, np.array([0.8, 1.25, 1.0]))
+    assert out["unhedged"]["max_dd"] == pytest.approx(-0.2)
+    b1 = next(b for b in out["books"] if b["budget"] == 0.01)
+    # 0.99 * 0.8 at the first reading, the worst of the path.
+    assert b1["max_dd"] == pytest.approx(0.99 * 0.8 - 1.0)
+
+
 def test_crisis_equity_runs_roll_date_to_roll_date() -> None:
     spx = pd.Series(
         [100.0, 50.0, 75.0], index=pd.to_datetime(["2008-08-15", "2008-09-19", "2008-10-17"])
@@ -668,7 +687,11 @@ def test_a_crisis_roll_settles_on_spy_moved_by_the_spx_move() -> None:
             ("2008-10-17", "2008-11-21", 60.0, 54.0, 0.10, 1.00, 100),
         ]
     )
-    spx = pd.Series([100.0, 50.0], index=pd.to_datetime(["2008-09-19", "2008-10-17"]))
+    # SPX has history before the first entry (the real series goes back
+    # decades): the move is measured from the ENTRY close, not the first one.
+    spx = pd.Series(
+        [80.0, 100.0, 50.0], index=pd.to_datetime(["2008-09-18", "2008-09-19", "2008-10-17"])
+    )
     df = pe.crisis_rolls(q, spx, 10.0, list(pd.to_datetime(["2008-09-19", "2008-10-17"])))
     assert df.roi.iloc[0] == pytest.approx(4800.0 / (100.0 + COMMISSION_PER_CONTRACT) - 1.0)
     assert df.expiry.iloc[0] == pd.Timestamp("2008-10-17")
@@ -821,6 +844,20 @@ def test_sign_persistence_counts_only_the_in_sample_improvers() -> None:
     ]
     out = pe.sign_persistence(rows, "roi_diff")
     assert (out["is_positive"], out["is_positive_oos_positive"]) == (2, 1)
+
+
+def test_a_gate_that_takes_every_roll_is_no_timing_and_never_counts_as_improving() -> None:
+    # A regime gate can take every in-sample roll (all of 2010-16 calm, say).
+    # That is no filter: its mean-return difference is exactly zero and its
+    # growth difference against a spend-matched book (the same book) is
+    # undefined, so it must not count as an in-sample improver, nor carry a
+    # growth figure of 0 into the eligible count.
+    c = _combo([0.5, -1.0, 2.0, -1.0], [0.5, -1.0], [True] * 4 + [True, False], "5pct_4w_hold")
+    is_s = c.stats(oos=False)  # type: ignore[attr-defined]
+    assert is_s["roi_diff"] == 0.0
+    assert math.isnan(is_s["dg"])
+    rows = [(c, is_s, c.stats(oos=True))]  # type: ignore[attr-defined]
+    assert pe.sign_persistence(rows, "roi_diff")["is_positive"] == 0
 
 
 def test_the_persistence_null_rotates_outcomes_against_fixed_choices() -> None:
