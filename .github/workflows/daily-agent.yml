@@ -133,24 +133,28 @@ jobs:
           # (base-action/src/run-claude-sdk.ts: "break"). A background task
           # lets the model end its turn early to wait, which emits that
           # result: the job then reports success with the work unfinished and
-          # nothing pushed. Background tasks come from an explicit
-          # run_in_background, a background subagent, or a Bash command that
-          # outlives its timeout (default 120 s) and is moved to the
-          # background automatically -- and CI's pytest step alone took 125 s
-          # and 135 s on 10-13 and 10-25. Seen on 10-25: the job log's
-          # "Cleaning up orphan processes" killed a still-running
-          # `npm exec playwright test` and its dev server, i.e. step 6's e2e
-          # run abandoned mid-flight. On the other 14 runs (10-12..10-26)
-          # that cleanup killed nothing, so no background shell was alive;
-          # there the cause is a background subagent (dies with the CLI,
-          # leaves no orphan) or a genuine "nothing proposed" -- the summary
-          # step below tells them apart, and those orphan lines remain the
-          # first thing to check. Checked in the pinned CLI 2.1.289: the
-          # variable below disables all three, after which an over-long
-          # command is KILLED at its timeout instead, so the timeouts are
-          # raised to fit step 6's full suite.
+          # nothing pushed. In the pinned CLI 2.1.289 a main-agent Agent call
+          # runs in the background BY DEFAULT: its launch rule is async
+          # unless the call passes run_in_background: false (only one
+          # built-in agent type is exempt, not adversarial-reviewer). So step
+          # 6b's three parallel reviewers end the turn unless told otherwise.
+          # The timing says this is what happened: the CLI waits up to 2.0 s
+          # ("exit-handoff agent flush timeout") when work is still live at
+          # exit, and the gap from the result line to "Log saved" is 0.26 s
+          # and 0.19 s on 10-12 and 10-13 (#166 was opened on 10-13) but
+          # 2.00-2.07 s on all 13 runs from 10-14 to 10-26 -- live work at
+          # exit every time, so not a quiet "nothing proposed". Only 10-25's
+          # "Cleaning up orphan processes" also killed a shell (a running
+          # `npm exec playwright test` and its dev server); in-process
+          # subagents leave no orphan. Bash commands that outlive their
+          # timeout are backgrounded too. The variable below makes the CLI
+          # treat background tasks as disabled, which turns off all of these
+          # (`backgroundTasksDisabled` feeds the async decision); an
+          # over-long command is then KILLED at its timeout, so the default
+          # is raised past CI's pytest step (125 s and 135 s on 10-13 and
+          # 10-25) and the maximum fits step 6's full suite.
           CLAUDE_CODE_DISABLE_BACKGROUND_TASKS: "1"
-          BASH_DEFAULT_TIMEOUT_MS: "900000"
+          BASH_DEFAULT_TIMEOUT_MS: "300000"
           BASH_MAX_TIMEOUT_MS: "1800000"
           # The ONE new secret this agent gets, alongside the OAuth token
           # above — read-only feedback pull + resolving issues it fixes.
@@ -259,11 +263,16 @@ jobs:
                  coverage report --include="src/tail_lab/research/*,src/tail_lab/transforms/*" --fail-under=90
                and, only if you touched the frontend:
                  cd frontend && npm run typecheck && npm run build
+               Pass an explicit Bash timeout (up to 1800000 ms) for the pytest run and e2e:
+               the default is 300000 ms, and a command past its timeout is killed, not
+               backgrounded. Never start a dev server or `make api` in the foreground.
                If any of these fail, fix it or reduce the change until they pass. Never open a red PR.
             6b. REVIEW LOOP — `docs/AGENT_MISSION.md` §Workflow steps 3a and 3b, exactly: commit
                locally (do not push), run the three `adversarial-reviewer` subagents in parallel,
                re-check and fix, at most two rounds, inside the `$START` time budget. It decides
-               whether step 7's PR is a draft.
+               whether step 7's PR is a draft. Pass `run_in_background: false` on EVERY Agent call:
+               an Agent call runs in the background by default, and ending your turn while one
+               runs ends the whole job with nothing pushed.
             7. Push and open ONE pull request, in that order and only now:
                  git push -u origin HEAD && gh pr create --assignee diomavro --body-file "$RUNNER_TEMP/pr-body.md" ...
                (if `gh pr create` fails, `git push origin --delete <branch>`). The branch is named
@@ -299,7 +308,9 @@ jobs:
                describe or paraphrase what it says. At most ten lines:
                  Outcome: PR #<n> | draft PR #<n> | nothing proposed | stopped early
                  Item: <the AGENT_TODO.md heading or feedback id you chose, or "none">
-                 Considered: <the items you looked at and passed over, one reason each>
+                 Considered: <the items you looked at and passed over, one reason each; for a
+                   feedback item the reason is ONLY one of needs-credential | guarded-path |
+                   below-value-bar | already-done | covered-by-open-pr, never free text>
                  Stopped at: <the step number above> because <reason>
                  Review: <rounds run and each round's verdicts, or "not reached">
                Do not end your turn to wait for anything: there is no later turn.
@@ -310,11 +321,16 @@ jobs:
       # (a grep pattern, a jq filter copied from it), so this prints only:
       # the result stats, the agent's own decision note (prompt step 8,
       # written to be public), each main-agent tool call as its name plus its
-      # file_path argument (whitespace collapsed, so one line per call), a
+      # file_path argument ONLY if it is plain path characters (else
+      # "(other)": a path is model-chosen text, and a hyphenated one can
+      # still spell words), a
       # Bash command's program and subcommand ONLY when both are on the fixed
       # allowlists in the script (anything else prints as "(other)"), or a
       # subagent type -- no command text, no search pattern -- any
-      # background task, and the local git state. Known secrets are redacted
+      # background task (including an Agent call launched async by default),
+      # and the local git state, whose branch and file names pass the same
+      # path filter. Unpushed commit subjects are printed as written: the
+      # one remaining free-text channel besides the note. Known secrets are redacted
       # and backticks neutralised everywhere. A diagnostics step must never
       # turn the run red.
       - name: Record the run's decision
@@ -329,7 +345,7 @@ jobs:
         run: |
           f="${EXEC_FILE:-$RUNNER_TEMP/claude-execution-output.json}"
           python3 -I - "$f" >> "$GITHUB_STEP_SUMMARY" <<'PY'
-          import json, os, subprocess, sys
+          import json, os, re, subprocess, sys
 
           secrets = [v for k, v in os.environ.items() if k.startswith("REDACT_") and len(v) >= 8]
 
@@ -376,6 +392,13 @@ jobs:
                   subs.append(w)
               return " ".join([name, *subs])
 
+          SAFE = re.compile(r"[A-Za-z0-9_./-]+")
+          TRACK = re.compile(r"\[(ahead \d+|behind \d+|ahead \d+, behind \d+|gone)\]|\(no branch\)")
+
+          def safe(text: str) -> str:
+              """A model-chosen path or ref, printed only if it is plain path characters."""
+              return text if SAFE.fullmatch(text) and len(text) <= 140 else "(other)"
+
           def git(*args: str) -> str:
               try:
                   out = subprocess.run(["git", *args], capture_output=True, text=True, timeout=30)
@@ -384,10 +407,22 @@ jobs:
               return out.stdout if out.returncode == 0 else ""
 
           def print_git_state() -> None:
-              branch = clean(git("rev-parse", "--abbrev-ref", "HEAD").strip(), 120)
-              print(f"\n**Local git state after the run:** branch '{branch}'")
+              branch = git("rev-parse", "--abbrev-ref", "HEAD").strip()
+              print(f"\n**Local git state after the run:** branch '{clean(safe(branch), 140)}'")
               print("```")
-              print(clean("\n".join(git("status", "-sb").splitlines()[:30]), 4000))
+              # 'XY path' (or '## branch...upstream' for the header); the path is
+              # model-chosen, so it goes through the same filter as the branch.
+              status = []
+              for line in git("status", "-sb", "--porcelain=v1").splitlines()[:30]:
+                  if line.startswith("## "):
+                      refs, _, track = line[3:].partition(" ")
+                      track = track if TRACK.fullmatch(track) else ("(other)" if track else "")
+                      refs = "...".join(safe(r) for r in refs.split("..."))
+                      status.append(" ".join(filter(None, ["##", refs, track])))
+                  else:
+                      paths = [safe(x) for x in line[3:].split(" -> ")]
+                      status.append(f"{line[:2]} {' -> '.join(paths)}")
+              print(clean("\n".join(status), 4000))
               unpushed = git("log", "--oneline", "@{u}..HEAD")
               if git("rev-parse", "--abbrev-ref", "@{u}").strip():
                   print("-- commits not pushed to the upstream:")
@@ -395,13 +430,18 @@ jobs:
               else:
                   # An upstream that is configured but no longer resolves means the
                   # remote branch was deleted after a push (step 7's failure path).
-                  if git("config", "--get", f"branch.{branch}.merge").strip():
+                  local = git("log", "--oneline", "origin/main..HEAD")
+                  if not git("rev-parse", "--verify", "-q", "origin/main").strip():
+                      print("-- no upstream, and origin/main does not resolve: unpushed commits unknown")
+                  elif not local.strip():
+                      print("-- no local commits beyond origin/main (nothing to push)")
+                  elif git("config", "--get", f"branch.{branch}.merge").strip():
                       print("-- pushed, then the remote branch was deleted (gh pr create likely"
                             " failed). Commits not on origin/main:")
                   else:
                       print("-- no upstream: this branch was never pushed. Commits not on origin/main:")
-                  local = git("log", "--oneline", "origin/main..HEAD")
-                  print(clean("\n".join(local.splitlines()[:20]), 3000) or "(none)")
+                  if local.strip():
+                      print(clean("\n".join(local.splitlines()[:20]), 3000))
               print("```")
 
           def report() -> None:
@@ -440,15 +480,22 @@ jobs:
                       # read: the CLI puts the command's stdout ahead of its marker.
                       # An explicit run_in_background call was already counted at its
                       # input, so only a Bash call without that flag counts here.
+                      # An Agent call is async by default in CLI 2.1.289, also with no
+                      # input flag; its structured result says isAsync/async_launched.
                       tur = m.get("tool_use_result")
-                      structured = isinstance(tur, dict) and bool(tur.get("backgroundTaskId"))
+                      tur = tur if isinstance(tur, dict) else {}
                       for b in blocks:
                           if b.get("type") != "tool_result":
                               continue
-                          if tools.get(b.get("tool_use_id")) != ("Bash", False):
+                          name, explicit = tools.get(b.get("tool_use_id"), ("", False))
+                          if explicit:
                               continue
-                          if structured:
+                          if name == "Bash" and tur.get("backgroundTaskId"):
                               background.append(f"{who}: a command moved to the background")
+                              break
+                          if name in ("Agent", "Task") and (
+                                  tur.get("isAsync") is True or tur.get("status") == "async_launched"):
+                              background.append(f"{who}: {name} launched async (CLI default)")
                               break
                       continue
                   if m.get("type") != "assistant":
@@ -469,7 +516,8 @@ jobs:
                       elif name in ("Agent", "Task"):
                           detail = str(inp.get("subagent_type", ""))
                       else:
-                          detail = str(inp.get("file_path") or "")
+                          path = str(inp.get("file_path") or "")
+                          detail = safe(path) if path else ""
                       bg = " [background]" if inp.get("run_in_background") else ""
                       detail = " ".join(detail.split())  # one line per call
                       trail.append(f"{len(trail) + 1:3d} {name}{bg} {clean(detail, 140)}")
