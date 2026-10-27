@@ -590,7 +590,11 @@ def test_the_wrong_sign_guard_tolerates_a_fifth_and_no_more(
 
 @pytest.mark.parametrize("wing", ["P", "C"])
 def test_one_symbols_wrong_signs_cost_that_symbol_not_the_session(
-    client: TestClient, store: DeltaLakeStore, monkeypatch: pytest.MonkeyPatch, wing: str
+    client: TestClient,
+    store: DeltaLakeStore,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+    wing: str,
 ) -> None:
     """24 chains, one of which carries the other wing's delta sign throughout
     (4% of the body's signed rows). Refusing the body whole would lose the
@@ -610,13 +614,20 @@ def test_one_symbols_wrong_signs_cost_that_symbol_not_the_session(
         for k in range(20)
     ]
     rows.append(_row(underlying="XLE", strike=650.0, delta=None, iv=None))
-    resp = post(client, _body(*rows))
+    with caplog.at_level("INFO"):
+        resp = post(client, _body(*rows))
 
     assert resp.status_code == 200, resp.text
     answer = resp.json()
     assert (answer["rows"], answer["quarantined"]) == (460, 21)
     assert answer["symbols_failed"] == ["XLE"]
     assert answer["symbols_misrouted"] == ["XLE"]
+    (event,) = (
+        r.getMessage()
+        for r in caplog.records
+        if r.getMessage().startswith("event=api.ingest.option_chain ")
+    )
+    assert "symbols_misrouted=XLE " in event
     day = dt.date(2026, 8, 26)
     assert "XLE" not in set(store.read_bronze_as_of(dataset, day)["underlying"])
     assert set(store.read_bronze_as_of(quarantine, day)["underlying"]) == {"XLE"}

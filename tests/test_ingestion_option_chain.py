@@ -1662,7 +1662,7 @@ def test_one_chains_wrong_signs_cost_that_chain_on_the_local_path_too(
     payloads = {name: _payload(_put(95.0), symbol=name) for name in live}
     payloads["XLE"] = _payload(_put(95.0, delta=0.3), _put(96.0, iv=0.0), symbol="XLE")
     store = DeltaLakeStore(tmp_path)
-    with caplog.at_level("WARNING"):
+    with caplog.at_level("INFO"):
         result = _ingest_with_fetch(store, [*live, "XLE"], payloads=payloads)
 
     assert result.symbols_failed == ("XLE",)
@@ -1674,6 +1674,37 @@ def test_one_chains_wrong_signs_cost_that_chain_on_the_local_path_too(
         and "symbols=XLE rows=2" in r.getMessage()
         for r in caplog.records
     )
+    (run,) = (
+        r.getMessage() for r in caplog.records if "ingestion.option_chain.run" in r.getMessage()
+    )
+    assert "symbols_misrouted=XLE " in run
+
+
+def test_a_local_refusal_names_misrouted_chains_apart_from_missing_ones(
+    tmp_path: Path,
+) -> None:
+    """The route's twin (test_api_ingest): three chains past the share are
+    quarantined whole and the floor refuses -- but they had quotes, so the
+    error must not list them as "Missing" under advice to re-run, which
+    fetches the same chains."""
+    names = [f"SYM{i:02d}" for i in range(21)] + ["FXI", "HYG", "TLT"]
+    payloads = {
+        name: _payload(
+            *(
+                _put(80.0 + k, delta=0.3 if name in {"FXI", "HYG", "TLT"} and k < 10 else -0.3)
+                for k in range(20)
+            ),
+            symbol=name,
+        )
+        for name in names
+    }
+    store = DeltaLakeStore(tmp_path)
+    with pytest.raises(IncompleteSweepError) as refused:
+        _ingest_with_fetch(store, names, payloads=payloads)
+
+    message = str(refused.value)
+    assert "Missing: (none)" in message
+    assert "Misrouted, not missing: FXI, HYG, TLT" in message
 
 
 def test_a_sign_glitch_on_three_chains_costs_their_bad_rows_on_the_local_path(

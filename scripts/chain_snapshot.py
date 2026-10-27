@@ -101,6 +101,10 @@ class Outcome(enum.Enum):
 #: ``http.client.RemoteDisconnected``, which subclasses it.
 _DROPS: tuple[type[Exception], ...] = (ConnectionResetError, http.client.IncompleteRead)
 
+#: Every transport fault :func:`_post` catches and :func:`_retryable` weighs --
+#: one set, so the two cannot drift apart.
+_TRANSPORT: tuple[type[Exception], ...] = (urllib.error.URLError, TimeoutError, *_DROPS)
+
 
 def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
@@ -163,7 +167,7 @@ def _retryable(exc: Exception) -> bool:
     """
     if isinstance(exc, urllib.error.HTTPError):
         return exc.code >= 500 or exc.code == 429
-    return isinstance(exc, (urllib.error.URLError, TimeoutError, *_DROPS))
+    return isinstance(exc, _TRANSPORT)
 
 
 def _failed_after_send(exc: Exception) -> bool:
@@ -194,7 +198,7 @@ def _post(
     for attempt in range(1, POST_ATTEMPTS + 1):
         try:
             return _post_once(base_url, path, token, payload, timeout), may_have_landed
-        except (urllib.error.URLError, TimeoutError, *_DROPS) as exc:
+        except _TRANSPORT as exc:
             if not _retryable(exc) or attempt == POST_ATTEMPTS:
                 raise
             may_have_landed = may_have_landed or _failed_after_send(exc)

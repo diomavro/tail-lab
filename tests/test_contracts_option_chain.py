@@ -277,13 +277,11 @@ def test_misrouted_is_more_than_a_fifth_of_one_symbols_signed_deltas(
     symbol would count it against the floor, and three such chains refused a
     put session. 21 in 100 is refused, and 29 -- the thinnest symbol of a
     measured both-wings body (SLV on the call route) -- must be too."""
-    frame = pd.DataFrame(
-        {
-            "underlying": ["spy"] * 102,
-            "delta": [-0.2] * (100 - wrong) + [0.3] * wrong + [None, 0.0],
-        }
+    deltas = [-0.2] * (100 - wrong) + [0.3] * wrong + [None, 0.0]
+    frame = _frame(
+        *(_row(underlying="spy", strike=500.0 + i, delta=d) for i, d in enumerate(deltas))
     )
-    assert WINGS["P"].misrouted_symbols(frame) == (("SPY",) if misrouted else ())
+    assert WINGS["P"].split(frame).misrouted == (("SPY",) if misrouted else ())
 
 
 def test_one_symbols_wrong_signs_cost_that_symbol_and_no_other() -> None:

@@ -190,14 +190,9 @@ class Wing:
         wrong = signed > 0.0 if self.right == "P" else signed < 0.0
         return float(wrong.mean())
 
-    def misrouted_symbols(self, frame: pd.DataFrame) -> tuple[str, ...]:
-        """The underlyings in ``frame`` whose :meth:`wrong_sign_share` is past
-        :data:`MAX_WRONG_SIGN_SHARE`, upper-cased and sorted."""
-        if frame.empty:
-            return ()
-        return self._misrouted(frame, frame["underlying"].astype(str).str.upper())
-
     def _misrouted(self, frame: pd.DataFrame, names: pd.Series[str]) -> tuple[str, ...]:
+        """The ``names`` whose :meth:`wrong_sign_share` is past
+        :data:`MAX_WRONG_SIGN_SHARE`, sorted."""
         return tuple(
             sorted(
                 str(name)
@@ -208,7 +203,8 @@ class Wing:
 
     def split(self, frame: pd.DataFrame) -> WingSplit:
         """``(valid, quarantined, misrouted, misrouted_rows)``: every row of a
-        :meth:`misrouted_symbols` symbol is quarantined -- its null-delta rows
+        symbol whose :meth:`wrong_sign_share` is past
+        :data:`MAX_WRONG_SIGN_SHARE` is quarantined -- its null-delta rows
         too, which the contract alone would keep -- and the rest is split
         against this wing's contract (:func:`split_valid_and_quarantined`).
 
@@ -220,9 +216,6 @@ class Wing:
         rows below :data:`MAX_WRONG_SIGN_SHARE` are not misrouting: the
         contract quarantines just those rows, as it always has.
         """
-        if frame.empty:
-            valid, quarantined = split_valid_and_quarantined(frame, self.schema)
-            return WingSplit(valid, quarantined, (), 0)
         names = frame["underlying"].astype(str).str.upper()
         misrouted = self._misrouted(frame, names)
         if not misrouted:

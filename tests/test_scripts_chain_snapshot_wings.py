@@ -21,6 +21,7 @@ import http.client
 import importlib.util
 import io
 import urllib.error
+import urllib.request
 from collections.abc import Callable, Mapping
 from pathlib import Path
 
@@ -62,6 +63,31 @@ def test_the_script_posts_to_routes_the_app_serves() -> None:
     assert PUTS != CALLS
     assert "post" in paths[PUTS]
     assert "post" in paths[CALLS]
+
+
+def test_a_post_goes_to_the_route_it_names(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Every other test stubs ``_post_once``, so this is the one seam where a
+    call body could silently be sent to the put route (or vice versa)."""
+    seen: list[urllib.request.Request] = []
+
+    class _Response(io.BytesIO):
+        def __enter__(self) -> _Response:
+            return self
+
+        def __exit__(self, *_exc: object) -> None:
+            return None
+
+    def urlopen(request: urllib.request.Request, timeout: int) -> _Response:
+        seen.append(request)
+        return _Response(b'{"ok": true}')
+
+    monkeypatch.setattr(chain_snapshot.urllib.request, "urlopen", urlopen)
+    answer = chain_snapshot._post_once("http://x/", CALLS, "t", {"rows": []}, 1)
+    assert answer == {"ok": True}
+    (request,) = seen
+    assert request.full_url == "http://x/api/ingest/option-chain-calls"
+    assert request.get_method() == "POST"
+    assert request.get_header("Authorization") == "Bearer t"
 
 
 # ---- --post ------------------------------------------------------------------
@@ -279,19 +305,20 @@ def test_an_incomplete_read_on_every_put_attempt_still_sends_the_calls(
 def test_a_drop_stays_flagged_through_a_later_non_drop_retry(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    """Reset, then a 503, then a no-op: the reset may have committed the
-    rows, and the 503 between does not un-say that."""
+    """Reset, then a 429, then a no-op: the reset may have committed the
+    rows, and the 429 between (refused before any work, so it says nothing
+    landed) does not un-say that."""
     attempts: list[int] = []
 
-    def reset_503_no_op() -> object:
+    def reset_429_no_op() -> object:
         attempts.append(1)
         if len(attempts) == 1:
             raise ConnectionResetError(104, "Connection reset by peer")
         if len(attempts) == 2:
-            raise _http_error(503)
+            raise _http_error(429)
         return _answer(committed=False)
 
-    sent = _server(monkeypatch, reset_503_no_op, _ok())
+    sent = _server(monkeypatch, reset_429_no_op, _ok())
     assert _main() == 0
     assert len(sent[PUTS]) == 3
     out = capsys.readouterr().out
