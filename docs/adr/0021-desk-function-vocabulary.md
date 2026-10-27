@@ -117,3 +117,18 @@ winner selected at t > 2 across a grid this size is a coin that came up heads.
   platform's value is that its wall is real. The "one-person hedge fund" is a
   subscription business wearing a fund's vocabulary; tail-lab is a research
   instrument, and should wear its own.
+
+## Amendment 2026-10-27: add "Pitch"
+
+Dio asked for a page that says, before anything else, whether the put book
+has a genuine edge. Desks have a word for that document: the **Pitch**, the
+case a trade idea makes to the investment committee, with the verdict first
+and the evidence and caveats after it. None of the existing words fit: the
+Screen ranks, the Bake-off compares metrics, Prior Art stores verdicts, and
+none of them is allowed to say "there is no trade here".
+
+**Decision.** "Pitch" joins the closed list. It names one surface, the Pitch
+tab, which states the verdict on real quotes, how it was reached and what
+would change it. Its figures are aggregates written by the human-run
+`scripts/pitch_evidence.py` into `frontend/src/content/pitch_evidence.json`.
+A pitch can recommend standing aside, and this one does.

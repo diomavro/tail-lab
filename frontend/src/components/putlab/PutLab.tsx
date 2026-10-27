@@ -44,6 +44,7 @@ import {
 } from './types'
 import { BakeOffView } from './views/BakeOffView'
 import { GlossaryView } from './views/GlossaryView'
+import { PitchView } from './views/PitchView'
 import { PortfolioView } from './views/PortfolioView'
 import { RegimeView } from './views/RegimeView'
 import { OverlayView } from './views/OverlayView'
@@ -78,6 +79,7 @@ export type TabId =
   | 'regime'
   | 'surface'
   | 'glossary'
+  | 'pitch'
 
 /** Tabs whose results come from the trailing-RV Black-Scholes backtester --
  *  the only ones the global "model-priced on trailing RV" notes describe. */
@@ -610,6 +612,7 @@ export function PutLab() {
             {tab === 'regime' && <RegimeView regimes={regimes} vix={vix} accuracy={accuracy} />}
             {tab === 'surface' && <SurfaceView surface={surface} controls={controls} narrow={narrow} />}
             {tab === 'glossary' && <GlossaryView />}
+            {tab === 'pitch' && <PitchView />}
           </main>
         </div>
 

@@ -1451,3 +1451,13 @@
    9.5:1 dark), not the table default --ink-45 (2.6:1 on light paper). Row
    headers (.pl-explain-rowhead, above) read in full --ink on top of this. */
 .pl-explain .pl-table th { white-space: normal; color: var(--ink-70); }
+
+/* ---------------------------------------------------------------- pitch --- */
+/* A reading page: one measure wide, tables scroll inside .pl-scroll. */
+.pl-pitch { max-width: 980px; }
+.pl-pitch h3 { font-size: 19px; margin-bottom: var(--space-2); }
+.pl-pitch .pl-note { margin: var(--space-2) 0; }
+.pl-pitch .pl-table { margin: var(--space-2) 0; }
+.pl-pitch-list { font-size: 14px; line-height: 1.55; max-width: 80ch; padding-left: 1.3em; }
+.pl-pitch-list li { margin-bottom: var(--space-2); }
+.pl-pitch code { font-size: 12.5px; overflow-wrap: anywhere; }
