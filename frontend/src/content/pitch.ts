@@ -25,10 +25,15 @@ export interface Standalone {
   first_entry: string
   last_exit: string
   fill_skips: number
-  /** Sales whose exit bid the guards refused, credited intrinsic instead;
+  /** Sales with no qualifying exit bid, credited intrinsic instead;
    *  `_itm` = those where intrinsic was above zero. */
   exits_at_intrinsic: number
   exits_at_intrinsic_itm: number
+  /** Of those, sales whose strike/spot at exit is above the panel's 1.02
+   *  band: no quote exists, so intrinsic omits real time value. */
+  exits_beyond_panel: number
+  /** Whether the rule's best roll is one of those. */
+  best_roll_beyond_panel: boolean
   by_period: Record<string, { n: number; mean_roi: number; hits: number }>
 }
 

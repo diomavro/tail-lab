@@ -50,11 +50,16 @@ function plural(n: number, one: string, many: string): string {
   return `${n} ${n === 1 ? one : many}`
 }
 /** The long rule label, swapped for a short one on a phone (putlab.css). */
-function RuleCell({ rule }: { rule: string }) {
+/** `budget`: on a phone the Budget/roll column is off-screen, so the short
+ *  label carries it -- otherwise one rule's books read as three identical rows. */
+function RuleCell({ rule, budget }: { rule: string; budget?: number }) {
   return (
     <td>
       <span className="pl-pitch-long">{ruleLabel(rule)}</span>
-      <span className="pl-pitch-short">{ruleShort(rule)}</span>
+      <span className="pl-pitch-short">
+        {ruleShort(rule)}
+        {budget === undefined ? '' : ` @${(budget * 100).toFixed(2)}%`}
+      </span>
     </td>
   )
 }
@@ -136,8 +141,12 @@ const offOneMonth = Object.values(spreadOff.depths).every((d) =>
 )
 const yearsSpan = Number(E.panels.SPY.last.slice(0, 4)) - Number(E.panels.SPY.first.slice(0, 4)) + 1
 const maxRolls = Math.max(...spyRules.map(([, s]) => s.n_rolls))
-const soldStats = spyRules.filter(([r]) => !r.includes('_4w_hold')).map(([, s]) => s)
+const soldSpy = spyRules.filter(([r]) => !r.includes('_4w_hold'))
+const soldStats = soldSpy.map(([, s]) => s)
 const intrinsicExits = soldStats.reduce((n, s) => n + s.exits_at_intrinsic_itm, 0)
+/** Of those, the exits with no quote at all: strike above the panel's band. */
+const beyondPanel = soldStats.reduce((n, s) => n + s.exits_beyond_panel, 0)
+const bestBeyond = soldSpy.filter(([, s]) => s.best_roll_beyond_panel).map(([r]) => ruleLabel(r))
 const soldRolls = soldStats.reduce((n, s) => n + s.n_rolls, 0)
 /** Premium a year at each budget, as a range over the rules. */
 const premiumAtBudget = [...new Set(SPY.hedge.configs.map((c) => c.budget))].map((b) => {
@@ -265,7 +274,7 @@ export function PitchView() {
             what the roll paid back ÷ what it cost − 1, after the ${E.commission_per_contract.toFixed(2)} commission,
             with the real ask paid. (The app’s figure is also net of brokerage, but its brokerage is commission plus
             a modelled half-spread on a model price.) For a held put, “paid back” is its value at expiry; for a sold
-            put, the bid it was sold at, or its intrinsic value when no bid passed the guards (method, Fills).
+            put, the bid it was sold at, or its intrinsic value when there was no bid to sell at (method, Fills).
             −1.00 means the premium was lost; +2.00 means three times the premium came back.
           </li>
           <li>
@@ -512,9 +521,17 @@ export function PitchView() {
             (research/backtest/quote_fills.py, <code>OptionsDxQuoteSource</code>): the exact session only, the
             nearest listed expiry on or after the target, a listed strike within 1 percentage point of the requested
             distance from spot, bid above zero and spread at most 50% of mid. Buys pay the <strong>ask</strong>; sales get the{' '}
-            <strong>bid</strong>. When no exit bid passes the guards, a sale is credited the put’s intrinsic value
-            (strike − spot, what exercising the American put pays; nothing if it is out of the money): that happened
-            on {intrinsicExits} in-the-money exits of {soldRolls.toLocaleString('en-US')} sold rolls. Commission ${E.commission_per_contract.toFixed(2)} a contract on each, none at
+            <strong>bid</strong>. When there is no exit bid, a sale is credited the put’s intrinsic value (strike −
+            spot, what exercising the American put pays; nothing if it is out of the money): that happened on{' '}
+            {intrinsicExits} in-the-money exits of {soldRolls.toLocaleString('en-US')} sold rolls. {beyondPanel} of
+            those are not refused bids: the panel keeps only strikes 0.60–1.02 × spot, so a put more than 2% in the
+            money at exit has no quote at all. Intrinsic leaves out the time value such a put still has with 4 or 8
+            weeks to run, and it happens only after spot has fallen about 6% or more since entry (the shallowest
+            strike is within a point of 5% below spot, and the exit spot is over 2% below that strike)
+            {bestBeyond.length > 0 ? `, the best roll of ${bestBeyond.join('; ')} among them` : ''}. So sold-rule
+            returns, winners and hedge growth are biased <em>against</em> the put, by an amount the data cannot
+            measure (there is no quote to measure it with); the same cut marks such a put at intrinsic on a hedge
+            book’s daily path. Commission ${E.commission_per_contract.toFixed(2)} a contract on each, none at
             expiry. A refused fill tries the next session and is counted. No option is priced by a model.
           </li>
           <li>
@@ -653,8 +670,9 @@ export function PitchView() {
       <section className="pl-section" id="pitch-hedge">
         <h3>2. Puts as a hedge on the index</h3>
         <p className="pl-note">
-          Unhedged SPY over {SPY.hedge.window[0]} to {SPY.hedge.window[1]}: log growth {pct(SPY.hedge.unhedged_growth, 2)}{' '}
-          a year, worst drawdown {pct(SPY.hedge.unhedged_max_dd)} ({SPY.hedge.unhedged_max_dd_span[0]} to{' '}
+          Unhedged SPY over {SPY.hedge.window[0]} to {SPY.hedge.window[1]} (price plus the flat{' '}
+          {pct(E.dividend_yield_assumed)} dividend accrual): log growth {pct(SPY.hedge.unhedged_growth, 2)} a year
+          (price alone {pct(SPY.hedge.unhedged_growth - E.dividend_yield_assumed, 2)}), worst drawdown {pct(SPY.hedge.unhedged_max_dd)} ({SPY.hedge.unhedged_max_dd_span[0]} to{' '}
           {SPY.hedge.unhedged_max_dd_span[1]}). Growth is shown as the change against that; drawdown is each book’s
           own. Tinted rows grew faster than unhedged SPY.
         </p>
@@ -673,7 +691,7 @@ export function PitchView() {
             <tbody>
               {SPY.hedge.configs.map((c) => (
                 <tr key={`${c.rule}@${c.budget}`} className={c.edge > 0 ? 'is-winner' : undefined}>
-                  <RuleCell rule={c.rule} />
+                  <RuleCell rule={c.rule} budget={c.budget} />
                   <td className={`num ${c.edge < 0 ? 'pl-neg' : ''}`}>{pp(c.edge)}</td>
                   <td className="num">{(c.budget * 100).toFixed(2)}%</td>
                   <td className="num">{pct(c.max_dd)}</td>

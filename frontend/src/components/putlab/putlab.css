@@ -1460,7 +1460,15 @@
 .pl-pitch .pl-table { margin: var(--space-2) 0; }
 .pl-pitch-list { font-size: 14px; line-height: 1.55; max-width: 80ch; padding-left: 1.3em; }
 .pl-pitch-list li { margin-bottom: var(--space-2); }
-.pl-pitch code { font-size: 12.5px; overflow-wrap: anywhere; }
+.pl-pitch code {
+  display: inline;
+  font-size: 12.5px;
+  line-height: inherit;
+  padding: 0 3px;
+  color: var(--ink);
+  background: var(--paper-2);
+  overflow-wrap: anywhere;
+}
 .pl-pitch-short { display: none; }
 @media (max-width: 640px) {
   .pl-pitch-long { display: none; }

@@ -1,10 +1,10 @@
 {
  "as_of": "2026-10-27",
  "code": {
-  "sha": "c86a05f5256e592773ad328c6d6233567164e5a6",
+  "sha": "b08e951abc6d6ebef6a668d1a562507026bcc486",
   "tree": {
    "src": "779cbbd61f91c40e7e510497c411fe23fa9dc5d1",
-   "scripts": "25ec337bab7c803fa08dc48688098db18d8420e9"
+   "scripts": "c383f4e0a6ec76670d267b08d8a4b5bcc1a944e6"
   },
   "dirty": false
  },
@@ -107,7 +107,9 @@
     },
     "fill_skips": 1,
     "exits_at_intrinsic": 0,
-    "exits_at_intrinsic_itm": 0
+    "exits_at_intrinsic_itm": 0,
+    "exits_beyond_panel": 0,
+    "best_roll_beyond_panel": false
    },
    "10pct_4w_hold": {
     "n_rolls": 173,
@@ -149,7 +151,9 @@
     },
     "fill_skips": 12,
     "exits_at_intrinsic": 0,
-    "exits_at_intrinsic_itm": 0
+    "exits_at_intrinsic_itm": 0,
+    "exits_beyond_panel": 0,
+    "best_roll_beyond_panel": false
    },
    "15pct_4w_hold": {
     "n_rolls": 170,
@@ -191,7 +195,9 @@
     },
     "fill_skips": 67,
     "exits_at_intrinsic": 0,
-    "exits_at_intrinsic_itm": 0
+    "exits_at_intrinsic_itm": 0,
+    "exits_beyond_panel": 0,
+    "best_roll_beyond_panel": false
    },
    "20pct_4w_hold": {
     "n_rolls": 160,
@@ -233,7 +239,9 @@
     },
     "fill_skips": 216,
     "exits_at_intrinsic": 0,
-    "exits_at_intrinsic_itm": 0
+    "exits_at_intrinsic_itm": 0,
+    "exits_beyond_panel": 0,
+    "best_roll_beyond_panel": false
    },
    "5pct_8w_sell4w": {
     "n_rolls": 181,
@@ -275,7 +283,9 @@
     },
     "fill_skips": 0,
     "exits_at_intrinsic": 8,
-    "exits_at_intrinsic_itm": 8
+    "exits_at_intrinsic_itm": 8,
+    "exits_beyond_panel": 8,
+    "best_roll_beyond_panel": true
    },
    "10pct_8w_sell4w": {
     "n_rolls": 181,
@@ -317,7 +327,9 @@
     },
     "fill_skips": 0,
     "exits_at_intrinsic": 3,
-    "exits_at_intrinsic_itm": 3
+    "exits_at_intrinsic_itm": 3,
+    "exits_beyond_panel": 3,
+    "best_roll_beyond_panel": false
    },
    "15pct_8w_sell4w": {
     "n_rolls": 181,
@@ -359,7 +371,9 @@
     },
     "fill_skips": 0,
     "exits_at_intrinsic": 0,
-    "exits_at_intrinsic_itm": 0
+    "exits_at_intrinsic_itm": 0,
+    "exits_beyond_panel": 0,
+    "best_roll_beyond_panel": false
    },
    "20pct_8w_sell4w": {
     "n_rolls": 181,
@@ -401,7 +415,9 @@
     },
     "fill_skips": 0,
     "exits_at_intrinsic": 3,
-    "exits_at_intrinsic_itm": 0
+    "exits_at_intrinsic_itm": 0,
+    "exits_beyond_panel": 0,
+    "best_roll_beyond_panel": false
    },
    "5pct_12w_sell4w": {
     "n_rolls": 180,
@@ -443,7 +459,9 @@
     },
     "fill_skips": 17,
     "exits_at_intrinsic": 8,
-    "exits_at_intrinsic_itm": 7
+    "exits_at_intrinsic_itm": 7,
+    "exits_beyond_panel": 7,
+    "best_roll_beyond_panel": true
    },
    "10pct_12w_sell4w": {
     "n_rolls": 180,
@@ -485,7 +503,9 @@
     },
     "fill_skips": 17,
     "exits_at_intrinsic": 4,
-    "exits_at_intrinsic_itm": 3
+    "exits_at_intrinsic_itm": 3,
+    "exits_beyond_panel": 3,
+    "best_roll_beyond_panel": true
    },
    "15pct_12w_sell4w": {
     "n_rolls": 180,
@@ -527,7 +547,9 @@
     },
     "fill_skips": 17,
     "exits_at_intrinsic": 1,
-    "exits_at_intrinsic_itm": 0
+    "exits_at_intrinsic_itm": 0,
+    "exits_beyond_panel": 0,
+    "best_roll_beyond_panel": false
    },
    "20pct_12w_sell4w": {
     "n_rolls": 180,
@@ -569,7 +591,9 @@
     },
     "fill_skips": 17,
     "exits_at_intrinsic": 2,
-    "exits_at_intrinsic_itm": 0
+    "exits_at_intrinsic_itm": 0,
+    "exits_beyond_panel": 0,
+    "best_roll_beyond_panel": false
    }
   },
   "rolls_on_closed_days": {
@@ -1363,7 +1387,9 @@
     },
     "fill_skips": 0,
     "exits_at_intrinsic": 0,
-    "exits_at_intrinsic_itm": 0
+    "exits_at_intrinsic_itm": 0,
+    "exits_beyond_panel": 0,
+    "best_roll_beyond_panel": false
    },
    "10pct_4w_hold": {
     "n_rolls": 151,
@@ -1405,7 +1431,9 @@
     },
     "fill_skips": 9,
     "exits_at_intrinsic": 0,
-    "exits_at_intrinsic_itm": 0
+    "exits_at_intrinsic_itm": 0,
+    "exits_beyond_panel": 0,
+    "best_roll_beyond_panel": false
    },
    "15pct_4w_hold": {
     "n_rolls": 142,
@@ -1447,7 +1475,9 @@
     },
     "fill_skips": 105,
     "exits_at_intrinsic": 0,
-    "exits_at_intrinsic_itm": 0
+    "exits_at_intrinsic_itm": 0,
+    "exits_beyond_panel": 0,
+    "best_roll_beyond_panel": false
    },
    "20pct_4w_hold": {
     "n_rolls": 126,
@@ -1489,7 +1519,9 @@
     },
     "fill_skips": 368,
     "exits_at_intrinsic": 0,
-    "exits_at_intrinsic_itm": 0
+    "exits_at_intrinsic_itm": 0,
+    "exits_beyond_panel": 0,
+    "best_roll_beyond_panel": false
    },
    "5pct_8w_sell4w": {
     "n_rolls": 155,
@@ -1531,7 +1563,9 @@
     },
     "fill_skips": 0,
     "exits_at_intrinsic": 8,
-    "exits_at_intrinsic_itm": 7
+    "exits_at_intrinsic_itm": 7,
+    "exits_beyond_panel": 7,
+    "best_roll_beyond_panel": true
    },
    "10pct_8w_sell4w": {
     "n_rolls": 155,
@@ -1573,7 +1607,9 @@
     },
     "fill_skips": 0,
     "exits_at_intrinsic": 2,
-    "exits_at_intrinsic_itm": 1
+    "exits_at_intrinsic_itm": 1,
+    "exits_beyond_panel": 1,
+    "best_roll_beyond_panel": false
    },
    "15pct_8w_sell4w": {
     "n_rolls": 155,
@@ -1615,7 +1651,9 @@
     },
     "fill_skips": 0,
     "exits_at_intrinsic": 4,
-    "exits_at_intrinsic_itm": 0
+    "exits_at_intrinsic_itm": 0,
+    "exits_beyond_panel": 0,
+    "best_roll_beyond_panel": false
    },
    "20pct_8w_sell4w": {
     "n_rolls": 155,
@@ -1657,7 +1695,9 @@
     },
     "fill_skips": 10,
     "exits_at_intrinsic": 8,
-    "exits_at_intrinsic_itm": 0
+    "exits_at_intrinsic_itm": 0,
+    "exits_beyond_panel": 0,
+    "best_roll_beyond_panel": false
    },
    "5pct_12w_sell4w": {
     "n_rolls": 154,
@@ -1699,7 +1739,9 @@
     },
     "fill_skips": 28,
     "exits_at_intrinsic": 9,
-    "exits_at_intrinsic_itm": 7
+    "exits_at_intrinsic_itm": 7,
+    "exits_beyond_panel": 7,
+    "best_roll_beyond_panel": true
    },
    "10pct_12w_sell4w": {
     "n_rolls": 154,
@@ -1741,7 +1783,9 @@
     },
     "fill_skips": 29,
     "exits_at_intrinsic": 3,
-    "exits_at_intrinsic_itm": 1
+    "exits_at_intrinsic_itm": 1,
+    "exits_beyond_panel": 1,
+    "best_roll_beyond_panel": true
    },
    "15pct_12w_sell4w": {
     "n_rolls": 153,
@@ -1783,7 +1827,9 @@
     },
     "fill_skips": 49,
     "exits_at_intrinsic": 2,
-    "exits_at_intrinsic_itm": 0
+    "exits_at_intrinsic_itm": 0,
+    "exits_beyond_panel": 0,
+    "best_roll_beyond_panel": false
    },
    "20pct_12w_sell4w": {
     "n_rolls": 153,
@@ -1825,7 +1871,9 @@
     },
     "fill_skips": 46,
     "exits_at_intrinsic": 2,
-    "exits_at_intrinsic_itm": 0
+    "exits_at_intrinsic_itm": 0,
+    "exits_beyond_panel": 0,
+    "best_roll_beyond_panel": false
    }
   },
   "rolls_on_closed_days": {

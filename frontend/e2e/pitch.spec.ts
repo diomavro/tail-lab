@@ -249,6 +249,24 @@ test('says how much of 2008-09 the spread guard decides', async ({ page }) => {
   )
 })
 
+test('on a phone each hedge row names its budget on screen, so one rule’s books differ', async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 800 })
+  const c = EVIDENCE.SPY.hedge.configs[0]!
+  const cell = page.getByTestId('pitch-hedge').locator('tbody tr').first().locator('td:nth-child(1)')
+  await expect(cell).toContainText(`@${(c.budget * 100).toFixed(2)}%`)
+  const box = await cell.boundingBox()
+  expect(box!.x + box!.width).toBeLessThanOrEqual(390)
+})
+
+test('unhedged SPY growth says it includes the dividend accrual and gives price alone', async ({ page }) => {
+  const h = EVIDENCE.SPY.hedge
+  const p = (x: number) => `${x < 0 ? '−' : '+'}${Math.abs(x * 100).toFixed(2)}%`
+  await expect(page.locator('#pitch-hedge')).toContainText(
+    `log growth ${p(h.unhedged_growth)} a year (price alone ${p(h.unhedged_growth - EVIDENCE.dividend_yield_assumed)})`,
+  )
+  await expect(page.locator('#pitch-hedge')).toContainText('price plus the flat +1.9% dividend accrual')
+})
+
 test('on a phone the hedge table shows growth against unhedged without scrolling', async ({ page }) => {
   // The column the section is about once started off-screen at 390px.
   await page.setViewportSize({ width: 390, height: 800 })
@@ -425,6 +443,16 @@ test('counts derived from the standalone table match it', async ({ page }) => {
   const itm = sold.reduce((k, s) => k + s.exits_at_intrinsic_itm, 0)
   const rolls = sold.reduce((k, s) => k + s.n_rolls, 0)
   await expect(page.locator('#pitch-method')).toContainText(`on ${itm} in-the-money exits of ${n(rolls)} sold rolls`)
+  // The intrinsic credits are mostly strikes the panel's 1.02 band dropped,
+  // not refused bids, and the page must say which way that biases the result.
+  const beyond = sold.reduce((k, s) => k + s.exits_beyond_panel, 0)
+  await expect(page.locator('#pitch-method')).toContainText(`${beyond} of those are not refused bids`)
+  await expect(page.locator('#pitch-method')).toContainText('biased against the put')
+  const best = Object.entries(spy)
+    .filter(([r, s]) => !r.includes('_4w_hold') && s.best_roll_beyond_panel)
+    .map(([r]) => ruleLabel(r))
+  if (best.length > 0)
+    await expect(page.locator('#pitch-method')).toContainText(`the best roll of ${best.join('; ')} among them`)
 })
 
 test('the method states each budget’s yearly premium as the range over the rules', async ({ page }) => {
