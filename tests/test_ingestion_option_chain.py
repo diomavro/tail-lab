@@ -1474,6 +1474,12 @@ def test_the_call_band_is_inclusive_at_both_edges() -> None:
     assert frame["strike"].tolist() == [80.0, 250.0]
 
 
+def test_the_put_band_is_inclusive_at_both_edges() -> None:
+    """0.40 and 1.05 of spot are kept; just past either is not."""
+    frame, _ = parse_cboe_chain(_payload(_put(39.0), _put(40.0), _put(105.0), _put(106.0)))
+    assert frame["strike"].tolist() == [40.0, 105.0]
+
+
 def test_the_put_band_still_drops_a_strike_the_call_band_keeps() -> None:
     """The bands are per right: a 2.0 x spot put is discounted stock, a 2.0 x
     spot call is a far-OTM wing."""
@@ -1660,10 +1666,12 @@ def test_one_chains_wrong_signs_cost_that_chain_on_the_local_path_too(
         result = _ingest_with_fetch(store, [*live, "XLE"], payloads=payloads)
 
     assert result.symbols_failed == ("XLE",)
+    assert result.symbols_misrouted == ("XLE",)
     assert (result.valid_rows, result.quarantined_rows) == (23, 2)
     assert result.committed is True
     assert any(
-        "ingestion.option_chain.misrouted" in r.getMessage() and "symbols=XLE" in r.getMessage()
+        "ingestion.option_chain.misrouted" in r.getMessage()
+        and "symbols=XLE rows=2" in r.getMessage()
         for r in caplog.records
     )
 
@@ -1681,7 +1689,7 @@ def test_a_chain_with_no_in_band_calls_is_a_failed_symbol_for_the_call_wing(
     )
 
     assert result.symbols_failed == ("PUTONLY",)
-    assert "PUTONLY" not in result.per_symbol_rows
+    assert result.per_symbol_rows == {name: 1 for name in live}
     assert result.valid_rows == 23
 
 

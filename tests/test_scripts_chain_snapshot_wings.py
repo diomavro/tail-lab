@@ -50,8 +50,18 @@ def _offline(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr("tail_lab.ingestion.option_chain.fetch_chains", lambda _s, *_a: {})
 
 
-def test_the_two_routes_are_distinct() -> None:
-    assert (PUTS, CALLS) == ("/api/ingest/option-chain", "/api/ingest/option-chain-calls")
+def test_the_script_posts_to_routes_the_app_serves() -> None:
+    """Checked against the app's router, not a hand-typed copy: renaming a
+    route without the script would otherwise stay green while every scheduled
+    POST met a 405 the script blames on a missing deploy."""
+    from tail_lab.api.main import app
+
+    # The OpenAPI paths, not ``app.routes``: FastAPI 0.141 keeps an included
+    # router as one opaque entry there, so its paths are not listed.
+    paths = app.openapi()["paths"]
+    assert PUTS != CALLS
+    assert "post" in paths[PUTS]
+    assert "post" in paths[CALLS]
 
 
 # ---- --post ------------------------------------------------------------------
@@ -285,7 +295,7 @@ def test_a_drop_stays_flagged_through_a_later_non_drop_retry(
     assert _main() == 0
     assert len(sent[PUTS]) == 3
     out = capsys.readouterr().out
-    assert "puts: landed (an earlier attempt likely committed it" in out
+    assert "puts: landed (an earlier attempt failed after sending" in out
     assert "puts: NO-OP" not in out
 
 
@@ -444,7 +454,81 @@ def test_a_reset_after_the_send_is_retried_and_flagged_as_a_drop(
     sent = _server(monkeypatch, reset_then_no_op, _ok())
     assert _main() == 0
     assert len(sent[PUTS]) == 2
-    assert "likely committed it before the connection dropped" in capsys.readouterr().out
+    assert (
+        "an earlier attempt failed after sending and may have committed it"
+        in capsys.readouterr().out
+    )
+
+
+@pytest.mark.parametrize(
+    "exc",
+    [TimeoutError("timed out"), _http_error(502), _http_error(500)],
+    ids=["timeout-awaiting-the-answer", "502", "500"],
+)
+def test_a_no_op_after_a_failure_that_followed_the_send_is_not_wrote_nothing(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], exc: Exception
+) -> None:
+    """A raw ``TimeoutError`` comes from waiting on the answer, after the body
+    went out, and a 5xx may follow ``write_bronze``. Either can have
+    committed the rows, so the retry's no-op must not claim "wrote nothing"."""
+    attempts: list[int] = []
+
+    def fail_then_no_op() -> object:
+        attempts.append(1)
+        if len(attempts) == 1:
+            raise exc
+        return _answer(committed=False)
+
+    _server(monkeypatch, fail_then_no_op, _ok())
+    assert _main() == 0
+    out = capsys.readouterr().out
+    assert "puts: landed (an earlier attempt failed after sending" in out
+    assert "puts: NO-OP" not in out
+
+
+@pytest.mark.parametrize(
+    "exc",
+    [urllib.error.URLError("connection refused"), _http_error(429)],
+    ids=["never-connected", "429"],
+)
+def test_a_no_op_after_a_failure_before_any_work_still_says_wrote_nothing(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], exc: Exception
+) -> None:
+    """The contrast: an attempt that never reached the route (urllib wraps a
+    connect or send failure in a bare ``URLError``), or a 429 refused before
+    any work, cannot have written anything, so the no-op is a plain no-op."""
+    attempts: list[int] = []
+
+    def fail_then_no_op() -> object:
+        attempts.append(1)
+        if len(attempts) == 1:
+            raise exc
+        return _answer(committed=False)
+
+    _server(monkeypatch, fail_then_no_op, _ok())
+    assert _main() == 0
+    out = capsys.readouterr().out
+    assert "puts: NO-OP: session 2026-10-26 was already captured, wrote nothing" in out
+
+
+def test_a_misrouted_symbol_is_named_for_its_cause_not_as_quoteless(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A symbol the app quarantined for the other wing's delta signs HAD
+    quotes. Reporting it as "no quotes landed" points the operator at a
+    re-run, which returns the same glitched chain."""
+    answer = {
+        **_answer(),
+        "symbols_failed": ["KRE", "XLE"],
+        "symbols_misrouted": ["XLE"],
+        "quarantined": 21,
+    }
+    _server(monkeypatch, lambda: answer, _ok())
+    assert _main() == 0
+    out = capsys.readouterr().out
+    assert "::warning::puts: no quotes landed for KRE\n" in out
+    assert "::warning::puts: XLE carried the other wing's delta signs; quarantined whole" in out
+    assert "no two-sided quote" not in out
 
 
 def test_a_plain_os_error_is_an_annotated_failure_not_a_traceback(
@@ -481,7 +565,7 @@ def test_a_no_op_after_a_drop_says_the_earlier_attempt_likely_landed(
     _server(monkeypatch, drop_then_no_op, _ok())
     assert _main() == 0
     out = capsys.readouterr().out
-    assert "an earlier attempt likely committed it before the connection dropped" in out
+    assert "an earlier attempt failed after sending and may have committed it" in out
     assert "wrote nothing" not in out.split("calls:")[0]
 
 

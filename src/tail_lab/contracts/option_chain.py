@@ -39,7 +39,7 @@ import datetime as dt
 import math
 from collections.abc import Callable, Collection, Iterable, Sequence
 from dataclasses import dataclass
-from typing import ClassVar, Literal
+from typing import ClassVar, Literal, NamedTuple
 from zoneinfo import ZoneInfo
 
 import pandas as pd
@@ -135,6 +135,17 @@ class OptionCallChainSnapshotSchema(OptionChainSnapshotSchema):
 Right = Literal["P", "C"]
 
 
+class WingSplit(NamedTuple):
+    """What :meth:`Wing.split` decided, so neither writer re-derives it."""
+
+    valid: pd.DataFrame
+    quarantined: pd.DataFrame
+    #: Symbols quarantined whole for carrying the other wing's deltas.
+    misrouted: tuple[str, ...]
+    #: How many rows those symbols had, all of them in ``quarantined``.
+    misrouted_rows: int
+
+
 @dataclass(frozen=True)
 class Wing:
     """Everything that differs between collecting puts and collecting calls,
@@ -183,8 +194,8 @@ class Wing:
             )
         )
 
-    def split(self, frame: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame, tuple[str, ...]]:
-        """``(valid, quarantined, misrouted)``: every row of a
+    def split(self, frame: pd.DataFrame) -> WingSplit:
+        """``(valid, quarantined, misrouted, misrouted_rows)``: every row of a
         :meth:`misrouted_symbols` symbol is quarantined -- its null-delta rows
         too, which the contract alone would keep -- and the rest is split
         against this wing's contract (:func:`split_valid_and_quarantined`).
@@ -198,10 +209,10 @@ class Wing:
         misrouted = self.misrouted_symbols(frame)
         if not misrouted:
             valid, quarantined = split_valid_and_quarantined(frame, self.schema)
-            return valid, quarantined, ()
+            return WingSplit(valid, quarantined, (), 0)
         bad = frame["underlying"].astype(str).str.upper().isin(misrouted)
         valid, quarantined = split_valid_and_quarantined(frame.loc[~bad], self.schema)
-        return valid, pd.concat([frame.loc[bad], quarantined]), misrouted
+        return WingSplit(valid, pd.concat([frame.loc[bad], quarantined]), misrouted, int(bad.sum()))
 
 
 #: Above this :meth:`Wing.wrong_sign_share`, ONE SYMBOL's rows are taken for
@@ -242,7 +253,8 @@ WINGS: dict[Right, Wing] = {
 #: The second is mechanical. Bronze is immutable and re-ingesting an
 #: ``ingest_date`` is a no-op (``lake/store.py``), so a day's sweep has to
 #: land as ONE write per dataset — which makes it one HTTP body per wing,
-#: sized to be parsed on a small Fly machine without an OOM. SPY alone slices to ~3.6k rows.
+#: sized to be parsed on a small Fly machine without an OOM. SPY alone slices
+#: to ~3.6k rows.
 #:
 #: Chosen for options liquidity first, then to span the thesis: the
 #: benchmarks, the credit/rates/commodity hedges, and the high-beta single
@@ -284,18 +296,18 @@ DEFAULT_SNAPSHOT_SYMBOLS: tuple[str, ...] = (
 
 
 def split_valid_and_quarantined(
-    df: pd.DataFrame, schema: type[OptionChainSnapshotSchema] = OptionChainSnapshotSchema
+    df: pd.DataFrame, schema: type[OptionChainSnapshotSchema]
 ) -> tuple[pd.DataFrame, pd.DataFrame]:
-    """Split ``df`` into ``(valid, quarantined)`` against ``schema`` -- the put
-    contract by default; the call wing passes
-    :class:`OptionCallChainSnapshotSchema`, which every call would otherwise
-    fail on its delta sign.
+    """Split ``df`` into ``(valid, quarantined)`` against ``schema``, which has
+    no default: validating calls against the put contract would quarantine
+    every one of them on its delta sign.
 
     Lives here, next to the schema, rather than in the adapter as its
-    siblings do -- because this dataset has **two** writers. The adapter
-    writes it on the local path, and ``api/ingest_routes`` writes it on the
-    scheduled path (``docs/adr/0020`` splits the sweep at its credential
-    seam). They must agree on what a bad row costs, and the first time they
+    siblings do -- because this dataset has **two** writers: the adapter on
+    the local path, and ``api/ingest_routes`` on the scheduled path
+    (``docs/adr/0020`` splits the sweep at its credential seam). Both reach
+    it only through :meth:`Wing.split`, the seam that keeps them in step.
+    They must agree on what a bad row costs, and the first time they
     did not, they disagreed expensively: the endpoint rejected an entire
     22,006-quote sweep because a few dozen far-OTM strikes had no resting
     offer overnight. For a dataset whose whole premise is "capture it today

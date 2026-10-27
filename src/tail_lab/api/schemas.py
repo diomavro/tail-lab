@@ -182,6 +182,11 @@ class OptionChainSnapshotResponse(BaseModel):
     committed: bool = True
     symbols_failed: tuple[str, ...] = ()
     symbols_off_session: tuple[str, ...] = ()
+    #: Symbols quarantined whole for carrying the other wing's delta signs
+    #: (``Wing.split``, ``docs/adr/0031``). They are in ``symbols_failed``
+    #: too; this names the cause. Defaulted, so an older app's answer still
+    #: validates.
+    symbols_misrouted: tuple[str, ...] = ()
 
 
 class OptionChainSnapshotStatus(BaseModel):

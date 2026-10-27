@@ -222,10 +222,29 @@ def test_the_call_contract_keeps_null_zero_and_unit_deltas(delta: float | None) 
     OptionCallChainSnapshotSchema.validate(_frame(_row(delta=delta)), lazy=True)
 
 
-@pytest.mark.parametrize("delta", [-0.0001, 1.0001])
-def test_the_call_contract_refuses_a_delta_just_outside_zero_to_one(delta: float) -> None:
+_WING_DELTA_EDGES = [
+    # (schema, kept at the edge, refused just past it)
+    (OptionCallChainSnapshotSchema, 0.0, -0.0001),
+    (OptionCallChainSnapshotSchema, 1.0, 1.0001),
+    (OptionChainSnapshotSchema, 0.0, 0.0001),
+    (OptionChainSnapshotSchema, -1.0, -1.0001),
+]
+
+
+@pytest.mark.parametrize(
+    ("schema", "edge", "past"),
+    _WING_DELTA_EDGES,
+    ids=["call-low", "call-high", "put-high", "put-low"],
+)
+def test_each_wing_keeps_its_delta_edge_and_refuses_just_past_it(
+    schema: type[OptionChainSnapshotSchema], edge: float, past: float
+) -> None:
+    """Below MAX_WRONG_SIGN_SHARE a stray wrong-sign row is caught by the
+    contract alone (ADR 0031: "one stray row is quarantined alone"), so each
+    wing's bound must sit exactly at zero -- for the puts as for the calls."""
+    schema.validate(_frame(_row(delta=edge)), lazy=True)
     with pytest.raises(SchemaErrors):
-        OptionCallChainSnapshotSchema.validate(_frame(_row(delta=delta)), lazy=True)
+        schema.validate(_frame(_row(delta=past)), lazy=True)
 
 
 @pytest.mark.parametrize(
@@ -269,9 +288,9 @@ def test_one_symbols_wrong_signs_cost_that_symbol_and_no_other() -> None:
     contract alone would keep -- and nothing of the others is."""
     spy = [_row(strike=600.0 + i) for i in range(50)]
     xle = [_row(underlying="XLE", strike=80.0, delta=0.3), _row(underlying="XLE", delta=None)]
-    valid, quarantined, misrouted = WINGS["P"].split(_frame(*spy, *xle))
+    valid, quarantined, misrouted, misrouted_rows = WINGS["P"].split(_frame(*spy, *xle))
 
-    assert misrouted == ("XLE",)
+    assert (misrouted, misrouted_rows) == (("XLE",), 2)
     assert set(valid["underlying"]) == {"SPY"}
     assert len(valid) == 50
     assert sorted(quarantined["underlying"]) == ["XLE", "XLE"]
@@ -279,8 +298,22 @@ def test_one_symbols_wrong_signs_cost_that_symbol_and_no_other() -> None:
 
 def test_split_without_a_misrouted_symbol_is_the_contract_split() -> None:
     frame = _frame(_row(strike=600.0), _row(strike=610.0, ask=0.0))
-    valid, quarantined, misrouted = WINGS["P"].split(frame)
-    assert (len(valid), len(quarantined), misrouted) == (1, 1, ())
+    valid, quarantined, misrouted, misrouted_rows = WINGS["P"].split(frame)
+    assert (len(valid), len(quarantined), misrouted, misrouted_rows) == (1, 1, (), 0)
+
+
+def test_a_lower_case_underlying_is_misrouted_whole_all_the_same() -> None:
+    """The route builds its frame from the body as sent and never upper-cases
+    ``underlying``, so the split's own case-folding is the only defence: calls
+    posted as "spy" to the put route must not commit their null-delta rows as
+    puts."""
+    calls = [_row(underlying="spy", strike=800.0 + i, delta=0.3) for i in range(5)]
+    nulls = [_row(underlying="spy", strike=900.0 + i, delta=None) for i in range(3)]
+    valid, quarantined, misrouted, misrouted_rows = WINGS["P"].split(_frame(*calls, *nulls))
+
+    assert valid.empty
+    assert len(quarantined) == 8
+    assert (misrouted, misrouted_rows) == (("SPY",), 8)
 
 
 def test_the_call_schema_differs_from_the_put_schema_only_in_delta() -> None:
@@ -311,7 +344,6 @@ def test_the_split_validates_against_the_schema_it_is_given() -> None:
     assert valid["strike"].tolist() == [800.0]
     assert quarantined["strike"].tolist() == [810.0]
 
-    # The default is still the put contract.
-    valid, quarantined = split_valid_and_quarantined(calls)
+    valid, quarantined = split_valid_and_quarantined(calls, schema=OptionChainSnapshotSchema)
     assert valid["strike"].tolist() == [810.0]
     assert quarantined["strike"].tolist() == [800.0]

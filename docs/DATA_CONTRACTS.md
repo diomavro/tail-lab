@@ -353,10 +353,10 @@ may not legitimately do nothing.
 
 **The slice.** Puts (this dataset); calls go to
 `option_chain_call_snapshot`, `docs/adr/0031`. Strikes within 0.40-1.05 of
-spot, tenors 0-180 days. SPY's full document is 5.9 MB / 13,288 contracts; the slice is ~3,600
-rows. Bands match §"real historical option quotes" deliberately, so the
-vendor back-history and this forward collection union on their shared columns
-with no translation layer.
+spot, tenors 0-180 days. SPY's full document is 5.9 MB / 13,288 contracts;
+the slice is ~3,600 rows. Bands match §"real historical option quotes"
+deliberately, so the vendor back-history and this forward collection union on
+their shared columns with no translation layer.
 
 **Schema — `OptionChainSnapshotSchema`** (`contracts/option_chain.py`). The
 first nine columns are exactly `OptionQuoteSchema`:

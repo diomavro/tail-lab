@@ -60,9 +60,10 @@ buys puts.
 
 2. **Contract.** `OptionCallChainSnapshotSchema` subclasses the put schema and
    overrides only `delta` (`[0, 1]`). `split_valid_and_quarantined` takes the
-   schema; its default keeps the put behaviour. `WINGS` maps a right to
-   `(dataset, quarantine, schema, band)` in one place, and every writer reads
-   it.
+   schema, with no default, so no caller can validate calls against the put
+   contract by omission. `WINGS` maps a right to `(dataset, quarantine,
+   schema, band)` in one place, and every writer reads it through
+   `Wing.split`.
 
 3. **Band: calls 0.80-2.50 of spot**, the same 180-day tenor cap, and the same
    24 symbols. 2.50 is log-symmetric with the put floor (1 / 0.40). At
@@ -74,18 +75,18 @@ buys puts.
    fetched once, by `fetch_chains`; `ingest_option_chain` takes only those
    payloads and never fetches. A second fetch loop would repeat 2026-09-19
    (48 requests, 429 on 9 of 24) and draw the wings from different CDN
-   snapshots. A failed
-   fetch costs that symbol both wings. A failed put parse still parses the
-   calls. A failed call parse, or a failed call record conversion, keeps the
-   puts and logs `event=ingestion.option_chain.symbol_failed` with
+   snapshots. A failed fetch costs that symbol both wings. A failed put parse
+   still parses the calls. A failed call parse, or a failed call record
+   conversion, keeps the puts and logs
+   `event=ingestion.option_chain.symbol_failed` with
    `dataset=option_chain_call_snapshot`. So a call-only bug cannot push the
    put session under `MIN_SYMBOL_FRACTION`. In `--local`, a symbol whose fetch
-   failed logs one traceback in `fetch_chains` and then one
-   `symbol_unfetched` line per wing, with no second traceback. Each
-   wing gets its own session plan, floor, write and audit record
-   (`ingestion.option_chain.run` with `dataset=`). `unparsed_contracts` counts
-   OSI-unparseable symbols before the right filter (so both records carry
-   them), plus that wing's rows with an unparseable `iv`.
+   failed logs one traceback in `fetch_chains` and then one `symbol_unfetched`
+   line per wing, with no second traceback. Each wing gets its own session
+   plan, floor, write and audit record (`ingestion.option_chain.run` with
+   `dataset=`). `unparsed_contracts` counts OSI-unparseable symbols before the
+   right filter (so both records carry them), plus that wing's rows with an
+   unparseable `iv`.
 
 5. **Route.** `POST /api/ingest/option-chain-calls` uses the same token,
    session plan, witness and floor. Both routes run one shared body
@@ -107,7 +108,11 @@ buys puts.
    (4% of a body) into a lost session on the `--post` path while `--local`
    kept the other 23. 1% rather than zero, so one stray row is quarantined
    alone. Without the guard, the fixture's call body POSTed to the put route
-   committed its two null-delta ITM calls as puts.
+   committed its two null-delta ITM calls as puts. A misrouted symbol is
+   named as such (`symbols_misrouted` in the route's answer and in
+   `IngestResult`), and the script reports it by that cause rather than as
+   "no quotes", which would point the operator at a re-run that returns the
+   same glitched chain.
 
 6. **Script exit contract** (`scripts/chain_snapshot.py`, both modes):
 
@@ -124,13 +129,15 @@ buys puts.
    only: a call session lost earlier went red on the run that lost it. A
    call 425 is a failure, logged as an `::error::`, never as
    `calls: SKIPPED`; after puts that landed it also says the two wings
-   disagreed about the session. One witness read serves both bodies. The `--token` check
-   now runs first. Every transport failure maps to a failed wing and never to
-   a traceback that skips the other wing. That includes the dropped
-   connections and non-JSON 200s that urllib leaves unwrapped, and a refusal
-   whose body cannot be read. An unforeseen exception (a bug) still ends
-   the run. A call-only
-   failure prints `calls only; puts landed`.
+   disagreed about the session. One witness read serves both bodies. The
+   `--token` check now runs first. Every transport failure maps to a failed
+   wing and never to a traceback that skips the other wing. That includes the
+   dropped connections and non-JSON 200s that urllib leaves unwrapped, and a
+   refusal whose body cannot be read. An unforeseen exception (a bug) still
+   ends the run. A call-only failure prints `calls only; puts landed`. A
+   no-op answer after a retried failure that followed the send (a drop, a raw
+   timeout awaiting the answer, or a 5xx) prints "landed ... may have
+   committed it", never "wrote nothing".
 
 7. **Accepted gaps.**
    - **Deploy lag.** The workflow runs main's script against the deployed app.
@@ -138,8 +145,8 @@ buys puts.
      The run goes red with the puts landed, and the annotation says
      "call route not deployed yet (check deploy.yml)". A 404 never gets that
      hint, because the auth gate answers 404 on both routes when the app's
-     token is unset. The first call capture
-     therefore needs `deploy.yml` to have shipped the merge.
+     token is unset. The first call capture therefore needs `deploy.yml` to
+     have shipped the merge.
    - **No call freshness route.** `docs/adr/0020` §8 ("Freshness is public")
      and `docs/AGENT_MISSION.md`'s health check cover puts only. Until
      `AGENT_TODO.md`'s follow-up lands, a calls-only failure is visible only
@@ -154,7 +161,8 @@ buys puts.
 
 The production app is one 1 GB machine with no swap (`fly.toml`), and the
 2026-09-04 transient 500 has two plausible causes, a cold start or memory
-pressure parsing a ~5 MB body (`scripts/chain_snapshot.py`). The call body is larger than the put body, so it was measured first.
+pressure parsing a ~5 MB body (`scripts/chain_snapshot.py`). The call body
+is larger than the put body, so it was measured first.
 
 **Rows and bytes.** Live session 2026-10-26, fetched 2026-10-27 08:20 UTC,
 24 symbols, both wings sliced from the same 24 payloads:

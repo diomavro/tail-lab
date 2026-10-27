@@ -78,6 +78,7 @@ class _Result:
     symbols_ok = ("spy", "qqq")
     symbols_failed: tuple[str, ...] = ()
     symbols_off_session: tuple[str, ...] = ()
+    symbols_misrouted: tuple[str, ...] = ()
     committed = True
     quote_date = dt.date(2026, 9, 18)
     bronze_path = "s3://tail-lab-lake/bronze/option_chain_snapshot/ingest_date=2026-09-18"
@@ -109,6 +110,7 @@ def test_the_stub_still_matches_the_real_ingest_result() -> None:
         "symbols_ok",
         "symbols_failed",
         "symbols_off_session",
+        "symbols_misrouted",
         "committed",
         "quote_date",
         "bronze_path",
@@ -195,6 +197,27 @@ def test_local_reports_a_no_op_rather_than_claiming_rows(
     out = capsys.readouterr().out
     assert "NO-OP" in out
     assert "committed 19525 rows" not in out
+
+
+def test_local_names_a_misrouted_symbol_for_its_cause(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Same rule as the ``--post`` report: a symbol quarantined for the other
+    wing's delta signs had quotes, so it is not "no quotes"."""
+
+    class _Misrouted(_Result):
+        symbols_failed = ("KRE", "XLE")
+        symbols_misrouted = ("XLE",)
+
+    monkeypatch.setattr("tail_lab.config.get_lake_store", lambda: object())
+    monkeypatch.setattr(
+        "tail_lab.ingestion.option_chain.ingest_option_chain",
+        lambda _s, _y, **_kw: _Misrouted(),
+    )
+    assert chain_snapshot.main(["--local", "--symbols", "spy"]) == 0
+    out = capsys.readouterr().out
+    assert "::warning::puts: no quotes landed for KRE\n" in out
+    assert "::warning::puts: XLE carried the other wing's delta signs; quarantined whole" in out
 
 
 def test_local_hands_the_market_witness_to_the_adapter(monkeypatch: pytest.MonkeyPatch) -> None:

@@ -50,7 +50,7 @@ import sys
 import time
 import urllib.error
 import urllib.request
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Mapping, Sequence
 from typing import TYPE_CHECKING
 
 from pydantic import ValidationError
@@ -166,24 +166,38 @@ def _retryable(exc: Exception) -> bool:
     return isinstance(exc, (urllib.error.URLError, TimeoutError, *_DROPS))
 
 
-def _post(
-    base_url: str, path: str, token: str, payload: Mapping[str, object], timeout: int
-) -> tuple[object, bool]:
-    """POST the sweep, retrying only faults that a retry could fix.
+def _failed_after_send(exc: Exception) -> bool:
+    """Whether a retried failure may have followed a commit on the app.
 
-    Returns ``(answer, dropped)``: ``dropped`` says an earlier attempt lost its
-    connection after sending (:data:`_DROPS`), so a "no-op" answer may be the
-    echo of that attempt's own commit.
+    urllib wraps only a failure to connect or send in a bare ``URLError``;
+    such an attempt never reached the route. Anything else came after the
+    body went out: a drop or a raw ``TimeoutError`` while waiting for the
+    answer, or a 5xx the app may have raised after ``write_bronze``. A 429
+    is refused before any work, so it cannot have landed rows.
     """
-    dropped = False
-    label = next((_LABEL[r] for r, p in _PATH.items() if p == path), path)
+    if isinstance(exc, urllib.error.HTTPError):
+        return exc.code >= 500
+    return not isinstance(exc, urllib.error.URLError)
+
+
+def _post(
+    base_url: str, right: Right, token: str, payload: Mapping[str, object], timeout: int
+) -> tuple[object, bool]:
+    """POST one wing's sweep, retrying only faults that a retry could fix.
+
+    Returns ``(answer, may_have_landed)``: ``may_have_landed`` says an earlier
+    attempt failed after sending (:func:`_failed_after_send`), so a "no-op"
+    answer may be the echo of that attempt's own commit.
+    """
+    may_have_landed = False
+    label, path = _LABEL[right], _PATH[right]
     for attempt in range(1, POST_ATTEMPTS + 1):
         try:
-            return _post_once(base_url, path, token, payload, timeout), dropped
+            return _post_once(base_url, path, token, payload, timeout), may_have_landed
         except (urllib.error.URLError, TimeoutError, *_DROPS) as exc:
             if not _retryable(exc) or attempt == POST_ATTEMPTS:
                 raise
-            dropped = dropped or isinstance(exc, _DROPS)
+            may_have_landed = may_have_landed or _failed_after_send(exc)
             detail = getattr(exc, "code", None) or getattr(exc, "reason", exc)
             wait = POST_BACKOFF_S[min(attempt - 1, len(POST_BACKOFF_S) - 1)]
             print(
@@ -315,8 +329,7 @@ def _unsettled(right: Right, detail: str) -> Outcome:
 
 
 def _report_local(result: IngestResult, label: str, requested: int) -> None:
-    if result.symbols_failed:
-        print(f"::warning::{label}: no quotes for {', '.join(result.symbols_failed)}")
+    _report_symbols(label, result.symbols_failed, result.symbols_misrouted)
     if result.symbols_off_session:
         print(
             f"::warning::{label}: off-session quotes for {', '.join(result.symbols_off_session)} "
@@ -371,7 +384,7 @@ def _post_sweep(args: argparse.Namespace, right: Right, payload: dict[str, objec
     """POST one wing and turn every way it can fail into an annotated outcome."""
     label, path = _LABEL[right], _PATH[right]
     try:
-        result_json, dropped = _post(args.post, path, args.token, payload, args.timeout)
+        result_json, may_have_landed = _post(args.post, right, args.token, payload, args.timeout)
     except urllib.error.HTTPError as exc:
         return _refused(exc, right, label)
     except urllib.error.URLError as exc:
@@ -419,7 +432,7 @@ def _post_sweep(args: argparse.Namespace, right: Right, payload: dict[str, objec
             file=sys.stderr,
         )
         return Outcome.FAILED
-    return _report_post(response, label, dropped=dropped)
+    return _report_post(response, label, may_have_landed=may_have_landed)
 
 
 def _error_body(exc: urllib.error.HTTPError) -> bytes:
@@ -517,7 +530,7 @@ def main(argv: list[str] | None = None) -> int:
 
 
 def _report_post(
-    response: OptionChainSnapshotResponse, label: str, *, dropped: bool = False
+    response: OptionChainSnapshotResponse, label: str, *, may_have_landed: bool = False
 ) -> Outcome:
     """Say which of the two things the app did -- commit or no-op.
 
@@ -525,26 +538,26 @@ def _report_post(
     "committed 20078 rows" on 2026-09-23 and again on 2026-09-24 for a session
     the lake already held, while 2026-09-23 was being lost unmentioned.
 
-    ``dropped``: an earlier attempt lost its connection after sending, so a
-    no-op answer most likely means that attempt committed the rows.
+    ``may_have_landed``: an earlier attempt failed after sending, so a no-op
+    answer cannot say "wrote nothing" -- that attempt may have committed the
+    rows, or an earlier run did; from here the two look the same.
     """
     if response.committed:
         print(
             f"{label}: committed {response.rows} rows for {response.symbols} symbols "
             f"(session {response.quote_date}) -> {response.bronze_path}"
         )
-    elif dropped:
+    elif may_have_landed:
         print(
-            f"{label}: landed (an earlier attempt likely committed it before the connection "
-            f"dropped): session {response.quote_date} -> {response.bronze_path}"
+            f"{label}: landed (an earlier attempt failed after sending and may have "
+            f"committed it): session {response.quote_date} -> {response.bronze_path}"
         )
     else:
         print(
             f"{label}: NO-OP: session {response.quote_date} was already captured, wrote "
             f"nothing -> {response.bronze_path}"
         )
-    if response.symbols_failed:
-        print(f"::warning::{label}: no quotes landed for {', '.join(response.symbols_failed)}")
+    _report_symbols(label, response.symbols_failed, response.symbols_misrouted)
     if response.symbols_off_session:
         print(
             f"::warning::{label}: off-session quotes for "
@@ -553,9 +566,25 @@ def _report_post(
         )
     if response.quarantined:
         # Expected in small numbers -- far-OTM strikes with no resting offer.
-        # Worth surfacing, never worth failing the sweep over.
-        print(f"::warning::{label}: {response.quarantined} rows quarantined (no two-sided quote)")
+        # Worth surfacing, never worth failing the sweep over. No cause is
+        # printed: the count also holds off-session and misrouted rows.
+        print(f"::warning::{label}: {response.quarantined} rows quarantined")
     return Outcome.OK
+
+
+def _report_symbols(label: str, failed: Sequence[str], misrouted: Sequence[str]) -> None:
+    """Name the symbols that landed nothing, by cause. A misrouted symbol HAD
+    quotes -- the other wing's delta signs (``Wing.split``) -- so it is not
+    reported as "no quotes": that would point the operator at a re-run, which
+    returns the same glitched chain."""
+    unquoted = [s for s in failed if s not in misrouted]
+    if unquoted:
+        print(f"::warning::{label}: no quotes landed for {', '.join(unquoted)}")
+    if misrouted:
+        print(
+            f"::warning::{label}: {', '.join(misrouted)} carried the other wing's delta "
+            "signs; quarantined whole"
+        )
 
 
 if __name__ == "__main__":

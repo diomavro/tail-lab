@@ -164,6 +164,9 @@ class IngestResult:
     #: Their rows are quarantined rather than filed under a session they did
     #: not trade in, and they have NO quotes for this session.
     symbols_off_session: tuple[str, ...] = ()
+    #: Symbols quarantined whole for carrying the other wing's delta signs
+    #: (``Wing.split``): they had quotes, just not this wing's.
+    symbols_misrouted: tuple[str, ...] = ()
 
 
 def cboe_symbol(symbol: str) -> str:
@@ -312,16 +315,15 @@ def _fetch_with_retry(
     )
 
 
-def validate_and_quarantine(
-    df: pd.DataFrame, schema: type[OptionChainSnapshotSchema] = OptionChainSnapshotSchema
-) -> tuple[pd.DataFrame, pd.DataFrame]:
-    """Split ``df`` into (valid, quarantined) against ``schema`` -- the put
-    contract unless the call wing passes its own.
+def validate_and_quarantine(df: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame]:
+    """Split ``df`` into (valid, quarantined) against the PUT contract.
 
+    The adapters' common entry point, kept for that convention; the writers
+    themselves go through ``Wing.split``, which also picks the wing's schema.
     Bad rows are never silently dropped: they come back in the second frame
     so the caller can persist them for inspection.
     """
-    return split_valid_and_quarantined(df, schema)
+    return split_valid_and_quarantined(df, OptionChainSnapshotSchema)
 
 
 def fetch_chains(
@@ -429,8 +431,9 @@ def ingest_option_chain(
     from them counts as failed, exactly as a fetch failure does. That is how
     ``--local`` slices both wings out of one fetch per chain, and tests pass
     ``fetch_chains(symbols, fake_fetch)`` to run without a socket. A symbol
-    whose fetch or parse fails is recorded in ``symbols_failed`` and skipped -- one dead chain must not
-    cost the other sixty-nine their only chance at today's quotes.
+    whose fetch or parse fails is recorded in ``symbols_failed`` and
+    skipped -- one dead chain must not cost the other sixty-nine their only
+    chance at today's quotes.
 
     Raises ``IncompleteSweepError`` when fewer than ``min_symbol_fraction`` of
     the requested chains returned AND no partition exists yet for the session:
@@ -451,21 +454,22 @@ def ingest_option_chain(
     # Per symbol, as the route does (``Wing.split``): a chain whose deltas are
     # the other wing's is quarantined whole, so both writers agree on what a
     # Cboe sign glitch costs -- that symbol, never the session.
-    valid, quarantined, misrouted = wing.split(parsed.combined())
-    if misrouted:
+    split = wing.split(parsed.combined())
+    if split.misrouted:
         _LOGGER.warning(
-            "event=ingestion.option_chain.misrouted dataset=%s symbols=%s -- their deltas "
-            "are the other wing's; quarantined whole",
+            "event=ingestion.option_chain.misrouted dataset=%s symbols=%s rows=%d -- their "
+            "deltas are the other wing's; quarantined whole",
             wing.dataset,
-            ",".join(misrouted),
+            ",".join(split.misrouted),
+            split.misrouted_rows,
         )
 
     # Partition by the SESSION the quotes belong to, never by the clock --
     # see the note in ``api/ingest_routes``. Shared with that route so the two
     # writers cannot drift apart again (``contracts.option_chain.SessionPlan``).
     plan = plan_session_write(
-        valid,
-        quarantined,
+        split.valid,
+        split.quarantined,
         requested=symbols,
         fetched_ok=parsed.ok,
         fetch_failed=parsed.failed,
@@ -523,6 +527,7 @@ def ingest_option_chain(
         per_symbol_rows=parsed.per_symbol,
         committed=not plan.already_captured,
         symbols_off_session=plan.symbols_off_session,
+        symbols_misrouted=split.misrouted,
     )
     _log_run(result, ingest_date)
     return result
@@ -542,6 +547,7 @@ def _log_run(result: IngestResult, ingest_date: dt.date) -> None:
         unparsed_contracts=result.unparsed_contracts or None,
         committed=result.committed,
         symbols_off_session=",".join(result.symbols_off_session) or None,
+        symbols_misrouted=",".join(result.symbols_misrouted) or None,
         bronze_path=result.bronze_path,
     )
 

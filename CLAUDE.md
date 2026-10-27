@@ -197,7 +197,7 @@ them.
 
 The layer boundaries and dependency rules in `ARCHITECTURE.md` are enforced and real, but its file tree describes the end state, not the current code. As of now:
 
-- `contracts/` is one module per dataset (`vix.py`, `ohlcv.py`, `regime.py`, `options_calendar.py`, `option_quotes.py`, `option_chain.py`, `rates.py`, `credit.py`, `cboe_strategy.py`, `hypothesis.py`, `tiingo_eod.py`), not the single `datasets.py` shown.
+- `contracts/` is one module per dataset (`vix.py`, `ohlcv.py`, `regime.py`, `options_calendar.py`, `option_quotes.py`, `option_chain.py`, `rates.py`, `credit.py`, `cboe_strategy.py`, `hypothesis.py`, `tiingo_eod.py`), not the single `datasets.py` shown. One exception: `option_chain.py` holds both chain wings, `option_chain_snapshot` and `option_chain_call_snapshot` (`docs/adr/0031`).
 - `lake/` is `store.py` (`LakeStore` protocol + `DeltaLakeStore`, including as-of resolution — there is no separate `asof.py`) and `blob_store.py` (JSON blobs, used by feedback).
 - `api/` is flat (`main.py`, `putlab_routes.py`, `feedback_routes.py`, `ingest_routes.py`, `schemas.py`), no `routes/` subpackage yet.
 - `feedback/` is a real layer (peer of ingestion/transforms in the import-linter contract) not shown in the tree.

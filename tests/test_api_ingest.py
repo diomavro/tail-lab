@@ -617,6 +617,7 @@ def test_one_symbols_wrong_signs_cost_that_symbol_not_the_session(
     answer = resp.json()
     assert (answer["rows"], answer["quarantined"]) == (460, 21)
     assert answer["symbols_failed"] == ["XLE"]
+    assert answer["symbols_misrouted"] == ["XLE"]
     day = dt.date(2026, 8, 26)
     assert "XLE" not in set(store.read_bronze_as_of(dataset, day)["underlying"])
     assert set(store.read_bronze_as_of(quarantine, day)["underlying"]) == {"XLE"}

@@ -61,9 +61,10 @@ def test_a_transient_500_is_retried_and_the_session_is_saved(
         return {"rows": 20113}
 
     monkeypatch.setattr(chain_snapshot, "_post_once", fake)
-    assert chain_snapshot._post("http://x", chain_snapshot.PUT_PATH, "t", {"rows": []}, 30) == (
+    # True: the 500 may have followed the commit (`_failed_after_send`).
+    assert chain_snapshot._post("http://x", "P", "t", {"rows": []}, 30) == (
         {"rows": 20113},
-        False,
+        True,
     )
     assert len(calls) == 2
 
@@ -98,7 +99,7 @@ def test_only_faults_a_retry_could_fix_are_retried(
 
     monkeypatch.setattr(chain_snapshot, "_post_once", fake)
     with pytest.raises(urllib.error.HTTPError):
-        chain_snapshot._post("http://x", chain_snapshot.PUT_PATH, "t", {"rows": []}, 30)
+        chain_snapshot._post("http://x", "P", "t", {"rows": []}, 30)
     assert len(calls) == expected_calls
 
 
@@ -121,7 +122,7 @@ def test_it_gives_up_rather_than_retrying_forever(monkeypatch: pytest.MonkeyPatc
 
     monkeypatch.setattr(chain_snapshot, "_post_once", fake)
     with pytest.raises(urllib.error.HTTPError):
-        chain_snapshot._post("http://x", chain_snapshot.PUT_PATH, "t", {"rows": []}, 30)
+        chain_snapshot._post("http://x", "P", "t", {"rows": []}, 30)
     assert len(calls) == chain_snapshot.POST_ATTEMPTS
 
 

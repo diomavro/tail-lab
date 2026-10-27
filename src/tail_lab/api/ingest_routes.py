@@ -46,6 +46,7 @@ from tail_lab.contracts.option_chain import (
     IngestDateMismatch,
     SessionInProgress,
     Wing,
+    WingSplit,
     plan_session_write,
 )
 from tail_lab.lake.store import LAKE_WRITE_ERRORS, LakeStore
@@ -87,7 +88,7 @@ def ingest_option_chain_call_snapshot(
     return _ingest_chain(body, authorization, store, wing=WINGS["C"])
 
 
-def _split(frame: pd.DataFrame, wing: Wing) -> tuple[pd.DataFrame, pd.DataFrame]:
+def _split(frame: pd.DataFrame, wing: Wing) -> WingSplit:
     """``wing.split`` plus its log line, and a 422 when nothing is left.
 
     Its own function so ``_ingest_chain`` stays under the complexity ratchet.
@@ -95,25 +96,29 @@ def _split(frame: pd.DataFrame, wing: Wing) -> tuple[pd.DataFrame, pd.DataFrame]
     (:meth:`Wing.split`), the same rule the local writer runs, so one
     symbol's glitch costs that symbol and the floor decides the session.
     """
-    valid, quarantined, misrouted = wing.split(frame)
-    if misrouted:
+    split = wing.split(frame)
+    if split.misrouted:
         _LOGGER.warning(
             "event=api.ingest.option_chain.misrouted dataset=%s symbols=%s rows=%d -- "
             "their deltas are the other wing's; quarantined whole",
             wing.dataset,
-            ",".join(misrouted),
-            int(frame["underlying"].astype(str).str.upper().isin(misrouted).sum()),
+            ",".join(split.misrouted),
+            split.misrouted_rows,
         )
-    if valid.empty:
-        why = f"; {', '.join(misrouted)} carry the other wing's deltas" if misrouted else ""
+    if split.valid.empty:
+        why = (
+            f"; {', '.join(split.misrouted)} carry the other wing's deltas"
+            if split.misrouted
+            else ""
+        )
         raise HTTPException(
             status_code=422,
             detail=(
-                f"no rows satisfied the contract ({len(quarantined)} quarantined){why}; "
+                f"no rows satisfied the contract ({len(split.quarantined)} quarantined){why}; "
                 f"nothing written to {wing.dataset}"
             ),
         )
-    return valid, quarantined
+    return split
 
 
 def _ingest_chain(
@@ -150,7 +155,7 @@ def _ingest_chain(
     # kept the rest. Two writers disagreeing about what a bad row costs is
     # how a session gets lost, which is the one thing this dataset cannot
     # afford. A 422 now means nothing at all validated.
-    valid, quarantined = _split(frame, wing)
+    split = _split(frame, wing)
 
     # The partition IS the session, not the wall clock. Scheduled runners
     # drift -- GitHub ran the 21:30 cron at 00:57 the next day on the very
@@ -168,8 +173,8 @@ def _ingest_chain(
     present = {str(u).upper() for u in frame["underlying"].unique()}
     try:
         plan = plan_session_write(
-            valid,
-            quarantined,
+            split.valid,
+            split.quarantined,
             requested=requested,
             fetched_ok=[s for s in requested if s in present],
             fetch_failed=[s for s in requested if s not in present],
@@ -226,6 +231,7 @@ def _ingest_chain(
         committed=not plan.already_captured,
         symbols_failed=",".join(plan.symbols_failed) or None,
         symbols_off_session=",".join(plan.symbols_off_session) or None,
+        symbols_misrouted=",".join(split.misrouted) or None,
         market_session=body.market_session,
         bronze_path=bronze_path,
     )
@@ -240,6 +246,7 @@ def _ingest_chain(
         committed=not plan.already_captured,
         symbols_failed=plan.symbols_failed,
         symbols_off_session=plan.symbols_off_session,
+        symbols_misrouted=split.misrouted,
     )
 
 

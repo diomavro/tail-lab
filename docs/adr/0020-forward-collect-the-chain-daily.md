@@ -58,11 +58,11 @@ Yahoo's `/v7/finance/options`, named as the fallback in
 `contracts/options_calendar`, now answers 401 without a cookie+crumb pair; Cboe
 needs neither.
 
-**2. Store a slice, not the chain.** Puts only (amended by 0031), strikes within 0.40–1.05 of
-spot, tenors 0–180 days. SPY's full document is 5.9 MB and 13,288 contracts;
-the slice is ~3,600 rows. The bands match `contracts/option_quotes` so the
-vendor back-history and this forward collection union on their shared columns
-without a translation layer.
+**2. Store a slice, not the chain.** Puts only (amended by 0031), strikes
+within 0.40–1.05 of spot, tenors 0–180 days. SPY's full document is 5.9 MB
+and 13,288 contracts; the slice is ~3,600 rows. The bands match
+`contracts/option_quotes` so the vendor back-history and this forward
+collection union on their shared columns without a translation layer.
 
 **3. Cboe's zero-filled greeks are stored as null, not zero.** A listed put
 cannot have 0.0 implied volatility, so a zero there is a sentinel. Storing it
