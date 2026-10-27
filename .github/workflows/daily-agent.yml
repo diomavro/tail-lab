@@ -259,7 +259,7 @@ jobs:
                renames anything a human reads — a view, a tile, a column header, a
                `research/` module — name it from the CLOSED desk vocabulary in
                `docs/adr/0021`: Screen, Tape, Marks, Book, Blotter, Carry, Surface, Regime,
-               Prior Art, Bake-off. "Leaderboard", "dashboard", "panel" and "tool" are not
+               Prior Art, Bake-off, Pitch. "Leaderboard", "dashboard", "panel" and "tool" are not
                desk words and describe nothing. Needing a word that is not on the list is
                fine, but it is an ADR to propose, not a name to invent in a PR. Add tests that pin
                behavior against a known/independent value per `docs/STANDARDS.md`. Respect the

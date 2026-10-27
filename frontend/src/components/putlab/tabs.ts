@@ -15,6 +15,9 @@ export const TABS: { id: TabId; label: string }[] = [
   { id: 'bakeoff', label: 'Bake-off' },
   { id: 'regime', label: 'Regime' },
   { id: 'surface', label: 'Surface' },
+  // The verdict on whether any of the above is a strategy (docs/adr/0021,
+  // 2026-10-27 amendment): a reading page, so it sits with the Glossary.
+  { id: 'pitch', label: 'Pitch' },
   { id: 'glossary', label: 'Glossary' },
 ]
 

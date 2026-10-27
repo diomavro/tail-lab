@@ -30,6 +30,8 @@ export const RAIL: Record<TabId, readonly RailSection[]> = {
   // (accuracy.select_reference), so those two drive numbers on this tab.
   regime: ['strike', 'tenor'],
   glossary: [],
+  // Reads nothing from the controls: its figures are a committed study.
+  pitch: [],
 }
 
 /** The collapsed rail's one-line summary on a narrow screen: only what this

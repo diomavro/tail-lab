@@ -486,6 +486,8 @@
 .pl-table .dimmer { color: var(--ink-45); }
 .pl-table .bold { font-weight: 600; }
 .pl-table .nowrap { white-space: nowrap; }
+/* An ISO date in prose: Chromium breaks after its hyphens ("2020-02-" / "21"). */
+.pl-date { white-space: nowrap; }
 .pl-scroll { overflow-x: auto; }
 .pl-scroll-y { max-height: 460px; overflow-y: auto; }
 /* Eleven columns of figures: a step down from the shared table size. */
@@ -1451,3 +1453,54 @@
    9.5:1 dark), not the table default --ink-45 (2.6:1 on light paper). Row
    headers (.pl-explain-rowhead, above) read in full --ink on top of this. */
 .pl-explain .pl-table th { white-space: normal; color: var(--ink-70); }
+
+/* ---------------------------------------------------------------- pitch --- */
+/* A reading page: one measure wide, tables scroll inside .pl-scroll. */
+.pl-pitch { max-width: 980px; }
+.pl-pitch h3 { font-size: 19px; margin-bottom: var(--space-2); }
+.pl-pitch .pl-note { margin: var(--space-2) 0; }
+.pl-pitch .pl-table { margin: var(--space-2) 0; }
+.pl-pitch-list { font-size: 14px; line-height: 1.55; max-width: 80ch; padding-left: 1.3em; }
+.pl-pitch-list li { margin-bottom: var(--space-2); }
+.pl-pitch code {
+  display: inline;
+  font-size: 12.5px;
+  line-height: inherit;
+  padding: 0 3px;
+  color: var(--ink);
+  background: var(--paper-2);
+  overflow-wrap: anywhere;
+}
+.pl-pitch-short { display: none; }
+@media (max-width: 640px) {
+  .pl-pitch-long { display: none; }
+  .pl-pitch-short { display: inline; white-space: nowrap; }
+}
+/* A lake snapshot id is long and unbroken: let it wrap. On a phone the data
+   table stacks, one dataset per block with each cell labelled, so "What it
+   is" and "Known gaps" are read without scrolling sideways past the id. */
+.pl-pitch .pl-pitch-id { overflow-wrap: anywhere; max-width: 14em; font-size: 12px; }
+@media (max-width: 640px) {
+  .pl-pitch-stack thead { display: none; }
+  .pl-pitch-stack, .pl-pitch-stack tbody, .pl-pitch-stack tr, .pl-pitch-stack td { display: block; }
+  .pl-pitch-stack tr { padding: var(--space-2) 0; border-bottom: 1px solid var(--rule); }
+  .pl-pitch-stack td { white-space: normal; padding: 2px 0; max-width: none; border: 0; }
+  /* Outranks the 14em cap above, so a stacked id wraps at the row's width
+     and its snapshot date stays whole. */
+  .pl-pitch .pl-pitch-stack .pl-pitch-id { max-width: none; }
+  .pl-pitch-stack td::before { display: block; font-size: 11px; color: var(--ink-70); text-transform: uppercase; letter-spacing: 0.04em; }
+  .pl-pitch-stack td:nth-child(1)::before { content: 'Dataset (lake snapshot)'; }
+  .pl-pitch-stack td:nth-child(2)::before { content: 'Span'; }
+  .pl-pitch-stack td:nth-child(3)::before { content: 'What it is'; }
+  .pl-pitch-stack td:nth-child(4)::before { content: 'Known gaps'; }
+  /* The schedule stacks the same way, so "A decision?" is not off-screen. */
+  .pl-pitch-sched td:nth-child(1)::before { content: 'What runs'; }
+  .pl-pitch-sched td:nth-child(2)::before { content: 'When'; }
+  .pl-pitch-sched td:nth-child(3)::before { content: 'What it produces'; }
+  .pl-pitch-sched td:nth-child(4)::before { content: 'A decision?'; }
+}
+/* On a phone the wide study tables scroll inside .pl-scroll; say so. */
+.pl-pitch-scrollhint { display: none; margin: 0; font-size: 12px; color: var(--ink-70); }
+@media (max-width: 640px) {
+  .pl-pitch-scrollhint { display: block; }
+}
