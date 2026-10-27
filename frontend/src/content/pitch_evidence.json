@@ -1,10 +1,10 @@
 {
  "as_of": "2026-10-27",
  "code": {
-  "sha": "eb4f627d17b0f1cba15713a92370e87d3a30a75a",
+  "sha": "acdb7657059ff3f2d24d74fd20eb10e0333303b6",
   "tree": {
    "src": "779cbbd61f91c40e7e510497c411fe23fa9dc5d1",
-   "scripts": "182cab3347d8dce3df9a45da4e30e40e957baecc"
+   "scripts": "7c25eef48e5a089a6ae6812872de19dc4905a5f5"
   },
   "dirty": false
  },
@@ -12,11 +12,11 @@
  "commission_per_contract": 0.65,
  "block_rolls": 6,
  "snapshots": {
-  "optionsdx_quotes_spy": "optionsdx_quotes_spy@2026-09-03#43b1a82bf373b27d",
-  "optionsdx_quotes_qqq": "optionsdx_quotes_qqq@2026-09-03#4cc195efce048a8d",
   "vix": "vix@2026-10-27#0dbe8f20c757ba39",
   "rates": "rates@2026-10-27#b2e459a1dce9be15",
   "cboe_strategy": "cboe_strategy@2026-10-27#9a156384f640258a",
+  "optionsdx_quotes_spy": "optionsdx_quotes_spy@2026-09-03#43b1a82bf373b27d",
+  "optionsdx_quotes_qqq": "optionsdx_quotes_qqq@2026-09-03#4cc195efce048a8d",
   "option_quotes": "option_quotes@2026-09-21#0e7740d6f821857b"
  },
  "panels": {
@@ -2909,6 +2909,7 @@
    "2023-12-29"
   ],
   "min_is_taken": 8,
+  "budget": 0.005,
   "roi_diff": {
    "eligible": 408,
    "rule": "20pct_12w_sell4w",

@@ -171,6 +171,33 @@ test('the data table shows what each dataset is without a sideways scroll on a p
   }
 })
 
+test('on a phone the schedule shows whether each job makes a decision without scrolling', async ({ page }) => {
+  // "A decision?" answers the section's question and once sat off-screen at 390px.
+  await page.setViewportSize({ width: 390, height: 800 })
+  const rows = page.getByTestId('pitch-schedule').locator('tbody tr')
+  for (const i of [0, (await rows.count()) - 1]) {
+    const box = await rows.nth(i).locator('td:nth-child(4)').boundingBox()
+    expect(box).not.toBeNull()
+    expect(box!.x).toBeGreaterThanOrEqual(0)
+    expect(box!.x + box!.width).toBeLessThanOrEqual(390)
+  }
+})
+
+test('defines the crisis label by its hysteresis band, not by a bare 28', async ({ page }) => {
+  // The label turns crisis at 29 and leaves below 27: a 28.5 close after an
+  // elevated day is not crisis, so "VIX at or above 28" describes another filter.
+  const text = await page.locator('.pl-pitch').innerText()
+  expect(text).not.toMatch(/at or above 28|crisis from 28/)
+  expect(text).toContain('turns crisis at 29 or more and leaves crisis only below 27')
+})
+
+test('says what budget the timing growth figure is at, and what it is compared with', async ({ page }) => {
+  const b = `${(EVIDENCE.timing.budget * 100).toFixed(2)}%`
+  const timing = page.locator('#pitch-timing')
+  await expect(timing).toContainText(`at ${b} of wealth per roll taken against the spend-matched book`)
+  await expect(page.locator('#pitch-method')).toContainText(`× the share of rolls the filter took`)
+})
+
 test('no 2008-09 refusal reason prints a quote', async ({ page }) => {
   // option_quotes is cleared for private research only and this page is
   // public: a reason names the guard, never a bid, ask or strike.

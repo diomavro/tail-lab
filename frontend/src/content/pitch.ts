@@ -202,6 +202,8 @@ export interface PitchEvidence {
     oos_period: string[]
     /** A combination is eligible only if its filter took at least this many in-sample rolls. */
     min_is_taken: number
+    /** Share of wealth spent per roll taken in the growth comparison. */
+    budget: number
     /** Share of entries with an implied-alpha reading, lowest and highest over the rules. */
     alpha_coverage: number[]
     roi_diff: Selected

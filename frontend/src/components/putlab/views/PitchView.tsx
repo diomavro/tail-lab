@@ -16,6 +16,8 @@ import { fmtFixed } from '../format'
 const SPY = E.SPY
 const QQQ = E.QQQ
 const T = E.timing
+/** The growth comparison's spend per roll taken, as section 2 prints budgets. */
+const timingBudget = `${(T.budget * 100).toFixed(2)}%`
 
 /** Signed percent with a true minus, at `digits` decimals. */
 function pct(x: number, digits = 1): string {
@@ -268,8 +270,16 @@ export function PitchView() {
             return of a whole book: what compounds, and the yardstick a hedge is sized on (docs/END_STATE.md §4 Q8).
           </li>
           <li>
-            <strong>VIX regimes.</strong> <ConceptInfo id="regime" /> Calm: VIX under 17. Elevated: 17 to 28.
-            Crisis: 28 and above, with a one-point hysteresis band (contracts/regime.py).
+            <strong>VIX regimes.</strong> <ConceptInfo id="regime" /> The base thresholds are 17 (calm below,
+            elevated above) and 28 (crisis above), but each close’s label carries a one-point hysteresis band
+            (contracts/regime.py), labelled causally from the VIX history’s first close in 1990. The label turns
+            elevated at a close of 18 or more and goes back to calm only below 16; it turns crisis at 29 or more
+            and leaves crisis only below 27. So a 28.5 close after an elevated day is still elevated, and a 27.5
+            close after a crisis day is still crisis.
+          </li>
+          <li>
+            <strong>Winners.</strong> Rolls whose return on premium, after commission, is above zero. The word
+            means only that here; a combination chosen by a search is called the <em>pick</em>.
           </li>
         </ul>
       </section>
@@ -281,7 +291,7 @@ export function PitchView() {
           {LIVE.code_sha}; live readings on {LIVE.read_on}.)
         </p>
         <div className="pl-scroll">
-          <table className="pl-table">
+          <table className="pl-table pl-pitch-stack pl-pitch-sched" data-testid="pitch-schedule">
             <thead>
               <tr>
                 <th>What runs</th>
@@ -348,6 +358,7 @@ export function PitchView() {
           significance test, no minimum sample: the crisis slice below holds 1 or 2 rolls. SPY, 5% OOM, 4 weeks,
           4-year window, by as-of date (GET /api/putlab/regime-verdict?asset=spy&amp;moneyness_pct=5&amp;as_of=…):
         </p>
+        <p className="pl-pitch-scrollhint">The table scrolls sideways →</p>
         <div className="pl-scroll">
           <table className="pl-table" data-testid="pitch-flips">
             <thead>
@@ -451,7 +462,7 @@ export function PitchView() {
               <tr>
                 <td className="pl-pitch-id">{E.snapshots.vix}</td>
                 <td>1990 → today</td>
-                <td>Cboe VIX close; the regime bands (calm under 17, crisis from 28) and the timing filters</td>
+                <td>Cboe VIX close; the regime label (crisis entered at a close of 29, left below 27; see Terms) and the timing filters</td>
                 <td>—</td>
               </tr>
               <tr>
@@ -529,11 +540,14 @@ export function PitchView() {
             label from the <em>prior</em> close; the put’s implied vol over VIX, its cost as a share of spot, and the
             implied tail index α from the same close the put is bought at (definitions below). Thirty-five filters
             (each continuous signal at or below, or at or above, its in-sample 33rd, 50th or 67th percentile: 30;
-            plus five regime sets) × 12 rules = {T.combinations} combinations. Thresholds and the winner are chosen
-            on rolls entered {T.is_period[0]} to {T.is_period[1]}; the winner is then tested on{' '}
+            plus five regime sets) × 12 rules = {T.combinations} combinations. Thresholds and the pick are chosen
+            on rolls entered {T.is_period[0]} to {T.is_period[1]}; the pick is then tested on{' '}
             {T.oos_period[0]} to {T.oos_period[1]}. A combination is eligible only if its filter took at least{' '}
             {T.min_is_taken} rolls in sample, which leaves {T.bh.tested} of the {T.combinations}. Two objectives: mean return on the
-            rolls taken minus on all rolls, and growth against a book spending the same total.
+            rolls taken minus on all rolls; and, as a hedge, the time-average growth of SPY plus puts bought at{' '}
+            {timingBudget} of wealth on each roll the filter takes, minus that of a book buying the same rule on
+            every roll at {timingBudget} × the share of rolls the filter took, so the two spend the same on
+            average.
           </li>
           <li>
             <strong>P-values.</strong> For one combination, the out-of-sample rolls are resampled {bootReps.toLocaleString('en-US')}{' '}
@@ -739,6 +753,7 @@ export function PitchView() {
           ; the licence is unresolved, so this is research use only. Unhedged, the book ends at{' '}
           {fmtFixed(C08['5pct'].unhedged.terminal, 4)} of its starting wealth, with a {pct(C08['5pct'].unhedged.max_dd)} drawdown.
         </p>
+        <p className="pl-pitch-scrollhint">The table scrolls sideways →</p>
         <div className="pl-scroll">
           <table className="pl-table" data-testid="pitch-2008">
             <thead>
@@ -830,7 +845,7 @@ export function PitchView() {
       <section className="pl-section" id="pitch-timing">
         <h3>3. Can timing rescue it?</h3>
         <p className="pl-note">
-          The in-sample winner on mean return
+          The in-sample pick on mean return
           {selDg.rule === sel.rule && selDg.gate === sel.gate ? ' — and on growth —' : ''} was {ruleLabel(sel.rule)},
           bought only when {gateLabel(sel.gate)}.
           {sameClose(sel.gate) && (
@@ -846,8 +861,9 @@ export function PitchView() {
           )}{' '}
           {selDg.rule === sel.rule && selDg.gate === sel.gate
             ? 'As a hedge'
-            : `The growth objective's winner, ${ruleLabel(selDg.rule)} when ${gateLabel(selDg.gate)}`}
-          , against a book spending the same: {pp(selDg.oos.dg)} out of sample, interval{' '}
+            : `The growth objective's pick, ${ruleLabel(selDg.rule)} when ${gateLabel(selDg.gate)}`}
+          , at {timingBudget} of wealth per roll taken against the spend-matched book (method, Timing):{' '}
+          {pp(selDg.oos.dg)} out of sample, interval{' '}
           [{pp(selDg.oos_ci95[0]!)}, {pp(selDg.oos_ci95[1]!)}], p = {selDg.oos_p.toFixed(3)}.
         </p>
         <p className="pl-note">
@@ -911,7 +927,7 @@ export function PitchView() {
           {notCrisisEverySold
             ? `The ${T.bh.smallest_p.length} smallest p-values are the same filter, once on each of the ${soldRules.length} sold rules`
             : `${notCrisisSmallest.length} of the ${T.bh.smallest_p.length} smallest p-values are the same filter, on ${new Set(notCrisisSmallest.map((x) => x.rule)).size} different sold rules`}
-          : do not buy when the prior close’s regime is crisis (VIX at or above 28). It lifted their out-of-sample mean by{' '}
+          : do not buy when the prior close’s regime label is crisis (entered at a VIX close of 29 or more, left only below 27: see Terms). It lifted their out-of-sample mean by{' '}
           {fmtFixed(Math.min(...notCrisisSmallest.map((x) => x.oos.roi_diff ?? 0)), 3)} to{' '}
           {fmtFixed(Math.max(...notCrisisSmallest.map((x) => x.oos.roi_diff ?? 0)), 3)} per dollar, taking{' '}
           {notCrisisSmallest[0]?.oos.taken} of {notCrisisSmallest[0]?.oos.n} rolls, with p from{' '}
