@@ -317,6 +317,7 @@ jobs:
                quietly widen everything else (`docs/adr/0022`, `docs/adr/0030`).
                Do NOT edit those — if a change needs one, describe it in the PR body / propose an
                ADR for a human.
+
             8. DECISION NOTE — your final message, every run, whatever happened. The next workflow
                step publishes it in this run's summary, and this repo is PUBLIC: never quote a token
                or any secret, and refer to feedback ONLY by its id and kind -- never quote,
