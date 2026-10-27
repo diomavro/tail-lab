@@ -17,9 +17,15 @@ through the platform's own guard pipeline,
 (point in time), the nearest listed expiry AT OR AFTER the target, a listed
 strike within ``MAX_SNAP_MONEYNESS_PP`` (1pp) of the requested distance, bid
 > 0 and relative spread <= ``marks.MAX_RELATIVE_SPREAD`` (50%), bought at the
-ASK; a sale is at the BID (when no exit bid passes the guards, at intrinsic --
-the American put's exercise value -- counted per rule as
-``exits_at_intrinsic``). Commission ``brokerage.COMMISSION_PER_CONTRACT``
+ASK; a sale is at the BID. When there is no exit bid it is credited intrinsic
+(the American put's exercise value), counted per rule as
+``exits_at_intrinsic``. Almost all of those are not refused bids: the panel keeps
+only strikes within ``contracts.optionsdx`` MONEYNESS_MIN..MONEYNESS_MAX
+(0.60-1.02) of spot, so a put more than 2% in the money at exit has no quote at
+all (``exits_beyond_panel``). Intrinsic drops the time value such a put still
+has, and that happens on crash exits, so it biases sold-rule returns, winners
+and hedge growth AGAINST the put; the same truncation marks a deep put at
+intrinsic on the books' daily paths. Commission ``brokerage.COMMISSION_PER_CONTRACT``
 ($0.65) per contract on a buy and on a sale, none on expiry.
 
 Three questions, all on SPY (2010-2023) and, for the first two, QQQ (2012-2023):
@@ -63,6 +69,7 @@ import pandas as pd
 
 import tail_lab
 from tail_lab.config import Settings, get_lake_store
+from tail_lab.contracts.optionsdx import MONEYNESS_MAX
 from tail_lab.contracts.regime import classify_vix_series
 from tail_lab.lake.store import LakeStore
 from tail_lab.research.backtest import marks
@@ -138,9 +145,13 @@ class Roll:
     dte: int
     roi: float  # per unit of premium budget, after commissions
     path: pd.Series = field(repr=False)  # daily value of one unit of budget
-    #: A sale whose exit bid the guards refused, credited at intrinsic
+    #: A sale with no qualifying exit bid, credited at intrinsic
     #: (strike - spot, what exercising the American put pays) instead.
     exit_at_intrinsic: bool = False
+    #: Of those, one whose strike/spot at exit is above the panel's
+    #: ``MONEYNESS_MAX``: the dataset holds no quote for it at all, so the
+    #: credit omits the put's remaining time value (biased against the put).
+    exit_beyond_panel: bool = False
 
 
 @dataclass
@@ -263,8 +274,10 @@ def run_rolls(
             bid = mkt.src.mark(
                 entry_date=exit_.date(), strike=f.strike, expiry=f.expiry, basis=f.basis
             )
-            # No bid passes the guards: credit intrinsic, the exercise value of
-            # an American put (zero when out of the money). Counted and printed.
+            # No qualifying bid: credit intrinsic, the exercise value of an
+            # American put (zero when out of the money). On the real panel that
+            # is mostly a strike beyond MONEYNESS_MAX of spot, which the dataset
+            # dropped -- not a refused bid. Counted separately and printed.
             at_intrinsic = bid is None
             v = bid if bid is not None else v
         roi = unit_value(contracts, v, sold=hold_weeks is not None) - 1.0
@@ -273,8 +286,23 @@ def run_rolls(
             if daily_paths
             else pd.Series(dtype=float)
         )
+        # The caller's spot here IS the panel's, so the basis is 1 and this is
+        # the same strike/spot the ingestion slice was cut on.
+        beyond = at_intrinsic and f.strike / s1 > MONEYNESS_MAX
         rolls.append(
-            Roll(t, exit_, f.strike, f.premium, s0, s1, f.realized_dte, roi, path, at_intrinsic)
+            Roll(
+                t,
+                exit_,
+                f.strike,
+                f.premium,
+                s0,
+                s1,
+                f.realized_dte,
+                roi,
+                path,
+                at_intrinsic,
+                beyond,
+            )
         )
         t = nxt
     return rolls, skips
@@ -1287,12 +1315,16 @@ def standalone_and_hedge(
 
 
 def intrinsic_exits(rolls: Sequence[Roll]) -> Json:
-    """Sold rolls credited intrinsic for want of a qualifying exit bid, and
-    of those the ones in the money (an out-of-the-money one is credited 0
-    and loses exactly its premium)."""
+    """Sold rolls credited intrinsic for want of a qualifying exit bid; of
+    those the ones in the money (an out-of-the-money one is credited 0 and
+    loses exactly its premium); of those the ones whose strike is beyond the
+    panel's slice, so no quote exists; and whether the rule's best roll is one."""
+    best = max(rolls, key=lambda r: r.roi, default=None)
     return {
         "exits_at_intrinsic": sum(r.exit_at_intrinsic for r in rolls),
         "exits_at_intrinsic_itm": sum(r.exit_at_intrinsic and r.roi > -1.0 for r in rolls),
+        "exits_beyond_panel": sum(r.exit_beyond_panel for r in rolls),
+        "best_roll_beyond_panel": best is not None and best.exit_beyond_panel,
     }
 
 

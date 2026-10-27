@@ -1118,7 +1118,51 @@ def test_only_an_in_the_money_intrinsic_exit_is_counted_as_one() -> None:
         return list(rolls)
 
     rolls = sold([100.0] * 10 + [80.0] * 15) + sold([100.0] * 25)
-    assert pe.intrinsic_exits(rolls) == {"exits_at_intrinsic": 2, "exits_at_intrinsic_itm": 1}
+    assert pe.intrinsic_exits(rolls) == {
+        "exits_at_intrinsic": 2,
+        "exits_at_intrinsic_itm": 1,
+        "exits_beyond_panel": 1,
+        "best_roll_beyond_panel": True,
+    }
+
+
+def _sold_at(exit_spot: float, *, bid: float) -> object:
+    """One 95 put bought at spot 100 and sold two weeks later at exit_spot,
+    with the given exit bid."""
+    panel = _panel([100.0] * 10 + [exit_spot] * 15)
+    panel.loc[10, "bid"] = bid
+    rolls, _ = pe.run_rolls(
+        pe.market_from_panel(panel, "SPY"),
+        moneyness=5.0,
+        tenor_weeks=4.0,
+        hold_weeks=2.0,
+        start="2020-01-06",
+        end="2020-01-06",
+    )
+    return rolls[0]
+
+
+def test_an_intrinsic_exit_beyond_the_strike_band_is_flagged_missing_not_refused() -> None:
+    # The optionsDX slice keeps strike/spot <= MONEYNESS_MAX (1.02): a sale
+    # more than 2% in the money has NO quote at all, so its intrinsic credit
+    # drops real time value -- a bias against the put the page must name. A
+    # zero bid inside the band is a refusal, not truncation.
+    assert pe.MONEYNESS_MAX == 1.02
+    beyond = _sold_at(93.0, bid=0.0)  # 95 / 93 = 1.0215
+    assert (beyond.exit_at_intrinsic, beyond.exit_beyond_panel) == (True, True)  # type: ignore[attr-defined]
+    at_edge = _sold_at(95.0 / 1.02, bid=0.0)  # exactly on the band's edge: still quoted
+    assert (at_edge.exit_at_intrinsic, at_edge.exit_beyond_panel) == (True, False)  # type: ignore[attr-defined]
+    refused = _sold_at(94.0, bid=0.0)  # in the money, inside the band
+    assert (refused.exit_at_intrinsic, refused.exit_beyond_panel) == (True, False)  # type: ignore[attr-defined]
+    quoted = _sold_at(80.0, bid=14.0)  # a real bid is a real bid, wherever it sits
+    assert (quoted.exit_at_intrinsic, quoted.exit_beyond_panel) == (False, False)  # type: ignore[attr-defined]
+    out = pe.intrinsic_exits([refused, beyond, quoted])  # type: ignore[list-item]
+    assert out["exits_at_intrinsic_itm"] == 2
+    assert out["exits_beyond_panel"] == 1
+    # The best roll (bid 14 at spot 80) was quoted; with it gone the best is
+    # the truncated one.
+    assert out["best_roll_beyond_panel"] is False
+    assert pe.intrinsic_exits([refused, beyond])["best_roll_beyond_panel"] is True  # type: ignore[list-item]
 
 
 def test_an_every_session_put_expiring_after_the_panel_is_refused_not_settled() -> None:
@@ -1199,3 +1243,37 @@ def test_each_snapshot_id_is_taken_just_before_its_table_is_read(
         i = calls.index(("id", ds))
         assert calls[i + 1] == ("read", ds), ds
     assert out["snapshots"] == {ds: f"{ds}@x" for _, ds in calls if _ == "id"}
+
+
+def test_the_spread_cap_check_prints_the_total_of_books_ahead_over_every_depth(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # The page prints spread_guard_off.n_beat as "N of <configs> books end
+    # ahead": it is the SUM over depths, not the largest depth's count.
+    beats = {5.0: 2, 10.0: 3, 15.0: 0, 20.0: 1}
+
+    def fake(q: object, spx: object, m: float, dates: object) -> dict[str, object]:
+        return {
+            "filled": 1,
+            "rolls": 1,
+            "n_beat": beats[m],
+            "best_entry": None,
+            "unhedged": {},
+            "books": [],
+        }
+
+    monkeypatch.setattr(pe, "_crisis_depth", fake)
+    out = pe.crisis_without_spread_guard(pd.DataFrame(), pd.Series(dtype=float), [])
+    assert out["n_beat"] == 6
+    assert out["depths"]["10pct"]["n_beat"] == 3
+
+
+def test_a_gate_is_eligible_from_exactly_min_is_taken_in_sample_rolls() -> None:
+    # The page says a combination is eligible "only if its filter took at
+    # least MIN_IS_TAKEN rolls in sample": MIN_IS_TAKEN counts, one fewer not.
+    rows = [
+        (object(), {"taken": pe.MIN_IS_TAKEN, "dg": 0.1}, {"dg": 0.0}),
+        (object(), {"taken": pe.MIN_IS_TAKEN - 1, "dg": 0.9}, {"dg": 0.0}),
+    ]
+    ok = pe._select(rows, "dg")  # type: ignore[arg-type]
+    assert [r[1]["taken"] for r in ok] == [pe.MIN_IS_TAKEN]
