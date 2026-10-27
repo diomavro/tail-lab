@@ -56,12 +56,18 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
+import tail_lab
 from tail_lab.config import Settings, get_lake_store
 from tail_lab.contracts.regime import classify_vix_series
 from tail_lab.lake.store import LakeStore
 from tail_lab.research.backtest.brokerage import COMMISSION_PER_CONTRACT
+from tail_lab.research.backtest.marks import MAX_RELATIVE_SPREAD, MIN_OPEN_INTEREST
 from tail_lab.research.backtest.multiple_testing import benjamini_hochberg
-from tail_lab.research.backtest.quote_fills import OptionQuotesSource, OptionsDxQuoteSource
+from tail_lab.research.backtest.quote_fills import (
+    MAX_SNAP_MONEYNESS_PP,
+    OptionQuotesSource,
+    OptionsDxQuoteSource,
+)
 from tail_lab.research.skew import implied_vol_put
 from tail_lab.research.surface.implied_alpha import fit_implied_alpha
 from tail_lab.research.surface.ladder import Anchor
@@ -85,6 +91,8 @@ STRUCTS: dict[str, tuple[float, float | None]] = {
     "8w_sell4w": (8.0, 4.0),
     "12w_sell4w": (12.0, 4.0),
 }
+#: The page's "declines of 10% or more", and the key ``episodes_10pct``.
+EPISODE_DD = 0.10
 BUDGETS = (0.0025, 0.005, 0.01)  # of the book, per roll
 SPANS = {"SPY": ("2010-01-04", "2023-12-29"), "QQQ": ("2012-01-03", "2023-12-29")}
 PERIODS = {
@@ -281,23 +289,26 @@ def unhedged(mkt: Market, a: pd.Timestamp, b: pd.Timestamp) -> pd.Series:
     return pd.Series(out).sort_index()
 
 
-def book(mkt: Market, rolls: Sequence[Roll], *, budget: float) -> pd.Series:
+def book(
+    mkt: Market, rolls: Sequence[Roll], *, budget: float, skip: int | None = None
+) -> pd.Series:
     """Daily wealth of a book that at each roll entry spends ``budget`` x
     wealth on that roll's puts and holds the rest in the underlying (price
     plus the flat dividend accrual); at each exit everything is rebalanced.
-    Between rolls (a refused fill) it is fully invested, never dropped."""
+    Between rolls (a refused fill) it is fully invested, never dropped.
+    Roll number ``skip``, if given, is left unhedged: the same book without
+    that one trade."""
     w = 1.0
     out: dict[pd.Timestamp, float] = {}
     prev: pd.Timestamp | None = None
-    for r in rolls:
+    for i, r in enumerate(rolls):
         if prev is not None and r.entry > prev:
             w = _equity(mkt, prev, r.entry, w, out)
+        b = 0.0 if i == skip else budget
         days = r.path.index
         sp = mkt.spot.loc[days].to_numpy()
         yrs = (days - days[0]).days.to_numpy() / 365.25
-        vals = (1.0 - budget) * w * (sp / sp[0]) * np.exp(
-            DIV_YIELD * yrs
-        ) + budget * w * r.path.to_numpy()
+        vals = (1.0 - b) * w * (sp / sp[0]) * np.exp(DIV_YIELD * yrs) + b * w * r.path.to_numpy()
         out.update(zip(days, vals, strict=True))
         w = float(vals[-1])
         prev = r.exit
@@ -419,6 +430,12 @@ def standalone_stats(df: pd.DataFrame, rng: np.random.Generator) -> Json:
     }
 
 
+def phase_means(rois: pd.Series, period: int) -> list[float]:
+    """Mean return of each of the ``period`` ways to phase a cycle: phase k
+    keeps entries k, k + period, k + 2 x period, ... (NaN = refused, dropped)."""
+    return [float(rois.iloc[k::period].dropna().mean()) for k in range(period)]
+
+
 def every_day_entries(mkt: Market, m: float, span: tuple[str, str]) -> Json:
     """The roll calendar is arbitrary: buy a 4-week put on EVERY session and
     hold it to expiry; phase k keeps every 20th entry from session k. With a
@@ -435,7 +452,7 @@ def every_day_entries(mkt: Market, m: float, span: tuple[str, str]) -> Json:
         c = 1.0 / (100.0 * f.premium + COMMISSION_PER_CONTRACT)
         rois.append(c * 100.0 * max(f.strike - float(mkt.spot[settle]), 0.0) - 1.0)
     g = pd.Series(rois)
-    means = [float(g.iloc[k::20].dropna().mean()) for k in range(20)]
+    means = phase_means(g, 20)
     ok = g.dropna()
     return {
         "entry_days": len(ok),
@@ -452,24 +469,6 @@ def every_day_entries(mkt: Market, m: float, span: tuple[str, str]) -> Json:
 # ------------------------------------------------------------- 2. hedge
 
 
-def drop_best_roll_growth(rolls: Sequence[Roll], budget: float) -> Json:
-    """Hedged-minus-unhedged log growth per year, computed roll by roll (the
-    equity-only gaps are identical in both books and cancel), with and without
-    the single best roll -- how much of a "beats unhedged" rests on one trade."""
-    df = rolls_frame(rolls)
-    eq = (
-        df.spot_exit / df.spot_entry * np.exp(DIV_YIELD * (df.exit - df.entry).dt.days / 365.25)
-    ).to_numpy()
-    lr = np.log((1 - budget) * eq + budget * (1 + df.roi.to_numpy())) - np.log(eq)
-    yrs = (df.exit.iloc[-1] - df.entry.iloc[0]).days / 365.25
-    best = int(df.roi.idxmax())
-    return {
-        "edge": float(lr.sum() / yrs),
-        "edge_without_best": float(np.delete(lr, best).sum() / yrs),
-        "best_entry": str(df.entry[best].date()),
-    }
-
-
 def hedge(mkt: Market, rolls_by_rule: dict[str, list[Roll]]) -> Json:
     a = max(r[0].entry for r in rolls_by_rule.values())
     b = min(r[-1].exit for r in rolls_by_rule.values())
@@ -478,11 +477,16 @@ def hedge(mkt: Market, rolls_by_rule: dict[str, list[Roll]]) -> Json:
     rows: list[Json] = []
     n_beat = n_cut_dd = 0
     dd0 = max_drawdown(w0)
+
+    def growth(rolls: list[Roll], budget: float, skip: int | None = None) -> pd.Series:
+        w = book(mkt, rolls, budget=budget, skip=skip)[a:b]
+        return w / w.iloc[0]
+
     for rule, rolls in rolls_by_rule.items():
         yrs = (rolls[-1].exit - rolls[0].entry).days / 365.25
+        best = max(range(len(rolls)), key=lambda i: rolls[i].roi)
         for budget in BUDGETS:
-            w = book(mkt, rolls, budget=budget)[a:b]
-            w = w / w.iloc[0]
+            w = growth(rolls, budget)
             g = ann_log_growth(w)
             row: Json = {
                 "rule": rule,
@@ -495,7 +499,13 @@ def hedge(mkt: Market, rolls_by_rule: dict[str, list[Roll]]) -> Json:
             }
             if g > g0:
                 n_beat += 1
-                row["drop_best"] = drop_best_roll_growth(rolls, budget)
+                # Same window, same daily book, the best roll left unhedged:
+                # one quantity, one value (the table's edge is this edge).
+                row["drop_best"] = {
+                    "edge": g - g0,
+                    "edge_without_best": ann_log_growth(growth(rolls, budget, best)) - g0,
+                    "best_entry": str(rolls[best].entry.date()),
+                }
             n_cut_dd += max_drawdown(w) > dd0
             rows.append(row)
     return {
@@ -883,10 +893,11 @@ def crisis_rolls(
 ) -> pd.DataFrame:
     """One put per monthly roll date, bought at the ask through
     ``OptionQuotesSource`` (its own guards, open interest included) and held
-    to expiry. Each date lists ONE expiry, so the request is that contract's
-    own tenor: "buy the next monthly put". The panel has no expiry-day spot,
-    so SPY at expiry = SPY at entry x the SPX move (one month of SPY-vs-SPX
-    tracking is the error)."""
+    to expiry. The request is the NEAREST listed expiry's own tenor: "buy the
+    next monthly put" (two 2009 dates also list a quarterly; it is not used).
+    The panel has no expiry-day spot, so SPY at expiry = SPY at entry x the
+    SPX move (one month of SPY-vs-SPX tracking is the error). A refused roll
+    carries the guard that refused it."""
     src = OptionQuotesSource(q)
     rows: list[Json] = []
     for t in dates:
@@ -896,7 +907,8 @@ def crisis_rolls(
             entry_date=t.date(), spot=s0, moneyness_pct=moneyness, tenor_weeks=(listed - t).days / 7
         )
         if f is None:
-            rows.append({"entry": t, "filled": False})
+            day = q[(q.quote_date == t) & (q.expiration == listed)]
+            rows.append({"entry": t, "filled": False, "reason": refusal_reason(day, moneyness)})
             continue
         exp = pd.Timestamp(f.expiry)
         s1 = s0 * float(spx[:exp].iloc[-1]) / float(spx[:t].iloc[-1])
@@ -910,6 +922,29 @@ def crisis_rolls(
             }
         )
     return pd.DataFrame(rows)
+
+
+def refusal_reason(at_expiry: pd.DataFrame, moneyness: float) -> str:
+    """Which of ``OptionQuotesSource``'s strike and liquidity guards refused
+    this session's put -- so a page can say WHY a roll is missing rather
+    than leave a reader to think the market refused it. Same thresholds as
+    the guards (``MAX_SNAP_MONEYNESS_PP``, ``MIN_OPEN_INTEREST``,
+    ``MAX_RELATIVE_SPREAD``), checked on the strike they would pick."""
+    spot = float(at_expiry["spot"].iloc[0])
+    target = spot * (1.0 - moneyness / 100.0)
+    row = at_expiry.iloc[int((at_expiry["strike"] - target).abs().to_numpy().argmin())]
+    got = (1.0 - float(row["strike"]) / spot) * 100.0
+    bid, ask = float(row["bid"]), float(row["ask"])
+    if abs(got - moneyness) > MAX_SNAP_MONEYNESS_PP:
+        return f"no strike within {MAX_SNAP_MONEYNESS_PP:g}pp (nearest {got:.1f}% OTM)"
+    if bid <= 0.0 or ask <= 0.0:
+        return f"no bid (strike {float(row['strike']):g})"
+    if int(row["open_interest"]) < MIN_OPEN_INTEREST:
+        return f"open interest {int(row['open_interest'])} (strike {float(row['strike']):g})"
+    spread = (ask - bid) / ((ask + bid) / 2)
+    if spread > MAX_RELATIVE_SPREAD:
+        return f"spread {spread:.0%} of mid (bid {bid:.2f}, ask {ask:.2f}, strike {float(row['strike']):g})"
+    return "refused by another guard"
 
 
 def crisis_equity(spx: pd.Series, dates: Sequence[pd.Timestamp], end: pd.Timestamp) -> np.ndarray:
@@ -959,6 +994,10 @@ def crisis_books(df: pd.DataFrame, eq: np.ndarray) -> Json:
         "hits": int((ok.roi > 0).sum()),
         "best_roi": float(ok.roi.max()),
         "best_entry": str(df.entry[best].date()),
+        "refused": [
+            {"entry": str(r.entry.date()), "reason": str(r.reason)}
+            for r in df[~df["filled"]].itertuples()
+        ],
     }
 
 
@@ -968,7 +1007,17 @@ def crisis_2008(q: pd.DataFrame, cboe: pd.DataFrame) -> Json:
     q = q.assign(quote_date=pd.to_datetime(q.quote_date), expiration=pd.to_datetime(q.expiration))
     days = pd.DatetimeIndex(q.quote_date.unique()).sort_values()
     dates = list(days[(days >= CRISIS_SPAN[0]) & (days <= CRISIS_SPAN[1])])
-    out: Json = {"roll_dates": len(dates), "first": str(dates[0].date())}
+    win = q[q.quote_date.isin(dates)]
+    nearest_dte = (
+        win.groupby("quote_date").expiration.min() - pd.Series(dates, index=dates)
+    ).dt.days
+    n_exp = win.groupby("quote_date").expiration.nunique()
+    out: Json = {
+        "roll_dates": len(dates),
+        "first": str(dates[0].date()),
+        "nearest_dte": [int(nearest_dte.min()), int(nearest_dte.max())],
+        "dates_with_two_expiries": [str(d.date()) for d in n_exp[n_exp > 1].index],
+    }
     beat = 0
     for m in DEPTHS:
         df = crisis_rolls(q, spx, m, dates)
@@ -994,9 +1043,19 @@ def exchange_calendar(cboe: pd.DataFrame) -> pd.DatetimeIndex:
 
 
 def data_quality(panel_spot: pd.Series, calendar: pd.DatetimeIndex) -> Json:
+    """Sessions against the exchange calendar. The engine treats every panel
+    date as a session, so a row dated on a closed day is used like any other;
+    ``closed_day_then_next_missing`` counts closed-day rows whose next
+    exchange session is absent from the panel -- the signature of a vendor
+    file dated one session early, not of an extra session."""
     lo, hi = panel_spot.index[0], panel_spot.index[-1]
     trading = calendar[(calendar >= lo) & (calendar <= hi)]
+    closed = [d for d in panel_spot.index if d not in calendar]
+    nxt = [first_on_or_after(trading, d) for d in closed]
     return {
+        "closed_day_then_next_missing": sum(
+            n is not None and n not in panel_spot.index for n in nxt
+        ),
         "sessions": len(panel_spot),
         "first": str(lo.date()),
         "last": str(hi.date()),
@@ -1005,7 +1064,12 @@ def data_quality(panel_spot: pd.Series, calendar: pd.DatetimeIndex) -> Json:
     }
 
 
-def standalone_and_hedge(mkt: Market, span: tuple[str, str], rng: np.random.Generator) -> Json:
+def standalone_and_hedge(
+    mkt: Market,
+    span: tuple[str, str],
+    rng: np.random.Generator,
+    closed_days: Sequence[pd.Timestamp] = (),
+) -> Json:
     rules: Json = {}
     rolls_by_rule: dict[str, list[Roll]] = {}
     for sname, (ten, hold) in STRUCTS.items():
@@ -1021,31 +1085,59 @@ def standalone_and_hedge(mkt: Market, span: tuple[str, str], rng: np.random.Gene
             print(
                 f"{mkt.symbol} {key}: n={st['n_rolls']} mean={st['mean_roi']:+.3f}", file=sys.stderr
             )
+    closed = set(closed_days)
     return {
         "standalone": rules,
+        "rolls_on_closed_days": touching_closed_days(rolls_by_rule, closed),
         "hedge": hedge(mkt, rolls_by_rule),
         "every_day": {f"{int(m)}pct_4w_hold": every_day_entries(mkt, m, span) for m in DEPTHS},
-        "episodes_10pct": drawdown_episodes(mkt.spot[span[0] : span[1]], 0.10),
+        "episodes_10pct": drawdown_episodes(mkt.spot[span[0] : span[1]], EPISODE_DD),
     }
 
 
-def code_version() -> Json:
-    """The commit that produced the file, and whether the code that ran
-    (scripts/ and src/) differed from it (README constitution, rule 4)."""
-    here = Path(__file__).resolve().parent
+def touching_closed_days(rolls_by_rule: dict[str, list[Roll]], closed: set[pd.Timestamp]) -> Json:
+    """Rolls (over every rule) entered or exited on a session the exchange
+    was shut: how much of the study the misdated rows reach."""
+    rolls = [r for rs in rolls_by_rule.values() for r in rs]
+    return {
+        "rolls": len(rolls),
+        "touching": sum(r.entry in closed or r.exit in closed for r in rolls),
+    }
+
+
+def check_imports_from(root: Path, imported: Path) -> None:
+    """Refuse to run when ``tail_lab`` is imported from another checkout's
+    ``src/`` (a worktree using the main checkout's venv does exactly that):
+    the recorded version would then name code that did not run."""
+    if not imported.resolve().is_relative_to((root / "src").resolve()):
+        raise RuntimeError(
+            f"tail_lab is imported from {imported}, not {root / 'src'}: "
+            f"set PYTHONPATH={root / 'src'}"
+        )
+
+
+def code_version(root: Path) -> Json:
+    """The commit that produced the file, the git TREE hashes of src/ and
+    scripts/ (a squash merge keeps a tree, not a branch commit), and whether
+    the code that ran differed from them (README constitution, rule 4)."""
 
     def git(*args: str) -> str:
         return subprocess.run(
-            ["git", *args], cwd=here, capture_output=True, text=True, check=True
+            ["git", *args], cwd=root, capture_output=True, text=True, check=True
         ).stdout.strip()
 
     return {
         "sha": git("rev-parse", "HEAD"),
-        "dirty": bool(git("status", "--porcelain", "--", "../scripts", "../src")),
+        "tree": {d: git("rev-parse", f"HEAD:{d}") for d in ("src", "scripts")},
+        "dirty": bool(git("status", "--porcelain", "--", "scripts", "src")),
     }
 
 
+ROOT = Path(__file__).resolve().parents[1]
+
+
 def run(store: LakeStore, as_of: dt.date) -> Json:
+    check_imports_from(ROOT, Path(tail_lab.__file__))
     rng = np.random.default_rng(SEED)
     vix_bronze = store.read_bronze_as_of("vix", as_of)
     rates = store.read_bronze_as_of("rates", as_of)
@@ -1053,7 +1145,7 @@ def run(store: LakeStore, as_of: dt.date) -> Json:
     calendar = exchange_calendar(cboe)
     out: Json = {
         "as_of": as_of.isoformat(),
-        "code": code_version(),
+        "code": code_version(ROOT),
         "dividend_yield_assumed": DIV_YIELD,
         "commission_per_contract": COMMISSION_PER_CONTRACT,
         "block_rolls": BLOCK,
@@ -1069,7 +1161,8 @@ def run(store: LakeStore, as_of: dt.date) -> Json:
         panel = store.read_bronze_columns_as_of(ds, as_of, PANEL_COLUMNS)
         mkt = market_from_panel(panel, sym)
         panels[sym] = {**data_quality(mkt.spot, calendar), "rows": len(panel)}
-        out[sym] = standalone_and_hedge(mkt, span, rng)
+        closed = [d for d in mkt.sessions if d not in calendar]
+        out[sym] = standalone_and_hedge(mkt, span, rng, closed)
         if sym == "SPY":
             spy = mkt
     for ds in ("vix", "rates", "cboe_strategy", "option_quotes"):

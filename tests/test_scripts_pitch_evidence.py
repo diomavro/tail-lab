@@ -132,10 +132,17 @@ def test_dropping_the_best_roll_removes_its_contribution() -> None:
     rolls, _ = pe.run_rolls(
         mkt, moneyness=5.0, tenor_weeks=4.0, hold_weeks=None, start="2020-01-06", end="2020-01-06"
     )
-    out = pe.drop_best_roll_growth(rolls, 0.01)
-    assert out["edge"] > 0  # a 15/share payoff on a 1.00 put
-    assert out["edge_without_best"] == 0.0  # nothing left
-    assert out["best_entry"] == "2020-01-06"
+    out = pe.hedge(mkt, {"5pct_4w_hold": rolls})
+    c = out["configs"][2]
+    assert c["edge"] > 0  # a 15/share payoff on a 1.00 put
+    # The page prints both figures side by side: they must be ONE quantity.
+    assert c["drop_best"]["edge"] == c["edge"]
+    assert c["drop_best"]["edge_without_best"] == pytest.approx(0.0)  # nothing left
+    assert c["drop_best"]["best_entry"] == "2020-01-06"
+    # Skipping the roll leaves exactly the unhedged book.
+    pd.testing.assert_series_equal(
+        pe.book(mkt, rolls, budget=0.01, skip=0), pe.book(mkt, rolls, budget=0.0)
+    )
 
 
 def test_bootstrap_p_is_never_zero() -> None:
@@ -145,6 +152,8 @@ def test_bootstrap_p_is_never_zero() -> None:
     assert p == pytest.approx(1 / 2001)
     assert p > 0.10 / 408
     assert pe.bootstrap_p(-np.ones(9)) == 1.0
+    # A draw of exactly zero is "no effect": it counts against the claim.
+    assert pe.bootstrap_p(np.array([0.0, 1.0, 1.0])) == pytest.approx(2 / 4)
 
 
 def test_block_bootstrap_keeps_neighbours_together() -> None:
@@ -421,6 +430,14 @@ def test_hedge_counts_beaters_and_drawdown_cuts_on_a_common_window() -> None:
     assert out["n_beat"] == 3  # the win rule at each of the three budgets
     assert out["n_cut_dd"] == 3
     assert {c["rule"] for c in out["configs"] if "drop_best" in c} == {"win"}
+    win = [c for c in out["configs"] if c["rule"] == "win"]
+    yrs = (mkt.sessions[21] - mkt.sessions[1]).days / 365.25
+    # "Premium/yr": one roll at b of the book, over the rule's own span, in %.
+    assert [c["premium_pct_per_year"] for c in win] == pytest.approx(
+        [b / yrs * 100 for b in pe.BUDGETS]
+    )
+    # Drop-best is measured on the same common window as the edge itself.
+    assert all(c["drop_best"]["edge"] == c["edge"] for c in win)
 
 
 def test_share_of_payoff_from_best_roll_and_by_period() -> None:
@@ -438,6 +455,17 @@ def test_share_of_payoff_from_best_roll_and_by_period() -> None:
     assert st["share_of_payoff_from_best_roll"] == pytest.approx(4 / 6)
     assert st["hits"] == 2
     assert st["best_entry"] == "2014-02-01"
+
+
+def test_a_phase_keeps_every_period_th_entry() -> None:
+    # Entries 0 and 20 caught a crash: only phase 0 holds them both.
+    rois = pd.Series([-1.0] * 40)
+    rois[[0, 20]] = 9.0
+    rois[5] = np.nan  # a refused day is dropped, not counted as a loss
+    means = pe.phase_means(rois, 20)
+    assert means[0] == 9.0
+    assert sum(m > 0 for m in means) == 1
+    assert means[5] == -1.0
 
 
 def test_every_day_entries_count_positive_phases() -> None:
@@ -482,6 +510,24 @@ def test_missing_days_are_counted_against_the_exchange_calendar() -> None:
     dq = pe.data_quality(panel, cal)
     assert dq["missing_trading_days"] == 1  # 2023-01-17
     assert dq["sessions_on_closed_days"] == ["2023-01-16"]
+    # The holiday row stands where the next session is missing: a shifted date.
+    assert dq["closed_day_then_next_missing"] == 1
+    whole = pd.Series(1.0, index=pd.to_datetime(["2023-01-13", "2023-01-16", "2023-01-17"]))
+    assert pe.data_quality(whole, cal)["closed_day_then_next_missing"] == 0
+
+
+def test_rolls_on_closed_days_count_entries_and_exits() -> None:
+    mkt = _flat_market([100.0] * 10)
+    d = mkt.sessions  # type: ignore[attr-defined]
+    rolls = {"a": [_roll(mkt, 0, 3, [1.0] * 4), _roll(mkt, 3, 6, [1.0] * 4)]}
+    assert pe.touching_closed_days(rolls, {d[6]}) == {"rolls": 2, "touching": 1}
+    assert pe.touching_closed_days(rolls, {d[3]}) == {"rolls": 2, "touching": 2}
+    assert pe.touching_closed_days(rolls, {d[5]}) == {"rolls": 2, "touching": 0}
+
+
+def test_episodes_are_declines_of_ten_percent() -> None:
+    # The page and the key both say "10% or more".
+    assert pe.EPISODE_DD == 0.10
 
 
 # ---------------------------------------------------------------- 2008-09
@@ -495,6 +541,7 @@ def test_a_crisis_book_is_rerun_without_its_best_month() -> None:
             "entry": pd.to_datetime(["2008-08-15", "2008-09-19", "2008-10-17", "2008-11-21"]),
             "filled": [True, True, False, True],
             "roi": [-1.0, 20.0, np.nan, -1.0],
+            "reason": [None, None, "spread 80% of mid", None],
         }
     )
     eq = np.array([1.0, 0.5, 1.0, 1.0])
@@ -508,6 +555,7 @@ def test_a_crisis_book_is_rerun_without_its_best_month() -> None:
     assert out["n_beat"] == 3
     assert out["filled"] == 3
     assert out["best_entry"] == "2008-09-19"
+    assert out["refused"] == [{"entry": "2008-10-17", "reason": "spread 80% of mid"}]
     # A book that never beats is not rerun, and is not counted.
     worthless = pe.crisis_books(df.assign(roi=[-1.0, -1.0, np.nan, -1.0]), eq)
     assert worthless["n_beat"] == 0
@@ -530,3 +578,190 @@ def test_the_evidence_file_never_carries_nan() -> None:
         "b": [None],
         "c": "x",
     }
+
+
+def _quotes(rows: list[tuple[str, str, float, float, float, float, int]]) -> pd.DataFrame:
+    """option_quotes-shaped rows: (quote_date, expiration, spot, strike, bid, ask, oi)."""
+    df = pd.DataFrame(
+        rows, columns=["quote_date", "expiration", "spot", "strike", "bid", "ask", "open_interest"]
+    )
+    return df.assign(
+        underlying="SPY",
+        quote_date=pd.to_datetime(df.quote_date),
+        expiration=pd.to_datetime(df.expiration),
+    )
+
+
+def test_a_crisis_roll_settles_on_spy_moved_by_the_spx_move() -> None:
+    # SPX halves between entry and expiry; SPY at 120 is assumed to halve too,
+    # to 60, so the 108 put is worth 48 a share. The second date's only 10%
+    # put is quoted 0.10 / 1.00: a 164% spread, refused -- and the row says so.
+    q = _quotes(
+        [
+            ("2008-09-19", "2008-10-17", 120.0, 108.0, 0.90, 1.00, 100),
+            ("2008-10-17", "2008-11-21", 60.0, 54.0, 0.10, 1.00, 100),
+        ]
+    )
+    spx = pd.Series([100.0, 50.0], index=pd.to_datetime(["2008-09-19", "2008-10-17"]))
+    df = pe.crisis_rolls(q, spx, 10.0, list(pd.to_datetime(["2008-09-19", "2008-10-17"])))
+    assert df.roi.iloc[0] == pytest.approx(4800.0 / (100.0 + COMMISSION_PER_CONTRACT) - 1.0)
+    assert df.expiry.iloc[0] == pd.Timestamp("2008-10-17")
+    assert df.filled.tolist() == [True, False]
+    assert df.reason.iloc[1] == "spread 164% of mid (bid 0.10, ask 1.00, strike 54)"
+
+
+def test_refusal_reasons_name_the_guard() -> None:
+    def one(strike: float, bid: float, ask: float, oi: int) -> str:
+        return pe.refusal_reason(
+            _quotes([("2008-09-19", "2008-10-17", 100.0, strike, bid, ask, oi)]), 10.0
+        )
+
+    assert one(85.0, 1.0, 1.1, 100) == "no strike within 1pp (nearest 15.0% OTM)"
+    assert one(90.0, 0.0, 1.0, 100) == "no bid (strike 90)"
+    assert one(90.0, 1.0, 1.1, 9) == "open interest 9 (strike 90)"
+    assert one(90.0, 1.0, 1.1, 100) == "refused by another guard"
+
+
+def test_the_2008_book_runs_to_the_last_filled_rolls_expiry() -> None:
+    # Two monthly roll dates, every depth listed; the 2009-01-16 date also
+    # lists a quarterly. The last roll is filled, so the unhedged arm must run
+    # to its expiry (2009-02-20), not stop at its entry.
+    rows = []
+    for d, e, sp in (("2008-12-19", "2009-01-16", 100.0), ("2009-01-16", "2009-02-20", 90.0)):
+        for k in (95.0, 90.0, 85.0, 80.0):
+            rows.append((d, e, sp, k * sp / 100, 0.9, 1.0, 100))
+    rows.append(("2009-01-16", "2009-03-31", 90.0, 81.0, 2.0, 2.1, 100))
+    q = _quotes(rows)
+    cboe = pd.DataFrame(
+        {
+            "index_symbol": "SPX",
+            "trade_date": pd.to_datetime(["2008-12-19", "2009-01-16", "2009-02-20"]),
+            "close": [100.0, 90.0, 45.0],
+        }
+    )
+    out = pe.crisis_2008(q, cboe)
+    assert out["roll_dates"] == 2
+    assert out["nearest_dte"] == [28, 35]
+    assert out["dates_with_two_expiries"] == ["2009-01-16"]
+    r = out["10pct"]
+    assert r["last"] == "2009-02-20"
+    # The final month's halving is in the unhedged arm.
+    assert r["unhedged"]["terminal"] == pytest.approx(
+        0.45 * math.exp(pe.DIV_YIELD * (28 + 35) / 365.25)
+    )
+
+
+def test_cboe_benchmark_reads_only_the_hedge_window() -> None:
+    days = pd.to_datetime(["2009-12-31", "2010-01-04", "2011-01-04", "2012-01-04"])
+    cboe = pd.DataFrame(
+        [
+            {"index_symbol": sym, "trade_date": d, "close": c}
+            for sym in ("SPX", "PPUT", "PPUT3M", "VXTH")
+            for d, c in zip(days, [50.0, 100.0, 110.0, 400.0], strict=True)
+        ]
+    )
+    out = pe.cboe_benchmark(cboe, ["2010-01-04", "2011-01-04"])
+    assert out["span"] == ["2010-01-04", "2011-01-04"]
+    assert out["SPX"]["growth"] == pytest.approx(math.log(1.1) / (365 / 365.25))
+    assert out["VXTH"]["max_dd"] == 0.0
+
+
+def _timing_combo(gate: str, take_is: list[bool], take_oos: list[bool]) -> object:
+    roi = np.array([float(i) for i in range(30)] * 2) / 10 - 1.0
+    is_ = np.array([True] * 30 + [False] * 30)
+    return pe.Combo(
+        "5pct_8w_sell4w", gate, roi, np.ones(60), np.array(take_is + take_oos), is_, 1.0, 1.0
+    )
+
+
+def test_timing_picks_the_winner_in_sample_and_scores_it_out_of_sample(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Three gates on the same rolls. In sample "top" takes the best ten rolls
+    # and "bottom" the worst; out of sample they swap. The selected winner must
+    # be the IN-SAMPLE best ("top"), scored on its out-of-sample rolls, and the
+    # in-sample/out-of-sample ranks are exactly reversed.
+    monkeypatch.setattr(pe, "P_REPS", 200)
+
+    def band(lo: int) -> list[bool]:
+        return [lo <= i < lo + 10 for i in range(30)]
+
+    combos = [
+        _timing_combo("bottom", band(0), band(20)),
+        _timing_combo("top", band(20), band(0)),
+        _timing_combo("middle", band(12), band(8)),  # +0.2 in sample, -0.2 out
+    ]
+    out = pe.timing(combos, np.random.default_rng(0))
+    for key in ("roi_diff", "dg"):
+        sel = out[key]
+        assert sel["gate"] == "top", key
+        assert sel["is"]["roi_diff"] == pytest.approx(1.0)
+        assert sel["oos"]["roi_diff"] == pytest.approx(-1.0)
+        assert sel["spearman_is_oos"] == pytest.approx(-1.0)
+        assert sel["eligible"] == 3
+        assert sel["share_positive_oos"] == pytest.approx(1 / 3)
+
+
+def test_every_benjamini_hochberg_pass_runs_at_the_stated_fdr(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # ADR 0021 §6 requires the correction, and the page prints its level.
+    monkeypatch.setattr(pe, "P_REPS", 50)
+    seen: list[float] = []
+    real = pe.benjamini_hochberg
+
+    def spy(ps: list[float], alpha: float) -> list[bool]:
+        seen.append(alpha)
+        return list(real(ps, alpha=alpha))
+
+    monkeypatch.setattr(pe, "benjamini_hochberg", spy)
+    roi = [-1.0, 2.0] * 15
+    c = _combo(roi, roi, [True, False] * 30, "5pct_8w_sell4w")
+    out = pe.benjamini_hochberg_oos([(c, {}, {"taken": 15})], np.random.default_rng(0))
+    assert seen == [0.10, 0.10]
+    assert out["fdr"] == 0.10
+
+
+def _git(cwd: Path, *args: str) -> None:
+    import subprocess
+
+    subprocess.run(
+        ["git", "-c", "user.name=t", "-c", "user.email=t@t", *args],
+        cwd=cwd,
+        check=True,
+        capture_output=True,
+    )
+
+
+def test_code_version_reports_dirty_src_and_survivable_tree_hashes(tmp_path: Path) -> None:
+    for d in ("src", "scripts", "docs"):
+        (tmp_path / d).mkdir()
+        (tmp_path / d / "f.py").write_text("x = 1\n")
+    _git(tmp_path, "init", "-q")
+    _git(tmp_path, "add", ".")
+    _git(tmp_path, "commit", "-q", "-m", "c")
+    clean = pe.code_version(tmp_path)
+    assert clean["dirty"] is False
+    assert len(clean["sha"]) == 40
+    assert set(clean["tree"]) == {"src", "scripts"}
+    (tmp_path / "docs" / "f.py").write_text("x = 2\n")
+    assert pe.code_version(tmp_path)["dirty"] is False  # docs/ did not run
+    (tmp_path / "src" / "f.py").write_text("x = 2\n")
+    assert pe.code_version(tmp_path)["dirty"] is True
+
+
+def test_the_generator_refuses_another_checkouts_tail_lab(tmp_path: Path) -> None:
+    pe.check_imports_from(tmp_path, tmp_path / "src" / "tail_lab" / "__init__.py")
+    with pytest.raises(RuntimeError, match="PYTHONPATH"):
+        pe.check_imports_from(tmp_path, Path("/elsewhere/src/tail_lab/__init__.py"))
+
+
+def test_drop_best_leaves_out_the_best_roll_not_the_first() -> None:
+    # Two rolls: a loser, then a 10x winner. Without the winner the book is
+    # the unhedged book less the loser's premium, so it falls behind.
+    mkt = _flat_market([100.0] * 12)
+    rolls = {"r": [_roll(mkt, 0, 5, [1.0] + [0.0] * 5), _roll(mkt, 5, 11, [1.0] * 6 + [10.0])]}
+    out = pe.hedge(mkt, rolls)
+    c = out["configs"][0]
+    assert c["drop_best"]["best_entry"] == str(mkt.sessions[5].date())  # type: ignore[attr-defined]
+    assert c["drop_best"]["edge_without_best"] < 0 < c["edge"]
