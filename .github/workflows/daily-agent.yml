@@ -302,8 +302,9 @@ jobs:
       # (a grep pattern, a jq filter copied from it), so this prints only:
       # the result stats, the agent's own decision note (prompt step 8,
       # written to be public), each main-agent tool call as its name plus its
-      # file_path argument, a Bash command's program name (a leading VAR=value
-      # is skipped, odd characters stripped) or a subagent type -- no command
+      # file_path argument, a Bash command's program name (words containing =
+      # are skipped; a first word that is not a plain name prints as
+      # "(other)") or a subagent type -- no command
       # text, no search pattern -- any background task, and the local
       # git state. Known secrets are redacted and backticks neutralised
       # everywhere. A diagnostics step must never turn the run red.
@@ -357,14 +358,6 @@ jobs:
                   print(clean("\n".join(local.splitlines()[:20]), 3000) or "(none)")
               print("```")
 
-          def text_of(content: object) -> str:
-              if isinstance(content, str):
-                  return content
-              if isinstance(content, list):
-                  return " ".join(text_of(b.get("text") or b.get("content"))
-                                  for b in content if isinstance(b, dict))
-              return ""
-
           def report() -> None:
               print("### Agent decision")
               try:
@@ -386,13 +379,6 @@ jobs:
                     f"cost=${res.get('total_cost_usd')}, "
                     f"minutes={round((res.get('duration_ms') or 0) / 60000, 1)}")
 
-              # The CLI's own words when IT backgrounds a Bash command (2.1.289):
-              # "Command did not complete within its Ns timeout and was moved to
-              # the background (ID: ..." or "Command was moved to the background
-              # (ID: ...". Anchored to the start of a Bash result, so a Read or
-              # grep of a file quoting the phrase (this one) is not a match.
-              auto_bg = re.compile(r"Command (did not complete within its \d+s timeout and was |was )"
-                                   r"moved to the background \(ID: ")
               tools = {}  # tool_use id -> (name, explicitly run_in_background)
               trail, sub_calls, background = [], 0, []
               for m in msgs:
@@ -402,8 +388,10 @@ jobs:
                   who = "subagent" if m.get("parent_tool_use_id") else "main agent"
                   if m.get("type") == "user":
                       # A command that outlives its timeout is backgrounded with no
-                      # input flag; only its result says so. Match the marker, never
-                      # print the result.
+                      # input flag; only its result says so, through the structured
+                      # tool_use_result.backgroundTaskId the CLI sets for explicit and
+                      # auto-backgrounded commands alike. The result text is never
+                      # read: the CLI puts the command's stdout ahead of its marker.
                       # An explicit run_in_background call was already counted at its
                       # input, so only a Bash call without that flag counts here.
                       tur = m.get("tool_use_result")
@@ -413,7 +401,7 @@ jobs:
                               continue
                           if tools.get(b.get("tool_use_id")) != ("Bash", False):
                               continue
-                          if structured or auto_bg.match(text_of(b.get("content")).lstrip()):
+                          if structured:
                               background.append(f"{who}: a command moved to the background")
                               break
                       continue
@@ -432,7 +420,11 @@ jobs:
                           continue
                       if name == "Bash":
                           words = [w for w in str(inp.get("command", "")).split() if "=" not in w]
-                          detail = re.sub(r"[^A-Za-z0-9_./-]", "", words[0]) if words else ""
+                          # A first word that is not a plain program name (a quoted
+                          # string, a comment) is prose, so it is never printed.
+                          first = words[0] if words else ""
+                          plain = re.fullmatch(r"[A-Za-z0-9_./-]+", first)
+                          detail = first if plain else "(other)"
                       elif name in ("Agent", "Task"):
                           detail = str(inp.get("subagent_type", ""))
                       else:
