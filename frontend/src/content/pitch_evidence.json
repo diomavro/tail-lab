@@ -1,7 +1,11 @@
 {
  "as_of": "2026-10-27",
  "code": {
-  "sha": "64040b98f015fe5584aaa0e54126bc664854309a",
+  "sha": "07924088ae5604aa047166a8a4dcbc54a02f04ba",
+  "tree": {
+   "src": "779cbbd61f91c40e7e510497c411fe23fa9dc5d1",
+   "scripts": "e3c39eb44f61fe599c7dbc6f9fb5f17c1a5a7edf"
+  },
   "dirty": false
  },
  "dividend_yield_assumed": 0.019,
@@ -17,6 +21,7 @@
  },
  "panels": {
   "SPY": {
+   "closed_day_then_next_missing": 0,
    "sessions": 3500,
    "first": "2010-01-04",
    "last": "2023-12-29",
@@ -38,6 +43,7 @@
    "rows": 3276579
   },
   "QQQ": {
+   "closed_day_then_next_missing": 0,
    "sessions": 3017,
    "first": "2012-01-03",
    "last": "2023-12-29",
@@ -542,6 +548,10 @@
     "fill_skips": 17
    }
   },
+  "rolls_on_closed_days": {
+   "rolls": 2123,
+   "touching": 19
+  },
   "hedge": {
    "window": [
     "2010-01-04",
@@ -674,8 +684,8 @@
       "2022-10-12"
      ],
      "drop_best": {
-      "edge": 0.014753072434511514,
-      "edge_without_best": -0.028582119865252855,
+      "edge": 0.014768793166262992,
+      "edge_without_best": -0.028591975678238485,
       "best_entry": "2020-02-21"
      }
     },
@@ -691,8 +701,8 @@
       "2016-02-11"
      ],
      "drop_best": {
-      "edge": 0.01293475202615202,
-      "edge_without_best": -0.05723596407134855,
+      "edge": 0.01295641369450766,
+      "edge_without_best": -0.05725571734462041,
       "best_entry": "2020-02-21"
      }
     },
@@ -1564,6 +1574,10 @@
     "fill_skips": 46
    }
   },
+  "rolls_on_closed_days": {
+   "rolls": 1806,
+   "touching": 8
+  },
   "hedge": {
    "window": [
     "2012-01-03",
@@ -2142,6 +2156,14 @@
  "crisis_2008": {
   "roll_dates": 23,
   "first": "2008-01-18",
+  "nearest_dte": [
+   29,
+   36
+  ],
+  "dates_with_two_expiries": [
+   "2009-02-20",
+   "2009-08-21"
+  ],
   "5pct": {
    "unhedged": {
     "terminal": 0.890391392803009,
@@ -2173,6 +2195,7 @@
    "hits": 4,
    "best_roi": 11.090567270051237,
    "best_entry": "2008-09-19",
+   "refused": [],
    "last": "2010-01-16"
   },
   "10pct": {
@@ -2206,6 +2229,7 @@
    "hits": 2,
    "best_roi": 16.63600303164039,
    "best_entry": "2008-09-19",
+   "refused": [],
    "last": "2010-01-16"
   },
   "15pct": {
@@ -2240,6 +2264,12 @@
    "hits": 1,
    "best_roi": 22.333615927333113,
    "best_entry": "2008-09-19",
+   "refused": [
+    {
+     "entry": "2008-04-18",
+     "reason": "spread 59% of mid (bid 0.06, ask 0.11, strike 118)"
+    }
+   ],
    "last": "2010-01-16"
   },
   "20pct": {
@@ -2271,6 +2301,24 @@
    "hits": 0,
    "best_roi": -1.0,
    "best_entry": "2008-02-15",
+   "refused": [
+    {
+     "entry": "2008-01-18",
+     "reason": "spread 86% of mid (bid 0.04, ask 0.10, strike 106)"
+    },
+    {
+     "entry": "2008-04-18",
+     "reason": "spread 133% of mid (bid 0.01, ask 0.05, strike 111)"
+    },
+    {
+     "entry": "2008-06-20",
+     "reason": "spread 80% of mid (bid 0.03, ask 0.07, strike 105)"
+    },
+    {
+     "entry": "2008-09-19",
+     "reason": "spread 64% of mid (bid 0.16, ask 0.31, strike 99)"
+    }
+   ],
    "last": "2010-01-16"
   },
   "n_beat": 7,

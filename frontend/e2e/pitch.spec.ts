@@ -22,8 +22,11 @@ test('leads with the verdict, built from the evidence file', async ({ page }) =>
   const losing = spy.filter((s) => s.mean_roi < 0).length
   const verdict = page.getByTestId('pitch-verdict')
   await expect(verdict).toContainText(`lost money in ${losing} of ${spy.length} rules`)
-  const lowered = EVIDENCE.SPY.hedge.configs.length - EVIDENCE.SPY.hedge.n_beat
-  await expect(verdict).toContainText(`in ${lowered} of ${EVIDENCE.SPY.hedge.configs.length} configurations`)
+  // Counted per rule, not per book: a rule's three budgets share its rolls.
+  const cfg = EVIDENCE.SPY.hedge.configs
+  const rules = [...new Set(cfg.map((c) => c.rule))]
+  const alwaysLose = rules.filter((r) => cfg.filter((c) => c.rule === r).every((c) => c.edge <= 0)).length
+  await expect(verdict).toContainText(`${alwaysLose} of ${rules.length} rules lowered long-run growth at every budget`)
   await expect(verdict).toContainText(
     `of ${EVIDENCE.timing.bh.tested} rule-and-filter combinations tested for timing, ${EVIDENCE.timing.bh.survivors.length} survived`,
   )
@@ -51,9 +54,26 @@ test('prints the 2008-09 check, one row per depth and budget', async ({ page }) 
   await expect(page.getByTestId('pitch-2008').locator('tbody tr')).toHaveCount(rows)
 })
 
+test('says which 2008-09 rolls the guards refused, and why', async ({ page }) => {
+  // A deep put with no winners through Lehman reads as the market's verdict
+  // unless the page says the quote guard refused the crash month.
+  const section = page.locator('#pitch-2008')
+  for (const k of ['5pct', '10pct', '15pct', '20pct'] as const) {
+    for (const r of EVIDENCE.crisis_2008[k].refused) await expect(section).toContainText(`${r.entry}: ${r.reason}`)
+  }
+})
+
+test('compares Cboe total-return indices with the index plus dividends', async ({ page }) => {
+  const yardstick = EVIDENCE.cboe.SPX.growth + EVIDENCE.dividend_yield_assumed
+  const pctText = (x: number) => `${x < 0 ? '−' : '+'}${Math.abs(x * 100).toFixed(2)}%`
+  await expect(page.locator('#pitch-hedge')).toContainText(`${pctText(yardstick)} a year`)
+})
+
 test('names the commit that generated the evidence', async ({ page }) => {
   expect(EVIDENCE.code.dirty).toBe(false)
   await expect(page.getByTestId('pitch-code-sha')).toHaveText(EVIDENCE.code.sha.slice(0, 12))
+  // The branch commit does not survive a squash merge; the tree hashes do.
+  await expect(page.locator('#pitch-reproduce')).toContainText(EVIDENCE.code.tree.src.slice(0, 12))
 })
 
 test('the headline still fits the evidence it summarises', () => {
@@ -96,4 +116,16 @@ test('does not scroll sideways at phone width', async ({ page }) => {
   await page.setViewportSize({ width: 375, height: 800 })
   const overflow = await page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth)
   expect(overflow).toBeLessThanOrEqual(0)
+})
+
+test('the data table shows what each dataset is without a sideways scroll on a phone', async ({ page }) => {
+  // A long snapshot id once filled the screen and pushed "What it is" off it.
+  await page.setViewportSize({ width: 390, height: 800 })
+  const firstRow = page.getByTestId('pitch-data').locator('tbody tr').first()
+  for (const col of [3, 4]) {
+    const box = await firstRow.locator(`td:nth-child(${col})`).boundingBox()
+    expect(box).not.toBeNull()
+    expect(box!.x).toBeGreaterThanOrEqual(0)
+    expect(box!.x + box!.width).toBeLessThanOrEqual(390)
+  }
 })

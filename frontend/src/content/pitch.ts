@@ -63,6 +63,8 @@ export interface EveryDay {
 
 export interface UnderlyingEvidence {
   standalone: Record<string, Standalone>
+  /** Rolls (over all 12 rules) entered or exited on a session the exchange was shut. */
+  rolls_on_closed_days: { rolls: number; touching: number }
   hedge: Hedge
   every_day: Record<string, EveryDay>
   episodes_10pct: { peak: string; trough: string; dd: number; unrecovered?: boolean }[]
@@ -105,6 +107,8 @@ export interface CrisisRule {
   best_roi: number
   best_entry: string
   last: string
+  /** Roll dates whose put the guards refused, and which guard refused it. */
+  refused: { entry: string; reason: string }[]
 }
 
 export interface Selected {
@@ -126,13 +130,17 @@ export interface PanelInfo {
   last: string
   missing_trading_days: number
   sessions_on_closed_days: string[]
+  /** Closed-day rows whose next exchange session is missing: a date shifted one session early. */
+  closed_day_then_next_missing: number
   rows: number
 }
 
 export interface PitchEvidence {
   as_of: string
-  /** The commit that generated the file; dirty = scripts/ or src/ differed from it. */
-  code: { sha: string; dirty: boolean }
+  /** The commit that generated the file; dirty = scripts/ or src/ differed
+   *  from it. `tree` = git tree hashes of src/ and scripts/, which survive a
+   *  squash merge where the branch commit does not. */
+  code: { sha: string; tree: { src: string; scripts: string }; dirty: boolean }
   dividend_yield_assumed: number
   commission_per_contract: number
   block_rolls: number
@@ -144,6 +152,9 @@ export interface PitchEvidence {
   crisis_2008: {
     roll_dates: number
     first: string
+    /** Days to the nearest listed expiry, min and max over the roll dates. */
+    nearest_dte: number[]
+    dates_with_two_expiries: string[]
     n_beat: number
     configs: number
   } & Record<'5pct' | '10pct' | '15pct' | '20pct', CrisisRule>
@@ -173,7 +184,7 @@ export interface PitchEvidence {
 
 export const EVIDENCE = raw as PitchEvidence
 
-/** "20pct_4w_hold" -> "20% OTM, 4-week put held to expiry". */
+/** "20pct_4w_hold" -> "20% OOM, 4-week put held to expiry". */
 export function ruleLabel(rule: string): string {
   const [depth, struct] = [rule.split('pct_')[0], rule.split('pct_')[1]]
   const how: Record<string, string> = {
@@ -181,7 +192,7 @@ export function ruleLabel(rule: string): string {
     '8w_sell4w': '8-week put, sold at the bid after 4 weeks',
     '12w_sell4w': '12-week put, sold at the bid after 4 weeks',
   }
-  return `${depth}% OTM, ${how[struct ?? ''] ?? struct}`
+  return `${depth}% OOM, ${how[struct ?? ''] ?? struct}`
 }
 
 /** The four parts of a timing gate's name, in words. */
@@ -240,8 +251,12 @@ export const LIVE = {
    *  2026-10-26 chain session): two of its ten legs, and how many of the ten
    *  the collected chain could price at all. */
   roll_schedule_legs: [
-    { rank: 1, asset: 'KRE', rule: '10% OTM, 2 weeks', model_premium: 0.0008, market: 'bid 0.00 / ask 0.88', expected_roi: 18.03 },
-    { rank: 7, asset: 'AAPL', rule: '10% OTM, 12 weeks', model_premium: 0.95, market: 'mid 7.40 (7.8× the model)', expected_roi: 5.3 },
+    { rank: 1, asset: 'KRE', rule: '10% OOM, 2 weeks', model_premium: 0.0008, market: 'bid 0.00 / ask 0.88', expected_roi: 18.03 },
+    /* The listed contract is the Feb-2027 expiry (115 days) against the
+     * model's 2027-01-19 target (84 days): 7.40 / 0.9527 = 7.8x is NOT like
+     * for like. At the 115-day mid's implied vol (29.1%, r = 4%) the 84-day
+     * put is about 5.36, 5.6x the model. */
+    { rank: 7, asset: 'AAPL', rule: '10% OOM, 12 weeks', model_premium: 0.95, market: 'mid 7.40 on the nearest listed expiry, February 2027 (115 days against the model’s 84); at that quote’s implied vol an 84-day put is about 5.36, 5.6× the model', expected_roi: 5.3 },
   ],
   roll_schedule_quote_status: { quoted: 1, illiquid: 2, not_collected: 7 },
 } as const

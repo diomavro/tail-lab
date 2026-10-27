@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import { Suspense, lazy, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import {
   ApiError,
   fetchAccuracy,
@@ -44,7 +44,6 @@ import {
 } from './types'
 import { BakeOffView } from './views/BakeOffView'
 import { GlossaryView } from './views/GlossaryView'
-import { PitchView } from './views/PitchView'
 import { PortfolioView } from './views/PortfolioView'
 import { RegimeView } from './views/RegimeView'
 import { OverlayView } from './views/OverlayView'
@@ -70,6 +69,10 @@ import { WorkspaceView } from './views/WorkspaceView'
  * pinned four bands above the result, which left the hero chart a few hundred
  * pixels on a laptop.
  */
+
+/** The Pitch carries its whole study (content/pitch_evidence.json) in its
+ *  chunk, so only a visitor who opens the tab downloads it. */
+const PitchView = lazy(() => import('./views/PitchView').then((m) => ({ default: m.PitchView })))
 
 export type TabId =
   | 'workspace'
@@ -612,7 +615,11 @@ export function PutLab() {
             {tab === 'regime' && <RegimeView regimes={regimes} vix={vix} accuracy={accuracy} />}
             {tab === 'surface' && <SurfaceView surface={surface} controls={controls} narrow={narrow} />}
             {tab === 'glossary' && <GlossaryView />}
-            {tab === 'pitch' && <PitchView />}
+            {tab === 'pitch' && (
+              <Suspense fallback={<p className="pl-note">Loading the Pitch…</p>}>
+                <PitchView />
+              </Suspense>
+            )}
           </main>
         </div>
 

@@ -1,4 +1,5 @@
 import { EVIDENCE as E, LIVE, gateLabel, ruleLabel, ruleShort, type Standalone } from '../../../content/pitch'
+import { ConceptInfo } from '../ConceptInfo'
 import { fmtFixed } from '../format'
 
 /* The Pitch: does the put book have a genuine edge? (docs/adr/0021, 2026-10-27
@@ -55,6 +56,25 @@ const beaters = SPY.hedge.configs.filter((c) => c.drop_best)
 const cutDd = SPY.hedge.configs.filter((c) => c.max_dd > SPY.hedge.unhedged_max_dd)
 const cutDdAndLost = cutDd.filter((c) => c.edge <= 0).length
 const deeperDd = SPY.hedge.configs.filter((c) => c.max_dd < SPY.hedge.unhedged_max_dd)
+/** Deeper drawdowns by what they measure: a peak set in March 2020 by a put
+ *  marked high before it expired into a rebound; one that peaks and bottoms
+ *  before 2020 (the 2015-16 fall); one that runs from 2015 to the March 2020
+ *  trough, across a market that mostly rose. */
+const ddMarch2020 = deeperDd.filter((c) => c.max_dd_span[0]!.startsWith('2020-03'))
+const ddFalling = deeperDd.filter((c) => c.max_dd_span[1]! < '2020')
+const ddBleed = deeperDd.filter((c) => c.max_dd_span[0]! < '2020' && c.max_dd_span[1]! >= '2020')
+const ddText = (cs: typeof deeperDd) =>
+  cs.map((c) => `${ruleShort(c.rule)} at ${(c.budget * 100).toFixed(2)}%`).join(', ')
+const budgetsPerRule = new Set(SPY.hedge.configs.map((c) => c.budget)).size
+const hedgeRules = [...new Set(SPY.hedge.configs.map((c) => c.rule))]
+const rulesAlwaysLose = hedgeRules.filter((r) => SPY.hedge.configs.filter((c) => c.rule === r).every((c) => c.edge <= 0))
+const rulesSometimesBeat = hedgeRules
+  .filter((r) => !rulesAlwaysLose.includes(r))
+  .map((r) => ({ rule: r, n: SPY.hedge.configs.filter((c) => c.rule === r && c.edge > 0).length }))
+const lastExits = spyRules.map(([, s]) => s.last_exit).sort()
+/** The dividend-inclusive yardstick for Cboe's total-return indices: SPX
+ *  price growth plus the same flat yield the study accrues (log growth adds). */
+const spxWithDiv = E.cboe.SPX.growth + E.dividend_yield_assumed
 /** True when every config that beat unhedged did so on the same roll and
  *  falls behind without it -- the claim the verdict makes in words. */
 const oneRoll =
@@ -82,6 +102,9 @@ const bootReps = Math.round(1 / T.bh.p_floor - 1)
 const heldRules = Object.entries(T.bh.oracle).filter(([r]) => r.includes('_4w_hold'))
 const soldRules = Object.entries(T.bh.oracle).filter(([r]) => !r.includes('_4w_hold'))
 const notCrisisSmallest = T.bh.smallest_p.filter((x) => x.gate === 'regime=not_crisis')
+const notCrisisEverySold =
+  notCrisisSmallest.length === T.bh.smallest_p.length &&
+  new Set(notCrisisSmallest.map((x) => x.rule)).size === soldRules.length
 const qqq20 = QQQ.standalone['20pct_4w_hold']!
 const qqq15 = QQQ.standalone['15pct_4w_hold']!
 
@@ -108,10 +131,17 @@ export function PitchView() {
       <p className="pl-kicker">The Pitch · evidence as of {E.as_of}</p>
       <h2 className="pl-view-title">No demonstrable edge.</h2>
       <p className="pl-view-lede" data-testid="pitch-verdict">
-        On real bid/ask quotes for SPY ({SPY.standalone['5pct_4w_hold']!.first_entry} to{' '}
-        {SPY.standalone['5pct_4w_hold']!.last_exit}), buying out-of-the-money puts lost money in{' '}
-        {spyNegative} of {spyRules.length} rules; as a hedge on the index it lowered long-run growth in{' '}
-        {SPY.hedge.configs.length - SPY.hedge.n_beat} of {SPY.hedge.configs.length} configurations; and of{' '}
+        On real bid/ask quotes for SPY ({E.panels.SPY.first} to {E.panels.SPY.last}), buying out-of-the-money
+        puts lost money in {spyNegative} of {spyRules.length} rules; as a hedge on the index,{' '}
+        {rulesAlwaysLose.length} of {hedgeRules.length} rules lowered long-run growth at every budget tried
+        {rulesSometimesBeat.map((x) => (
+          <span key={x.rule}>
+            {' '}
+            (the other, {ruleLabel(x.rule)}, beat it at {x.n} of {budgetsPerRule} budgets
+            {oneRoll ? ', on a single roll' : ''})
+          </span>
+        ))}
+        ; and of{' '}
         {T.bh.tested} rule-and-filter combinations tested for timing, {survivors} survived a multiple-testing correction out of
         sample. There is
         no strategy here yet, and Putlab does not produce a daily trading signal.
@@ -130,20 +160,20 @@ export function PitchView() {
                 premium (bought {s.best_entry}); its interval is {ci(s.mean_roi_ci95)}.{' '}
               </span>
             ))}
-            QQQ: {qqqNegative} of {Object.keys(QQQ.standalone).length} rules negative — but its 20% OTM rule’s{' '}
-            {fmtFixed(qqq20.mean_roi)} is not evidence against SPY’s exception: {qqq20.fill_skips} refused fills
-            shifted its roll calendar so that no roll it held caught February 2020 ({plural(qqq20.hits, 'winner', 'winners')}),
-            while QQQ’s 15% OTM rule returned +{fmtFixed(qqq15.best_roi, 1)}× on a roll bought {qqq15.best_entry}.
+            QQQ: {qqqNegative} of {Object.keys(QQQ.standalone).length} rules negative (
+            <a href="#pitch-standalone">section 1</a> says why its 20% rule missed 2020).
           </li>
           <li>
-            <strong>As a hedge: insurance, not an edge.</strong> {cutDd.length} of {SPY.hedge.configs.length} SPY
-            books cut the worst drawdown, {cutDdAndLost} of them at a cost in growth. {SPY.hedge.n_beat} grew faster
-            than holding SPY alone
+            <strong>As a hedge: insurance, not an edge.</strong> {rulesAlwaysLose.length} of {hedgeRules.length} SPY
+            rules grow slower than SPY alone at every budget. Counted by book (each rule at {budgetsPerRule} budgets;
+            the books of one rule share its rolls, so they are not independent evidence): {cutDd.length} of{' '}
+            {SPY.hedge.configs.length} SPY books cut the worst drawdown, {cutDdAndLost} of them at a cost in growth.{' '}
+            {SPY.hedge.n_beat} grew faster than holding SPY alone
             {oneRoll && (
               <>
                 , and {beaters.length === 1 ? 'it rests' : beaters.length === 2 ? 'both rest' : `all ${beaters.length} rest`} on a single roll bought{' '}
                 {beaters[0]!.drop_best!.best_entry}: drop it and{' '}
-                {beaters.map((c) => `${pp(c.drop_best!.edge)} becomes ${pp(c.drop_best!.edge_without_best)}`).join(', ')}
+                {beaters.map((c) => `${pp(c.edge)} becomes ${pp(c.drop_best!.edge_without_best)}`).join(', ')}
               </>
             )}
             . QQQ: {QQQ.hedge.n_beat} of {QQQ.hedge.configs.length}. In 2008–09, on a separate monthly dataset,{' '}
@@ -166,7 +196,7 @@ export function PitchView() {
         </ol>
         <p className="pl-note">
           “No demonstrable edge” is not “proven useless”. The sample holds {SPY.episodes_10pct.length} distinct
-          SPY declines of 10% or more and one that paid a far-OTM put spectacularly (February 2020). Fourteen years
+          SPY declines of 10% or more and one that paid a far-OOM put spectacularly (February 2020). Fourteen years
           of quotes cannot tell a strategy that pays once a decade from one that never pays. What would decide it is
           in <a href="#pitch-next">the last section</a>.
         </p>
@@ -176,26 +206,30 @@ export function PitchView() {
         <h3>Terms used below</h3>
         <ul className="pl-pitch-list">
           <li>
-            <strong>OTM, depth.</strong> How far below spot the strike sits: a 10% OTM put on SPY at 500 has a strike
-            near 450. Strikes here are always picked by this distance, never by delta (the Workspace can also pick by
-            delta at realised vol, docs/adr/0029; this study does not).
+            <strong>OOM put, depth</strong> <ConceptInfo id="oom_put" />. How far below spot the strike sits: a 10%
+            OOM put on SPY at 500 has a strike near 450. Moneyness is strike ÷ spot, so 0.90 is 10% OOM. Here the
+            strike is always picked by that distance. (The Workspace can instead pick the strike whose
+            Black–Scholes delta, computed at the last 20 days’ realised volatility, hits a target, docs/adr/0029;
+            this study does not.) The one difference from the glossary entry: nothing here is priced by a model.
+            Every premium is a real ask.
           </li>
           <li>
-            <strong>Roll.</strong> One put bought, then held to expiry or sold; the next is bought the session the
-            last one ends.
+            <strong>Roll</strong> <ConceptInfo id="rolling" />. One put bought, then held to expiry or sold; the
+            next is bought the session the last one ends.
           </li>
           <li>
-            <strong>Return on premium</strong> = what the roll paid back ÷ what it cost − 1, after commission. For a
-            held put, “paid back” is its value at expiry; for a sold put, the bid it was sold at. −1.00 means the
-            premium was lost; +2.00 means three times the premium came back.
+            <strong>Return on premium</strong> <ConceptInfo id="roi_on_premium" />. As in the glossary, but per roll
+            and <em>after</em> commission (the app’s figure is gross of brokerage): what the roll paid back ÷ what it
+            cost − 1. For a held put, “paid back” is its value at expiry; for a sold put, the bid it was sold at.
+            −1.00 means the premium was lost; +2.00 means three times the premium came back.
           </li>
           <li>
-            <strong>Time-average growth</strong> = the annualised log return of a whole book. It is what compounds,
-            and the only yardstick a hedge can be sized on (docs/END_STATE.md §4 Q8).
+            <strong>Time-average growth</strong> <ConceptInfo id="time_average_growth" />. The annualised log
+            return of a whole book: what compounds, and the yardstick a hedge is sized on (docs/END_STATE.md §4 Q8).
           </li>
           <li>
-            <strong>VIX regimes.</strong> Calm: VIX under 17. Elevated: 17 to 28. Crisis: 28 and above
-            (contracts/regime.py, with a one-point hysteresis band so a VIX near a boundary does not flip daily).
+            <strong>VIX regimes</strong> <ConceptInfo id="regime" />. Calm: VIX under 17. Elevated: 17 to 28.
+            Crisis: 28 and above, with a one-point hysteresis band (contracts/regime.py).
           </li>
         </ul>
       </section>
@@ -232,7 +266,7 @@ export function PitchView() {
               <tr>
                 <td>Verdict sweep (daily-verdict-sweep.yml)</td>
                 <td>Daily: scheduled 06:30 UTC; GitHub started it {LIVE.verdict_sweep_started} on 19–26 October</td>
-                <td>For every name × 5% and 10% OTM, 4-week puts, 4-year window: re-runs the backtest and files a verdict</td>
+                <td>For every name × 5% and 10% OOM, 4-week puts, 4-year window: re-runs the backtest and files a verdict</td>
                 <td>No — re-scores history</td>
               </tr>
               <tr>
@@ -271,7 +305,7 @@ export function PitchView() {
           <strong>Why the daily verdicts move.</strong> A verdict is <code>confirmed</code> when the backtest’s
           return on premium is positive in two or more VIX regimes, <code>regime_only</code> in exactly one,{' '}
           <code>failed</code> in none (contracts/hypothesis.py, <code>verdict_from_passing_regimes</code>). No
-          significance test, no minimum sample: the crisis slice below holds 1 or 2 rolls. SPY, 5% OTM, 4 weeks,
+          significance test, no minimum sample: the crisis slice below holds 1 or 2 rolls. SPY, 5% OOM, 4 weeks,
           4-year window, by as-of date (GET /api/putlab/regime-verdict?asset=spy&amp;moneyness_pct=5&amp;as_of=…):
         </p>
         <div className="pl-scroll">
@@ -320,7 +354,7 @@ export function PitchView() {
           not: they price every option with a model. The difference matters, so both are listed.
         </p>
         <div className="pl-scroll">
-          <table className="pl-table">
+          <table className="pl-table pl-pitch-stack" data-testid="pitch-data">
             <thead>
               <tr>
                 <th>Dataset (lake snapshot)</th>
@@ -334,47 +368,55 @@ export function PitchView() {
                 const p = E.panels[s]
                 return (
                   <tr key={s}>
-                    <td className="nowrap">{E.snapshots[`optionsdx_quotes_${s.toLowerCase()}`]}</td>
+                    <td className="pl-pitch-id">{E.snapshots[`optionsdx_quotes_${s.toLowerCase()}`]}</td>
                     <td className="nowrap">
                       {p.first} → {p.last}
                     </td>
                     <td>
-                      optionsDX end-of-day {s} puts, bid and ask, 0.60–1.02 moneyness, 0–120 days.{' '}
+                      optionsDX end-of-day {s} puts, bid and ask, strike ÷ spot 0.60–1.02, 0–120 days to expiry.{' '}
                       {p.rows.toLocaleString('en-US')} rows, {p.sessions.toLocaleString('en-US')} sessions. Licence:
                       no redistribution — only aggregates leave the lake.
                     </td>
                     <td>
                       Against the exchange’s session calendar (the days Cboe printed an SPX close):{' '}
                       {p.missing_trading_days} trading days missing; {p.sessions_on_closed_days.length} sessions dated on
-                      days the exchange was shut ({p.sessions_on_closed_days.slice(0, 3).join(', ')}, …). No 2008: the
-                      panel starts in {p.first.slice(0, 4)}.
+                      days the exchange was shut ({p.sessions_on_closed_days.slice(0, 3).join(', ')}, …).{' '}
+                      {p.closed_day_then_next_missing === 0
+                        ? 'The next trading day is present after every one of them, so they are extra rows, not quotes dated a session early.'
+                        : `For ${p.closed_day_then_next_missing} of them the next trading day is missing, so those look like quotes dated a session early.`}{' '}
+                      The study uses the dates as given:{' '}
+                      {E[s].rolls_on_closed_days.touching} of {E[s].rolls_on_closed_days.rolls} rolls enter or exit on
+                      one. A missing day is no session: nothing enters or is marked on it. No 2008: the panel starts in{' '}
+                      {p.first.slice(0, 4)}.
                     </td>
                   </tr>
                 )
               })}
               <tr>
-                <td className="nowrap">{E.snapshots.option_quotes}</td>
+                <td className="pl-pitch-id">{E.snapshots.option_quotes}</td>
                 <td className="nowrap">2008-01 → 2025-11</td>
                 <td>
-                  SPY puts on monthly roll dates only ({C08.roll_dates} of them in 2008–09), one expiry each; no daily
-                  quotes and no expiry-day spot. Used only for the 2008–09 check (section 2b)
+                  SPY puts on monthly roll dates only ({C08.roll_dates} of them in 2008–09), the nearest listed expiry{' '}
+                  {C08.nearest_dte[0]}–{C08.nearest_dte[1]} days out ({C08.dates_with_two_expiries.length} dates also
+                  list a quarterly, not used); no daily quotes and no expiry-day spot. Used only for the 2008–09 check
+                  (section 2b)
                 </td>
                 <td>Licence unresolved: research use only. 2008-03 has no roll date</td>
               </tr>
               <tr>
-                <td className="nowrap">{E.snapshots.vix}</td>
+                <td className="pl-pitch-id">{E.snapshots.vix}</td>
                 <td>1990 → today</td>
                 <td>Cboe VIX close; the regime bands (calm under 17, crisis from 28) and the timing filters</td>
                 <td>—</td>
               </tr>
               <tr>
-                <td className="nowrap">{E.snapshots.rates}</td>
+                <td className="pl-pitch-id">{E.snapshots.rates}</td>
                 <td>DGS3MO 1981 →</td>
                 <td>FRED 3-month bill, first vintage of each observation, for implied vol</td>
                 <td>Vintages begin 2005-06</td>
               </tr>
               <tr>
-                <td className="nowrap">{E.snapshots.cboe_strategy}</td>
+                <td className="pl-pitch-id">{E.snapshots.cboe_strategy}</td>
                 <td>1986 → today</td>
                 <td>Cboe SPX, PPUT, PPUT3M, VXTH: hedge-program indices Cboe prices from real trades; SPX also serves as the exchange session calendar</td>
                 <td>Benchmarks, not tradeable</td>
@@ -390,7 +432,7 @@ export function PitchView() {
                 <td>Last 4 years by default</td>
                 <td>
                   Black–Scholes at 20-day realised vol (clamped 6%–200%), flat 4% rate, q = 0 for all 70 names, no
-                  skew. It priced a calm-market 5% OTM SPY put at about $0.03 against about $1 in the market
+                  skew. It priced a calm-market 5% OOM SPY put at about $0.03 against about $1 in the market
                   (docs/adr/0027)
                 </td>
                 <td>Not quotes: the verdicts they print are not evidence</td>
@@ -417,7 +459,9 @@ export function PitchView() {
             the fill takes the nearest listed expiry on or after it, so the realised median is{' '}
             {SPY.standalone['5pct_4w_hold']!.median_dte}, {SPY.standalone['5pct_8w_sell4w']!.median_dte} and{' '}
             {SPY.standalone['5pct_12w_sell4w']!.median_dte} days to expiry. Each rule rolls back to back: the next put
-            is bought on the session the last one ends.
+            is bought on the session the last one ends. A roll counts only if it completes inside the panel, so the
+            rules’ last exits fall between {lastExits[0]} and {lastExits[lastExits.length - 1]}, before the panel’s
+            last day ({E.panels.SPY.last}).
           </li>
           <li>
             <strong>Standalone return</strong> = what the puts paid ÷ the premium, less one, per roll. The 95%
@@ -426,8 +470,9 @@ export function PitchView() {
           </li>
           <li>
             <strong>Hedge.</strong> A book holds SPY plus a flat {pct(E.dividend_yield_assumed)} dividend accrual
-            and spends b of its wealth on each roll’s puts, b = 0.25%, 0.5% or 1% (about 3%, 6% or 12% a year). It is
-            marked daily at the bid and rebalanced at each roll. The yardstick is time-average growth, the annualised
+            and spends b of its wealth on each roll’s puts, b = 0.25%, 0.5% or 1% (about 3%, 6% or 12% a year): at
+            each roll, b × current wealth goes into the new puts and the rest is held in SPY. It is marked daily at
+            the bid. The yardstick is time-average growth, the annualised
             log return — the one a hedge can be sized on (docs/END_STATE.md §4 Q8) — over one common window,{' '}
             {SPY.hedge.window[0]} to {SPY.hedge.window[1]}.
           </li>
@@ -448,9 +493,11 @@ export function PitchView() {
             return of the rolls the filter took minus the mean of all rolls (a resample in which the filter takes
             nothing is dropped). The one-sided p is (b + 1) ÷ (R + 1), where b counts resamples at or below zero, so
             no p is ever 0. It is a percentile-bootstrap p — the share of the bootstrap distribution on the wrong side
-            of zero — not a test under an imposed null, so read it as a ranking of evidence. Every eligible
-            combination’s p then goes through Benjamini–Hochberg at a {Math.round(T.bh.fdr * 100)}% false-discovery
-            rate (research/backtest/multiple_testing.py).
+            of zero — not a test under an imposed null. It approximates one only when the bootstrap distribution is
+            roughly symmetric about its centre, which nothing here checks. So the p-values, the count below 0.05 and
+            the Benjamini–Hochberg step at a {Math.round(T.bh.fdr * 100)}% false-discovery rate
+            (research/backtest/multiple_testing.py) are a <em>screen</em> for which effects to look at, not exact
+            tests.
           </li>
           <li>
             <strong>Signal definitions.</strong> <em>VIX stretch</em>: (VIX close − its 20-day mean) ÷ its 20-day
@@ -458,7 +505,7 @@ export function PitchView() {
             at its ask (3-month bill rate, first vintage; flat {pct(E.dividend_yield_assumed)} yield) over VIX ÷ 100.{' '}
             <em>Implied tail index α</em>: the Surface’s fit (research/surface/implied_alpha.py, docs/adr/0026) of
             the Pareto exponent that best prices the same session’s deeper put mids relative to one anchor — the
-            listed put nearest 5% OTM on the first expiry at least 28 days out. A lower α means the market is
+            listed put nearest 5% OOM on the first expiry at least 28 days out. A lower α means the market is
             pricing a fatter tail. The fit refuses on thin or noisy chains (about 3 entry sessions in 10 here), and a
             filter never takes a roll it has no reading for. <em>Regime sets</em>: calm; elevated; crisis; not calm
             (elevated or crisis); not crisis (calm or elevated).
@@ -494,16 +541,16 @@ export function PitchView() {
           </table>
         </div>
         <p className="pl-note">
-          <strong>The calendar decides the sign of the far-OTM rules.</strong> Buying a 4-week 20% OTM put on every
+          <strong>The calendar decides the sign of the far-OOM rules.</strong> Buying a 4-week 20% OOM put on every
           session instead of on a monthly cycle ({SPY.every_day['20pct_4w_hold']!.entry_days.toLocaleString('en-US')}{' '}
           entries, overlapping) averages {fmtFixed(SPY.every_day['20pct_4w_hold']!.mean_roi)}, and only{' '}
           {SPY.every_day['20pct_4w_hold']!.phases_positive} of {SPY.every_day['20pct_4w_hold']!.phases} ways to
-          phase a 20-session cycle come out positive. At 15% OTM: {fmtFixed(SPY.every_day['15pct_4w_hold']!.mean_roi)}
-          , {SPY.every_day['15pct_4w_hold']!.phases_positive} of 20. At 5% OTM,{' '}
+          phase a 20-session cycle come out positive. At 15% OOM: {fmtFixed(SPY.every_day['15pct_4w_hold']!.mean_roi)}
+          , {SPY.every_day['15pct_4w_hold']!.phases_positive} of 20. At 5% OOM,{' '}
           {SPY.every_day['5pct_4w_hold']!.phases_positive} of 20.
         </p>
         <p className="pl-note">
-          <strong>By period.</strong> 20% OTM held to expiry:{' '}
+          <strong>By period.</strong> 20% OOM held to expiry:{' '}
           {Object.entries(SPY.standalone['20pct_4w_hold']!.by_period).map(([p, v]) => (
             <span key={p}>
               {p} mean {fmtFixed(v.mean_roi)} ({plural(v.hits, 'winner', 'winners')} in {v.n});{' '}
@@ -511,6 +558,13 @@ export function PitchView() {
           ))}
           winners fall in {periodsWithWinners('20pct_4w_hold')} of {Object.keys(SPY.standalone['20pct_4w_hold']!.by_period).length}{' '}
           periods.
+        </p>
+        <p className="pl-note">
+          <strong>QQQ.</strong> {qqqNegative} of {Object.keys(QQQ.standalone).length} rules negative. Its 20% OOM
+          rule’s {fmtFixed(qqq20.mean_roi)} is not evidence against SPY’s one positive rule: {qqq20.fill_skips} refused
+          fills shifted its roll calendar so that no roll it held caught February 2020 (
+          {plural(qqq20.hits, 'winner', 'winners')}), while QQQ’s 15% OOM rule returned +{fmtFixed(qqq15.best_roi, 1)}×
+          on a roll bought {qqq15.best_entry}.
         </p>
       </section>
 
@@ -552,15 +606,33 @@ export function PitchView() {
           {deeperDd
             .map((c) => `${ruleShort(c.rule)} at ${(c.budget * 100).toFixed(2)}%, ${pct(c.max_dd)} from ${c.max_dd_span[0]} to ${c.max_dd_span[1]}`)
             .join('; ')}
-          .
-          The March 2020 peaks are a held put marked at its bid the day before it expired into a rebound: the gain on
-          paper was given back at settlement, then the index fell further. The ones that start in 2015 are premium —
-          up to 12% of the book a year — spent through a falling market.
+          .{' '}
+          {ddMarch2020.length > 0 && (
+            <>
+              The ones that peak in March 2020 ({ddText(ddMarch2020)}) are a held put marked at its bid the day
+              before it expired into a rebound: the gain on paper was given back at settlement, then the index fell
+              further.{' '}
+            </>
+          )}
+          {ddFalling.length > 0 && (
+            <>
+              {ddFalling.length > 1 ? 'The ones that end' : 'The one that ends'} before 2020 ({ddText(ddFalling)}){' '}
+              {ddFalling.length > 1 ? 'are' : 'is'} premium spent through a falling market.{' '}
+            </>
+          )}
+          {ddBleed.length > 0 && (
+            <>
+              {ddBleed.length > 1 ? 'The ones that run' : 'The one that runs'} from 2015 to the March 2020 trough (
+              {ddText(ddBleed)}) {ddBleed.length > 1 ? 'are' : 'is'} premium — about 12% of the book a year at 1% a roll
+              — bled through a market that mostly rose (SPY closed near 187 on 2015-08-25 and 338 on 2020-02-19, about
+              +80%), so the book’s peak came early and the crash took the rest.
+            </>
+          )}
         </p>
         <p className="pl-note">
           {beaters.map((c) => (
             <span key={`${c.rule}@${c.budget}`}>
-              {ruleLabel(c.rule)} at {(c.budget * 100).toFixed(2)}%: {pp(c.drop_best!.edge)} with the{' '}
+              {ruleLabel(c.rule)} at {(c.budget * 100).toFixed(2)}%: {pp(c.edge)} with the{' '}
               {c.drop_best!.best_entry} roll, {pp(c.drop_best!.edge_without_best)} without it.{' '}
             </span>
           ))}
@@ -568,12 +640,15 @@ export function PitchView() {
           configurations beat unhedged.
         </p>
         <p className="pl-note">
-          <strong>Cboe’s indices, priced from real trades, agree.</strong> Over {E.cboe.span[0]} to {E.cboe.span[1]}:
-          SPX price index {pct(E.cboe.SPX.growth, 2)} a
-          year (drawdown {pct(E.cboe.SPX.max_dd)}); PPUT, the S&amp;P 500 with a monthly 5% OTM put,{' '}
-          {pct(E.cboe.PPUT.growth, 2)} ({pct(E.cboe.PPUT.max_dd)}); PPUT3M {pct(E.cboe.PPUT3M.growth, 2)} (
-          {pct(E.cboe.PPUT3M.max_dd)}); VXTH, the index with VIX calls, {pct(E.cboe.VXTH.growth, 2)} (
-          {pct(E.cboe.VXTH.max_dd)}). SPX here is price only and PPUT includes dividends, so the gap is understated.
+          <strong>Cboe’s indices, priced from real trades, agree.</strong> PPUT, PPUT3M and VXTH are built on the
+          S&amp;P 500 with dividends reinvested, so the yardstick is the SPX price index plus the same{' '}
+          {pct(E.dividend_yield_assumed)} yield the study accrues: {pct(spxWithDiv, 2)} a year over {E.cboe.span[0]}{' '}
+          to {E.cboe.span[1]} (the price index alone: {pct(E.cboe.SPX.growth, 2)}, drawdown {pct(E.cboe.SPX.max_dd)}).
+          Against it: PPUT, the S&amp;P 500 with a monthly 5% OOM put, {pct(E.cboe.PPUT.growth, 2)} (
+          {pp(E.cboe.PPUT.growth - spxWithDiv)}; drawdown {pct(E.cboe.PPUT.max_dd)}); PPUT3M{' '}
+          {pct(E.cboe.PPUT3M.growth, 2)} ({pp(E.cboe.PPUT3M.growth - spxWithDiv)}; {pct(E.cboe.PPUT3M.max_dd)}); VXTH,
+          the index with VIX calls, {pct(E.cboe.VXTH.growth, 2)} ({pp(E.cboe.VXTH.growth - spxWithDiv)};{' '}
+          {pct(E.cboe.VXTH.max_dd)}). All three trail the index with dividends; each cuts the drawdown.
           The Book tab tests the right question — does any mix of program and index out-grow the index alone — and
           on {LIVE.read_on} answered:{' '}
           {LIVE.book.map((b) => (
@@ -591,12 +666,14 @@ export function PitchView() {
         <h3>2b. The crisis the panel misses: 2008–09</h3>
         <p className="pl-note">
           A separate, smaller check on the other real-quote dataset, option_quotes: SPY puts quoted on{' '}
-          {C08.roll_dates} monthly roll dates from {C08.first}, one expiry each (26–40 days), through the platform’s{' '}
+          {C08.roll_dates} monthly roll dates from {C08.first}, buying the nearest listed expiry ({C08.nearest_dte[0]}–
+          {C08.nearest_dte[1]} days out; {C08.dates_with_two_expiries.join(' and ')} also list a quarterly, which is
+          not used), through the platform’s{' '}
           <code>OptionQuotesSource</code> guards (open interest included). “Buy the next monthly put” and hold it to
           expiry. Its limits: no daily quotes, so drawdowns are measured on roll dates only; no expiry-day spot, so
           SPY at expiry is estimated as SPY at entry × the SPX move; 2008-03 has no roll date, so that month is
           unhedged; the licence is unresolved, so this is research use only. Unhedged, the book ends at{' '}
-          {fmtFixed(C08['5pct'].unhedged.terminal, 3)} of its starting wealth, with a {pct(C08['5pct'].unhedged.max_dd)} drawdown.
+          {fmtFixed(C08['5pct'].unhedged.terminal, 4)} of its starting wealth, with a {pct(C08['5pct'].unhedged.max_dd)} drawdown.
         </p>
         <div className="pl-scroll">
           <table className="pl-table" data-testid="pitch-2008">
@@ -609,6 +686,7 @@ export function PitchView() {
                 <th className="num">Best</th>
                 <th className="num">Budget/roll</th>
                 <th className="num">Ends at</th>
+                <th>vs unhedged</th>
                 <th className="num">Without best roll</th>
                 <th className="num">Worst drawdown</th>
               </tr>
@@ -617,7 +695,7 @@ export function PitchView() {
               {c08Rules.flatMap(([k, r]) =>
                 r.books.map((b, i) => (
                   <tr key={`${k}@${b.budget}`} className={b.terminal > r.unhedged.terminal ? 'is-winner' : undefined}>
-                    <td>{i === 0 ? `${k.replace('pct', '')}% OTM` : ''}</td>
+                    <td>{i === 0 ? `${k.replace('pct', '')}% OOM` : ''}</td>
                     <td className="num">{i === 0 ? `${r.filled}/${r.rolls}` : ''}</td>
                     <td className={`num ${r.mean_roi < 0 ? 'pl-neg' : ''}`}>{i === 0 ? fmtFixed(r.mean_roi) : ''}</td>
                     <td className="num">{i === 0 ? r.hits : ''}</td>
@@ -631,8 +709,9 @@ export function PitchView() {
                       )}
                     </td>
                     <td className="num">{(b.budget * 100).toFixed(2)}%</td>
-                    <td className="num">{fmtFixed(b.terminal, 3)}</td>
-                    <td className="num">{b.terminal_without_best === undefined ? '—' : fmtFixed(b.terminal_without_best, 3)}</td>
+                    <td className="num">{fmtFixed(b.terminal, 4)}</td>
+                    <td>{b.terminal > r.unhedged.terminal ? 'ahead' : 'behind'}</td>
+                    <td className="num">{b.terminal_without_best === undefined ? '—' : fmtFixed(b.terminal_without_best, 4)}</td>
                     <td className="num">{pct(b.max_dd)}</td>
                   </tr>
                 )),
@@ -640,6 +719,26 @@ export function PitchView() {
             </tbody>
           </table>
         </div>
+        {c08Rules
+          .filter(([, r]) => r.refused.length > 0)
+          .map(([k, r]) => (
+            <p className="pl-note" key={k}>
+              <strong>
+                {k.replace('pct', '')}% OOM: {plural(r.refused.length, 'roll date', 'roll dates')} of {r.rolls} refused
+              </strong>{' '}
+              by the platform’s quote guards, which treat a spread wider than half the mid as no price at all:{' '}
+              {r.refused.map((x) => `${x.entry}: ${x.reason}`).join('; ')}. {r.refused.length > 1 ? 'Those months are' : 'That month is'}{' '}
+              unhedged.
+              {r.hits === 0 && r.refused.some((x) => x.entry === C08['5pct'].best_entry) && (
+                <>
+                  {' '}
+                  The {C08['5pct'].best_entry} roll that carries every other depth is among them, which is why this
+                  row has {plural(r.hits, 'winner', 'winners')}: the deepest put was never bought in the month of
+                  the crash.
+                </>
+              )}
+            </p>
+          ))}
         <p className="pl-note">
           Here the hedge does what it is bought for: {C08.n_beat} of {C08.configs} books end ahead of unhedged, and{' '}
           {c08Rules.flatMap(([, r]) => r.books.filter((b) => b.max_dd > r.unhedged.max_dd)).length} cut the
@@ -647,7 +746,7 @@ export function PitchView() {
           {c08OneMonth && (
             <>
               Every book that ends ahead rests on the roll bought {c08Beaters[0]!.r.best_entry}, the week Lehman failed: leave
-              that month unhedged and each ends below {fmtFixed(C08['5pct'].unhedged.terminal, 3)}.{' '}
+              that month unhedged and each ends below {fmtFixed(C08['5pct'].unhedged.terminal, 4)}.{' '}
             </>
           )}
           That is the pattern of the 2010–2023 study — one crash month carries the result — seen once more, on 23
@@ -682,7 +781,9 @@ export function PitchView() {
           improved out of sample, and the rank correlation between in-sample and out-of-sample results is{' '}
           {fmtFixed(sel.spearman_is_oos)}: an in-sample ranking says almost nothing about the next seven years.{' '}
           {T.bh.p_below_05} of {T.bh.tested} have a raw p below 0.05 — about the {Math.round(T.bh.tested * 0.05)} that
-          chance alone would give if the tests were independent (they are not: they share the same rolls). Benjamini–Hochberg at {Math.round(T.bh.fdr * 100)}% keeps{' '}
+          chance would give if these p-values were uniform under no effect and the tests independent (neither is
+          established: see the method, and the tests share the same rolls). Benjamini–Hochberg at{' '}
+          {Math.round(T.bh.fdr * 100)}%, used as a screen, keeps{' '}
           <strong data-testid="pitch-bh">{survivors}</strong>
           {survivors > 0 && (
             <>
@@ -698,9 +799,18 @@ export function PitchView() {
           )}
           . Could a real effect have passed? The smallest p any test can report is {T.bh.p_floor.toFixed(5)}, under
           the first BH step ({(T.bh.fdr / T.bh.tested).toFixed(5)}), but that is not the whole answer. A
-          perfect-foresight filter that takes the best third of out-of-sample rolls reaches p ={' '}
-          {Math.max(...soldRules.map(([, o]) => o.p)).toFixed(4)} or less on every sold rule, so those tests had power;
-          on the held-to-expiry rules it gets only{' '}
+          perfect-foresight filter that takes the best third of out-of-sample rolls reaches{' '}
+          {soldRules.every(([, o]) => o.p <= T.bh.p_floor * 1.0001)
+            ? `the floor p = ${T.bh.p_floor.toFixed(4)}`
+            : `p = ${Math.max(...soldRules.map(([, o]) => o.p)).toFixed(4)} or less`}{' '}
+          on every sold rule, so those tests had power against a perfect filter. Against a realistic one they do not:
+          the effect actually seen, the skip-crisis filter below at{' '}
+          {fmtFixed(Math.min(...notCrisisSmallest.map((x) => x.oos.roi_diff ?? 0)), 3)} to{' '}
+          {fmtFixed(Math.max(...notCrisisSmallest.map((x) => x.oos.roi_diff ?? 0)), 3)} per dollar on{' '}
+          {notCrisisSmallest[0]?.oos.n} out-of-sample rolls, reaches p ={' '}
+          {Math.min(...notCrisisSmallest.map((x) => x.oos_p)).toFixed(4)} at best, short of the first BH step. An
+          effect that size would not have been found here even if it is real. On the held-to-expiry rules the
+          perfect filter gets only{' '}
           {heldRules.map(([r, o]) => `${o.p.toFixed(2)} (${ruleShort(r)}, ${plural(o.oos_winners, 'winner', 'winners')})`).join(', ')}
           , because with one or a few winning rolls a resample either contains them or does not. Even a perfect
           filter there stays above the first BH step, so those {T.bh.tested - T.bh.sell_rules.tested} tests carry
@@ -709,10 +819,11 @@ export function PitchView() {
           {T.bh.sell_rules.min_p.toFixed(4)}, first step {(T.bh.fdr / T.bh.sell_rules.tested).toFixed(5)}).
         </p>
         <p className="pl-note">
-          <strong>The one consistent pattern.</strong> {notCrisisSmallest.length} of the{' '}
-          {T.bh.smallest_p.length} smallest p-values are the same filter — do not buy when the prior close’s regime
-          is crisis (VIX at or above 28) — on {new Set(notCrisisSmallest.map((x) => x.rule)).size} different sold
-          rules: it lifted their out-of-sample mean by{' '}
+          <strong>The one consistent pattern.</strong>{' '}
+          {notCrisisEverySold
+            ? `The ${T.bh.smallest_p.length} smallest p-values are the same filter, once on each of the ${soldRules.length} sold rules`
+            : `${notCrisisSmallest.length} of the ${T.bh.smallest_p.length} smallest p-values are the same filter, on ${new Set(notCrisisSmallest.map((x) => x.rule)).size} different sold rules`}
+          : do not buy when the prior close’s regime is crisis (VIX at or above 28). It lifted their out-of-sample mean by{' '}
           {fmtFixed(Math.min(...notCrisisSmallest.map((x) => x.oos.roi_diff ?? 0)), 3)} to{' '}
           {fmtFixed(Math.max(...notCrisisSmallest.map((x) => x.oos.roi_diff ?? 0)), 3)} per dollar, taking{' '}
           {notCrisisSmallest[0]?.oos.taken} of {notCrisisSmallest[0]?.oos.n} rolls, with p from{' '}
@@ -750,11 +861,17 @@ export function PitchView() {
             of two US index ETFs over a bull market is itself hindsight.
           </li>
           <li>
+            <strong>Same-close signals.</strong> Three timing signals (put IV ÷ VIX, put cost, implied α) are read
+            from the same close the put is bought at, at that close’s ask. Doing that for real means reading the
+            chain and trading in the closing minutes, or trading the next session at its prices; neither has been
+            tested. The VIX and regime signals use the prior close and do not have this problem.
+          </li>
+          <li>
             <strong>Searched space, and what changed along the way.</strong> {spyRules.length} rules × 3 budgets on
             two underlyings, the 2008–09 check (4 depths × 3 budgets), then {T.combinations} timing combinations.
             Every count is reported above. One change was made after seeing a result: an exploratory timing run drew
             2,000 bootstrap resamples per test and wrote p = 0 when none fell at or below zero, and with that, one
-            combination (5% OTM 8-week, not-crisis filter, p reported as 0) passed BH. A p of 0 claims more than 2,000
+            combination (5% OOM 8-week, not-crisis filter, p reported as 0) passed BH. A p of 0 claims more than 2,000
             draws can resolve, and the floor of 1/2,001 sat above the first BH step, so no honest p could pass at all.
             The p was corrected to (b + 1) ÷ (R + 1) and R raised to {bootReps.toLocaleString('en-US')}, which puts
             the floor below the first step; under the correction the same combination’s p is{' '}
@@ -776,7 +893,7 @@ export function PitchView() {
           </li>
           <li>
             <strong>Price the Screen on quotes, not a model.</strong> Until the Workspace verdicts use real fills,
-            they cannot count as evidence. Even priced at VIX, which the Workspace does not use, a ~30-day 10% OTM
+            they cannot count as evidence. Even priced at VIX, which the Workspace does not use, a ~30-day 10% OOM
             SPY put comes out a median 7.4× too cheap against real quotes (docs/MODEL_RESIDUAL.md, 210 roll dates).
           </li>
           <li>
@@ -798,10 +915,15 @@ export function PitchView() {
       <section className="pl-section" id="pitch-reproduce">
         <h3>Reproduce every number</h3>
         <p className="pl-note">
-          <code>make pitch-evidence AS_OF={E.as_of}</code> reads the snapshots named above (lake read only) and
+          From a checkout whose <code>.env</code> points at the production lake (the snapshots above are not in a
+          local <code>./data</code>), <code>make pitch-evidence AS_OF={E.as_of}</code> reads them, read only, and
           rewrites <code>frontend/src/content/pitch_evidence.json</code>, which is all this page reads for the
-          study. That file was generated by commit <code data-testid="pitch-code-sha">{E.code.sha.slice(0, 12)}</code>
-          {E.code.dirty ? ' with uncommitted changes to scripts/ or src/ — not reproducible as committed' : ''}. The live readings: <code>GET /api/putlab/regime-verdict</code>,{' '}
+          study. The generator refuses to run against another checkout’s code. That file was generated by commit{' '}
+          <code data-testid="pitch-code-sha">{E.code.sha.slice(0, 12)}</code>, a branch commit that a squash merge
+          does not keep; the code it ran is identified on main by its git tree hashes, src/{' '}
+          <code>{E.code.tree.src.slice(0, 12)}</code> and scripts/ <code>{E.code.tree.scripts.slice(0, 12)}</code>
+          {E.code.dirty ? ', with uncommitted changes — not reproducible as committed' : ''}. The live readings:{' '}
+          <code>GET /api/putlab/regime-verdict</code>, <code>/api/putlab/backtest</code>,{' '}
           <code>/api/putlab/roll-schedule/marked</code> and <code>/api/putlab/hedge-overlay</code> on tail-lab.fly.dev,
           read {LIVE.read_on}. The roll engine is tested in tests/test_scripts_pitch_evidence.py.
         </p>
