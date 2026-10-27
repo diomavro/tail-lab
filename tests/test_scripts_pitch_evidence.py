@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import importlib.util
 import math
+import re
 import sys
 from pathlib import Path
 from types import ModuleType
@@ -284,8 +285,17 @@ def test_gate_thresholds_come_from_in_sample_signals_only() -> None:
 def _combo(is_roi: list[float], oos_roi: list[float], take: list[bool], rule: str) -> object:
     n_is = len(is_roi)
     is_ = np.array([True] * n_is + [False] * len(oos_roi))
+    days = tuple(str(d.date()) for d in pd.bdate_range("2010-01-04", periods=len(is_)))
     return pe.Combo(
-        rule, "g", np.array(is_roi + oos_roi), np.ones(len(is_)), np.array(take), is_, 1.0, 1.0
+        rule,
+        "g",
+        np.array(is_roi + oos_roi),
+        np.ones(len(is_)),
+        np.array(take),
+        is_,
+        1.0,
+        1.0,
+        days,
     )
 
 
@@ -607,7 +617,7 @@ def test_a_crisis_roll_settles_on_spy_moved_by_the_spx_move() -> None:
     assert df.roi.iloc[0] == pytest.approx(4800.0 / (100.0 + COMMISSION_PER_CONTRACT) - 1.0)
     assert df.expiry.iloc[0] == pd.Timestamp("2008-10-17")
     assert df.filled.tolist() == [True, False]
-    assert df.reason.iloc[1] == "spread 164% of mid (bid 0.10, ask 1.00, strike 54)"
+    assert df.reason.iloc[1] == "spread 164% of mid, over the 50% cap"
 
 
 def test_refusal_reasons_name_the_guard() -> None:
@@ -616,10 +626,28 @@ def test_refusal_reasons_name_the_guard() -> None:
             _quotes([("2008-09-19", "2008-10-17", 100.0, strike, bid, ask, oi)]), 10.0
         )
 
-    assert one(85.0, 1.0, 1.1, 100) == "no strike within 1pp (nearest 15.0% OTM)"
-    assert one(90.0, 0.0, 1.0, 100) == "no bid (strike 90)"
-    assert one(90.0, 1.0, 1.1, 9) == "open interest 9 (strike 90)"
+    assert one(85.0, 1.0, 1.1, 100) == "no strike within 1pp (nearest 15.0% OOM)"
+    assert one(90.0, 0.0, 1.0, 100) == "no bid"
+    assert one(90.0, 1.0, 1.1, 9) == "open interest under 10"
     assert one(90.0, 1.0, 1.1, 100) == "refused by another guard"
+    assert one(90.0, 0.16, 0.31, 100) == "spread 64% of mid, over the 50% cap"
+
+
+def test_a_refusal_reason_never_carries_a_quote() -> None:
+    # option_quotes is cleared for private research only and the page is
+    # public: a reason names the guard, never the bid, ask or strike.
+    for strike, bid, ask, oi in (
+        (85.0, 1.0, 1.1, 100),
+        (90.0, 0.0, 1.37, 100),
+        (90.0, 1.23, 1.37, 3),
+        (90.0, 0.16, 0.31, 100),
+    ):
+        reason = pe.refusal_reason(
+            _quotes([("2008-09-19", "2008-10-17", 100.0, strike, bid, ask, oi)]), 10.0
+        )
+        for figure in (f"{bid:.2f}", f"{ask:.2f}", f"{strike:g}"):
+            assert figure not in reason, (figure, reason)
+        assert not re.search(r"\b(bid|ask|strike) \d", reason), reason
 
 
 def test_the_2008_book_runs_to_the_last_filled_rolls_expiry() -> None:
@@ -641,6 +669,11 @@ def test_the_2008_book_runs_to_the_last_filled_rolls_expiry() -> None:
     )
     out = pe.crisis_2008(q, cboe)
     assert out["roll_dates"] == 2
+    # Every 2008-09 month but the two with a roll date is reported as a gap.
+    gaps = out["months_without_roll_date"]
+    assert len(gaps) == 22
+    assert "2008-12" not in gaps and "2009-01" not in gaps
+    assert gaps[0] == "2008-01" and gaps[-1] == "2009-12"
     assert out["nearest_dte"] == [28, 35]
     assert out["dates_with_two_expiries"] == ["2009-01-16"]
     r = out["10pct"]
@@ -669,8 +702,9 @@ def test_cboe_benchmark_reads_only_the_hedge_window() -> None:
 def _timing_combo(gate: str, take_is: list[bool], take_oos: list[bool]) -> object:
     roi = np.array([float(i) for i in range(30)] * 2) / 10 - 1.0
     is_ = np.array([True] * 30 + [False] * 30)
+    days = tuple(str(d.date()) for d in pd.bdate_range("2010-01-04", periods=60))
     return pe.Combo(
-        "5pct_8w_sell4w", gate, roi, np.ones(60), np.array(take_is + take_oos), is_, 1.0, 1.0
+        "5pct_8w_sell4w", gate, roi, np.ones(60), np.array(take_is + take_oos), is_, 1.0, 1.0, days
     )
 
 
@@ -765,3 +799,103 @@ def test_drop_best_leaves_out_the_best_roll_not_the_first() -> None:
     c = out["configs"][0]
     assert c["drop_best"]["best_entry"] == str(mkt.sessions[5].date())  # type: ignore[attr-defined]
     assert c["drop_best"]["edge_without_best"] < 0 < c["edge"]
+
+
+def test_drawdown_span_is_the_worst_declines_own_peak_and_trough() -> None:
+    # Peak 2 on day 1, trough 0.8 on day 3 (-60%); the later 1.9 never makes
+    # a new peak, so the span is (day 1, day 3), not the global max/min dates.
+    idx = pd.bdate_range("2020-01-06", periods=6)
+    w = pd.Series([1.0, 2.0, 1.5, 0.8, 1.9, 0.9], index=idx)
+    assert pe.drawdown_span(w) == (str(idx[1].date()), str(idx[3].date()))
+
+
+def test_peak_put_reports_the_open_rolls_mark_and_settlement() -> None:
+    # A roll marked at 74x its cost on the peak day, then expiring worthless:
+    # the page calls that a paper mark given back.
+    mkt = _flat_market([100.0] * 10)
+    r = _roll(mkt, 1, 8, [1.0, 1.0, 74.0, 30.0, 5.0, 1.0, 0.5, 0.0])
+    peak = str(mkt.sessions[3].date())  # type: ignore[attr-defined]
+    assert pe.peak_put([r], peak) == {
+        "entry": str(mkt.sessions[1].date()),  # type: ignore[attr-defined]
+        "exit": str(mkt.sessions[8].date()),  # type: ignore[attr-defined]
+        "mark_multiple": 74.0,
+        "exit_multiple": 0.0,
+    }
+    # On an entry or exit day nothing is open between rolls: no paper mark.
+    assert pe.peak_put([r], str(mkt.sessions[1].date())) is None  # type: ignore[attr-defined]
+    assert pe.peak_put([r], str(mkt.sessions[8].date())) is None  # type: ignore[attr-defined]
+
+
+def test_a_sold_put_with_no_qualifying_exit_bid_is_credited_intrinsic_and_flagged() -> None:
+    # Spot drops to 80 before the 2-week exit, where the bid is 0 (refused):
+    # the 95 put is credited its exercise value, 15 a share, less the sale's
+    # commission -- and the roll says so, so the page can count it.
+    panel = _panel([100.0] * 10 + [80.0] * 15)
+    panel.loc[10, "bid"] = 0.0
+    mkt = pe.market_from_panel(panel, "SPY")
+    rolls, _ = pe.run_rolls(
+        mkt, moneyness=5.0, tenor_weeks=4.0, hold_weeks=2.0, start="2020-01-06", end="2020-01-06"
+    )
+    c = 1.0 / (100.0 + COMMISSION_PER_CONTRACT)
+    assert rolls[0].exit == SESSIONS[10]
+    assert rolls[0].roi == pytest.approx(c * 1500.0 - c * COMMISSION_PER_CONTRACT - 1.0)
+    assert rolls[0].exit_at_intrinsic is True
+    # With a qualifying bid the same sale is at the bid and not flagged.
+    ok, _ = pe.run_rolls(
+        pe.market_from_panel(_panel([100.0] * 10 + [80.0] * 15), "SPY"),
+        moneyness=5.0,
+        tenor_weeks=4.0,
+        hold_weeks=2.0,
+        start="2020-01-06",
+        end="2020-01-06",
+    )
+    assert ok[0].roi == pytest.approx(c * 90.0 - c * COMMISSION_PER_CONTRACT - 1.0)
+    assert ok[0].exit_at_intrinsic is False
+
+
+def test_overlap_says_when_several_tests_are_one_result() -> None:
+    # Two rules on the same dates whose filters skip the same out-of-sample
+    # roll: one effect seen twice. A third on other dates is not comparable.
+    a = _combo([0.0] * 4, [1.0, -1.0, 0.5, -0.5], [True] * 4 + [True, False, True, True], "a")
+    b = _combo([0.0] * 4, [2.0, -1.0, 0.4, -0.6], [True] * 4 + [True, False, True, True], "b")
+    out = pe.overlap([a, b])
+    assert out["same_oos_entries"] is True
+    assert out["oos_entries"] == 4
+    assert out["same_skipped"] is True
+    assert out["skipped"] == [a.entries[5]]  # type: ignore[attr-defined]
+    assert out["roi_corr"][0] == pytest.approx(
+        np.corrcoef([1.0, -1.0, 0.5, -0.5], [2.0, -1.0, 0.4, -0.6])[0, 1]
+    )
+    c = _combo([0.0] * 4, [1.0, -1.0, 0.5, -0.5], [True] * 4 + [False, True, True, True], "c")
+    assert pe.overlap([a, c])["same_skipped"] is False
+    shifted = pe.Combo(**{**vars(a), "entries": tuple(reversed(a.entries))})  # type: ignore[attr-defined]
+    moved = pe.overlap([a, shifted])
+    assert moved["same_oos_entries"] is False
+    assert moved["roi_corr"] is None
+
+
+def test_lifting_the_spread_cap_buys_a_wide_quote_at_its_ask_and_restores_the_cap() -> None:
+    # The 10% put on the second date is quoted 0.10 / 1.00 (164% of mid):
+    # refused under the cap, bought at 1.00 with it lifted.
+    rows = []
+    for d, e, sp in (("2008-12-19", "2009-01-16", 100.0), ("2009-01-16", "2009-02-20", 90.0)):
+        for k in (95.0, 90.0, 85.0, 80.0):
+            wide = d == "2009-01-16" and k == 90.0
+            rows.append((d, e, sp, k * sp / 100, 0.10 if wide else 0.9, 1.0, 100))
+    q = _quotes(rows)
+    cboe = pd.DataFrame(
+        {
+            "index_symbol": "SPX",
+            "trade_date": pd.to_datetime(["2008-12-19", "2009-01-16", "2009-02-20"]),
+            "close": [100.0, 90.0, 45.0],
+        }
+    )
+    out = pe.crisis_2008(q, cboe)
+    assert out["10pct"]["filled"] == 1
+    off = out["spread_guard_off"]["depths"]["10pct"]
+    assert (off["filled"], off["rolls"]) == (2, 2)
+    # The halving after 2009-01-16 is now hedged: the book beats its own
+    # unhedged arm (which, the last roll now filled, runs to its expiry).
+    assert off["books"][-1]["terminal"] > off["unhedged"]["terminal"]
+    assert off["n_beat"] == 3
+    assert pe.marks.MAX_RELATIVE_SPREAD == 0.50

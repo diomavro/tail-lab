@@ -7,8 +7,9 @@ archives ``docs/DATA_CONTRACTS.md`` #12 describes are not needed) through the
 store's as-of reads
 (``docs/adr/0009``), never writes to it, and writes ONE file of aggregate
 statistics, ``frontend/src/content/pitch_evidence.json``, that the Pitch tab
-renders. No raw quote row is written: the optionsDX licence forbids
-redistribution, aggregates are fine.
+renders. No raw quote row is written -- no bid, ask or strike, refusal
+reasons included: the optionsDX licence forbids redistribution and
+``option_quotes`` is cleared for private research only; aggregates are fine.
 
 Nothing here prices an option with a model. Every fill and every mark goes
 through the platform's own guard pipeline,
@@ -16,7 +17,9 @@ through the platform's own guard pipeline,
 (point in time), the nearest listed expiry AT OR AFTER the target, a listed
 strike within ``MAX_SNAP_MONEYNESS_PP`` (1pp) of the requested distance, bid
 > 0 and relative spread <= ``marks.MAX_RELATIVE_SPREAD`` (50%), bought at the
-ASK; a sale is at the BID. Commission ``brokerage.COMMISSION_PER_CONTRACT``
+ASK; a sale is at the BID (when no exit bid passes the guards, at intrinsic --
+the American put's exercise value -- counted per rule as
+``exits_at_intrinsic``). Commission ``brokerage.COMMISSION_PER_CONTRACT``
 ($0.65) per contract on a buy and on a sale, none on expiry.
 
 Three questions, all on SPY (2010-2023) and, for the first two, QQQ (2012-2023):
@@ -52,6 +55,7 @@ import sys
 from collections.abc import Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
+from unittest.mock import patch
 
 import numpy as np
 import pandas as pd
@@ -60,6 +64,7 @@ import tail_lab
 from tail_lab.config import Settings, get_lake_store
 from tail_lab.contracts.regime import classify_vix_series
 from tail_lab.lake.store import LakeStore
+from tail_lab.research.backtest import marks
 from tail_lab.research.backtest.brokerage import COMMISSION_PER_CONTRACT
 from tail_lab.research.backtest.marks import MAX_RELATIVE_SPREAD, MIN_OPEN_INTEREST
 from tail_lab.research.backtest.multiple_testing import benjamini_hochberg
@@ -131,6 +136,9 @@ class Roll:
     dte: int
     roi: float  # per unit of premium budget, after commissions
     path: pd.Series = field(repr=False)  # daily value of one unit of budget
+    #: A sale whose exit bid the guards refused, credited at intrinsic
+    #: (strike - spot, what exercising the American put pays) instead.
+    exit_at_intrinsic: bool = False
 
 
 @dataclass
@@ -248,10 +256,14 @@ def run_rolls(
         contracts = 1.0 / (100.0 * f.premium + COMMISSION_PER_CONTRACT)
         s1 = float(mkt.spot[exit_])
         v = max(f.strike - s1, 0.0)
+        at_intrinsic = False
         if hold_weeks is not None:
             bid = mkt.src.mark(
                 entry_date=exit_.date(), strike=f.strike, expiry=f.expiry, basis=f.basis
             )
+            # No bid passes the guards: credit intrinsic, the exercise value of
+            # an American put (zero when out of the money). Counted and printed.
+            at_intrinsic = bid is None
             v = bid if bid is not None else v
         roi = unit_value(contracts, v, sold=hold_weeks is not None) - 1.0
         path = (
@@ -259,7 +271,9 @@ def run_rolls(
             if daily_paths
             else pd.Series(dtype=float)
         )
-        rolls.append(Roll(t, exit_, f.strike, f.premium, s0, s1, f.realized_dte, roi, path))
+        rolls.append(
+            Roll(t, exit_, f.strike, f.premium, s0, s1, f.realized_dte, roi, path, at_intrinsic)
+        )
         t = nxt
     return rolls, skips
 
@@ -313,6 +327,23 @@ def book(
         w = float(vals[-1])
         prev = r.exit
     return pd.Series(out).sort_index()
+
+
+def peak_put(rolls: Sequence[Roll], peak: str) -> Json | None:
+    """The roll open on a drawdown's peak day, if any: its put's value then
+    and at its exit, per unit of premium (1 = what it cost). A peak far above
+    1 that settles far below it is a paper mark given back, not premium bled
+    through a falling market."""
+    d = pd.Timestamp(peak)
+    for r in rolls:
+        if r.entry < d < r.exit:
+            return {
+                "entry": str(r.entry.date()),
+                "exit": str(r.exit.date()),
+                "mark_multiple": float(r.path[d]),
+                "exit_multiple": r.roi + 1.0,
+            }
+    return None
 
 
 def ann_log_growth(w: pd.Series) -> float:
@@ -496,6 +527,7 @@ def hedge(mkt: Market, rolls_by_rule: dict[str, list[Roll]]) -> Json:
                 "edge": g - g0,
                 "max_dd": max_drawdown(w),
                 "max_dd_span": drawdown_span(w),
+                "max_dd_peak_put": peak_put(rolls, drawdown_span(w)[0]),
             }
             if g > g0:
                 n_beat += 1
@@ -701,6 +733,7 @@ class Combo:
     is_: np.ndarray
     yrs_is: float
     yrs_oos: float
+    entries: tuple[str, ...]  # entry date of each roll, aligned with roi
 
     def stats(self, oos: bool) -> Json:
         m = ~self.is_ if oos else self.is_
@@ -730,13 +763,28 @@ def rule_combos(rule: str, df: pd.DataFrame, sig: pd.DataFrame, eq: np.ndarray) 
     yrs_is = (df.exit[is_].max() - df.entry[is_].min()).days / 365.25
     yrs_oos = (df.exit[~is_].max() - df.entry[~is_].min()).days / 365.25
     return [
-        Combo(rule, gname, df.roi.to_numpy(), eq, apply_gate(sig, gate), is_, yrs_is, yrs_oos)
+        Combo(
+            rule,
+            gname,
+            df.roi.to_numpy(),
+            eq,
+            apply_gate(sig, gate),
+            is_,
+            yrs_is,
+            yrs_oos,
+            tuple(str(d.date()) for d in df.entry),
+        )
         for gname, gate in gates(sig[is_]).items()
     ]
 
 
-def timing_combos(mkt: Market, ti: TimingInputs, span: tuple[str, str]) -> list[Combo]:
+def timing_combos(
+    mkt: Market, ti: TimingInputs, span: tuple[str, str]
+) -> tuple[list[Combo], dict[str, float]]:
+    """Every rule x gate, and per rule the share of entries with an implied
+    alpha reading (the fit refuses on thin chains)."""
     combos: list[Combo] = []
+    coverage: dict[str, float] = {}
     for sname, (ten, hold) in STRUCTS.items():
         for m in DEPTHS:
             rolls, _ = run_rolls(
@@ -756,11 +804,12 @@ def timing_combos(mkt: Market, ti: TimingInputs, span: tuple[str, str]) -> list[
             ).to_numpy()
             sig = signals(mkt, df, ti)
             combos += rule_combos(f"{int(m)}pct_{sname}", df, sig, eq)
+            coverage[f"{int(m)}pct_{sname}"] = float(sig.alpha.notna().mean())
             print(
                 f"timing {int(m)}pct_{sname}: alpha coverage {sig.alpha.notna().mean():.2f}",
                 file=sys.stderr,
             )
-    return combos
+    return combos, coverage
 
 
 def _select(rows: list[tuple[Combo, Json, Json]], key: str) -> list[tuple[Combo, Json, Json]]:
@@ -788,6 +837,7 @@ def timing(combos: list[Combo], rng: np.random.Generator) -> Json:
         "gates": len({c.gate for c in combos}),
         "is_period": ["2010-01-04", str(IS_END.date())],
         "oos_period": ["2017-01-01", "2023-12-29"],
+        "min_is_taken": MIN_IS_TAKEN,
     }
     for key in ("roi_diff", "dg"):
         ok = _select(rows, key)
@@ -880,6 +930,33 @@ def benjamini_hochberg_oos(ok: list[tuple[Combo, Json, Json]], rng: np.random.Ge
             for i in order
         ],
         "oracle": oracle,
+        "smallest_p_overlap": overlap([ok[i][0] for i in order]),
+    }
+
+
+def overlap(combos: Sequence[Combo]) -> Json:
+    """How alike a set of tests are: whether they share their out-of-sample
+    entry dates, which of those dates their filters skip, and the pairwise
+    correlation of their out-of-sample roll returns. Tests on the same dates
+    skipping the same dates are one result seen several times."""
+    oos = [tuple(np.array(c.entries)[~c.is_]) for c in combos]
+    skipped = [tuple(np.array(c.entries)[~c.is_ & ~c.take]) for c in combos]
+    same_entries = len(set(oos)) == 1
+    corr: list[float] = []
+    if same_entries:
+        rois = [c.roi[~c.is_] for c in combos]
+        corr = [
+            float(np.corrcoef(rois[i], rois[j])[0, 1])
+            for i in range(len(rois))
+            for j in range(i + 1, len(rois))
+        ]
+    return {
+        "tests": len(combos),
+        "same_oos_entries": same_entries,
+        "oos_entries": len(oos[0]) if oos else 0,
+        "same_skipped": len(set(skipped)) == 1,
+        "skipped": sorted({d for s in skipped for d in s}),
+        "roi_corr": [min(corr), float(np.median(corr))] if corr else None,
     }
 
 
@@ -936,14 +1013,16 @@ def refusal_reason(at_expiry: pd.DataFrame, moneyness: float) -> str:
     got = (1.0 - float(row["strike"]) / spot) * 100.0
     bid, ask = float(row["bid"]), float(row["ask"])
     if abs(got - moneyness) > MAX_SNAP_MONEYNESS_PP:
-        return f"no strike within {MAX_SNAP_MONEYNESS_PP:g}pp (nearest {got:.1f}% OTM)"
+        return f"no strike within {MAX_SNAP_MONEYNESS_PP:g}pp (nearest {got:.1f}% OOM)"
+    # Only the guard and a derived ratio: no bid, ask or strike leaves the lake
+    # (option_quotes is cleared for private research use only).
     if bid <= 0.0 or ask <= 0.0:
-        return f"no bid (strike {float(row['strike']):g})"
+        return "no bid"
     if int(row["open_interest"]) < MIN_OPEN_INTEREST:
-        return f"open interest {int(row['open_interest'])} (strike {float(row['strike']):g})"
+        return f"open interest under {MIN_OPEN_INTEREST}"
     spread = (ask - bid) / ((ask + bid) / 2)
     if spread > MAX_RELATIVE_SPREAD:
-        return f"spread {spread:.0%} of mid (bid {bid:.2f}, ask {ask:.2f}, strike {float(row['strike']):g})"
+        return f"spread {spread:.0%} of mid, over the {MAX_RELATIVE_SPREAD:.0%} cap"
     return "refused by another guard"
 
 
@@ -1017,19 +1096,51 @@ def crisis_2008(q: pd.DataFrame, cboe: pd.DataFrame) -> Json:
         "first": str(dates[0].date()),
         "nearest_dte": [int(nearest_dte.min()), int(nearest_dte.max())],
         "dates_with_two_expiries": [str(d.date()) for d in n_exp[n_exp > 1].index],
+        "months_without_roll_date": sorted(
+            set(pd.period_range(*CRISIS_SPAN, freq="M").astype(str))
+            - {d.strftime("%Y-%m") for d in dates}
+        ),
     }
     beat = 0
     for m in DEPTHS:
-        df = crisis_rolls(q, spx, m, dates)
-        last = df[df["filled"]].iloc[-1]
-        end = pd.Timestamp(last["expiry"]) if last["entry"] == dates[-1] else dates[-1]
-        res = crisis_books(df, crisis_equity(spx, dates, end))
-        res["last"] = str(end.date())
+        res = _crisis_depth(q, spx, m, dates)
         beat += int(str(res["n_beat"]))
         out[f"{int(m)}pct"] = res
     out["n_beat"] = beat
     out["configs"] = len(DEPTHS) * len(BUDGETS)
+    out["spread_guard_off"] = crisis_without_spread_guard(q, spx, dates)
     return out
+
+
+def _crisis_depth(q: pd.DataFrame, spx: pd.Series, m: float, dates: list[pd.Timestamp]) -> Json:
+    df = crisis_rolls(q, spx, m, dates)
+    last = df[df["filled"]].iloc[-1]
+    end = pd.Timestamp(last["expiry"]) if last["entry"] == dates[-1] else dates[-1]
+    res = crisis_books(df, crisis_equity(spx, dates, end))
+    res["last"] = str(end.date())
+    return res
+
+
+def crisis_without_spread_guard(q: pd.DataFrame, spx: pd.Series, dates: list[pd.Timestamp]) -> Json:
+    """The 2008-09 check again with the 50%-of-mid spread cap lifted, so a
+    wide quote is bought at its ask: how much of the result the cap decides.
+    The other guards (strike snap, bid > 0, open interest) stay."""
+    with patch.object(marks, "MAX_RELATIVE_SPREAD", math.inf):
+        per = {f"{int(m)}pct": _crisis_depth(q, spx, m, dates) for m in DEPTHS}
+    return {
+        "n_beat": sum(int(str(r["n_beat"])) for r in per.values()),
+        "depths": {
+            k: {
+                "filled": r["filled"],
+                "rolls": r["rolls"],
+                "n_beat": r["n_beat"],
+                "best_entry": r["best_entry"],
+                "unhedged": r["unhedged"],
+                "books": r["books"],
+            }
+            for k, r in per.items()
+        },
+    }
 
 
 # ------------------------------------------------------------- data + main
@@ -1080,6 +1191,8 @@ def standalone_and_hedge(
             )
             st = standalone_stats(rolls_frame(rolls), rng)
             st["fill_skips"] = skips
+            st["exits_at_intrinsic"] = sum(r.exit_at_intrinsic for r in rolls)
+            st["exits_at_intrinsic_itm"] = sum(r.exit_at_intrinsic and r.roi > -1.0 for r in rolls)
             rules[key] = st
             rolls_by_rule[key] = rolls
             print(
@@ -1173,7 +1286,10 @@ def run(store: LakeStore, as_of: dt.date) -> Json:
     hedge_window = spy_hedge_window(out)
     out["cboe"] = cboe_benchmark(cboe, hedge_window)
     out["crisis_2008"] = crisis_2008(store.read_bronze_as_of("option_quotes", as_of), cboe)
-    out["timing"] = timing(timing_combos(spy, timing_inputs(vix_bronze, rates), SPANS["SPY"]), rng)
+    combos, coverage = timing_combos(spy, timing_inputs(vix_bronze, rates), SPANS["SPY"])
+    tm = timing(combos, rng)
+    tm["alpha_coverage"] = [min(coverage.values()), max(coverage.values())]
+    out["timing"] = tm
     return out
 
 
