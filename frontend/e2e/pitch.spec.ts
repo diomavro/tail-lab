@@ -128,7 +128,9 @@ test('names the commit that generated the evidence', async ({ page }) => {
   await expect(page.getByTestId('pitch-code-sha')).toHaveText(EVIDENCE.code.sha.slice(0, 12))
   // The branch commit does not survive a squash merge; the tree hashes do.
   await expect(page.locator('#pitch-reproduce')).toContainText(EVIDENCE.code.tree.src.slice(0, 12))
-  await expect(page.locator('#pitch-reproduce')).toContainText(EVIDENCE.code.tree.scripts.slice(0, 12))
+  await expect(page.locator('#pitch-reproduce')).toContainText(
+    `blob hash of scripts/pitch_evidence.py, ${EVIDENCE.code.script.slice(0, 12)}`,
+  )
 })
 
 test('the headline still fits the evidence it summarises', () => {
@@ -440,9 +442,13 @@ test('the skip-crisis paragraph prints the range of its effects and p-values', a
   expect(xs.length).toBeGreaterThan(0)
   const d = xs.map((x) => x.oos.roi_diff ?? 0)
   const p = xs.map((x) => x.oos_p)
+  const pn = xs.map((x) => x.oos_p_null)
   await expect(page.locator('#pitch-timing')).toContainText(
-    `lifted their out-of-sample mean by ${fmtFixed(Math.min(...d), 3)} to ${fmtFixed(Math.max(...d), 3)} per dollar, taking ${xs[0]!.oos.taken} of ${xs[0]!.oos.n} rolls, with p from ${Math.min(...p).toFixed(4)} to ${Math.max(...p).toFixed(4)}`,
+    `lifted their out-of-sample mean by ${fmtFixed(Math.min(...d), 3)} to ${fmtFixed(Math.max(...d), 3)} per dollar, taking ${xs[0]!.oos.taken} of ${xs[0]!.oos.n} rolls, with percentile p from ${Math.min(...p).toFixed(4)} to ${Math.max(...p).toFixed(4)} and null-centred p from ${Math.min(...pn).toFixed(3)} to ${Math.max(...pn).toFixed(3)}`,
   )
+  // "None below 0.05" is printed only when it is true of every one.
+  const none = page.locator('#pitch-timing').getByText('none below 0.05 once the skew is accounted for')
+  await expect(none).toHaveCount(pn.every((x) => x >= 0.05) ? 1 : 0)
 })
 
 test('the one-month claims about 2008-09 are printed exactly when the books bear them out', async ({ page }) => {
@@ -521,14 +527,27 @@ test('the timing correction is said to cover the mean-return objective only', as
     `${fmtFixed(EVIDENCE.timing.roi_diff.spearman_is_oos)} on mean return and ${fmtFixed(dg.spearman_is_oos)} on growth`,
   )
   await expect(timing).toContainText(
-    `${EVIDENCE.timing.bh.p_below_05} of ${EVIDENCE.timing.bh.tested} mean-return differences have a raw p below 0.05`,
+    `${EVIDENCE.timing.bh.p_below_05} of ${EVIDENCE.timing.bh.tested} mean-return differences have a percentile p below 0.05, and ${EVIDENCE.timing.bh.p_null_below_05} a null-centred one (smallest ${EVIDENCE.timing.bh.min_p_null.toFixed(3)})`,
   )
-  // Both comparisons are derived on the page; a wrong chance count or a
-  // ratio against the FDR instead of the first BH step would mislead.
+  // The percentile p sits on skewed draws, so every comparison is restated
+  // under the null-centred p; a ratio against the FDR instead of the first
+  // BH step would mislead.
   const bh = EVIDENCE.timing.bh
-  await expect(timing).toContainText(`about the ${Math.round(bh.tested * 0.05)} that chance would give`)
-  const bestNotCrisis = Math.min(...bh.smallest_p.filter((x) => x.gate === 'regime=not_crisis').map((x) => x.oos_p))
-  await expect(timing).toContainText(`about ${Math.round(bestNotCrisis / (bh.fdr / bh.tested))}× the first BH`)
+  await expect(timing).toContainText(`keeps ${bh.survivors.length} on the percentile p and ${bh.survivors_null} on the null-centred p`)
+  const best = bh.smallest_p
+    .filter((x) => x.gate === 'regime=not_crisis')
+    .reduce((a, b) => (b.oos_p < a.oos_p ? b : a))
+  const step = bh.fdr / bh.tested
+  await expect(timing).toContainText(
+    `percentile p of ${best.oos_p.toFixed(4)} at best, about ${Math.round(best.oos_p / step)}× the first BH step; the same test’s null-centred p is ${best.oos_p_null.toFixed(3)}, about ${Math.round(best.oos_p_null / step)}× the step`,
+  )
+  // A p-value, labelled as one: not read as a lift per dollar.
+  await expect(timing).toContainText('even the perfect filter has p = ')
+  const r = bh.skew_range!
+  await expect(page.locator('#pitch-method')).toContainText(
+    `runs from ${fmtFixed(r[0]!)} to ${fmtFixed(r[2]!)} (median ${fmtFixed(r[1]!)})`,
+  )
+  await expect(page.locator('#pitch-method')).not.toContainText('nothing here checks')
 })
 
 test('the fills step says the spread cap guards buys only, and how long a sold put still runs', async ({ page }) => {

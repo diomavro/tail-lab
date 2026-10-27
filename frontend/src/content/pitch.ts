@@ -104,7 +104,10 @@ export interface PValued {
   rule: string
   gate: string
   oos: ComboStats
+  /** Percentile-bootstrap p: the share of draws at or below zero. */
   oos_p: number
+  /** Null-centred p: the same draws shifted to centre on zero, the share at or above the observed effect. */
+  oos_p_null: number
 }
 
 /** One of the smallest-p tests, with its in-sample result beside it. */
@@ -112,6 +115,8 @@ export interface SmallestP extends PValued {
   is: ComboStats
   /** In-sample entry dates the filter skipped. */
   is_skipped: string[]
+  /** Skewness of the test's bootstrap distribution. */
+  oos_skew: number
 }
 
 export interface CrisisBook {
@@ -144,6 +149,8 @@ export interface Selected {
   oos: ComboStats
   oos_ci95: number[]
   oos_p: number
+  oos_p_null: number
+  oos_skew: number
   /** Eligible combinations that improved in sample, and of those the ones
    *  that also improved out of sample. (Not "the share positive out of
    *  sample": every gate's complement is in the set, so that is ~1/2.) */
@@ -175,10 +182,11 @@ export interface PanelInfo {
 
 export interface PitchEvidence {
   as_of: string
-  /** The commit that generated the file; dirty = scripts/ or src/ differed
-   *  from it. `tree` = git tree hashes of src/ and scripts/, which survive a
+  /** The commit that generated the file; dirty = scripts/pitch_evidence.py
+   *  or src/ differed from it. `tree.src` = git tree hash of src/ and
+   *  `script` = git blob hash of scripts/pitch_evidence.py, which survive a
    *  squash merge where the branch commit does not. */
-  code: { sha: string; tree: { src: string; scripts: string }; dirty: boolean }
+  code: { sha: string; tree: { src: string }; script: string; dirty: boolean }
   dividend_yield_assumed: number
   commission_per_contract: number
   block_rolls: number
@@ -236,6 +244,14 @@ export interface PitchEvidence {
       survivors: PValued[]
       min_p: number
       p_below_05: number
+      /** The same, on the null-centred p. */
+      min_p_null: number
+      p_null_below_05: number
+      survivors_null: number
+      /** Skewness of the tests' bootstrap distributions: min, median, max. */
+      skew_range: number[] | null
+      /** Eligible combinations whose filter took no out-of-sample roll: not tested. */
+      untestable_oos: number
       p_floor: number
       /** BH over the sold-after-4-weeks rules alone. */
       sell_rules: { tested: number; survivors: number; min_p: number }
@@ -296,7 +312,7 @@ export function ruleShort(rule: string): string {
 /** Live readings of the deployed app, 2026-10-20..27 (GET only). */
 export const LIVE = {
   read_on: '2026-10-27',
-  code_sha: 'fa0fa3d',
+  code_sha: 'ea9f98e',
   /** GET /api/putlab/regime-verdict?asset=spy&moneyness_pct=5&tenor_weeks=4&years=4&as_of=D,
    *  every session 2026-10-20..27; first_entry / last_expiry are the first and
    *  last cycle of GET /api/putlab/backtest with the same parameters. */

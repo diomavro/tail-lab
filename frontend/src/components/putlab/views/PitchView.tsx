@@ -142,6 +142,8 @@ const bootReps = Math.round(1 / T.bh.p_floor - 1)
 const heldRules = Object.entries(T.bh.oracle).filter(([r]) => r.includes('_4w_hold'))
 const soldRules = Object.entries(T.bh.oracle).filter(([r]) => !r.includes('_4w_hold'))
 const notCrisisSmallest = T.bh.smallest_p.filter((x) => x.gate === 'regime=not_crisis')
+/** The skip-crisis test with the smallest percentile p. */
+const bestNotCrisis = notCrisisSmallest.reduce((a, b) => (b.oos_p < a.oos_p ? b : a))
 const notCrisisEverySold =
   notCrisisSmallest.length === T.bh.smallest_p.length &&
   new Set(notCrisisSmallest.map((x) => x.rule)).size === soldRules.length
@@ -303,7 +305,7 @@ export function PitchView() {
             <strong>Timing: nothing survives.</strong> The best of the {sel.eligible} eligible rule-and-filter combinations (of {T.combinations})
             chosen on {T.is_period[0]!.slice(0, 4)}–{T.is_period[1]!.slice(0, 4)} improved the out-of-sample mean
             return by {num(sel.oos.roi_diff)} per dollar of premium (95% interval {ci(sel.oos_ci95)}, one-sided p ={' '}
-            {sel.oos_p.toFixed(3)}). Of the {sel.is_positive} eligible combinations that improved in sample,{' '}
+            {sel.oos_p.toFixed(3)}; null-centred, {sel.oos_p_null.toFixed(3)}). Of the {sel.is_positive} eligible combinations that improved in sample,{' '}
             {sel.is_positive_oos_positive} ({Math.round((sel.is_positive_oos_positive / sel.is_positive) * 100)}%) also
             improved out of sample; {sel.null_at_least_observed} of {sel.null_rotations} rotations of the
             out-of-sample outcomes do as well (<a href="#pitch-timing">section 3</a>). Weak evidence that in-sample
@@ -389,7 +391,7 @@ export function PitchView() {
               <tr>
                 <td>Chain sweep (daily-chain-snapshot.yml)</td>
                 <td>21:30 UTC weekdays, catch-up 05:00</td>
-                <td>Cboe put quotes for 24 names, stored</td>
+                <td>Cboe put and call quotes for 24 names, each wing its own dataset, stored</td>
                 <td>Data only</td>
               </tr>
               <tr>
@@ -653,7 +655,12 @@ export function PitchView() {
             plus five regime sets) × 12 rules = {T.combinations} combinations. Thresholds and the pick are chosen
             on rolls entered <D d={T.is_period[0]!} /> to <D d={T.is_period[1]!} />; the pick is then tested on{' '}
             <D d={T.oos_period[0]!} /> to <D d={T.oos_period[1]!} />. A combination is eligible only if its filter took at least{' '}
-            {T.min_is_taken} rolls in sample, which leaves {T.bh.tested} of the {T.combinations}. Two objectives: mean return on the
+            {T.min_is_taken} rolls in sample, which leaves {sel.eligible} of the {T.combinations}; eligibility and the pick
+            look at in-sample results only
+            {T.bh.untestable_oos > 0
+              ? `, and the ${T.bh.untestable_oos} whose filter took no out-of-sample roll are left out of the multiple-testing screen`
+              : ''}
+            . Two objectives: mean return on the
             rolls taken minus on all rolls; and, as a hedge, the time-average growth of SPY plus puts bought at{' '}
             {timingBudget} of wealth on each roll the filter takes, minus that of a book buying the same rule on
             every roll at {timingBudget} × the share of rolls the filter took, so the two spend the same on
@@ -668,7 +675,14 @@ export function PitchView() {
             the out-of-sample years; its interval and p are read off that distribution the same way. The one-sided p is (k + 1) ÷ (R + 1), where k counts resamples at or below zero and R ={' '}
             {bootReps.toLocaleString('en-US')} is the number of resamples, so no p is ever 0. It is a percentile-bootstrap p — the share of the bootstrap distribution on the wrong side
             of zero — not a test under an imposed null. It approximates one only when the bootstrap distribution is
-            roughly symmetric about its centre, which nothing here checks. So the p-values, the count below 0.05 and
+            roughly symmetric about its centre, and here it is not: the skewness of the {T.bh.tested} tests’
+            distributions runs from {fmtFixed(T.bh.skew_range?.[0] ?? NaN)} to {fmtFixed(T.bh.skew_range?.[2] ?? NaN)}{' '}
+            (median {fmtFixed(T.bh.skew_range?.[1] ?? NaN)}), and {fmtFixed(Math.min(...notCrisisSmallest.map((x) => x.oos_skew)))}{' '}
+            to {fmtFixed(Math.max(...notCrisisSmallest.map((x) => x.oos_skew)))} for the skip-crisis tests in section 3.
+            A right skew puts few draws below zero, so the percentile p comes out too small. Each test therefore
+            also gets a <em>null-centred</em> p, from the same draws: shift them to centre on zero (subtract the
+            observed effect) and count the share at or above the observed effect, with the same (k + 1) ÷ (R + 1).
+            The page prints both. Either way the p-values, the counts below 0.05 and
             the Benjamini–Hochberg step at a {Math.round(T.bh.fdr * 100)}% false-discovery rate
             (research/backtest/multiple_testing.py) are a <em>screen</em> for which effects to look at, not exact
             tests.
@@ -996,7 +1010,8 @@ export function PitchView() {
           In sample it took {sel.is.taken} of {sel.is.n} rolls and raised the mean return from{' '}
           {fmtFixed(sel.is.mean_roi_all)} to {num(sel.is.mean_roi_taken)}. Out of sample it took {sel.oos.taken}{' '}
           of {sel.oos.n}: {fmtFixed(sel.oos.mean_roi_all)} to {num(sel.oos.mean_roi_taken)}, an improvement of{' '}
-          {num(sel.oos.roi_diff)} per dollar of premium, with a 95% interval of {ci(sel.oos_ci95)} (p = {sel.oos_p.toFixed(3)}),
+          {num(sel.oos.roi_diff)} per dollar of premium, with a 95% interval of {ci(sel.oos_ci95)} (p = {sel.oos_p.toFixed(3)}; null-centred,{' '}
+          {sel.oos_p_null.toFixed(3)}),
           resting on {sel.oos.hits_taken} winning rolls.
           {sel.oos_mean_taken_without_best !== null && (
             <> Without its single best out-of-sample roll the filtered mean is {fmtFixed(sel.oos_mean_taken_without_best)}.</>
@@ -1006,7 +1021,8 @@ export function PitchView() {
             : `The growth objective's pick, ${ruleLabel(selDg.rule)} when ${gateLabel(selDg.gate)}`}
           , at {timingBudget} of wealth per roll taken against the spend-matched book (method, Timing):{' '}
           {pp(selDg.oos.dg)} out of sample, interval{' '}
-          [{pp(selDg.oos_ci95[0]!)}, {pp(selDg.oos_ci95[1]!)}], p = {selDg.oos_p.toFixed(3)}.
+          [{pp(selDg.oos_ci95[0]!)}, {pp(selDg.oos_ci95[1]!)}], p = {selDg.oos_p.toFixed(3)} (null-centred,{' '}
+          {selDg.oos_p_null.toFixed(3)}).
         </p>
         <p className="pl-note">
           <strong>Persistence.</strong> Across all {sel.eligible} combinations with enough in-sample trades, {sel.is_positive} improved in sample
@@ -1040,11 +1056,14 @@ export function PitchView() {
           <strong>Multiple testing.</strong> The multiple-testing screen that follows is on mean
           return only (on growth only the in-sample pick above has a p-value; the other {selDg.eligible - 1}{' '}
           combinations were not tested one by one, so nothing here corrects that objective).{' '}
-          {T.bh.p_below_05} of {T.bh.tested} mean-return differences have a raw p below 0.05 — about the {Math.round(T.bh.tested * 0.05)} that
-          chance would give if these p-values were uniform under no effect and the tests independent (neither is
-          established: see the method, and the tests share the same rolls). Benjamini–Hochberg at{' '}
-          {Math.round(T.bh.fdr * 100)}%, used as a screen, keeps{' '}
-          <strong data-testid="pitch-bh">{survivors}</strong>
+          {T.bh.p_below_05} of {T.bh.tested} mean-return differences have a percentile p below 0.05, and{' '}
+          {T.bh.p_null_below_05} a null-centred one (smallest {T.bh.min_p_null.toFixed(3)}). Chance alone would
+          give about {Math.round(T.bh.tested * 0.05)} only if the p-values were uniform under no effect and the tests
+          independent. Neither assumption is established: the percentile p is not uniform on these skewed
+          distributions, and the tests share the same rolls.
+          Benjamini–Hochberg at {Math.round(T.bh.fdr * 100)}%, used as a screen, keeps{' '}
+          <strong data-testid="pitch-bh">{survivors}</strong> on the percentile p and {T.bh.survivors_null} on the
+          null-centred p
           {survivors > 0 && (
             <>
               :{' '}
@@ -1070,17 +1089,17 @@ export function PitchView() {
           filter was not simulated. What was observed: the skip-crisis filter below, at{' '}
           {fmtFixed(Math.min(...notCrisisSmallest.map((x) => x.oos.roi_diff ?? 0)), 3)} to{' '}
           {fmtFixed(Math.max(...notCrisisSmallest.map((x) => x.oos.roi_diff ?? 0)), 3)} per dollar on{' '}
-          {notCrisisSmallest[0]?.oos.n} out-of-sample rolls, has p ={' '}
-          {Math.min(...notCrisisSmallest.map((x) => x.oos_p)).toFixed(4)} at best, about{' '}
-          {Math.round(Math.min(...notCrisisSmallest.map((x) => x.oos_p)) / (T.bh.fdr / T.bh.tested))}× the first BH
-          step. One p-value is one draw, not a power calculation: it does not say how often an effect of that size
-          would clear the step. On the held-to-expiry rules the
-          perfect filter gets only{' '}
-          {heldRules.map(([r, o]) => `${o.p.toFixed(2)} (${ruleLabel(r)}, ${plural(o.oos_winners, 'winner', 'winners')})`).join(', ')}
+          {notCrisisSmallest[0]?.oos.n} out-of-sample rolls, has a percentile p of{' '}
+          {bestNotCrisis.oos_p.toFixed(4)} at best, about {Math.round(bestNotCrisis.oos_p / (T.bh.fdr / T.bh.tested))}×
+          the first BH step; the same test’s null-centred p is {bestNotCrisis.oos_p_null.toFixed(3)}, about{' '}
+          {Math.round(bestNotCrisis.oos_p_null / (T.bh.fdr / T.bh.tested))}× the step. One p-value is one draw, not a power calculation: it does not say how often an effect of that size
+          would clear the step. On the held-to-expiry rules even the
+          perfect filter has{' '}
+          {heldRules.map(([r, o]) => `p = ${o.p.toFixed(2)} (${ruleLabel(r)}, ${plural(o.oos_winners, 'winner', 'winners')})`).join(', ')}
           , because with one or a few winning rolls a resample either contains them or does not. Even a perfect
           filter there stays above the first BH step, so those {T.bh.tested - T.bh.sell_rules.tested} tests carry
           almost no power. Benjamini–Hochberg over the{' '}
-          {T.bh.sell_rules.tested} sold-rule tests alone keeps {T.bh.sell_rules.survivors} (smallest p{' '}
+          {T.bh.sell_rules.tested} sold-rule tests alone keeps {T.bh.sell_rules.survivors} (smallest percentile p{' '}
           {T.bh.sell_rules.min_p.toFixed(4)}, first step {(T.bh.fdr / T.bh.sell_rules.tested).toFixed(5)}).
         </p>
         <p className="pl-note">
@@ -1091,9 +1110,13 @@ export function PitchView() {
           : do not buy when the prior close’s regime label is crisis (entered at a VIX close of 29 or more, left only below 27: see Terms). It lifted their out-of-sample mean by{' '}
           {fmtFixed(Math.min(...notCrisisSmallest.map((x) => x.oos.roi_diff ?? 0)), 3)} to{' '}
           {fmtFixed(Math.max(...notCrisisSmallest.map((x) => x.oos.roi_diff ?? 0)), 3)} per dollar, taking{' '}
-          {notCrisisSmallest[0]?.oos.taken} of {notCrisisSmallest[0]?.oos.n} rolls, with p from{' '}
+          {notCrisisSmallest[0]?.oos.taken} of {notCrisisSmallest[0]?.oos.n} rolls, with percentile p from{' '}
           {Math.min(...notCrisisSmallest.map((x) => x.oos_p)).toFixed(4)} to{' '}
-          {Math.max(...notCrisisSmallest.map((x) => x.oos_p)).toFixed(4)}. In sample ({T.is_period[0]!.slice(0, 4)}–
+          {Math.max(...notCrisisSmallest.map((x) => x.oos_p)).toFixed(4)} and null-centred p from{' '}
+          {Math.min(...notCrisisSmallest.map((x) => x.oos_p_null)).toFixed(3)} to{' '}
+          {Math.max(...notCrisisSmallest.map((x) => x.oos_p_null)).toFixed(3)}
+          {notCrisisSmallest.every((x) => x.oos_p_null >= 0.05) ? ': none below 0.05 once the skew is accounted for' : ''}
+          . In sample ({T.is_period[0]!.slice(0, 4)}–
           {T.is_period[1]!.slice(0, 4)}, which the 408-test screen does not score) it{' '}
           {notCrisisIs.helped === notCrisisSmallest.length ? 'also lifted the mean on every one' : `lifted the mean on ${notCrisisIs.helped} of ${notCrisisSmallest.length}`}
           , by {fmtFixed(notCrisisIs.lo, 3)} to {fmtFixed(notCrisisIs.hi, 3)}, but no test skipped more than{' '}
@@ -1217,8 +1240,9 @@ export function PitchView() {
           rewrites <code>frontend/src/content/pitch_evidence.json</code>, which is all this page reads for the
           study. The make target puts this checkout’s <code>src/</code> first on <code>PYTHONPATH</code>, and the generator stops if the <code>tail_lab</code> package it imports comes from anywhere else, so the tree hashes below identify the code that ran. That file was generated by commit{' '}
           <code data-testid="pitch-code-sha">{E.code.sha.slice(0, 12)}</code>, a branch commit that a squash merge
-          does not keep; the code it ran is identified on main by its git tree hashes, src/{' '}
-          <code>{E.code.tree.src.slice(0, 12)}</code> and scripts/ <code>{E.code.tree.scripts.slice(0, 12)}</code>
+          does not keep; the code it ran is identified on main by the git tree hash of src/,{' '}
+          <code>{E.code.tree.src.slice(0, 12)}</code>, and the blob hash of scripts/pitch_evidence.py,{' '}
+          <code>{E.code.script.slice(0, 12)}</code>
           {E.code.dirty ? ', with uncommitted changes — not reproducible as committed' : ''}. The live readings:{' '}
           <code>GET /api/putlab/regime-verdict</code>, <code>/api/putlab/backtest</code>,{' '}
           <code>/api/putlab/roll-schedule/marked</code> and <code>/api/putlab/hedge-overlay</code> on tail-lab.fly.dev,

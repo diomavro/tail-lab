@@ -1022,6 +1022,9 @@ def test_benjamini_hochberg_counts_raw_p_below_five_percent_and_lists_eight(
     assert out["p_null_below_05"] == 1
     assert out["min_p_null"] == 0.02
     assert [s["oos_p_null"] for s in out["smallest_p"]][:3] == [0.02, 0.08, 0.1]
+    # BH at 10% over ten: 0.01 clears the first step (0.01); 0.02 does not.
+    assert len(out["survivors"]) == 1
+    assert out["survivors_null"] == 0
 
 
 def test_every_benjamini_hochberg_pass_runs_at_the_stated_fdr(
