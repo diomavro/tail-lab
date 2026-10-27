@@ -129,6 +129,10 @@ none of them is allowed to say "there is no trade here".
 
 **Decision.** "Pitch" joins the closed list. It names one surface, the Pitch
 tab, which states the verdict on real quotes, how it was reached and what
-would change it. Its figures are aggregates written by the human-run
-`scripts/pitch_evidence.py` into `frontend/src/content/pitch_evidence.json`.
+would change it. It is a **Research** function in §2's map: it reports what
+the evidence supports and recommends nothing beyond that. Its study figures are
+aggregates written by the human-run `scripts/pitch_evidence.py` into
+`frontend/src/content/pitch_evidence.json`; beside them it shows a dated,
+hand-read `LIVE` block (`frontend/src/content/pitch.ts`) of what the deployed
+app returned, each reading with the request that reproduces it.
 A pitch can recommend standing aside, and this one does.

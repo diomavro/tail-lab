@@ -35,6 +35,8 @@ export interface HedgeConfig {
   growth: number
   edge: number
   max_dd: number
+  /** [peak, trough] of the worst drawdown. */
+  max_dd_span: string[]
   drop_best?: { edge: number; edge_without_best: number; best_entry: string }
 }
 
@@ -42,6 +44,7 @@ export interface Hedge {
   window: string[]
   unhedged_growth: number
   unhedged_max_dd: number
+  unhedged_max_dd_span: string[]
   configs: HedgeConfig[]
   n_beat: number
   n_cut_dd: number
@@ -54,8 +57,8 @@ export interface EveryDay {
   hit_rate: number
   phases: number
   phases_positive: number
-  phase_min: number
-  phase_max: number
+  phase_min: number | null
+  phase_max: number | null
 }
 
 export interface UnderlyingEvidence {
@@ -65,15 +68,43 @@ export interface UnderlyingEvidence {
   episodes_10pct: { peak: string; trough: string; dd: number; unrecovered?: boolean }[]
 }
 
+/** null where a gate took no roll, or every roll (the generator maps NaN to null). */
 export interface ComboStats {
   n: number
   taken: number
-  roi_diff: number
+  roi_diff: number | null
   hits_taken: number
   hits_all: number
-  dg: number
-  mean_roi_taken: number
+  dg: number | null
+  mean_roi_taken: number | null
   mean_roi_all: number
+}
+
+export interface PValued {
+  rule: string
+  gate: string
+  oos: ComboStats
+  oos_p: number
+}
+
+export interface CrisisBook {
+  budget: number
+  terminal: number
+  max_dd: number
+  terminal_without_best?: number
+}
+
+export interface CrisisRule {
+  unhedged: { terminal: number; max_dd: number }
+  books: CrisisBook[]
+  n_beat: number
+  rolls: number
+  filled: number
+  mean_roi: number
+  hits: number
+  best_roi: number
+  best_entry: string
+  last: string
 }
 
 export interface Selected {
@@ -100,6 +131,8 @@ export interface PanelInfo {
 
 export interface PitchEvidence {
   as_of: string
+  /** The commit that generated the file; dirty = scripts/ or src/ differed from it. */
+  code: { sha: string; dirty: boolean }
   dividend_yield_assumed: number
   commission_per_contract: number
   block_rolls: number
@@ -107,7 +140,13 @@ export interface PitchEvidence {
   panels: Record<'SPY' | 'QQQ', PanelInfo>
   SPY: UnderlyingEvidence
   QQQ: UnderlyingEvidence
-  cboe: Record<'SPX' | 'PPUT' | 'PPUT3M' | 'VXTH', { growth: number; max_dd: number }>
+  cboe: { span: string[] } & Record<'SPX' | 'PPUT' | 'PPUT3M' | 'VXTH', { growth: number; max_dd: number }>
+  crisis_2008: {
+    roll_dates: number
+    first: string
+    n_beat: number
+    configs: number
+  } & Record<'5pct' | '10pct' | '15pct' | '20pct', CrisisRule>
   timing: {
     combinations: number
     rules: number
@@ -119,10 +158,15 @@ export interface PitchEvidence {
     bh: {
       tested: number
       fdr: number
-      survivors: { rule: string; gate: string; oos: ComboStats; oos_p: number }[]
+      survivors: PValued[]
       min_p: number
       p_below_05: number
       p_floor: number
+      /** BH over the sold-after-4-weeks rules alone. */
+      sell_rules: { tested: number; survivors: number; min_p: number }
+      smallest_p: PValued[]
+      /** A perfect-foresight filter (the best third of out-of-sample rolls), per rule. */
+      oracle: Record<string, { oos_winners: number; p: number }>
     }
   }
 }
@@ -157,18 +201,31 @@ export function gateLabel(gate: string): string {
   return `${names[sig!] ?? sig} ${op === '<=' ? 'at or below' : 'at or above'} its in-sample ${q}th percentile`
 }
 
+/** "20pct_4w_hold" -> "20% · 4w held": the narrow-screen label. */
+export function ruleShort(rule: string): string {
+  const [depth, struct] = [rule.split('pct_')[0], rule.split('pct_')[1]]
+  const how: Record<string, string> = { '4w_hold': '4w held', '8w_sell4w': '8w sold@4w', '12w_sell4w': '12w sold@4w' }
+  return `${depth}% · ${how[struct ?? ''] ?? struct}`
+}
+
 /** Live readings of the deployed app, 2026-10-20..27 (GET only). */
 export const LIVE = {
   read_on: '2026-10-27',
   code_sha: 'fa0fa3d',
-  /** GET /api/putlab/regime-verdict?asset=spy&moneyness_pct=5&tenor_weeks=4&years=4&as_of=D */
+  /** GET /api/putlab/regime-verdict?asset=spy&moneyness_pct=5&tenor_weeks=4&years=4&as_of=D,
+   *  every session 2026-10-20..27; first_entry / last_expiry are the first and
+   *  last cycle of GET /api/putlab/backtest with the same parameters. */
   spy_verdicts: [
-    { as_of: '2026-10-20', verdict: 'failed', calm: -0.916, elevated: -1.035, crisis_n: 1 },
-    { as_of: '2026-10-21', verdict: 'failed', calm: -0.941, elevated: -0.821, crisis_n: 2 },
-    { as_of: '2026-10-22', verdict: 'regime_only', calm: -0.747, elevated: 0.721, crisis_n: 2 },
-    { as_of: '2026-10-23', verdict: 'failed', calm: -0.457, elevated: -0.423, crisis_n: 2 },
-    { as_of: '2026-10-27', verdict: 'regime_only', calm: 1.073, elevated: -0.92, crisis_n: 2 },
+    { as_of: '2026-10-20', verdict: 'failed', calm: -0.916, elevated: -1.035, crisis_n: 1, first_entry: '2022-10-11', last_expiry: '2026-10-08' },
+    { as_of: '2026-10-21', verdict: 'failed', calm: -0.941, elevated: -0.821, crisis_n: 2, first_entry: '2022-10-12', last_expiry: '2026-10-09' },
+    { as_of: '2026-10-22', verdict: 'regime_only', calm: -0.747, elevated: 0.721, crisis_n: 2, first_entry: '2022-10-13', last_expiry: '2026-10-12' },
+    { as_of: '2026-10-23', verdict: 'failed', calm: -0.457, elevated: -0.423, crisis_n: 2, first_entry: '2022-10-14', last_expiry: '2026-10-13' },
+    { as_of: '2026-10-26', verdict: 'failed', calm: -0.457, elevated: -0.423, crisis_n: 2, first_entry: '2022-10-14', last_expiry: '2026-10-13' },
+    { as_of: '2026-10-27', verdict: 'regime_only', calm: 1.073, elevated: -0.92, crisis_n: 2, first_entry: '2022-10-18', last_expiry: '2026-10-15' },
   ],
+  /** gh run list --workflow daily-verdict-sweep.yml: scheduled 06:30 UTC,
+   *  started 11:25-13:47 UTC on 2026-10-19..26. */
+  verdict_sweep_started: '11:25–13:47 UTC',
   /** GET /api/putlab/hedge-overlay -- growth margin of the best mix over no
    *  hedge, per year, at the 1.9% ASSUMED dividend yield (no tiingo_eod). */
   book: [

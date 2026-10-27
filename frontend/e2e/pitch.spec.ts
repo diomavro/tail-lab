@@ -25,9 +25,35 @@ test('leads with the verdict, built from the evidence file', async ({ page }) =>
   const lowered = EVIDENCE.SPY.hedge.configs.length - EVIDENCE.SPY.hedge.n_beat
   await expect(verdict).toContainText(`in ${lowered} of ${EVIDENCE.SPY.hedge.configs.length} configurations`)
   await expect(verdict).toContainText(
-    `of ${EVIDENCE.timing.bh.tested} timing filters, ${EVIDENCE.timing.bh.survivors.length} survived`,
+    `of ${EVIDENCE.timing.bh.tested} rule-and-filter combinations tested for timing, ${EVIDENCE.timing.bh.survivors.length} survived`,
   )
   await expect(verdict).toContainText('does not produce a daily trading signal')
+})
+
+test('the verdict list prints the counts the evidence gives', async ({ page }) => {
+  // Each sentence once printed a wrong count ("for 12 the whole interval sits
+  // below zero", "31 of them at a cost in growth"); derive and pin them.
+  const spy = Object.values(EVIDENCE.SPY.standalone)
+  const below = spy.filter((s) => s.mean_roi_ci95[1]! < 0).length
+  const h = EVIDENCE.SPY.hedge
+  const cut = h.configs.filter((c) => c.max_dd > h.unhedged_max_dd)
+  const cutAndLost = cut.filter((c) => c.edge <= 0).length
+  const list = page.locator('#pitch-verdict-detail')
+  await expect(list).toContainText(`for ${below} the whole 95% interval sits below zero`)
+  await expect(list).toContainText(`${cut.length} of ${h.configs.length} SPY books cut the worst drawdown, ${cutAndLost} of them at a cost in growth`)
+  const c08 = EVIDENCE.crisis_2008
+  await expect(list).toContainText(`${c08.n_beat} of ${c08.configs} books ended ahead of unhedged`)
+})
+
+test('prints the 2008-09 check, one row per depth and budget', async ({ page }) => {
+  const c08 = EVIDENCE.crisis_2008
+  const rows = (['5pct', '10pct', '15pct', '20pct'] as const).reduce((n, k) => n + c08[k].books.length, 0)
+  await expect(page.getByTestId('pitch-2008').locator('tbody tr')).toHaveCount(rows)
+})
+
+test('names the commit that generated the evidence', async ({ page }) => {
+  expect(EVIDENCE.code.dirty).toBe(false)
+  await expect(page.getByTestId('pitch-code-sha')).toHaveText(EVIDENCE.code.sha.slice(0, 12))
 })
 
 test('the headline still fits the evidence it summarises', () => {
@@ -37,7 +63,7 @@ test('the headline still fits the evidence it summarises', () => {
   // file breaks any of these, the headline must be rewritten, not kept.
   for (const s of Object.values(EVIDENCE.SPY.standalone)) expect(s.mean_roi_ci95[0]).toBeLessThanOrEqual(0)
   for (const s of Object.values(EVIDENCE.QQQ.standalone)) expect(s.mean_roi_ci95[0]).toBeLessThanOrEqual(0)
-  expect(EVIDENCE.timing.bh.survivors.filter((s) => s.oos.mean_roi_taken > 0)).toHaveLength(0)
+  expect(EVIDENCE.timing.bh.survivors.filter((s) => (s.oos.mean_roi_taken ?? 0) > 0)).toHaveLength(0)
   for (const c of [...EVIDENCE.SPY.hedge.configs, ...EVIDENCE.QQQ.hedge.configs]) {
     if (c.edge > 0) expect(c.drop_best?.edge_without_best).toBeLessThan(0)
   }

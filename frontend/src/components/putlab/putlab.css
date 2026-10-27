@@ -1461,3 +1461,8 @@
 .pl-pitch-list { font-size: 14px; line-height: 1.55; max-width: 80ch; padding-left: 1.3em; }
 .pl-pitch-list li { margin-bottom: var(--space-2); }
 .pl-pitch code { font-size: 12.5px; overflow-wrap: anywhere; }
+.pl-pitch-short { display: none; }
+@media (max-width: 640px) {
+  .pl-pitch-long { display: none; }
+  .pl-pitch-short { display: inline; white-space: nowrap; }
+}

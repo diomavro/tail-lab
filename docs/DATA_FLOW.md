@@ -43,7 +43,7 @@ flowchart LR
         ROUTES["/api/putlab/*"]
     end
     subgraph U["⑤ Pages"]
-        PAGES["Workspace · Portfolio · Book<br/>Bake-off · Regime · Glossary"]
+        PAGES["Workspace · Portfolio · Book<br/>Bake-off · Regime · Surface<br/>Pitch · Glossary"]
     end
 
     CBOE --> BRONZE
@@ -72,7 +72,7 @@ number (`docs/DISCOVERIES.md` #2).
 
 ## 2. What feeds each page
 
-The app is one workspace with seven tabs. Each row lists what the tab answers,
+The app is one workspace with eight tabs. Each row lists what the tab answers,
 the endpoints it calls, and the bronze datasets those endpoints ultimately read.
 
 Screen and Backtest used to be separate tabs, bridged by a fragility ranking
@@ -90,6 +90,7 @@ Screen tab's deeper "is the screen any good?" question moved to its own
 | **Bake-off** | Which screen actually picks winners? | `/api/putlab/metric-screen` (on the tab's button — one backtest per screened name, up to 70; a run on parameters already computed that day is served from the server's in-process memo (a deploy or restart empties it), and the Workspace line's fixed parameters are pre-computed daily when `TAIL_LAB_WARM_RANKING` is on) | `ohlcv_*` (+ `ohlcv_spy` as benchmark), `vix`, `tiingo_eod` (q) |
 | **Surface** | How fat a tail is the option market pricing, against the name's own history? | `/api/putlab/surface` (one chain session; the anchor is the rail's strike, the expiry its tenor) | `option_chain_snapshot`, `ohlcv_<asset>`, `tiingo_eod` (q) |
 | **Regime** | What market are we in? | `/api/putlab/regimes`, `/api/vix/stretch`, `/accuracy` (the per-regime residual) | `vix`, `cboe_strategy`, `credit` (widening, §3.2 — falls back to VIX-only until ingested) |
+| **Pitch** | Is there a genuine edge in buying puts, on real quotes? (`docs/adr/0021` 2026-10-27 amendment) | none — a committed study: `frontend/src/content/pitch_evidence.json`, written offline by `make pitch-evidence` (`scripts/pitch_evidence.py`, which records the snapshot ids and its own commit), plus a hand-dated `LIVE` block in `content/pitch.ts` read from `/regime-verdict`, `/backtest`, `/roll-schedule/marked` and `/hedge-overlay` | `optionsdx_quotes_spy`, `optionsdx_quotes_qqq`, `option_quotes` (2008-09), `vix`, `rates`, `cboe_strategy` — read at build time, not by the server. Stale until someone reruns the script and commits the JSON; the `LIVE` readings are stale from the day after their date |
 | **Glossary** | — (renders `content/concepts.ts`, no network) | none | none |
 | **Roll schedule** (export, not a tab) | What would I actually place? | `/api/putlab/roll-schedule` (the ranking's read at the rail's screen, reused from cache; its legs are each name's best cell, so the screen's strike is a label only) | `ohlcv_*`, `vix`, `tiingo_eod` (q, per leg) |
 | **Control rail** (the tabs that read it: `rail.ts`, `docs/adr/0028`) | What position am I asking about, and where did the data come from? | `/api/putlab/universe`, `/cadence`, `/data-quality` | `ohlcv_<asset>`, the options calendar |
