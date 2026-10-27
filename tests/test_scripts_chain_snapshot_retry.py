@@ -155,11 +155,15 @@ def test_the_post_carries_the_floor_and_the_witness(monkeypatch: pytest.MonkeyPa
     sent: list[dict[str, Any]] = []
 
     def fake(
-        _url: str, _path: str, _token: str, payload: dict[str, object], _timeout: int
+        _url: str, path: str, _token: str, payload: dict[str, object], _timeout: int
     ) -> dict[str, object]:
         sent.append(payload)
         return {
-            "dataset": "option_chain_snapshot",
+            "dataset": (
+                "option_chain_call_snapshot"
+                if path == chain_snapshot.CALL_PATH
+                else "option_chain_snapshot"
+            ),
             "ingest_date": "2026-09-22",
             "rows": 1,
             "symbols": 1,

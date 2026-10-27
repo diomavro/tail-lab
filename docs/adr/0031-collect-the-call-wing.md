@@ -71,8 +71,10 @@ buys puts.
    cap. The band was kept at 0.80 after the body-size gate below.
 
 4. **One fetch, two parses, three failure boundaries.** Each Cboe payload is
-   fetched once. A second fetch loop would repeat 2026-09-19 (48 requests,
-   429 on 9 of 24) and draw the wings from different CDN snapshots. A failed
+   fetched once, by `fetch_chains`; `ingest_option_chain` takes only those
+   payloads and never fetches. A second fetch loop would repeat 2026-09-19
+   (48 requests, 429 on 9 of 24) and draw the wings from different CDN
+   snapshots. A failed
    fetch costs that symbol both wings. A failed put parse still parses the
    calls. A failed call parse, or a failed call record conversion, keeps the
    puts and logs `event=ingestion.option_chain.symbol_failed` with
@@ -91,13 +93,16 @@ buys puts.
    Both log `api.ingest.option_chain` and tell the wings apart by `dataset=`,
    as the ingestion events do. Neither contract can keep a call out of the
    put dataset on its own: there is no `right` column, and a zero-filled row
-   has a null delta, which both contracts accept. So each route refuses a
-   body whole (422, nothing written) when more than half of its rows with a
-   non-zero delta carry the other wing's sign (`Wing.wrong_sign_share`).
-   Measured on the 2026-10-26 live bodies, a correct body scores 0 (0 of
-   17,114 puts, 0 of 23,038 calls) and a misrouted body scores 1. Without the
-   guard, the fixture's call body POSTed to the put route committed its two
-   null-delta ITM calls as puts.
+   has a null (or exactly zero) delta, which both contracts accept. So each
+   route refuses a body whole (422, nothing written) when more than 1% of its
+   rows with a non-null, non-zero delta carry the other wing's sign
+   (`Wing.misrouted`, `MAX_WRONG_SIGN_SHARE`). Measured on the 2026-10-26
+   live bodies, a correct body scores 0 (0 of 16,665 puts, 0 of 21,942
+   calls) and a misrouted body scores 1; a body carrying both wings scores
+   0.43 on the call route, which a first threshold of one half let through.
+   1% rather than zero, so one stray row from Cboe is quarantined instead of
+   costing the session. Without the guard, the fixture's call body POSTed to
+   the put route committed its two null-delta ITM calls as puts.
 
 6. **Script exit contract** (`scripts/chain_snapshot.py`, both modes):
 
@@ -109,9 +114,12 @@ buys puts.
 
    The calls have no "skipped". They come from the same payloads, so when the
    puts are unsettled the calls are too. Attempting them anyway would let the
-   call dataset's own witness turn a benign skip into a red 409. A call 425
-   after the puts landed means the two wings disagreed about the session, so
-   it is a failure. One witness read serves both bodies. The `--token` check
+   call dataset's own witness turn a benign skip into a red 409. The exit 0
+   on that row therefore vouches for the PUT dataset's previous session
+   only: a call session lost earlier went red on the run that lost it. A
+   call 425 after the puts landed means the two wings disagreed about the
+   session, so it is a failure, logged as an `::error::`, never as
+   `calls: SKIPPED`. One witness read serves both bodies. The `--token` check
    now runs first. Every transport failure maps to a failed wing and never to
    a traceback that skips the other wing. That includes the dropped
    connections and non-JSON 200s that urllib leaves unwrapped. A call-only

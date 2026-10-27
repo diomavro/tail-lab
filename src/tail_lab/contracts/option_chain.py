@@ -149,16 +149,18 @@ class Wing:
     moneyness_max: float
 
     def wrong_sign_share(self, frame: pd.DataFrame) -> float:
-        """Share of the rows with a non-zero delta whose sign is the OTHER
-        wing's -- 0.0 when no row has one.
+        """Share of the rows with a non-null, non-zero delta whose sign is the
+        OTHER wing's -- 0.0 when no row has one. Null and zero deltas are
+        neutral: they cannot say which wing a row belongs to.
 
         The contracts alone cannot keep a body out of the wrong dataset: there
         is no ``right`` column, and a row whose greeks Cboe zero-filled has a
-        null delta, which both wings accept. Measured 2026-10-26: 172 SPY
-        calls (mostly ITM, inside the put band) would pass the PUT contract
-        that way and be committed as puts, immutably. A correctly routed live
-        body has none of these (0 of 17,114 puts and 0 of 23,038 calls with a
-        delta); a misrouted one has all of them.
+        null delta (or a delta of exactly 0), which both wings accept.
+        Measured 2026-10-26: 221 SPY calls (172 null-delta, 49 delta == 0; 169
+        of them inside the put band) would pass the PUT contract that way and
+        be committed as puts, immutably. A correctly routed live body has none
+        of these (0 of 16,665 puts and 0 of 21,942 calls with a non-null,
+        non-zero delta); a misrouted one has all of them.
         """
         delta = pd.to_numeric(frame["delta"], errors="coerce")
         signed = delta[delta.notna() & (delta != 0.0)]
@@ -167,11 +169,21 @@ class Wing:
         wrong = signed > 0.0 if self.right == "P" else signed < 0.0
         return float(wrong.mean())
 
+    def misrouted(self, frame: pd.DataFrame) -> bool:
+        """Whether ``frame`` carries enough of the other wing's rows to be
+        refused whole (:data:`MAX_WRONG_SIGN_SHARE`)."""
+        return self.wrong_sign_share(frame) > MAX_WRONG_SIGN_SHARE
 
-#: Above this :meth:`Wing.wrong_sign_share`, a body is refused whole as the
-#: other wing's rows rather than split into quarantine plus a committed
-#: null-delta remainder. Half: a correct body measures 0, a misrouted one 1.
-MAX_WRONG_SIGN_SHARE = 0.5
+
+#: Above this :meth:`Wing.wrong_sign_share`, a body is refused whole as
+#: (partly) the other wing's rows rather than split into quarantine plus a
+#: committed null-delta remainder of the other wing. A correct live body
+#: measures 0. Not 0.5: a writer that concatenated both wings sends the call
+#: route a body scoring 0.43 (16,665 puts against 21,942 calls), which a
+#: half threshold accepted, committing the null-delta puts as calls. Not 0
+#: either: one stray wrong-sign row from Cboe would then cost the whole
+#: session, which nobody can re-collect; at 1% such rows are quarantined.
+MAX_WRONG_SIGN_SHARE = 0.01
 
 
 WINGS: dict[Right, Wing] = {

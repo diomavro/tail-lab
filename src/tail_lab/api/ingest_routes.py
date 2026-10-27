@@ -41,7 +41,6 @@ from tail_lab.config import get_lake_store as _get_configured_lake_store
 from tail_lab.contracts.option_chain import (
     DATASET,
     DEFAULT_SNAPSHOT_SYMBOLS,
-    MAX_WRONG_SIGN_SHARE,
     WINGS,
     IncompleteSweepError,
     IngestDateMismatch,
@@ -89,6 +88,21 @@ def ingest_option_chain_call_snapshot(
     return _ingest_chain(body, authorization, store, wing=WINGS["C"])
 
 
+def _refuse_misrouted(frame: pd.DataFrame, wing: Wing) -> None:
+    """422 a body carrying the other wing's rows (:meth:`Wing.misrouted`).
+
+    Before the split, and its own function so ``_ingest_chain`` stays under
+    the complexity ratchet: quarantining only the wrong-sign rows would leave
+    their null-delta siblings valid, and commit the other wing's rows here
+    for good.
+    """
+    if wing.misrouted(frame):
+        raise HTTPException(
+            status_code=422,
+            detail=f"these rows' deltas are the other wing's; not written to {wing.dataset}",
+        )
+
+
 def _ingest_chain(
     body: OptionChainSnapshotRequest,
     authorization: str | None,
@@ -103,8 +117,8 @@ def _ingest_chain(
     against the wing's contract regardless, because the caller being trusted
     is not the same as the payload being well-formed, and bronze is immutable
     once written. The contract cannot tell the wings apart on a row with a
-    null delta, so a body whose deltas mostly carry the other wing's sign is
-    refused whole (:meth:`Wing.wrong_sign_share`).
+    null delta, so a body carrying the other wing's deltas is refused whole
+    (:func:`_refuse_misrouted`).
     """
     _require_token(authorization)
     dataset = wing.dataset
@@ -116,13 +130,7 @@ def _ingest_chain(
     frame["quote_date"] = pd.to_datetime(frame["quote_date"])
     frame["expiration"] = pd.to_datetime(frame["expiration"])
 
-    # Before the split: quarantining the wrong-sign rows would leave their
-    # null-delta siblings valid, and commit the other wing's rows here for good.
-    if wing.wrong_sign_share(frame) > MAX_WRONG_SIGN_SHARE:
-        raise HTTPException(
-            status_code=422,
-            detail=f"these rows' deltas are the other wing's; not written to {dataset}",
-        )
+    _refuse_misrouted(frame, wing)
 
     # Quarantine bad rows; do NOT reject the batch. The first version of this
     # endpoint validated all-or-nothing and threw away a whole 22,006-quote

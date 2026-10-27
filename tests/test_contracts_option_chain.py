@@ -246,6 +246,14 @@ def test_wrong_sign_share_counts_only_rows_with_a_signed_delta(
     assert WINGS["C" if right == "C" else "P"].wrong_sign_share(frame) == pytest.approx(share)
 
 
+@pytest.mark.parametrize(("wrong", "misrouted"), [(0, False), (1, False), (2, True), (43, True)])
+def test_misrouted_is_more_than_one_percent_of_signed_deltas(wrong: int, misrouted: bool) -> None:
+    """Pins MAX_WRONG_SIGN_SHARE from both sides: 1 in 100 is a stray row,
+    2 in 100 is refused, and the 43% of a both-wings body is far past it."""
+    frame = pd.DataFrame({"delta": [-0.2] * (100 - wrong) + [0.3] * wrong + [None, 0.0]})
+    assert WINGS["P"].misrouted(frame) is misrouted
+
+
 def test_the_call_schema_differs_from_the_put_schema_only_in_delta() -> None:
     """Same columns, same key, same strictness -- a subclass, not a copy, so a
     later tightening of the put contract reaches the calls too."""

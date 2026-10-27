@@ -508,12 +508,14 @@ def test_the_call_route_validates_against_the_call_contract(
 ) -> None:
     """A put-signed delta is quarantined on the call route -- into the CALL
     quarantine -- and a call-signed one is kept; the put route would do the
-    reverse."""
+    reverse. A hundred calls carry the one stray row: alone it would be a
+    misrouted body (MAX_WRONG_SIGN_SHARE), refused whole."""
     _set_token(monkeypatch, TOKEN)
-    resp = _post_calls(client, _body(_call_row(strike=800.0), _call_row(strike=810.0, delta=-0.3)))
+    calls = [_call_row(strike=900.0 + i) for i in range(100)]
+    resp = _post_calls(client, _body(*calls, _call_row(strike=810.0, delta=-0.3)))
 
     assert resp.status_code == 200
-    assert (resp.json()["rows"], resp.json()["quarantined"]) == (1, 1)
+    assert (resp.json()["rows"], resp.json()["quarantined"]) == (100, 1)
     day = dt.date(2026, 8, 26)
     assert store.read_bronze_as_of(CALL_QUARANTINE_DATASET, day)["strike"].tolist() == [810.0]
     assert not store.bronze_partition_exists(QUARANTINE_DATASET, day)
@@ -563,17 +565,47 @@ def test_put_rows_posted_to_the_call_route_are_refused_whole(
     assert not store.bronze_partition_exists(CALL_QUARANTINE_DATASET, day)
 
 
-def test_a_minority_of_wrong_sign_rows_is_quarantined_not_refused(
-    client: TestClient, monkeypatch: pytest.MonkeyPatch
+@pytest.mark.parametrize(("wrong", "status"), [(1, 200), (2, 422)])
+def test_the_wrong_sign_guard_tolerates_one_percent_and_no_more(
+    client: TestClient,
+    store: DeltaLakeStore,
+    monkeypatch: pytest.MonkeyPatch,
+    wrong: int,
+    status: int,
 ) -> None:
-    """The guard is a share, not "any": one garbled row must never cost a
-    whole unrecoverable session."""
+    """The guard is a share, not "any": one garbled row in a hundred must
+    never cost a whole unrecoverable session, and is quarantined. Two in a
+    hundred is past MAX_WRONG_SIGN_SHARE, and the body is refused whole."""
     _set_token(monkeypatch, TOKEN)
-    rows = [_row(strike=700.0), _row(strike=710.0), _row(strike=720.0, delta=0.4)]
+    rows = [_row(strike=500.0 + i) for i in range(100 - wrong)]
+    rows += [_row(strike=700.0 + i, delta=0.4) for i in range(wrong)]
     resp = _post(client, _body(*rows))
 
-    assert resp.status_code == 200
-    assert (resp.json()["rows"], resp.json()["quarantined"]) == (2, 1)
+    assert resp.status_code == status
+    if status == 200:
+        assert (resp.json()["rows"], resp.json()["quarantined"]) == (99, 1)
+    else:
+        assert not store.bronze_partition_exists(DATASET, dt.date(2026, 8, 26))
+
+
+def test_a_body_carrying_both_wings_is_refused_by_the_call_route(
+    client: TestClient, store: DeltaLakeStore, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A writer that concatenated the wings sends the call route a body whose
+    signed deltas are ~43% puts (16,665 of 38,607 on 2026-10-26). A half
+    threshold accepted it and committed the null-delta put as a call; here
+    4 of 10 signed rows are puts, and nothing may be written."""
+    _set_token(monkeypatch, TOKEN)
+    calls = [_call_row(strike=800.0 + i) for i in range(6)]
+    puts = [_row(strike=600.0 + i) for i in range(4)]
+    zero_filled_put = _row(strike=650.0, delta=None, iv=None)
+    resp = _post_calls(client, _body(*calls, *puts, zero_filled_put))
+
+    assert resp.status_code == 422
+    assert "other wing" in resp.json()["detail"]
+    day = dt.date(2026, 8, 26)
+    assert not store.bronze_partition_exists(CALL_DATASET, day)
+    assert not store.bronze_partition_exists(CALL_QUARANTINE_DATASET, day)
 
 
 def test_a_call_rerun_is_a_no_op_and_independent_of_the_puts(

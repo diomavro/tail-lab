@@ -25,12 +25,14 @@ puts to ``option_chain_snapshot``, then the calls to
 
 Exit codes are the contract with the scheduler: non-zero whenever a session
 may be lost -- a sweep that returns nothing, too few chains, a feed behind the
-market, or EITHER wing failing to land. 0 means nothing is at risk: both wings
-landed (or were already captured), or the session is still trading and the
-previous one is confirmed in the lake -- in which case the calls, sliced from
-the same payloads, are not attempted. A put failure still sends the calls (each
-session is unrecoverable), and a call-only failure prints ``calls only; puts
-landed`` so an alert can tell it from a lost put session.
+market, or EITHER wing failing to land. 0 means both wings landed (or were
+already captured), or the session is still trading and the previous session
+is confirmed in the PUT lake. The calls, sliced from the same payloads, are
+then not attempted, so that 0 vouches for the put dataset only: a call
+session lost earlier went red on the run that lost it (``docs/adr/0031``
+§6). A put failure still sends the calls (each session is unrecoverable),
+and a call-only failure prints ``calls only; puts landed`` so an alert can
+tell it from a lost put session.
 """
 
 from __future__ import annotations
@@ -51,7 +53,7 @@ from typing import TYPE_CHECKING
 from pydantic import ValidationError
 
 from tail_lab.api.schemas import OptionChainSnapshotResponse
-from tail_lab.contracts.option_chain import DEFAULT_SNAPSHOT_SYMBOLS, Right
+from tail_lab.contracts.option_chain import DEFAULT_SNAPSHOT_SYMBOLS, WINGS, Right
 from tail_lab.ingestion.option_chain import latest_market_session, sweep_to_records
 from tail_lab.observability import configure_logging
 
@@ -78,7 +80,8 @@ _CALLS_NOT_ATTEMPTED = "calls: not attempted -- the session is still trading"
 
 class Outcome(enum.Enum):
     """What one wing's write came to. ``SKIPPED`` is the session still
-    trading; the calls never use it (see :func:`_finish`)."""
+    trading, and only the puts produce it: an unsettled call wing is
+    ``FAILED`` (see :func:`_unsettled`)."""
 
     SKIPPED = "skipped"
     OK = "ok"
@@ -265,10 +268,9 @@ def _ingest_wing(
     try:
         result = ingest(right)
     except SessionInProgress as exc:
-        # A wake-time catch-up that landed mid-session. Benign by
+        # A wake-time catch-up that landed mid-session. Benign for the puts by
         # construction: raised only once the lake confirms the previous session.
-        print(f"{label}: SKIPPED: {exc}")
-        return Outcome.SKIPPED
+        return _unsettled(right, str(exc))
     except IncompleteSweepError as exc:
         # Refusing to write is the CORRECT outcome, but it is still a failed
         # sweep for the operator: the session is recoverable only until the
@@ -290,6 +292,25 @@ def _ingest_wing(
         return Outcome.FAILED
     _report_local(result, label, len(symbols))
     return Outcome.OK
+
+
+def _unsettled(right: Right, detail: str) -> Outcome:
+    """A session still trading (a 425 / ``SessionInProgress``).
+
+    For the puts that is a SKIP: nothing is written and nothing is at risk.
+    The calls are attempted only once the puts' session settled, so for them
+    it means the two wings disagreed about the session -- a failure, and the
+    log says so rather than printing a benign-looking ``calls: SKIPPED``.
+    """
+    if right == "P":
+        print(f"puts: SKIPPED: {detail}")
+        return Outcome.SKIPPED
+    print(
+        "::error::calls: session still in progress after the puts settled -- the wings "
+        f"disagree about the session: {detail}",
+        file=sys.stderr,
+    )
+    return Outcome.FAILED
 
 
 def _report_local(result: IngestResult, label: str, requested: int) -> None:
@@ -320,9 +341,7 @@ def _report_local(result: IngestResult, label: str, requested: int) -> None:
 def _finish(put: Outcome, call: Outcome) -> int:
     """The exit code once both wings were attempted: 0 only if both landed.
 
-    The calls have no "skipped": they were attempted only because the puts'
-    session was settled, so a call 425 / ``SessionInProgress`` means the two
-    wings disagreed about the session -- a failure a human must see.
+    The calls have no "skipped": :func:`_unsettled` maps theirs to FAILED.
     """
     if call is not Outcome.OK and put is Outcome.OK:
         # Distinct on purpose: the chain-loss alert must not tell the operator
@@ -381,14 +400,22 @@ def _post_sweep(args: argparse.Namespace, right: Right, payload: dict[str, objec
             file=sys.stderr,
         )
         return Outcome.FAILED
+    if response.dataset != WINGS[right].dataset:
+        # The app filed this wing under another dataset: the rows landed
+        # somewhere a reader of this wing will never look.
+        print(
+            f"::error::{label}: the app wrote {response.dataset}, "
+            f"not {WINGS[right].dataset}: {response.bronze_path}",
+            file=sys.stderr,
+        )
+        return Outcome.FAILED
     return _report_post(response, label, dropped=dropped)
 
 
 def _refused(exc: urllib.error.HTTPError, right: Right, label: str) -> Outcome:
     if exc.code == 425:
-        # SessionInProgress on the app side: nothing lost, nothing written.
-        print(f"{label}: SKIPPED: {exc.read()[:400]!r}")
-        return Outcome.SKIPPED
+        # SessionInProgress on the app side: nothing written.
+        return _unsettled(right, repr(exc.read()[:400]))
     # Between a merge and its deploy, the SPA's StaticFiles mount (mounted at
     # "/" in api/main.py) answers a POST to the unknown call path with 405.
     # Named, so the red run explains itself. Only 405: a 404 is what the auth

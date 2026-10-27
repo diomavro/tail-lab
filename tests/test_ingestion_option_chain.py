@@ -18,6 +18,7 @@ from tail_lab.contracts.option_chain import (
     DATASET,
     DEFAULT_SNAPSHOT_SYMBOLS,
     MAX_TENOR_DAYS,
+    Right,
     SessionInProgress,
     session_in_progress,
 )
@@ -26,16 +27,47 @@ from tail_lab.ingestion.option_chain import (
     MIN_SYMBOL_FRACTION,
     QUARANTINE_DATASET,
     IncompleteSweepError,
+    IngestResult,
     _fetch_with_retry,
     cboe_symbol,
     fetch_chains,
-    ingest_option_chain,
     parse_cboe_chain,
     parse_osi_symbol,
     sweep_to_records,
     validate_and_quarantine,
 )
-from tail_lab.lake.store import DeltaLakeStore
+from tail_lab.ingestion.option_chain import ingest_option_chain as _ingest_payloads
+from tail_lab.lake.store import DeltaLakeStore, LakeStore
+
+
+def ingest_option_chain(
+    store: LakeStore,
+    symbols: list[str],
+    *,
+    fetch: Callable[[str], Mapping[str, object]] | None = None,
+    payloads: Mapping[str, Mapping[str, object]] | None = None,
+    ingest_date: dt.date | None = None,
+    min_symbol_fraction: float = MIN_SYMBOL_FRACTION,
+    market_session: dt.date | None = None,
+    now: dt.datetime | None = None,
+    right: Right = "P",
+) -> IngestResult:
+    """The ingest, fed the way production feeds it: ``fetch_chains`` turns a
+    canned ``fetch`` into payloads (one fetch per symbol, with its retry and
+    failure boundary), unless a test hands the payloads over itself."""
+    if payloads is None:
+        payloads = fetch_chains(symbols, fetch)
+    return _ingest_payloads(
+        store,
+        symbols,
+        payloads=payloads,
+        ingest_date=ingest_date,
+        min_symbol_fraction=min_symbol_fraction,
+        market_session=market_session,
+        now=now,
+        right=right,
+    )
+
 
 # A quote session, and an expiry 30 days out that every well-formed row uses.
 QUOTE_DAY = "2026-08-26"
@@ -1523,15 +1555,9 @@ def test_ingest_from_prefetched_payloads_never_fetches(
     unfetched = [r for r in caplog.records if "symbol_unfetched symbol=S19" in r.getMessage()]
     assert len(unfetched) == 1
     assert unfetched[0].exc_info is None
+    # The per-wing field ADR 0031 §4 advertises: which wing lost the symbol.
+    assert f"dataset={CALL_DATASET}" in unfetched[0].getMessage()
     assert not [r for r in caplog.records if "symbol_failed" in r.getMessage()]
-
-
-def test_payloads_and_fetch_together_are_refused(tmp_path: Path) -> None:
-    """One of the two would be silently ignored."""
-    with pytest.raises(ValueError, match="payloads or fetch"):
-        ingest_option_chain(
-            DeltaLakeStore(tmp_path), ["SPY"], payloads={}, fetch=lambda _s: {}, right="P"
-        )
 
 
 def test_a_call_ingest_writes_only_the_call_dataset(tmp_path: Path) -> None:
@@ -1605,6 +1631,20 @@ def test_each_wing_logs_its_own_audit_record(
     assert f"dataset={CALL_DATASET} " in runs[1]
     assert "unparsed_contracts=1 " in runs[0]
     assert "unparsed_contracts=2 " in runs[1]
+
+
+def test_unparsed_contracts_sum_across_symbols(tmp_path: Path) -> None:
+    """The audit count is the SWEEP's, not the last symbol's: one broken
+    OSI symbol in each of two chains is two unparsed contracts."""
+    payloads = {
+        name: _payload(
+            _contract("!!broken!!"), _contract(f"{name}{NEAR_EXPIRY}P00095000"), symbol=name
+        )
+        for name in ("SPY", "QQQ")
+    }
+    result = ingest_option_chain(DeltaLakeStore(tmp_path), ["SPY", "QQQ"], payloads=payloads)
+    assert result.symbols_ok == ("SPY", "QQQ")
+    assert result.unparsed_contracts == 2
 
 
 def _break_the_call_band(monkeypatch: pytest.MonkeyPatch) -> None:

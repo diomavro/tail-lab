@@ -27,9 +27,10 @@ the network:
   slice.
 - :func:`fetch_chain_raw` -- the HTTP call, exercised only by
   ``make ingest-option-chain`` and the scheduled workflow, never by CI.
-- :func:`ingest_option_chain` -- fetch (or take :func:`fetch_chains`'
-  payloads) -> parse -> validate/quarantine -> commit one bronze partition
-  for the whole universe, for one wing.
+- :func:`fetch_chains` -- one fetch per symbol, shared by both wings.
+- :func:`ingest_option_chain` -- :func:`fetch_chains`' payloads -> parse ->
+  validate/quarantine -> commit one bronze partition for the whole
+  universe, for one wing.
 
 The universe is committed as a **single partition per day**, not one per
 symbol: a half-finished sweep must not look like a complete one to an as-of
@@ -365,13 +366,13 @@ class _Parsed:
 
 
 def _parse_symbols(
-    symbols: Sequence[str], load: Callable[[str], Mapping[str, object] | None], right: Right
+    symbols: Sequence[str], payloads: Mapping[str, Mapping[str, object]], right: Right
 ) -> _Parsed:
     parsed = _Parsed()
     dataset = WINGS[right].dataset
     for symbol in symbols:
         try:
-            payload = load(symbol)
+            payload = payloads.get(symbol)
             if payload is None:
                 # Absent from fetch_chains' payloads: its fetch failed, and
                 # fetch_chains already logged the traceback. A known case, so
@@ -413,26 +414,22 @@ def ingest_option_chain(
     store: LakeStore,
     symbols: Sequence[str],
     *,
+    payloads: Mapping[str, Mapping[str, object]],
     ingest_date: dt.date | None = None,
-    fetch: Callable[[str], Mapping[str, object]] | None = None,
     min_symbol_fraction: float = MIN_SYMBOL_FRACTION,
     market_session: dt.date | None = None,
     now: dt.datetime | None = None,
     right: Right = "P",
-    payloads: Mapping[str, Mapping[str, object]] | None = None,
 ) -> IngestResult:
     """Sweep ``symbols``, slice each chain, and commit ONE bronze partition.
 
     ``right`` picks the wing -- its dataset, quarantine, contract and band all
-    come from that one choice (``contracts.option_chain.WINGS``). Given
-    ``payloads`` (from :func:`fetch_chains`), nothing is fetched: a symbol
-    absent from it counts as failed, exactly as a fetch failure does. That is
-    how ``--local`` slices both wings out of one fetch per chain. Passing
-    both ``payloads`` and ``fetch`` is a ``ValueError``: one would be ignored.
-
-    ``fetch`` is injectable so tests drive the whole orchestration off canned
-    payloads without a socket. A symbol whose fetch or parse fails is
-    recorded in ``symbols_failed`` and skipped -- one dead chain must not
+    come from that one choice (``contracts.option_chain.WINGS``). It never
+    fetches: ``payloads`` come from :func:`fetch_chains`, and a symbol absent
+    from them counts as failed, exactly as a fetch failure does. That is how
+    ``--local`` slices both wings out of one fetch per chain, and tests pass
+    ``fetch_chains(symbols, fake_fetch)`` to run without a socket. A symbol
+    whose fetch or parse fails is recorded in ``symbols_failed`` and skipped -- one dead chain must not
     cost the other sixty-nine their only chance at today's quotes.
 
     Raises ``IncompleteSweepError`` when fewer than ``min_symbol_fraction`` of
@@ -449,16 +446,8 @@ def ingest_option_chain(
     partition; a re-run, a weekend or a holiday resolves to a session already
     captured and writes nothing.
     """
-    if payloads is not None and fetch is not None:
-        raise ValueError("pass payloads or fetch, not both: payloads are never re-fetched")
     wing = WINGS[right]
-    fetcher = fetch or fetch_chain_raw
-    load: Callable[[str], Mapping[str, object] | None] = (
-        payloads.get
-        if payloads is not None
-        else (lambda symbol: _fetch_with_retry(fetcher, symbol))
-    )
-    parsed = _parse_symbols(symbols, load, right)
+    parsed = _parse_symbols(symbols, payloads, right)
     valid, quarantined = validate_and_quarantine(parsed.combined(), wing.schema)
 
     # Partition by the SESSION the quotes belong to, never by the clock --

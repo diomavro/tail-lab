@@ -38,6 +38,10 @@ _SPEC.loader.exec_module(chain_snapshot)
 PUTS = chain_snapshot.PUT_PATH
 CALLS = chain_snapshot.CALL_PATH
 ROWS: list[dict[str, object]] = [{"underlying": "SPY"}] * 20_000
+#: An answer's ``dataset`` placeholder: ``_server`` swaps in the dataset of
+#: the route that answers, as the real routes do.
+OWN_DATASET = "<the answering route's own dataset>"
+_ROUTE_DATASET = {PUTS: "option_chain_snapshot", CALLS: "option_chain_call_snapshot"}
 
 
 @pytest.fixture(autouse=True)
@@ -54,7 +58,7 @@ def test_the_two_routes_are_distinct() -> None:
 # ---- --post ------------------------------------------------------------------
 
 
-def _answer(committed: bool = True, dataset: str = "option_chain_snapshot") -> dict[str, object]:
+def _answer(committed: bool = True, dataset: str = OWN_DATASET) -> dict[str, object]:
     return {
         "dataset": dataset,
         "ingest_date": "2026-10-26",
@@ -89,7 +93,11 @@ def _server(
         _url: str, path: str, _token: str, payload: Mapping[str, object], _timeout: int
     ) -> object:
         sent[path].append(payload)
-        return (put if path == PUTS else call)()
+        answer = (put if path == PUTS else call)()
+        if isinstance(answer, dict) and answer.get("dataset") == OWN_DATASET:
+            answer = {**answer, "dataset": _ROUTE_DATASET[path]}
+            answer["bronze_path"] = f"s3://lake/bronze/{answer['dataset']}"
+        return answer
 
     monkeypatch.setattr(chain_snapshot, "_post_once", post_once)
     monkeypatch.setattr(chain_snapshot, "sweep_to_records", lambda _s: (puts, calls))
@@ -157,11 +165,96 @@ def test_unsettled_puts_send_no_calls_and_stay_green(
     assert "calls: not attempted -- the session is still trading" in out
 
 
-def test_unsettled_calls_after_settled_puts_are_red(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_unsettled_calls_after_settled_puts_are_red(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
     """Calls have no SKIPPED: a 425 after the puts landed means the wings'
-    voter sets disagreed about the session, which a human must see."""
+    voter sets disagreed about the session, which a human must see -- and the
+    log must not print a benign-looking ``calls: SKIPPED`` beside it."""
     _server(monkeypatch, _ok(), _raise(_http_error(425)))
     assert _main() == 1
+    captured = capsys.readouterr()
+    assert "calls: SKIPPED" not in captured.out
+    assert "::error::calls: session still in progress after the puts settled" in captured.err
+
+
+def test_a_call_answer_naming_another_dataset_is_red(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """The call route answering that it wrote the PUT dataset means the call
+    rows landed where no call reader looks: a failure, never "committed"."""
+    _server(monkeypatch, _ok(), lambda: _answer(dataset="option_chain_snapshot"))
+    assert _main() == 1
+    captured = capsys.readouterr()
+    assert "calls: committed" not in captured.out
+    assert (
+        "::error::calls: the app wrote option_chain_snapshot, not option_chain_call_snapshot"
+        in (captured.err)
+    )
+    assert "calls only; puts landed" in captured.err
+
+
+def test_an_incomplete_read_on_every_put_attempt_still_sends_the_calls(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """``IncompleteRead`` subclasses ``HTTPException``, not ``OSError``: only
+    the ``http.client.HTTPException`` clause turns its last attempt into a
+    FAILED put rather than a traceback that never POSTs the calls."""
+    sent = _server(
+        monkeypatch,
+        _raise(http.client.IncompleteRead(b"")),
+        _raise(http.client.IncompleteRead(b"")),
+    )
+    assert _main() == 1
+    assert (len(sent[PUTS]), len(sent[CALLS])) == (
+        chain_snapshot.POST_ATTEMPTS,
+        chain_snapshot.POST_ATTEMPTS,
+    )
+    err = capsys.readouterr().err
+    assert "::error::puts: the POST to /api/ingest/option-chain failed" in err
+    assert "neither wing landed" in err
+
+
+def test_a_drop_stays_flagged_through_a_later_non_drop_retry(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Reset, then a 503, then a no-op: the reset may have committed the
+    rows, and the 503 between does not un-say that."""
+    attempts: list[int] = []
+
+    def reset_503_no_op() -> object:
+        attempts.append(1)
+        if len(attempts) == 1:
+            raise ConnectionResetError(104, "Connection reset by peer")
+        if len(attempts) == 2:
+            raise _http_error(503)
+        return _answer(committed=False)
+
+    sent = _server(monkeypatch, reset_503_no_op, _ok())
+    assert _main() == 0
+    assert len(sent[PUTS]) == 3
+    out = capsys.readouterr().out
+    assert "puts: landed (an earlier attempt likely committed it" in out
+    assert "puts: NO-OP" not in out
+
+
+def test_exactly_the_floor_is_posted(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The floor is "fewer than", so a wing of exactly MIN_PLAUSIBLE_ROWS goes."""
+    floor = [{"underlying": "SPY"}] * chain_snapshot.MIN_PLAUSIBLE_ROWS
+    sent = _server(monkeypatch, _ok(), _ok(), puts=floor, calls=floor)
+    assert _main() == 0
+    assert (len(sent[PUTS]), len(sent[CALLS])) == (1, 1)
+
+
+def test_a_symbol_missing_from_one_wing_is_warned_for_that_wing(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    calls = [{"underlying": "SPY"}] * 10_000 + [{"underlying": "QQQ"}] * 10_000
+    _server(monkeypatch, _ok(), _ok(), calls=calls)  # puts: SPY only
+    assert _main() == 0
+    out = capsys.readouterr().out
+    assert "::warning::puts: no quotes for QQQ" in out
+    assert "::warning::calls: no quotes for" not in out
 
 
 def test_an_undeployed_call_route_is_named_as_one(
