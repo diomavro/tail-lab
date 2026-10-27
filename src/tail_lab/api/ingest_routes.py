@@ -170,8 +170,7 @@ def _ingest_chain(
     present = {str(u).upper() for u in frame["underlying"].unique()}
     try:
         plan = plan_session_write(
-            split.valid,
-            split.quarantined,
+            split,
             requested=requested,
             fetched_ok=[s for s in requested if s in present],
             fetch_failed=[s for s in requested if s not in present],
@@ -179,7 +178,6 @@ def _ingest_chain(
             ingest_date=body.ingest_date,
             market_session=body.market_session,
             now=_utcnow(),
-            misrouted=split.misrouted,
         )
     except IngestDateMismatch as exc:
         # 400, not 409/422: the body is well-formed and the rows are fine --

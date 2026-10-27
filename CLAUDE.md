@@ -78,19 +78,13 @@ them.
 - **Tests never touch the network.** Ingestion adapters are tested against committed fixtures; live fetches happen only via the human-run `make ingest-*` targets.
 - **Config lives in one place:** `src/tail_lab/config.py` (pydantic-settings, `TAIL_LAB_` prefix, `.env`). Never read `os.environ` elsewhere. `TAIL_LAB_LAKE_BACKEND=local` (default, credential-free — what CI uses, lake at `./data/`) vs `tigris` (S3 on Fly Tigris, plain `AWS_*` env names). The feedback routes 404 unless `TAIL_LAB_FEEDBACK_TOKEN` is set — that's deliberate, not a bug.
 - **The daily chain sweep is the one job that must not miss** (`docs/adr/0020`).
-  `.github/workflows/daily-chain-snapshot.yml` forward-collects both wings from
-  Cboe's keyless CDN every weekday at 21:30 UTC: puts into
-  `option_chain_snapshot`, and calls (`docs/adr/0031`) into
-  `option_chain_call_snapshot`, a separate dataset that put readers never see.
-  Never union the two: they share a key and neither has a `right` column.
-  Every other source here serves history on demand, so a skipped pull is a
-  `make` invocation away from being fixed; nobody sells a retroactive option
-  chain, so a skipped session is gone at any price. An empty sweep therefore
-  **fails red on purpose** rather than no-opping, and a red build here is the
-  one that should interrupt a day. Check `GET /api/ingest/option-chain/status`
-  before assuming it is healthy. It covers the put wing only: a calls-only
-  loss shows only as a red `daily-chain-snapshot` run reading `calls only;
-  puts landed` (ADR 0031). Two
+  `.github/workflows/daily-chain-snapshot.yml` forward-collects the put wing from
+  Cboe's keyless CDN every weekday at 21:30 UTC. Every other source here serves
+  history on demand, so a skipped pull is a `make` invocation away from being
+  fixed; nobody sells a retroactive option chain, so a skipped session is gone at
+  any price. An empty sweep therefore **fails red on purpose** rather than
+  no-opping, and a red build here is the one that should interrupt a day. Check
+  `GET /api/ingest/option-chain/status` before assuming it is healthy. Two
   gotchas: **GitHub drops scheduled runs** — the 2026-08-27 evening sweep never fired at all, and an absent run produces no red build, so a second catch-up cron at 05:00 UTC now covers it (free, because the write is idempotent); the sweep must write **one partition for all symbols** (bronze is
   immutable, so a per-symbol write persists only the first), and Cboe
   **zero-fills** `iv`/`delta`/`theo` it cannot compute — the adapter maps those to
@@ -197,7 +191,7 @@ them.
 
 The layer boundaries and dependency rules in `ARCHITECTURE.md` are enforced and real, but its file tree describes the end state, not the current code. As of now:
 
-- `contracts/` is one module per dataset (`vix.py`, `ohlcv.py`, `regime.py`, `options_calendar.py`, `option_quotes.py`, `option_chain.py`, `rates.py`, `credit.py`, `cboe_strategy.py`, `hypothesis.py`, `tiingo_eod.py`), not the single `datasets.py` shown. One exception: `option_chain.py` holds both chain wings, `option_chain_snapshot` and `option_chain_call_snapshot` (`docs/adr/0031`).
+- `contracts/` is one module per dataset (`vix.py`, `ohlcv.py`, `regime.py`, `options_calendar.py`, `option_quotes.py`, `option_chain.py`, `rates.py`, `credit.py`, `cboe_strategy.py`, `hypothesis.py`, `tiingo_eod.py`), not the single `datasets.py` shown.
 - `lake/` is `store.py` (`LakeStore` protocol + `DeltaLakeStore`, including as-of resolution — there is no separate `asof.py`) and `blob_store.py` (JSON blobs, used by feedback).
 - `api/` is flat (`main.py`, `putlab_routes.py`, `feedback_routes.py`, `ingest_routes.py`, `schemas.py`), no `routes/` subpackage yet.
 - `feedback/` is a real layer (peer of ingestion/transforms in the import-linter contract) not shown in the tree.

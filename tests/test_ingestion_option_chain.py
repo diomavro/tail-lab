@@ -18,6 +18,7 @@ from tail_lab.contracts.option_chain import (
     DATASET,
     DEFAULT_SNAPSHOT_SYMBOLS,
     MAX_TENOR_DAYS,
+    WINGS,
     Right,
     SessionInProgress,
     session_in_progress,
@@ -34,7 +35,6 @@ from tail_lab.ingestion.option_chain import (
     parse_cboe_chain,
     parse_osi_symbol,
     sweep_to_records,
-    validate_and_quarantine,
 )
 from tail_lab.ingestion.option_chain import ingest_option_chain as _ingest_payloads
 from tail_lab.lake.store import DeltaLakeStore, LakeStore
@@ -290,14 +290,14 @@ def test_a_row_with_no_ask_is_quarantined_not_kept() -> None:
     """A zero *bid* is a real market state (nobody bids for a far-OTM put);
     a row with no ask is not a quote at all."""
     frame, _ = parse_cboe_chain(_payload(_put(95.0, bid=0.0, ask=0.0), _put(96.0)))
-    valid, quarantined = validate_and_quarantine(frame)
+    valid, quarantined, _, _ = WINGS["P"].split(frame)
     assert valid["strike"].tolist() == [96.0]
     assert quarantined["strike"].tolist() == [95.0]
 
 
 def test_valid_rows_survive_validation_untouched() -> None:
     frame, _ = parse_cboe_chain(_payload(_put(95.0), _put(96.0)))
-    valid, quarantined = validate_and_quarantine(frame)
+    valid, quarantined, _, _ = WINGS["P"].split(frame)
     assert len(valid) == 2
     assert quarantined.empty
 

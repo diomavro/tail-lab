@@ -55,11 +55,9 @@ from tail_lab.contracts.option_chain import (
     QUARANTINE_DATASET,
     WINGS,
     IncompleteSweepError,
-    OptionChainSnapshotSchema,
     Right,
     SessionInProgress,
     plan_session_write,
-    split_valid_and_quarantined,
 )
 from tail_lab.ingestion.json_payload import json_list, json_object, to_float
 from tail_lab.ingestion.ohlcv import latest_market_session
@@ -81,7 +79,6 @@ __all__ = [
     "latest_market_session",
     "parse_cboe_chain",
     "parse_osi_symbol",
-    "validate_and_quarantine",
 ]
 
 _LOGGER = logging.getLogger(__name__)
@@ -315,17 +312,6 @@ def _fetch_with_retry(
     )
 
 
-def validate_and_quarantine(df: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame]:
-    """Split ``df`` into (valid, quarantined) against the PUT contract.
-
-    The adapters' common entry point, kept for that convention; the writers
-    themselves go through ``Wing.split``, which also picks the wing's schema.
-    Bad rows are never silently dropped: they come back in the second frame
-    so the caller can persist them for inspection.
-    """
-    return split_valid_and_quarantined(df, OptionChainSnapshotSchema)
-
-
 def fetch_chains(
     symbols: Iterable[str],
     fetch: Callable[[str], Mapping[str, object]] | None = None,
@@ -463,8 +449,7 @@ def ingest_option_chain(
     # see the note in ``api/ingest_routes``. Shared with that route so the two
     # writers cannot drift apart again (``contracts.option_chain.SessionPlan``).
     plan = plan_session_write(
-        split.valid,
-        split.quarantined,
+        split,
         requested=symbols,
         fetched_ok=parsed.ok,
         fetch_failed=parsed.failed,
@@ -473,7 +458,6 @@ def ingest_option_chain(
         ingest_date=ingest_date,
         market_session=market_session,
         now=now,
-        misrouted=split.misrouted,
     )
     valid, quarantined, ingest_date = plan.valid, plan.quarantined, plan.ingest_date
 

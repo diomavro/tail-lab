@@ -643,8 +643,7 @@ class SessionPlan:
 
 
 def plan_session_write(
-    valid: pd.DataFrame,
-    quarantined: pd.DataFrame,
+    split: WingSplit,
     *,
     requested: Sequence[str],
     fetched_ok: Sequence[str],
@@ -654,17 +653,17 @@ def plan_session_write(
     ingest_date: dt.date | None = None,
     market_session: dt.date | None = None,
     now: dt.datetime | None = None,
-    misrouted: Collection[str] = (),
 ) -> SessionPlan:
     """Name the session, split off-session rows, and refuse unsafe writes.
 
-    ``fetched_ok`` are the symbols whose chains fetched and parsed;
+    ``split`` is what :meth:`Wing.split` decided for this wing's rows; its
+    ``misrouted`` symbols still count against the floor, and only change how
+    a refusal names them. ``fetched_ok`` are the symbols whose chains fetched
+    and parsed;
     ``fetch_failed`` those that did not. ``market_session`` is the newest
     COMPLETED US equity session according to a source independent of Cboe
     (``None`` when that source could not be read -- the check is then
-    skipped, never guessed). ``misrouted`` are the symbols :meth:`Wing.split`
-    quarantined whole; they still count against the floor, and only change
-    how a refusal names them.
+    skipped, never guessed).
 
     Raises ``IncompleteSweepError`` instead of returning a plan whose write
     would lose a session silently.
@@ -673,6 +672,7 @@ def plan_session_write(
     # a clock fallback, which the in-progress guard below must not mistake for
     # a session Cboe is serving -- a total outage would then read as "still
     # trading" and skip green (adversarial review, 2026-09-25).
+    valid, quarantined = split.valid, split.quarantined
     have_quotes = not valid.empty
     session = session_from_quotes(valid) if have_quotes else dt.date.today()
     valid, quarantined, off_session, newest_off = quarantine_off_session_rows(
@@ -779,7 +779,7 @@ def plan_session_write(
             min_symbol_fraction,
             session,
             missing=sorted(failed),
-            misrouted=misrouted,
+            misrouted=split.misrouted,
         )
     return SessionPlan(
         valid=valid,
