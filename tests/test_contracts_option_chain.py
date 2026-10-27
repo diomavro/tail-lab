@@ -3,15 +3,25 @@ from __future__ import annotations
 import datetime as dt
 
 import pandas as pd
+import pandera.pandas as pa
 import pytest
 from pandera.errors import SchemaErrors
 
 from tail_lab.contracts.option_chain import (
+    CALL_DATASET,
+    CALL_MONEYNESS_MAX,
+    CALL_MONEYNESS_MIN,
+    CALL_QUARANTINE_DATASET,
+    DATASET,
     MAX_TENOR_DAYS,
     MONEYNESS_MAX,
     MONEYNESS_MIN,
+    QUARANTINE_DATASET,
+    WINGS,
+    OptionCallChainSnapshotSchema,
     OptionChainSnapshotSchema,
     missing_sessions,
+    split_valid_and_quarantined,
 )
 from tail_lab.contracts.option_quotes import OptionQuoteSchema
 
@@ -151,3 +161,87 @@ def test_a_null_captured_session_is_ignored_not_a_crash() -> None:
     trading = [_D(2026, 9, 22), _D(2026, 9, 23), _D(2026, 9, 24), _D(2026, 9, 25)]
 
     assert missing_sessions(captured, trading) == [_D(2026, 9, 23)]  # type: ignore[arg-type]
+
+
+# ---- the call wing (docs/adr/0031) ------------------------------------------
+
+
+def test_every_chain_dataset_name_lives_once_in_the_contract() -> None:
+    """Four bronze names, one home. The put quarantine name used to be spelt
+    twice (adapter and route), so the two writers could drift apart; the call
+    names must not start life that way. Pinned literally because a reader
+    that unions the wrong pair corrupts a backtest silently."""
+
+    assert DATASET == "option_chain_snapshot"
+    assert QUARANTINE_DATASET == "option_chain_snapshot__quarantine"
+    assert CALL_DATASET == "option_chain_call_snapshot"
+    assert CALL_QUARANTINE_DATASET == "option_chain_call_snapshot__quarantine"
+
+
+def test_each_wing_maps_to_its_own_dataset_schema_and_band() -> None:
+    """The right is mapped to (dataset, quarantine, schema, band) in ONE
+    place. A call band of 0.80-2.50 is log-symmetric with the put floor
+    (1 / 0.40), wide enough to hold a 10-delta 30-day call on a sigma~0.9
+    name (K ~ 1.44 S), which a 1.30 cap would lose for good."""
+
+    put, call = WINGS["P"], WINGS["C"]
+    assert (put.dataset, put.quarantine_dataset, put.schema) == (
+        DATASET,
+        QUARANTINE_DATASET,
+        OptionChainSnapshotSchema,
+    )
+    assert (put.moneyness_min, put.moneyness_max) == (MONEYNESS_MIN, MONEYNESS_MAX)
+    assert (call.dataset, call.quarantine_dataset, call.schema) == (
+        CALL_DATASET,
+        CALL_QUARANTINE_DATASET,
+        OptionCallChainSnapshotSchema,
+    )
+    assert (call.moneyness_min, call.moneyness_max) == (CALL_MONEYNESS_MIN, CALL_MONEYNESS_MAX)
+    assert (CALL_MONEYNESS_MIN, CALL_MONEYNESS_MAX) == (0.80, 2.50)
+
+
+def test_a_call_delta_must_be_non_negative_and_a_put_delta_non_positive() -> None:
+    """The one column on which the wings disagree. Each schema refuses the
+    other wing's sign, so a call row that reached the put dataset (or the
+    reverse) is quarantined rather than stored as a put."""
+
+    OptionCallChainSnapshotSchema.validate(_frame(_row(delta=0.62)), lazy=True)
+    OptionCallChainSnapshotSchema.validate(_frame(_row(delta=1.0)), lazy=True)
+    with pytest.raises(SchemaErrors):
+        OptionCallChainSnapshotSchema.validate(_frame(_row(delta=-0.19)), lazy=True)
+    with pytest.raises(SchemaErrors):
+        OptionChainSnapshotSchema.validate(_frame(_row(delta=0.62)), lazy=True)
+
+
+def test_the_call_schema_differs_from_the_put_schema_only_in_delta() -> None:
+    """Same columns, same key, same strictness -- a subclass, not a copy, so a
+    later tightening of the put contract reaches the calls too."""
+
+    put = OptionChainSnapshotSchema.to_schema()
+    call = OptionCallChainSnapshotSchema.to_schema()
+    assert list(put.columns) == list(call.columns)
+    assert call.unique == put.unique
+    assert call.strict == put.strict
+
+    def spec(column: pa.Column) -> tuple[str, bool, str]:
+        return (str(column.dtype), column.nullable, repr(column.checks))
+
+    differing = [
+        name for name in put.columns if spec(put.columns[name]) != spec(call.columns[name])
+    ]
+    assert differing == ["delta"]
+
+
+def test_the_split_validates_against_the_schema_it_is_given() -> None:
+    """Reused unchanged, the split would hard-code the put schema and
+    quarantine every call the sweep collected."""
+
+    calls = _frame(_row(strike=800.0, delta=0.40), _row(strike=810.0, delta=-0.40))
+    valid, quarantined = split_valid_and_quarantined(calls, schema=OptionCallChainSnapshotSchema)
+    assert valid["strike"].tolist() == [800.0]
+    assert quarantined["strike"].tolist() == [810.0]
+
+    # The default is still the put contract.
+    valid, quarantined = split_valid_and_quarantined(calls)
+    assert valid["strike"].tolist() == [810.0]
+    assert quarantined["strike"].tolist() == [800.0]

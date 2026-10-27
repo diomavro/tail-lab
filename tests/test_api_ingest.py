@@ -12,7 +12,13 @@ from fastapi.testclient import TestClient
 from tail_lab.api.ingest_routes import get_lake_store
 from tail_lab.api.main import app
 from tail_lab.config import Settings
-from tail_lab.contracts.option_chain import DATASET, DEFAULT_SNAPSHOT_SYMBOLS
+from tail_lab.contracts.option_chain import (
+    CALL_DATASET,
+    CALL_QUARANTINE_DATASET,
+    DATASET,
+    DEFAULT_SNAPSHOT_SYMBOLS,
+    QUARANTINE_DATASET,
+)
 from tail_lab.lake.store import DeltaLakeStore
 
 TOKEN = "sweep-token"
@@ -463,3 +469,156 @@ def test_a_bug_in_the_quarantine_write_is_not_swallowed(
 
     with pytest.raises(KeyError):
         _post(client, _body(_row(strike=700.0, ask=0.0), _row(strike=710.0)))
+
+
+# ---- the call wing (docs/adr/0031) -------------------------------------------
+
+CALLS = "/api/ingest/option-chain-calls"
+
+
+def _call_row(**overrides: Any) -> dict[str, Any]:
+    return _row(**{"strike": 800.0, "delta": 0.31, **overrides})
+
+
+def _post_calls(client: TestClient, body: dict[str, Any]) -> Any:
+    return client.post(CALLS, json=body, headers={"Authorization": f"Bearer {TOKEN}"})
+
+
+def test_a_call_sweep_lands_in_the_call_dataset_and_never_the_put_one(
+    client: TestClient, store: DeltaLakeStore, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Every reader of ``option_chain_snapshot`` assumes a put; a call row in
+    it would be read as one. The call route writes only its own dataset."""
+    _set_token(monkeypatch, TOKEN)
+    resp = _post_calls(client, _body(_call_row(strike=800.0), _call_row(strike=900.0, delta=0.05)))
+
+    assert resp.status_code == 200
+    assert resp.json()["dataset"] == CALL_DATASET
+    assert resp.json()["committed"] is True
+    day = dt.date(2026, 8, 26)
+    assert sorted(store.read_bronze_as_of(CALL_DATASET, day)["strike"]) == [800.0, 900.0]
+    assert not store.bronze_partition_exists(DATASET, day)
+
+
+def test_the_call_route_validates_against_the_call_contract(
+    client: TestClient, store: DeltaLakeStore, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A put-signed delta is quarantined on the call route -- into the CALL
+    quarantine -- and a call-signed one is kept; the put route would do the
+    reverse."""
+    _set_token(monkeypatch, TOKEN)
+    resp = _post_calls(client, _body(_call_row(strike=800.0), _call_row(strike=810.0, delta=-0.3)))
+
+    assert resp.status_code == 200
+    assert (resp.json()["rows"], resp.json()["quarantined"]) == (1, 1)
+    day = dt.date(2026, 8, 26)
+    assert store.read_bronze_as_of(CALL_QUARANTINE_DATASET, day)["strike"].tolist() == [810.0]
+    assert not store.bronze_partition_exists(QUARANTINE_DATASET, day)
+
+
+def test_a_call_rerun_is_a_no_op_and_independent_of_the_puts(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Idempotent like the put route, and each wing has its own partition:
+    puts already captured must not make the first call POST a no-op."""
+    _set_token(monkeypatch, TOKEN)
+    assert _post(client, _body(ingest_date=None)).json()["committed"] is True
+    assert _post_calls(client, _body(_call_row(), ingest_date=None)).json()["committed"] is True
+    assert _post_calls(client, _body(_call_row(), ingest_date=None)).json()["committed"] is False
+
+
+@pytest.mark.parametrize(
+    ("token", "header", "status"),
+    [(None, None, 404), (TOKEN, None, 401), (TOKEN, "Bearer nope", 401)],
+)
+def test_the_call_route_has_the_same_gate(
+    client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+    token: str | None,
+    header: str | None,
+    status: int,
+) -> None:
+    _set_token(monkeypatch, token)
+    headers = {"Authorization": header} if header else {}
+    assert client.post(CALLS, json=_body(_call_row()), headers=headers).status_code == status
+
+
+def test_the_call_route_refuses_too_few_chains(
+    client: TestClient, store: DeltaLakeStore, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _set_token(monkeypatch, TOKEN)
+    resp = _post_calls(
+        client, _body(_call_row(), ingest_date=None, symbols=list(DEFAULT_SNAPSHOT_SYMBOLS))
+    )
+    assert resp.status_code == 409
+    assert not store.bronze_partition_exists(CALL_DATASET, dt.date(2026, 8, 26))
+
+
+def test_the_call_route_refuses_a_frozen_feed_by_its_own_witness(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The stale-feed check reads the CALL dataset's partitions."""
+    _set_token(monkeypatch, TOKEN)
+    _post_calls(client, _body(_call_row(), ingest_date=None))
+    resp = _post_calls(client, _body(_call_row(), ingest_date=None, market_session="2026-08-27"))
+    assert resp.status_code == 409
+    assert "Cboe's feed is behind" in resp.json()["detail"]
+
+
+def test_the_call_route_answers_too_early_mid_session(
+    client: TestClient, store: DeltaLakeStore, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _set_token(monkeypatch, TOKEN)
+    _post_calls(client, _body(_call_row(), ingest_date=None))
+    monkeypatch.setattr(
+        "tail_lab.api.ingest_routes._utcnow", lambda: dt.datetime(2026, 8, 27, 15, 0, tzinfo=dt.UTC)
+    )
+    resp = _post_calls(
+        client,
+        _body(_call_row(quote_date="2026-08-27"), ingest_date=None, market_session="2026-08-26"),
+    )
+    assert resp.status_code == 425
+    assert not store.bronze_partition_exists(CALL_DATASET, dt.date(2026, 8, 27))
+
+
+def test_each_route_logs_its_own_event(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    """STANDARDS §f: the audit line names the route's event and dataset."""
+    _set_token(monkeypatch, TOKEN)
+    with caplog.at_level("INFO"):
+        _post(client, _body())
+        _post_calls(client, _body(_call_row()))
+    lines = [r.getMessage() for r in caplog.records if r.getMessage().startswith("event=api.")]
+    assert any(
+        m.startswith("event=api.ingest.option_chain ") and f"dataset={DATASET} " in m for m in lines
+    )
+    assert any(
+        m.startswith("event=api.ingest.option_chain_calls ") and f"dataset={CALL_DATASET} " in m
+        for m in lines
+    )
+
+
+def test_a_failed_call_quarantine_write_logs_the_call_event(
+    client: TestClient,
+    store: DeltaLakeStore,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    _set_token(monkeypatch, TOKEN)
+    real_write = store.write_bronze
+
+    def write(dataset: str, day: dt.date, frame: Any) -> str:
+        if dataset.endswith("__quarantine"):
+            raise SchemaMismatchError("SchemaMismatchError: 13 vs 14")
+        return real_write(dataset, day, frame)
+
+    monkeypatch.setattr(store, "write_bronze", write)
+    with caplog.at_level("ERROR"):
+        resp = _post_calls(client, _body(_call_row(strike=800.0, ask=0.0), _call_row(strike=810.0)))
+
+    assert resp.status_code == 200
+    failure = next(r for r in caplog.records if "quarantine_write_failed" in r.getMessage())
+    assert failure.getMessage().startswith(
+        "event=api.ingest.option_chain_calls.quarantine_write_failed "
+    )

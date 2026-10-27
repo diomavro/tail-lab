@@ -37,7 +37,7 @@ import datetime as dt
 import math
 from collections.abc import Callable, Collection, Iterable, Sequence
 from dataclasses import dataclass
-from typing import ClassVar
+from typing import ClassVar, Literal
 from zoneinfo import ZoneInfo
 
 import pandas as pd
@@ -49,6 +49,16 @@ from pandera.typing import Series
 #: the hand-verified vendor back-history with a different provenance and a
 #: different licence. Same shape, different source, so: different dataset.
 DATASET = "option_chain_snapshot"
+QUARANTINE_DATASET = f"{DATASET}__quarantine"
+
+#: The CALL wing's bronze name (``docs/adr/0031``). A separate dataset, not a
+#: ``right`` column on the one above: every reader of ``option_chain_snapshot``
+#: assumes each row is a put, and the key below has no ``right`` in it. **Never
+#: union it** with ``option_chain_snapshot``, ``option_quotes`` or
+#: ``optionsdx``: they share the key ``(underlying, quote_date, expiration,
+#: strike)``, so a concat would silently mix calls into a put history.
+CALL_DATASET = "option_chain_call_snapshot"
+CALL_QUARANTINE_DATASET = f"{CALL_DATASET}__quarantine"
 
 #: Bounds on a listed strike, in dollars. Loose on purpose: these catch unit
 #: errors and garbled rows, not unusual-but-real strikes.
@@ -71,6 +81,14 @@ MONEYNESS_MAX = 1.05
 #: form around that, and cuts the LEAPS tail that would otherwise be most of
 #: the rows and none of the answers.
 MAX_TENOR_DAYS = 180
+
+#: Moneyness band retained for CALLS (``docs/adr/0031``): log-symmetric with
+#: the put floor (2.50 = 1 / 0.40), reaching a little way through the money on
+#: the other side. Wide on purpose: at sigma ~0.9 (MSTR, COIN, SMCI, TSLA) a
+#: 25-delta call at 90 days sits near K = 1.50 S and a 10-delta at 30 days
+#: near 1.44 S, both outside a 1.30 cap -- and an uncaptured session is gone.
+CALL_MONEYNESS_MIN = 0.80
+CALL_MONEYNESS_MAX = 2.50
 
 
 class OptionChainSnapshotSchema(pa.DataFrameModel):
@@ -98,6 +116,50 @@ class OptionChainSnapshotSchema(pa.DataFrameModel):
         coerce = True
         strict = True
         unique: ClassVar[list[str]] = ["underlying", "quote_date", "expiration", "strike"]
+
+
+class OptionCallChainSnapshotSchema(OptionChainSnapshotSchema):
+    """One delayed end-of-day CALL quote (``docs/adr/0031``).
+
+    The put contract with one change: a call's delta is in ``[0, 1]``. A
+    subclass rather than a copy, so a later tightening of the put contract
+    reaches the calls too. Same key and no ``right`` column -- which is why
+    the two datasets must never be unioned (see :data:`CALL_DATASET`).
+    """
+
+    delta: Series[float] = pa.Field(nullable=True, ge=0.0, le=1.0)
+
+
+Right = Literal["P", "C"]
+
+
+@dataclass(frozen=True)
+class Wing:
+    """Everything that differs between collecting puts and collecting calls,
+    so each writer maps a right to its dataset, quarantine, contract and band
+    in ONE lookup rather than at every site that names a dataset."""
+
+    right: Right
+    dataset: str
+    quarantine_dataset: str
+    schema: type[OptionChainSnapshotSchema]
+    moneyness_min: float
+    moneyness_max: float
+
+
+WINGS: dict[Right, Wing] = {
+    "P": Wing(
+        "P", DATASET, QUARANTINE_DATASET, OptionChainSnapshotSchema, MONEYNESS_MIN, MONEYNESS_MAX
+    ),
+    "C": Wing(
+        "C",
+        CALL_DATASET,
+        CALL_QUARANTINE_DATASET,
+        OptionCallChainSnapshotSchema,
+        CALL_MONEYNESS_MIN,
+        CALL_MONEYNESS_MAX,
+    ),
+}
 
 
 #: The names forward-collected every day. A deliberate subset of the 70-name
@@ -151,8 +213,13 @@ DEFAULT_SNAPSHOT_SYMBOLS: tuple[str, ...] = (
 )
 
 
-def split_valid_and_quarantined(df: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame]:
-    """Split ``df`` into ``(valid, quarantined)`` against this contract.
+def split_valid_and_quarantined(
+    df: pd.DataFrame, schema: type[OptionChainSnapshotSchema] = OptionChainSnapshotSchema
+) -> tuple[pd.DataFrame, pd.DataFrame]:
+    """Split ``df`` into ``(valid, quarantined)`` against ``schema`` -- the put
+    contract by default; the call wing passes
+    :class:`OptionCallChainSnapshotSchema`, which every call would otherwise
+    fail on its delta sign.
 
     Lives here, next to the schema, rather than in the adapter as its
     siblings do -- because this dataset has **two** writers. The adapter
@@ -168,12 +235,12 @@ def split_valid_and_quarantined(df: pd.DataFrame) -> tuple[pd.DataFrame, pd.Data
     so the caller can persist them for inspection.
     """
     try:
-        return OptionChainSnapshotSchema.validate(df, lazy=True), df.iloc[0:0]
+        return schema.validate(df, lazy=True), df.iloc[0:0]
     except SchemaErrors as err:
         bad_index = pd.Index(err.failure_cases["index"].dropna().unique())
         quarantined = df.loc[df.index.isin(bad_index)]
         kept = df.loc[~df.index.isin(bad_index)]
-        return OptionChainSnapshotSchema.validate(kept, lazy=True), quarantined
+        return schema.validate(kept, lazy=True), quarantined
 
 
 #: Fraction of the REQUESTED symbols that must return quotes before a sweep is
