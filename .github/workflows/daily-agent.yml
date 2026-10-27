@@ -137,8 +137,16 @@ jobs:
           # run_in_background, a background subagent, or a Bash command that
           # outlives its timeout (default 120 s) and is moved to the
           # background automatically -- and CI's pytest step alone took 125 s
-          # and 135 s on 10-13 and 10-25. Checked in the pinned CLI 2.1.289:
-          # the variable below disables all three, after which an over-long
+          # and 135 s on 10-13 and 10-25. Seen on 10-25: the job log's
+          # "Cleaning up orphan processes" killed a still-running
+          # `npm exec playwright test` and its dev server, i.e. step 6's e2e
+          # run abandoned mid-flight. On the other 14 runs (10-12..10-26)
+          # that cleanup killed nothing, so no background shell was alive;
+          # there the cause is a background subagent (dies with the CLI,
+          # leaves no orphan) or a genuine "nothing proposed" -- the summary
+          # step below tells them apart, and those orphan lines remain the
+          # first thing to check. Checked in the pinned CLI 2.1.289: the
+          # variable below disables all three, after which an over-long
           # command is KILLED at its timeout instead, so the timeouts are
           # raised to fit step 6's full suite.
           CLAUDE_CODE_DISABLE_BACKGROUND_TASKS: "1"
@@ -302,12 +310,13 @@ jobs:
       # (a grep pattern, a jq filter copied from it), so this prints only:
       # the result stats, the agent's own decision note (prompt step 8,
       # written to be public), each main-agent tool call as its name plus its
-      # file_path argument, a Bash command's program name (words containing =
-      # are skipped; a first word that is not a plain name prints as
-      # "(other)") or a subagent type -- no command
-      # text, no search pattern -- any background task, and the local
-      # git state. Known secrets are redacted and backticks neutralised
-      # everywhere. A diagnostics step must never turn the run red.
+      # file_path argument (whitespace collapsed, so one line per call), a
+      # Bash command's program and subcommand ONLY when both are on the fixed
+      # allowlists in the script (anything else prints as "(other)"), or a
+      # subagent type -- no command text, no search pattern -- any
+      # background task, and the local git state. Known secrets are redacted
+      # and backticks neutralised everywhere. A diagnostics step must never
+      # turn the run red.
       - name: Record the run's decision
         if: always() && steps.agent.outcome != 'skipped'
         continue-on-error: true
@@ -320,7 +329,7 @@ jobs:
         run: |
           f="${EXEC_FILE:-$RUNNER_TEMP/claude-execution-output.json}"
           python3 -I - "$f" >> "$GITHUB_STEP_SUMMARY" <<'PY'
-          import json, os, re, subprocess, sys
+          import json, os, subprocess, sys
 
           secrets = [v for k, v in os.environ.items() if k.startswith("REDACT_") and len(v) >= 8]
 
@@ -329,6 +338,43 @@ jobs:
                   text = text.replace(s, "***")
               text = text.replace("`", "'")
               return text if len(text) <= limit else text[:limit] + " [...]"
+
+          # Only these names are ever printed for a Bash call. The model chooses
+          # the command, so a free word could be prose copied from feedback.
+          PROGRAMS = {"git", "gh", "make", "npm", "npx", "python", "python3", "pytest", "ruff",
+                      "mypy", "lint-imports", "curl", "cat", "ls", "head", "tail", "sed", "grep",
+                      "rg", "find", "jq", "wc", "echo", "mkdir", "rm", "cp", "mv", "diff", "sort"}
+          SUBCOMMANDS = {"check", "test", "lint", "typecheck", "import-lint", "cov-floors",
+                         "format", "setup", "run", "e2e", "build", "ci", "install", "status",
+                         "diff", "add", "commit", "push", "checkout", "switch", "log", "fetch",
+                         "rebase", "branch", "show", "stash", "restore", "pr", "issue", "api",
+                         "create", "edit", "view", "list", "pytest", "ruff", "mypy", "playwright"}
+
+          def program(command: str) -> str:
+              """'cd frontend && npm run e2e' -> 'npm run e2e'; prose -> '(other)'."""
+              words = command.split()
+              i = 0
+              while i < len(words):
+                  w = words[i]
+                  if w == "cd":
+                      i += 2
+                  elif w in ("&&", "env") or "=" in w:
+                      i += 1
+                  elif w == "-u":  # env -u NAME
+                      i += 2
+                  else:
+                      break
+              name = words[i].rsplit("/", 1)[-1] if i < len(words) else ""
+              if name not in PROGRAMS:
+                  return "(other)"
+              subs = []
+              for w in words[i + 1:i + 3]:
+                  if w == "-m":  # python -m pytest
+                      continue
+                  if w not in SUBCOMMANDS:
+                      break
+                  subs.append(w)
+              return " ".join([name, *subs])
 
           def git(*args: str) -> str:
               try:
@@ -419,17 +465,13 @@ jobs:
                           sub_calls += 1
                           continue
                       if name == "Bash":
-                          words = [w for w in str(inp.get("command", "")).split() if "=" not in w]
-                          # A first word that is not a plain program name (a quoted
-                          # string, a comment) is prose, so it is never printed.
-                          first = words[0] if words else ""
-                          plain = re.fullmatch(r"[A-Za-z0-9_./-]+", first)
-                          detail = first if plain else "(other)"
+                          detail = program(str(inp.get("command", "")))
                       elif name in ("Agent", "Task"):
                           detail = str(inp.get("subagent_type", ""))
                       else:
                           detail = str(inp.get("file_path") or "")
                       bg = " [background]" if inp.get("run_in_background") else ""
+                      detail = " ".join(detail.split())  # one line per call
                       trail.append(f"{len(trail) + 1:3d} {name}{bg} {clean(detail, 140)}")
               print(f"- main-agent tool calls: {len(trail)}; subagent tool calls: {sub_calls}")
               if background:
