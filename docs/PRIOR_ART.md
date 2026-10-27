@@ -485,6 +485,10 @@ model-free IV would be biased low by an amount nobody here has measured. It is
 the honest prerequisite for the VRP column `AGENT_TODO` wants, since VRP needs
 its implied leg to be model-free or the flat-vol error is simply reimported.
 
+*2026-10-27:* since `docs/adr/0031` the sweep also collects the call wing
+(0.80-2.50 of spot) into `option_chain_call_snapshot`. The truncation above
+still holds for every session captured before that ADR was deployed.
+
 ## 17. Python has no bias-corrected Hill — that gap is real, and it is ours
 
 The negative result is worth as much as the positive ones. `research/surface/

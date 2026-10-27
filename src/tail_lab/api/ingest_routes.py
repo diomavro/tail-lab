@@ -1,4 +1,4 @@
-"""The one write endpoint that exists so a *scheduled* job can reach bronze
+"""The write endpoints that exist so a *scheduled* job can reach bronze
 without holding object-storage credentials (``docs/adr/0020``).
 
 The daily chain sweep has an awkward shape. It has to run every day forever
@@ -15,8 +15,9 @@ credential-free fetch-and-slice, and hands the sliced rows here. The live
 app already holds the Tigris keys and does the write. CI holds one bearer
 token and no data credentials, and the no-credentials wall stays intact.
 
-This route is deliberately **narrow**. It is not "write rows to bronze" --
-it writes one named dataset, validated against one contract, and rejects
+These routes are deliberately **narrow**. They are not "write rows to
+bronze" -- they write two named datasets, the put and call wings of the chain
+(``docs/adr/0031``), each validated against its own contract, and reject
 anything else. A general lake-write endpoint would be a far larger thing to
 have to trust, and nothing here needs one.
 """
@@ -40,11 +41,13 @@ from tail_lab.config import get_lake_store as _get_configured_lake_store
 from tail_lab.contracts.option_chain import (
     DATASET,
     DEFAULT_SNAPSHOT_SYMBOLS,
+    WINGS,
     IncompleteSweepError,
     IngestDateMismatch,
     SessionInProgress,
+    Wing,
+    WingSplit,
     plan_session_write,
-    split_valid_and_quarantined,
 )
 from tail_lab.lake.store import LAKE_WRITE_ERRORS, LakeStore
 from tail_lab.observability import log_event
@@ -52,8 +55,6 @@ from tail_lab.observability import log_event
 router = APIRouter()
 
 _LOGGER = logging.getLogger(__name__)
-
-QUARANTINE_DATASET = f"{DATASET}__quarantine"
 
 
 def _utcnow() -> dt.datetime:
@@ -72,14 +73,70 @@ def ingest_option_chain_snapshot(
     authorization: str | None = Header(default=None),
     store: LakeStore = Depends(get_lake_store),
 ) -> OptionChainSnapshotResponse:
-    """Commit one day's put-wing slice to bronze.
+    """Commit one day's put-wing slice to ``option_chain_snapshot``."""
+    return _ingest_chain(body, authorization, store, wing=WINGS["P"])
+
+
+@router.post("/api/ingest/option-chain-calls")
+def ingest_option_chain_call_snapshot(
+    body: OptionChainSnapshotRequest,
+    authorization: str | None = Header(default=None),
+    store: LakeStore = Depends(get_lake_store),
+) -> OptionChainSnapshotResponse:
+    """Commit one day's call-wing slice to ``option_chain_call_snapshot``
+    (``docs/adr/0031``) -- same token, same session rules, its own dataset."""
+    return _ingest_chain(body, authorization, store, wing=WINGS["C"])
+
+
+def _split(frame: pd.DataFrame, wing: Wing) -> WingSplit:
+    """``wing.split`` plus its log line, and a 422 when nothing is left.
+
+    Its own function so ``_ingest_chain`` stays under the complexity ratchet.
+    A symbol carrying more than ``MAX_WRONG_SIGN_SHARE`` of the other wing's
+    deltas is quarantined whole (:meth:`Wing.split`), the same rule the local
+    writer runs, so one misrouted symbol costs that symbol and the floor
+    decides the session.
+    """
+    split = wing.split(frame)
+    if split.misrouted:
+        _LOGGER.warning(
+            "event=api.ingest.option_chain.misrouted %s", split.describe_misrouted(wing)
+        )
+    if split.valid.empty:
+        why = (
+            f"; {', '.join(split.misrouted)} carry the other wing's deltas"
+            if split.misrouted
+            else ""
+        )
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                f"no rows satisfied the contract ({len(split.quarantined)} quarantined){why}; "
+                f"nothing written to {wing.dataset}"
+            ),
+        )
+    return split
+
+
+def _ingest_chain(
+    body: OptionChainSnapshotRequest,
+    authorization: str | None,
+    store: LakeStore,
+    *,
+    wing: Wing,
+) -> OptionChainSnapshotResponse:
+    """Commit one day's slice of one wing to bronze. Both routes run this ONE
+    body, so the session rules cannot drift between the wings.
 
     Rows arrive already sliced by the workflow; they are re-validated here
-    against the contract regardless, because the caller being trusted is not
-    the same as the payload being well-formed, and bronze is immutable once
-    written.
+    against the wing's contract regardless, because the caller being trusted
+    is not the same as the payload being well-formed, and bronze is immutable
+    once written. The contract cannot tell the wings apart on a row with a
+    null delta, so a symbol carrying the other wing's deltas is quarantined
+    whole (:func:`_split`).
     """
     _require_token(authorization)
+    dataset = wing.dataset
 
     if not body.rows:
         raise HTTPException(status_code=400, detail="no rows submitted")
@@ -95,12 +152,7 @@ def ingest_option_chain_snapshot(
     # kept the rest. Two writers disagreeing about what a bad row costs is
     # how a session gets lost, which is the one thing this dataset cannot
     # afford. A 422 now means nothing at all validated.
-    valid, quarantined = split_valid_and_quarantined(frame)
-    if valid.empty:
-        raise HTTPException(
-            status_code=422,
-            detail=f"no rows satisfied the contract ({len(quarantined)} quarantined)",
-        )
+    split = _split(frame, wing)
 
     # The partition IS the session, not the wall clock. Scheduled runners
     # drift -- GitHub ran the 21:30 cron at 00:57 the next day on the very
@@ -118,12 +170,11 @@ def ingest_option_chain_snapshot(
     present = {str(u).upper() for u in frame["underlying"].unique()}
     try:
         plan = plan_session_write(
-            valid,
-            quarantined,
+            split,
             requested=requested,
             fetched_ok=[s for s in requested if s in present],
             fetch_failed=[s for s in requested if s not in present],
-            partition_exists=lambda day: store.bronze_partition_exists(DATASET, day),
+            partition_exists=lambda day: store.bronze_partition_exists(dataset, day),
             ingest_date=body.ingest_date,
             market_session=body.market_session,
             now=_utcnow(),
@@ -144,7 +195,7 @@ def ingest_option_chain_snapshot(
         # red run with this message on it.
         raise HTTPException(status_code=409, detail=str(exc)) from exc
 
-    bronze_path = store.write_bronze(DATASET, plan.ingest_date, plan.valid)
+    bronze_path = store.write_bronze(dataset, plan.ingest_date, plan.valid)
     if not plan.quarantined.empty:
         # Diagnostic only, and the session is already committed above: a
         # failed quarantine write must not turn a correct capture into a 500
@@ -152,10 +203,12 @@ def ingest_option_chain_snapshot(
         # lake-write failures (`LAKE_WRITE_ERRORS`) are survived, anything else
         # is a bug and surfaces.
         try:
-            store.write_bronze(QUARANTINE_DATASET, plan.ingest_date, plan.quarantined)
+            store.write_bronze(wing.quarantine_dataset, plan.ingest_date, plan.quarantined)
         except LAKE_WRITE_ERRORS:
             _LOGGER.exception(
-                "event=api.ingest.option_chain.quarantine_write_failed ingest_date=%s rows=%d",
+                "event=api.ingest.option_chain.quarantine_write_failed dataset=%s "
+                "ingest_date=%s rows=%d",
+                wing.quarantine_dataset,
                 plan.ingest_date.isoformat(),
                 len(plan.quarantined),
             )
@@ -165,7 +218,7 @@ def ingest_option_chain_snapshot(
     log_event(
         _LOGGER,
         "api.ingest.option_chain",
-        dataset=DATASET,
+        dataset=dataset,
         ingest_date=plan.ingest_date,
         rows=len(plan.valid),
         quarantined=len(plan.quarantined),
@@ -174,11 +227,12 @@ def ingest_option_chain_snapshot(
         committed=not plan.already_captured,
         symbols_failed=",".join(plan.symbols_failed) or None,
         symbols_off_session=",".join(plan.symbols_off_session) or None,
+        symbols_misrouted=",".join(split.misrouted) or None,
         market_session=body.market_session,
         bronze_path=bronze_path,
     )
     return OptionChainSnapshotResponse(
-        dataset=DATASET,
+        dataset=dataset,
         ingest_date=plan.ingest_date,
         rows=len(plan.valid),
         quarantined=len(plan.quarantined),
@@ -188,6 +242,7 @@ def ingest_option_chain_snapshot(
         committed=not plan.already_captured,
         symbols_failed=plan.symbols_failed,
         symbols_off_session=plan.symbols_off_session,
+        symbols_misrouted=split.misrouted,
     )
 
 

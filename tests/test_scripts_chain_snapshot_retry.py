@@ -61,7 +61,11 @@ def test_a_transient_500_is_retried_and_the_session_is_saved(
         return {"rows": 20113}
 
     monkeypatch.setattr(chain_snapshot, "_post_once", fake)
-    assert chain_snapshot._post("http://x", "t", {"rows": []}, 30) == {"rows": 20113}
+    # True: the 500 may have followed the commit (`_failed_after_send`).
+    assert chain_snapshot._post("http://x", "P", "t", {"rows": []}, 30) == (
+        {"rows": 20113},
+        True,
+    )
     assert len(calls) == 2
 
 
@@ -95,7 +99,7 @@ def test_only_faults_a_retry_could_fix_are_retried(
 
     monkeypatch.setattr(chain_snapshot, "_post_once", fake)
     with pytest.raises(urllib.error.HTTPError):
-        chain_snapshot._post("http://x", "t", {"rows": []}, 30)
+        chain_snapshot._post("http://x", "P", "t", {"rows": []}, 30)
     assert len(calls) == expected_calls
 
 
@@ -118,7 +122,7 @@ def test_it_gives_up_rather_than_retrying_forever(monkeypatch: pytest.MonkeyPatc
 
     monkeypatch.setattr(chain_snapshot, "_post_once", fake)
     with pytest.raises(urllib.error.HTTPError):
-        chain_snapshot._post("http://x", "t", {"rows": []}, 30)
+        chain_snapshot._post("http://x", "P", "t", {"rows": []}, 30)
     assert len(calls) == chain_snapshot.POST_ATTEMPTS
 
 
@@ -136,7 +140,7 @@ def test_a_wedged_app_reports_a_failure_rather_than_a_traceback(
 
     monkeypatch.setattr(chain_snapshot, "_post_once", fake)
     monkeypatch.setattr(
-        chain_snapshot, "sweep_to_records", lambda _s: [{"underlying": "SPY"}] * 20_000
+        chain_snapshot, "sweep_to_records", lambda _s: ([{"underlying": "SPY"}] * 20_000,) * 2
     )
 
     rc = chain_snapshot.main(["--post", "http://x", "--token", "t", "--symbols", "spy"])
@@ -151,10 +155,16 @@ def test_the_post_carries_the_floor_and_the_witness(monkeypatch: pytest.MonkeyPa
     feed. Both have to cross the wire or the server-side checks are inert."""
     sent: list[dict[str, Any]] = []
 
-    def fake(_url: str, _token: str, payload: dict[str, Any], _timeout: int) -> dict[str, Any]:
+    def fake(
+        _url: str, path: str, _token: str, payload: dict[str, object], _timeout: int
+    ) -> dict[str, object]:
         sent.append(payload)
         return {
-            "dataset": "option_chain_snapshot",
+            "dataset": (
+                "option_chain_call_snapshot"
+                if path == chain_snapshot.CALL_PATH
+                else "option_chain_snapshot"
+            ),
             "ingest_date": "2026-09-22",
             "rows": 1,
             "symbols": 1,
@@ -166,12 +176,14 @@ def test_the_post_carries_the_floor_and_the_witness(monkeypatch: pytest.MonkeyPa
     monkeypatch.setattr(chain_snapshot, "_post_once", fake)
     monkeypatch.setattr(chain_snapshot, "latest_market_session", lambda: dt.date(2026, 9, 23))
     monkeypatch.setattr(
-        chain_snapshot, "sweep_to_records", lambda _s: [{"underlying": "SPY"}] * 20_000
+        chain_snapshot, "sweep_to_records", lambda _s: ([{"underlying": "SPY"}] * 20_000,) * 2
     )
 
     assert chain_snapshot.main(["--post", "http://x", "--token", "t", "--symbols", "spy,qqq"]) == 0
-    assert sent[0]["symbols"] == ["spy", "qqq"]
-    assert sent[0]["market_session"] == "2026-09-23"
+    assert len(sent) == 2, "one body per wing"
+    for body in sent:
+        assert body["symbols"] == ["spy", "qqq"]
+        assert body["market_session"] == "2026-09-23"
 
 
 def test_a_no_op_is_reported_as_one(capsys: pytest.CaptureFixture[str]) -> None:
@@ -184,10 +196,11 @@ def test_a_no_op_is_reported_as_one(capsys: pytest.CaptureFixture[str]) -> None:
             quote_date=dt.date(2026, 9, 22),
             bronze_path="p",
             committed=False,
-        )
+        ),
+        "puts",
     )
     out = capsys.readouterr().out
-    assert rc == 0
+    assert rc is chain_snapshot.Outcome.OK
     assert "NO-OP" in out
     assert "committed 20078" not in out
 
@@ -197,16 +210,20 @@ def test_a_too_early_answer_is_a_quiet_skip(
 ) -> None:
     """425 means the session is still trading and nothing is lost."""
 
-    def fake(*_a: Any, **_k: Any) -> dict[str, Any]:
+    posts: dict[str, int] = {}
+
+    def fake(_url: str, path: str, *_a: object, **_k: object) -> dict[str, object]:
+        posts[path] = posts.get(path, 0) + 1
         raise urllib.error.HTTPError("http://x", 425, "Too Early", {}, io.BytesIO(b"still trading"))  # type: ignore[arg-type]
 
     monkeypatch.setattr(chain_snapshot, "_post_once", fake)
     monkeypatch.setattr(
-        chain_snapshot, "sweep_to_records", lambda _s: [{"underlying": "SPY"}] * 20_000
+        chain_snapshot, "sweep_to_records", lambda _s: ([{"underlying": "SPY"}] * 20_000,) * 2
     )
 
     assert chain_snapshot.main(["--post", "http://x", "--token", "t", "--symbols", "spy"]) == 0
     assert "SKIPPED" in capsys.readouterr().out
+    assert posts == {chain_snapshot.PUT_PATH: 1}, "no call POST after an unsettled put answer"
 
 
 def test_an_unreadable_witness_is_announced_not_silent(
@@ -228,7 +245,7 @@ def test_a_malformed_app_response_is_a_failure_not_a_guess(
     landed, so the run must go red rather than print a success it cannot back."""
     monkeypatch.setattr(chain_snapshot, "_post_once", lambda *_a, **_k: {"rows": 1})
     monkeypatch.setattr(
-        chain_snapshot, "sweep_to_records", lambda _s: [{"underlying": "SPY"}] * 20_000
+        chain_snapshot, "sweep_to_records", lambda _s: ([{"underlying": "SPY"}] * 20_000,) * 2
     )
 
     assert chain_snapshot.main(["--post", "http://x", "--token", "t", "--symbols", "spy"]) == 1

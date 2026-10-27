@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import datetime as dt
 import math
+from collections.abc import Callable, Mapping
 from pathlib import Path
 from typing import Any
 from zoneinfo import ZoneInfo
@@ -12,9 +13,13 @@ import requests
 from deltalake.exceptions import SchemaMismatchError
 
 from tail_lab.contracts.option_chain import (
+    CALL_DATASET,
+    CALL_QUARANTINE_DATASET,
     DATASET,
     DEFAULT_SNAPSHOT_SYMBOLS,
     MAX_TENOR_DAYS,
+    WINGS,
+    Right,
     SessionInProgress,
     session_in_progress,
 )
@@ -23,15 +28,46 @@ from tail_lab.ingestion.option_chain import (
     MIN_SYMBOL_FRACTION,
     QUARANTINE_DATASET,
     IncompleteSweepError,
+    IngestResult,
     _fetch_with_retry,
     cboe_symbol,
-    ingest_option_chain,
+    fetch_chains,
     parse_cboe_chain,
     parse_osi_symbol,
     sweep_to_records,
-    validate_and_quarantine,
 )
-from tail_lab.lake.store import DeltaLakeStore
+from tail_lab.ingestion.option_chain import ingest_option_chain as _ingest_payloads
+from tail_lab.lake.store import DeltaLakeStore, LakeStore
+
+
+def _ingest_with_fetch(
+    store: LakeStore,
+    symbols: list[str],
+    *,
+    fetch: Callable[[str], Mapping[str, object]] | None = None,
+    payloads: Mapping[str, Mapping[str, object]] | None = None,
+    ingest_date: dt.date | None = None,
+    min_symbol_fraction: float = MIN_SYMBOL_FRACTION,
+    market_session: dt.date | None = None,
+    now: dt.datetime | None = None,
+    right: Right = "P",
+) -> IngestResult:
+    """The ingest, fed the way production feeds it: ``fetch_chains`` turns a
+    canned ``fetch`` into payloads (one fetch per symbol, with its retry and
+    failure boundary), unless a test hands the payloads over itself."""
+    if payloads is None:
+        payloads = fetch_chains(symbols, fetch)
+    return _ingest_payloads(
+        store,
+        symbols,
+        payloads=payloads,
+        ingest_date=ingest_date,
+        min_symbol_fraction=min_symbol_fraction,
+        market_session=market_session,
+        now=now,
+        right=right,
+    )
+
 
 # A quote session, and an expiry 30 days out that every well-formed row uses.
 QUOTE_DAY = "2026-08-26"
@@ -254,14 +290,14 @@ def test_a_row_with_no_ask_is_quarantined_not_kept() -> None:
     """A zero *bid* is a real market state (nobody bids for a far-OTM put);
     a row with no ask is not a quote at all."""
     frame, _ = parse_cboe_chain(_payload(_put(95.0, bid=0.0, ask=0.0), _put(96.0)))
-    valid, quarantined = validate_and_quarantine(frame)
+    valid, quarantined, _, _ = WINGS["P"].split(frame)
     assert valid["strike"].tolist() == [96.0]
     assert quarantined["strike"].tolist() == [95.0]
 
 
 def test_valid_rows_survive_validation_untouched() -> None:
     frame, _ = parse_cboe_chain(_payload(_put(95.0), _put(96.0)))
-    valid, quarantined = validate_and_quarantine(frame)
+    valid, quarantined, _, _ = WINGS["P"].split(frame)
     assert len(valid) == 2
     assert quarantined.empty
 
@@ -372,7 +408,7 @@ def test_a_transient_blip_no_longer_costs_the_symbol_its_whole_session(
             return _payload(_put(95.0), symbol="SPY")
         return _payload(_put(95.0), symbol="QQQ")
 
-    result = ingest_option_chain(store, ["SPY", "QQQ"], fetch=by_symbol)
+    result = _ingest_with_fetch(store, ["SPY", "QQQ"], fetch=by_symbol)
 
     assert result.symbols_ok == ("SPY", "QQQ")
     assert result.symbols_failed == ()
@@ -382,7 +418,7 @@ def test_ingest_commits_one_partition_for_the_whole_universe(tmp_path: Path) -> 
     """One partition per day, not one per symbol: a half-finished sweep must
     not look complete to an as-of read (docs/adr/0009)."""
     store = DeltaLakeStore(tmp_path)
-    result = ingest_option_chain(
+    result = _ingest_with_fetch(
         store,
         ["SPY", "QQQ"],
         ingest_date=dt.date(2026, 8, 26),
@@ -405,7 +441,7 @@ def test_a_symbol_with_one_unparseable_iv_still_lands_in_symbols_ok(tmp_path: Pa
     ``parse_cboe_chain`` and cost SPY its entire session, indistinguishable
     from a genuinely dead chain."""
     store = DeltaLakeStore(tmp_path)
-    result = ingest_option_chain(
+    result = _ingest_with_fetch(
         store,
         ["SPY"],
         ingest_date=dt.date(2026, 8, 26),
@@ -433,7 +469,7 @@ def test_one_dead_chain_does_not_cost_the_others_their_snapshot(tmp_path: Path) 
     """
     live = [f"SYM{i:02d}" for i in range(23)]
     store = DeltaLakeStore(tmp_path)
-    result = ingest_option_chain(
+    result = _ingest_with_fetch(
         store,
         [*live, "BROKEN"],
         ingest_date=dt.date(2026, 8, 26),
@@ -485,7 +521,7 @@ def test_a_small_hand_run_universe_refuses_on_a_single_dead_chain(tmp_path: Path
     """
     store = DeltaLakeStore(tmp_path)
     with pytest.raises(IncompleteSweepError):
-        ingest_option_chain(
+        _ingest_with_fetch(
             store,
             ["SPY", "BROKEN", "QQQ"],
             ingest_date=dt.date(2026, 8, 26),
@@ -516,7 +552,7 @@ def test_a_partial_sweep_refuses_to_create_the_partition(tmp_path: Path) -> None
     store = DeltaLakeStore(tmp_path)
 
     with pytest.raises(IncompleteSweepError, match="15 of 24"):
-        ingest_option_chain(
+        _ingest_with_fetch(
             store,
             [*live, *dead],
             ingest_date=dt.date(2026, 8, 26),
@@ -537,13 +573,13 @@ def test_the_floor_does_not_fire_when_the_session_is_already_captured(tmp_path: 
     live = [f"SYM{i:02d}" for i in range(24)]
     store = DeltaLakeStore(tmp_path)
     full = _fetcher(**{name: _payload(_put(95.0), symbol=name) for name in live})
-    first = ingest_option_chain(store, live, ingest_date=dt.date(2026, 8, 26), fetch=full)
+    first = _ingest_with_fetch(store, live, ingest_date=dt.date(2026, 8, 26), fetch=full)
     assert first.committed is True
 
     # Same session, now with only 3 of 24 chains answering: far below the
     # floor, but the partition exists, so this is a no-op and not a refusal.
     partial = _fetcher(**{name: _payload(_put(95.0), symbol=name) for name in live[:3]})
-    second = ingest_option_chain(store, live, ingest_date=dt.date(2026, 8, 26), fetch=partial)
+    second = _ingest_with_fetch(store, live, ingest_date=dt.date(2026, 8, 26), fetch=partial)
     assert second.committed is False
 
 
@@ -560,8 +596,8 @@ def test_a_no_op_write_does_not_report_rows_it_did_not_commit(tmp_path: Path) ->
     store = DeltaLakeStore(tmp_path)
     fetch = _fetcher(**{name: _payload(_put(95.0), symbol=name) for name in live})
 
-    first = ingest_option_chain(store, live, ingest_date=dt.date(2026, 8, 26), fetch=fetch)
-    second = ingest_option_chain(store, live, ingest_date=dt.date(2026, 8, 26), fetch=fetch)
+    first = _ingest_with_fetch(store, live, ingest_date=dt.date(2026, 8, 26), fetch=fetch)
+    second = _ingest_with_fetch(store, live, ingest_date=dt.date(2026, 8, 26), fetch=fetch)
 
     assert first.committed is True
     assert second.committed is False
@@ -585,15 +621,15 @@ def test_committed_is_correct_when_an_EARLIER_partition_already_exists(tmp_path:
     """
     live = [f"SYM{i:02d}" for i in range(24)]
     store = DeltaLakeStore(tmp_path)
-    ingest_option_chain(
+    _ingest_with_fetch(
         store,
         live,
         ingest_date=dt.date(2026, 8, 25),
         fetch=_fetcher(**{n: _payload(_put(95.0), symbol=n, day="2026-08-25") for n in live}),
     )
     fresh = _fetcher(**{n: _payload(_put(95.0), symbol=n) for n in live})
-    first = ingest_option_chain(store, live, ingest_date=dt.date(2026, 8, 26), fetch=fresh)
-    second = ingest_option_chain(store, live, ingest_date=dt.date(2026, 8, 26), fetch=fresh)
+    first = _ingest_with_fetch(store, live, ingest_date=dt.date(2026, 8, 26), fetch=fresh)
+    second = _ingest_with_fetch(store, live, ingest_date=dt.date(2026, 8, 26), fetch=fresh)
 
     assert first.committed is True
     assert second.committed is False
@@ -630,7 +666,7 @@ def test_one_symbol_with_no_last_trade_time_cannot_elect_the_session(tmp_path: P
     payloads[rogue] = rogue_payload
 
     store = DeltaLakeStore(tmp_path)
-    result = ingest_option_chain(store, live, fetch=_fetcher(**payloads))
+    result = _ingest_with_fetch(store, live, fetch=_fetcher(**payloads))
 
     assert result.quote_date == dt.date.fromisoformat(QUOTE_DAY), "the majority session must win"
     assert result.symbols_off_session == (rogue,), "the outlier is the rogue, not the other 23"
@@ -670,7 +706,7 @@ def test_a_session_without_a_majority_is_refused(tmp_path: Path, label: str, spl
         for i, name in enumerate(live)
     }
     with pytest.raises(IncompleteSweepError, match="majority"):
-        ingest_option_chain(DeltaLakeStore(tmp_path), live, fetch=_fetcher(**payloads))
+        _ingest_with_fetch(DeltaLakeStore(tmp_path), live, fetch=_fetcher(**payloads))
 
 
 def test_every_symbol_on_its_own_date_is_refused(tmp_path: Path) -> None:
@@ -684,7 +720,7 @@ def test_every_symbol_on_its_own_date_is_refused(tmp_path: Path) -> None:
         for i, name in enumerate(live)
     }
     with pytest.raises(IncompleteSweepError, match="majority"):
-        ingest_option_chain(DeltaLakeStore(tmp_path), live, fetch=_fetcher(**payloads))
+        _ingest_with_fetch(DeltaLakeStore(tmp_path), live, fetch=_fetcher(**payloads))
 
 
 def test_a_symbol_whose_rows_all_fail_validation_is_not_counted_as_captured(
@@ -721,11 +757,11 @@ def test_a_symbol_whose_rows_all_fail_validation_is_not_counted_as_captured(
         }
 
     with pytest.raises(IncompleteSweepError):
-        ingest_option_chain(DeltaLakeStore(tmp_path), live, fetch=_fetcher(**with_duds(live[:9])))
+        _ingest_with_fetch(DeltaLakeStore(tmp_path), live, fetch=_fetcher(**with_duds(live[:9])))
 
     # Below the floor it refuses; at ONE bad symbol it must still commit, and
     # must not claim the dud among the captured names.
-    result = ingest_option_chain(
+    result = _ingest_with_fetch(
         DeltaLakeStore(tmp_path / "one"), live, fetch=_fetcher(**with_duds([live[0]]))
     )
     assert live[0] in result.symbols_failed
@@ -755,7 +791,7 @@ def test_a_stale_majority_cannot_silently_discard_a_fresher_session(tmp_path: Pa
     live = [f"SYM{i:02d}" for i in range(24)]
     yesterday, today = "2026-08-25", QUOTE_DAY
     store = DeltaLakeStore(tmp_path)
-    ingest_option_chain(
+    _ingest_with_fetch(
         store,
         live,
         fetch=_fetcher(**{n: _payload(_put(95.0), symbol=n, day=yesterday) for n in live}),
@@ -763,7 +799,7 @@ def test_a_stale_majority_cannot_silently_discard_a_fresher_session(tmp_path: Pa
 
     stale = set(live[:20])
     with pytest.raises(IncompleteSweepError, match="already captured"):
-        ingest_option_chain(
+        _ingest_with_fetch(
             store,
             live,
             fetch=_fetcher(
@@ -784,7 +820,7 @@ def test_an_off_session_symbol_is_not_also_reported_as_failed(tmp_path: Path) ->
     quotes for X"."""
     live = [f"SYM{i:02d}" for i in range(24)]
     lagging = set(live[:2])
-    result = ingest_option_chain(
+    result = _ingest_with_fetch(
         DeltaLakeStore(tmp_path),
         live,
         fetch=_fetcher(
@@ -814,7 +850,7 @@ def test_laggards_do_not_cost_the_healthy_chains_their_session(tmp_path: Path) -
     live = [f"SYM{i:02d}" for i in range(24)]
     lagging = set(live[:3])
     store = DeltaLakeStore(tmp_path)
-    result = ingest_option_chain(
+    result = _ingest_with_fetch(
         store,
         live,
         fetch=_fetcher(
@@ -834,7 +870,7 @@ def test_laggards_do_not_cost_the_healthy_chains_their_session(tmp_path: Path) -
     # corrected.
     other = DeltaLakeStore(tmp_path / "second")
     with pytest.raises(IncompleteSweepError):
-        ingest_option_chain(
+        _ingest_with_fetch(
             other,
             live,
             fetch=_fetcher(**{n: _payload(_put(95.0), symbol=n) for n in live[3:]}),
@@ -863,7 +899,7 @@ def test_a_stale_symbol_is_quarantined_not_filed_under_the_wrong_session(
     payloads = {name: _payload(_put(95.0), symbol=name) for name in fresh}
     payloads["ARKK"] = _payload(_put(95.0), symbol="ARKK", day="2026-08-25")
 
-    result = ingest_option_chain(
+    result = _ingest_with_fetch(
         store,
         [*fresh, "ARKK"],
         ingest_date=dt.date(2026, 8, 26),
@@ -888,7 +924,7 @@ def test_a_stale_symbol_is_quarantined_not_filed_under_the_wrong_session(
 
 def test_quarantined_rows_are_persisted_for_inspection(tmp_path: Path) -> None:
     store = DeltaLakeStore(tmp_path)
-    result = ingest_option_chain(
+    result = _ingest_with_fetch(
         store,
         ["SPY"],
         ingest_date=dt.date(2026, 8, 26),
@@ -904,7 +940,10 @@ def test_quarantined_rows_are_persisted_for_inspection(tmp_path: Path) -> None:
 def test_sweep_to_records_emits_json_ready_rows() -> None:
     """The credential-free half of the scheduled sweep (docs/adr/0020): the
     workflow produces these, the app writes them."""
-    records = sweep_to_records(["SPY"], fetch=_fetcher(SPY=_payload(_put(95.0), symbol="SPY")))
+    records, calls = sweep_to_records(
+        ["SPY"], fetch=_fetcher(SPY=_payload(_put(95.0), symbol="SPY"))
+    )
+    assert calls == []
     assert len(records) == 1
     assert records[0]["quote_date"] == QUOTE_DAY
     assert records[0]["expiration"] == "2026-09-25"
@@ -912,10 +951,9 @@ def test_sweep_to_records_emits_json_ready_rows() -> None:
 
 
 def test_sweep_to_records_skips_a_failing_symbol() -> None:
-    records = sweep_to_records(
-        ["SPY", "BROKEN"], fetch=_fetcher(SPY=_payload(_put(95.0), symbol="SPY"))
-    )
+    records, calls = sweep_to_records(["SPY", "BROKEN"], fetch=_fetcher(SPY=_both("SPY")))
     assert [r["underlying"] for r in records] == ["SPY"]
+    assert [r["underlying"] for r in calls] == ["SPY"]
 
 
 def test_the_partition_is_the_session_not_the_clock(tmp_path: Path) -> None:
@@ -925,7 +963,7 @@ def test_the_partition_is_the_session_not_the_clock(tmp_path: Path) -> None:
     tomorrow's real sweep would then no-op against it (bronze is immutable)
     and be lost. The quotes know which session they are."""
     store = DeltaLakeStore(tmp_path)
-    result = ingest_option_chain(
+    result = _ingest_with_fetch(
         store, ["SPY"], fetch=_fetcher(SPY=_payload(_put(95.0), symbol="SPY"))
     )
 
@@ -942,8 +980,8 @@ def test_a_late_rerun_of_the_same_session_no_ops(tmp_path: Path) -> None:
     that shadows the first."""
     store = DeltaLakeStore(tmp_path)
     payload = _payload(_put(95.0), symbol="SPY")
-    first = ingest_option_chain(store, ["SPY"], fetch=_fetcher(SPY=payload))
-    second = ingest_option_chain(store, ["SPY"], fetch=_fetcher(SPY=payload))
+    first = _ingest_with_fetch(store, ["SPY"], fetch=_fetcher(SPY=payload))
+    second = _ingest_with_fetch(store, ["SPY"], fetch=_fetcher(SPY=payload))
 
     assert first.bronze_path == second.bronze_path
     assert len(store.read_bronze_as_of(DATASET, dt.date.fromisoformat(QUOTE_DAY))) == 1
@@ -975,7 +1013,7 @@ def test_a_failed_quarantine_write_does_not_fail_the_sweep(tmp_path: Path) -> No
                 )
             return super().write_bronze(dataset, ingest_date, df)
 
-    result = ingest_option_chain(_QuarantineIsBroken(tmp_path), live, fetch=_fetcher(**payloads))
+    result = _ingest_with_fetch(_QuarantineIsBroken(tmp_path), live, fetch=_fetcher(**payloads))
 
     assert result.committed is True, "the session must still be captured"
     assert len(result.symbols_ok) == 23
@@ -999,10 +1037,10 @@ def test_a_wholly_frozen_feed_is_refused_not_no_opped(tmp_path: Path) -> None:
     live = [f"SYM{i:02d}" for i in range(24)]
     store = DeltaLakeStore(tmp_path)
     frozen = _fetcher(**{n: _payload(_put(95.0), symbol=n, day="2026-08-25") for n in live})
-    ingest_option_chain(store, live, fetch=frozen)
+    _ingest_with_fetch(store, live, fetch=frozen)
 
     with pytest.raises(IncompleteSweepError, match="Cboe's feed is behind"):
-        ingest_option_chain(store, live, fetch=frozen, market_session=dt.date(2026, 8, 26))
+        _ingest_with_fetch(store, live, fetch=frozen, market_session=dt.date(2026, 8, 26))
 
 
 def test_a_market_holiday_is_still_a_quiet_no_op(tmp_path: Path) -> None:
@@ -1014,9 +1052,9 @@ def test_a_market_holiday_is_still_a_quiet_no_op(tmp_path: Path) -> None:
     live = [f"SYM{i:02d}" for i in range(24)]
     store = DeltaLakeStore(tmp_path)
     friday = _fetcher(**{n: _payload(_put(95.0), symbol=n, day="2026-09-04") for n in live})
-    ingest_option_chain(store, live, fetch=friday)
+    _ingest_with_fetch(store, live, fetch=friday)
 
-    rerun = ingest_option_chain(store, live, fetch=friday, market_session=dt.date(2026, 9, 4))
+    rerun = _ingest_with_fetch(store, live, fetch=friday, market_session=dt.date(2026, 9, 4))
 
     assert rerun.committed is False
 
@@ -1029,7 +1067,7 @@ def test_a_behind_feed_still_captures_a_session_the_lake_lacks(tmp_path: Path) -
     store = DeltaLakeStore(tmp_path)
     behind = _fetcher(**{n: _payload(_put(95.0), symbol=n, day="2026-08-25") for n in live})
 
-    result = ingest_option_chain(store, live, fetch=behind, market_session=dt.date(2026, 8, 26))
+    result = _ingest_with_fetch(store, live, fetch=behind, market_session=dt.date(2026, 8, 26))
 
     assert result.committed is True
     assert result.quote_date == dt.date(2026, 8, 25)
@@ -1044,9 +1082,9 @@ def test_a_lagging_witness_cannot_raise_an_alarm(tmp_path: Path) -> None:
     live = [f"SYM{i:02d}" for i in range(24)]
     store = DeltaLakeStore(tmp_path)
     today = _fetcher(**{n: _payload(_put(95.0), symbol=n, day="2026-08-26") for n in live})
-    ingest_option_chain(store, live, fetch=today)
+    _ingest_with_fetch(store, live, fetch=today)
 
-    rerun = ingest_option_chain(store, live, fetch=today, market_session=dt.date(2026, 8, 25))
+    rerun = _ingest_with_fetch(store, live, fetch=today, market_session=dt.date(2026, 8, 25))
 
     assert rerun.committed is False
 
@@ -1058,12 +1096,12 @@ def test_a_partial_cdn_rollback_after_capture_is_not_an_alarm(tmp_path: Path) ->
     loss that did not happen."""
     live = [f"SYM{i:02d}" for i in range(24)]
     store = DeltaLakeStore(tmp_path)
-    ingest_option_chain(
+    _ingest_with_fetch(
         store,
         live,
         fetch=_fetcher(**{n: _payload(_put(95.0), symbol=n, day="2026-08-25") for n in live}),
     )
-    ingest_option_chain(
+    _ingest_with_fetch(
         store,
         live,
         fetch=_fetcher(**{n: _payload(_put(95.0), symbol=n, day="2026-08-26") for n in live}),
@@ -1078,7 +1116,7 @@ def test_a_partial_cdn_rollback_after_capture_is_not_an_alarm(tmp_path: Path) ->
         }
     )
 
-    rerun = ingest_option_chain(store, live, fetch=mixed)
+    rerun = _ingest_with_fetch(store, live, fetch=mixed)
 
     assert rerun.committed is False
 
@@ -1093,10 +1131,10 @@ def test_a_cdn_rollback_after_the_newer_session_landed_is_not_an_alarm(tmp_path:
     store = DeltaLakeStore(tmp_path)
     older = _fetcher(**{n: _payload(_put(95.0), symbol=n, day="2026-08-25") for n in live})
     newer = _fetcher(**{n: _payload(_put(95.0), symbol=n, day="2026-08-26") for n in live})
-    ingest_option_chain(store, live, fetch=older)
-    ingest_option_chain(store, live, fetch=newer)
+    _ingest_with_fetch(store, live, fetch=older)
+    _ingest_with_fetch(store, live, fetch=newer)
 
-    rerun = ingest_option_chain(store, live, fetch=older, market_session=dt.date(2026, 8, 26))
+    rerun = _ingest_with_fetch(store, live, fetch=older, market_session=dt.date(2026, 8, 26))
 
     assert rerun.committed is False
 
@@ -1120,11 +1158,11 @@ def test_a_mid_session_catch_up_writes_nothing_when_the_previous_session_is_safe
     no-opped against them (adversarial review, 2026-09-25)."""
     store = DeltaLakeStore(tmp_path)
     live, yesterday = _live("2026-09-24")
-    ingest_option_chain(store, live, fetch=yesterday)
+    _ingest_with_fetch(store, live, fetch=yesterday)
     _, today = _live("2026-09-25")
 
     with pytest.raises(SessionInProgress):
-        ingest_option_chain(
+        _ingest_with_fetch(
             store,
             live,
             fetch=today,
@@ -1133,7 +1171,7 @@ def test_a_mid_session_catch_up_writes_nothing_when_the_previous_session_is_safe
         )
     assert not store.bronze_partition_exists("option_chain_snapshot", dt.date(2026, 9, 25))
 
-    after_close = ingest_option_chain(
+    after_close = _ingest_with_fetch(
         store,
         live,
         fetch=today,
@@ -1154,7 +1192,7 @@ def test_a_mid_session_catch_up_alarms_when_the_previous_session_may_be_lost(
     live, today = _live("2026-09-25")
 
     with pytest.raises(IncompleteSweepError, match="could not be confirmed in the lake") as err:
-        ingest_option_chain(
+        _ingest_with_fetch(
             store,
             live,
             fetch=today,
@@ -1195,13 +1233,13 @@ def test_a_total_outage_is_a_floor_refusal_not_a_session_in_progress(tmp_path: P
     right answer."""
     store = DeltaLakeStore(tmp_path)
     live, yesterday = _live("2026-09-24")
-    ingest_option_chain(store, live, fetch=yesterday)
+    _ingest_with_fetch(store, live, fetch=yesterday)
 
     def dead(_symbol: str) -> dict[str, Any]:
         raise ValueError("cboe down")
 
     with pytest.raises(IncompleteSweepError, match="Re-run before the") as err:
-        ingest_option_chain(
+        _ingest_with_fetch(
             store,
             live,
             fetch=dead,
@@ -1223,21 +1261,21 @@ def test_an_early_close_wake_skips_only_when_the_lake_vouches(tmp_path: Path) ->
     session is safe" green could hide a missed day)."""
     store = DeltaLakeStore(tmp_path)
     live, previous = _live("2026-11-25", expiry="261218")
-    ingest_option_chain(store, live, fetch=previous)
+    _ingest_with_fetch(store, live, fetch=previous)
     _, early_close = _live("2026-11-27", expiry="261218")
     wake = dt.datetime(2026, 11, 27, 19, 0, tzinfo=_UTC)  # 14:00 EST
 
     with pytest.raises(SessionInProgress):
-        ingest_option_chain(
+        _ingest_with_fetch(
             store, live, fetch=early_close, market_session=dt.date(2026, 11, 25), now=wake
         )
     with pytest.raises(IncompleteSweepError, match="could not be confirmed") as err:
-        ingest_option_chain(
+        _ingest_with_fetch(
             store, live, fetch=early_close, market_session=dt.date(2026, 11, 27), now=wake
         )
     assert not isinstance(err.value, SessionInProgress)
 
-    evening = ingest_option_chain(
+    evening = _ingest_with_fetch(
         store,
         live,
         fetch=early_close,
@@ -1253,11 +1291,11 @@ def test_a_future_dated_session_never_names_a_partition(tmp_path: Path) -> None:
     that would pre-claim the next real session."""
     store = DeltaLakeStore(tmp_path)
     live, previous = _live("2026-09-24")
-    ingest_option_chain(store, live, fetch=previous)  # the previous session IS safe
+    _ingest_with_fetch(store, live, fetch=previous)  # the previous session IS safe
     _, tomorrow = _live("2026-09-26", expiry="261016")
 
     with pytest.raises(IncompleteSweepError, match="has not begun in New York") as err:
-        ingest_option_chain(
+        _ingest_with_fetch(
             store,
             live,
             fetch=tomorrow,
@@ -1277,10 +1315,10 @@ def test_a_witness_naming_this_session_never_vouches_even_if_its_partition_exist
     and promised a post-close sweep that would then no-op (round-4 review)."""
     store = DeltaLakeStore(tmp_path)
     live, today = _live("2026-09-24")
-    ingest_option_chain(store, live, fetch=today)  # stands in for the override write
+    _ingest_with_fetch(store, live, fetch=today)  # stands in for the override write
 
     with pytest.raises(IncompleteSweepError, match="could not be confirmed") as err:
-        ingest_option_chain(
+        _ingest_with_fetch(
             store,
             live,
             fetch=today,
@@ -1303,7 +1341,7 @@ def test_a_bug_in_the_quarantine_write_is_not_swallowed(tmp_path: Path) -> None:
             return super().write_bronze(dataset, ingest_date, df)
 
     with pytest.raises(KeyError):
-        ingest_option_chain(_QuarantineHasABug(tmp_path), live, fetch=_fetcher(**payloads))
+        _ingest_with_fetch(_QuarantineHasABug(tmp_path), live, fetch=_fetcher(**payloads))
 
 
 @pytest.mark.parametrize(
@@ -1338,7 +1376,7 @@ def test_a_bug_in_one_symbol_costs_that_symbol_not_the_session(
 
     symbols = [f"S{i}" for i in range(20)] + ["QQQ"]
     with caplog.at_level("ERROR"):
-        result = ingest_option_chain(store := DeltaLakeStore(tmp_path), symbols, fetch=fetch)
+        result = _ingest_with_fetch(store := DeltaLakeStore(tmp_path), symbols, fetch=fetch)
 
     assert result.committed
     assert tuple(result.symbols_failed) == ("QQQ",)
@@ -1346,3 +1384,507 @@ def test_a_bug_in_one_symbol_costs_that_symbol_not_the_session(
     assert store.bronze_partition_exists(DATASET, result.quote_date)
     failure = next(r for r in caplog.records if "symbol_failed" in r.getMessage())
     assert failure.exc_info is not None and failure.exc_info[0] is KeyError
+
+
+# ---- the call wing (docs/adr/0031) -------------------------------------------
+#
+# One fetch per symbol, two parses: the put wing (unchanged) and the call wing,
+# each validated against its own contract and committed to its own dataset. A
+# call-side fault must never cost the puts their session, and vice versa.
+
+
+def test_the_call_parse_keeps_only_in_band_calls_within_the_tenor_cap(
+    cboe_chain_calls_sample: dict[str, object],
+) -> None:
+    """Against real contracts straddling every filter (see the fixture): the
+    0.80 floor (610 out), the 2.50 cap (1913 in, 1914 out), the 180-day tenor
+    cap (2027-04-30 out), and the right itself (both puts out)."""
+    frame, unparsed = parse_cboe_chain(cboe_chain_calls_sample, right="C")
+    assert not frame.empty, "a vacuous call frame proves nothing"
+    assert unparsed == 0
+    assert list(zip(frame["expiration"].dt.date.astype(str), frame["strike"], strict=True)) == [
+        ("2026-10-26", 615.0),
+        ("2026-11-20", 650.0),
+        ("2026-11-20", 660.0),
+        ("2026-11-20", 765.0),
+        ("2026-11-20", 800.0),
+        ("2026-11-20", 850.0),
+        ("2026-11-20", 1000.0),
+        ("2026-11-20", 1913.0),
+    ]
+    assert (frame["delta"].dropna() >= 0).all()
+
+
+def test_a_zero_filled_call_takes_its_greeks_with_it(
+    cboe_chain_calls_sample: dict[str, object],
+) -> None:
+    """The house rule is unchanged on the call side: an iv of 0 nulls delta
+    and theo too, even where Cboe printed a plausible delta beside it (the ITM
+    660 call's 0.85) -- the block is computed together, so it dies together."""
+    frame, _ = parse_cboe_chain(cboe_chain_calls_sample, right="C")
+    for strike in (615.0, 660.0):
+        row = frame[frame["strike"] == strike].iloc[0]
+        assert pd.isna(row["iv"]) and pd.isna(row["delta"]) and pd.isna(row["theo"])
+    live = frame[frame["strike"] == 765.0].iloc[0]
+    assert live["delta"] == pytest.approx(0.5426)
+
+
+def test_zero_filled_fixture_calls_land_valid_not_quarantined(
+    tmp_path: Path, cboe_chain_calls_sample: dict[str, object]
+) -> None:
+    """Null greeks are a typed absence, not a defect: the 0DTE 615 and the
+    iv-0 660 call must commit as rows, or every session loses ~1,100 calls."""
+    store = DeltaLakeStore(tmp_path)
+    result = _ingest_with_fetch(
+        store, ["SPY"], payloads={"SPY": cboe_chain_calls_sample}, right="C"
+    )
+    assert (result.valid_rows, result.quarantined_rows) == (8, 0)
+    stored = store.read_bronze_as_of(CALL_DATASET, result.quote_date)
+    for strike in (615.0, 660.0):
+        row = stored[stored["strike"] == strike].iloc[0]
+        assert pd.isna(row["delta"]) and pd.isna(row["iv"])
+
+
+def test_the_put_parse_is_unchanged_by_the_call_wing(
+    cboe_chain_calls_sample: dict[str, object],
+) -> None:
+    """Regression pin, values as the pre-0031 parser produced them: the
+    default is the put wing, and it ignores every call in the payload."""
+    default, unparsed = parse_cboe_chain(cboe_chain_calls_sample)
+    explicit, _ = parse_cboe_chain(cboe_chain_calls_sample, right="P")
+    pd.testing.assert_frame_equal(default, explicit)
+    assert unparsed == 0
+    assert default["strike"].tolist() == [700.0, 765.0]
+    assert default["delta"].tolist() == [-0.0764, -0.469]
+    assert default["iv"].tolist() == [0.2496, 0.148]
+    assert set(default["expiration"].dt.date.astype(str)) == {"2026-11-20"}
+
+
+def test_the_call_band_is_inclusive_at_both_edges() -> None:
+    frame, _ = parse_cboe_chain(
+        _payload(
+            _call(79.0, delta=0.9),
+            _call(80.0, delta=0.9),
+            _call(250.0, delta=0.01),
+            _call(251.0, delta=0.01),
+            _put(95.0),
+        ),
+        right="C",
+    )
+    assert frame["strike"].tolist() == [80.0, 250.0]
+
+
+def test_the_put_band_is_inclusive_at_both_edges() -> None:
+    """0.40 and 1.05 of spot are kept; just past either is not."""
+    frame, _ = parse_cboe_chain(_payload(_put(39.0), _put(40.0), _put(105.0), _put(106.0)))
+    assert frame["strike"].tolist() == [40.0, 105.0]
+
+
+def test_the_put_band_still_drops_a_strike_the_call_band_keeps() -> None:
+    """The bands are per right: a 2.0 x spot put is discounted stock, a 2.0 x
+    spot call is a far-OTM wing."""
+    payload = _payload(_put(200.0), _call(200.0, delta=0.01))
+    puts, _ = parse_cboe_chain(payload)
+    calls, _ = parse_cboe_chain(payload, right="C")
+    assert puts.empty
+    assert calls["strike"].tolist() == [200.0]
+
+
+def _counting(
+    **by_symbol: dict[str, object],
+) -> tuple[Callable[[str], dict[str, object]], list[str]]:
+    seen: list[str] = []
+    inner = _fetcher(**by_symbol)
+
+    def fetch(symbol: str) -> dict[str, object]:
+        seen.append(symbol)
+        return inner(symbol)
+
+    return fetch, seen
+
+
+def _both(symbol: str) -> dict[str, object]:
+    return _payload(
+        _contract(f"{symbol}{NEAR_EXPIRY}P00095000"),
+        _contract(f"{symbol}{NEAR_EXPIRY}C00105000", delta=0.3),
+        symbol=symbol,
+    )
+
+
+def test_the_post_sweep_fetches_each_chain_once_for_both_wings() -> None:
+    """A second fetch loop would repeat 2026-09-19 (48 requests, 429 on 9 of
+    24) and draw the wings from different CDN snapshots."""
+    fetch, seen = _counting(SPY=_both("SPY"), QQQ=_both("QQQ"))
+    puts, calls = sweep_to_records(["SPY", "QQQ"], fetch=fetch)
+    assert seen == ["SPY", "QQQ"]
+    assert [(r["underlying"], r["strike"]) for r in puts] == [("SPY", 95.0), ("QQQ", 95.0)]
+    assert [(r["underlying"], r["strike"]) for r in calls] == [("SPY", 105.0), ("QQQ", 105.0)]
+    assert calls[0]["quote_date"] == QUOTE_DAY and calls[0]["expiration"] == "2026-09-25"
+
+
+def test_fetch_chains_fetches_each_chain_once_and_drops_a_dead_one(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """The ``--local`` half of the same rule. A failed symbol is absent, and
+    logged with its traceback under the event the ingest loop always used."""
+    fetch, seen = _counting(SPY=_both("SPY"))
+    with caplog.at_level("ERROR"):
+        payloads = fetch_chains(["SPY", "DEAD"], fetch=fetch)
+    assert seen == ["SPY", "DEAD"]
+    assert set(payloads) == {"SPY"}
+    failure = next(r for r in caplog.records if "symbol_failed" in r.getMessage())
+    assert "DEAD" in failure.getMessage()
+    assert failure.exc_info is not None
+
+
+def test_ingest_from_prefetched_payloads_never_fetches(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    """Given ``payloads``, the ingest parses what it was handed. A symbol the
+    fetch lost counts as failed exactly as a fetch failure always did -- and
+    is logged as one named line, not a second traceback that reads like a
+    parse bug (fetch_chains already logged the real cause)."""
+    import tail_lab.ingestion.option_chain as module
+
+    def no_network(symbol: str) -> dict[str, object]:
+        raise AssertionError(f"fetched {symbol} although payloads were given")
+
+    monkeypatch.setattr(module, "fetch_chain_raw", no_network)
+    symbols = [f"S{i}" for i in range(20)]
+    payloads = {s: _both(s) for s in symbols[:19]}
+    with caplog.at_level("WARNING"):
+        result = _ingest_with_fetch(DeltaLakeStore(tmp_path), symbols, payloads=payloads, right="C")
+    assert result.symbols_failed == ("S19",)
+    assert len(result.symbols_ok) == 19
+    unfetched = [r for r in caplog.records if "symbol_unfetched symbol=S19" in r.getMessage()]
+    assert len(unfetched) == 1
+    assert unfetched[0].exc_info is None
+    # The per-wing field ADR 0031 §4 advertises: which wing lost the symbol.
+    assert f"dataset={CALL_DATASET}" in unfetched[0].getMessage()
+    assert not [r for r in caplog.records if "symbol_failed" in r.getMessage()]
+
+
+def test_a_call_ingest_writes_only_the_call_dataset(tmp_path: Path) -> None:
+    """Dataset isolation, against a real lake: every reader of
+    ``option_chain_snapshot`` assumes a put, so a call ingest must add nothing
+    to it -- or to its quarantine -- and must file under its own name."""
+    store = DeltaLakeStore(tmp_path)
+    payload = _payload(
+        _call(105.0, delta=0.3),
+        _call(106.0, delta=0.2, bid=0.0, ask=0.0),  # quarantined: no offer
+        _put(95.0),
+        symbol="SPY",
+    )
+    result = _ingest_with_fetch(store, ["SPY"], payloads={"SPY": payload}, right="C")
+    day = dt.date.fromisoformat(QUOTE_DAY)
+
+    assert result.dataset == CALL_DATASET
+    assert (result.valid_rows, result.quarantined_rows) == (1, 1)
+    assert store.bronze_partition_exists(CALL_DATASET, day)
+    assert store.bronze_partition_exists(CALL_QUARANTINE_DATASET, day)
+    assert not store.bronze_partition_exists(DATASET, day)
+    assert not store.bronze_partition_exists(QUARANTINE_DATASET, day)
+    assert store.read_bronze_as_of(CALL_DATASET, day)["strike"].tolist() == [105.0]
+
+
+def test_a_failed_call_quarantine_write_logs_the_call_dataset(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    """STANDARDS §f: the --local sweep's audit line for a lost quarantine
+    write must name the wing it lost. Logging the put quarantine's name on a
+    call failure would send whoever reads it to the wrong table."""
+
+    class _QuarantineIsBroken(DeltaLakeStore):
+        def write_bronze(self, dataset: str, ingest_date: dt.date, df: pd.DataFrame) -> str:
+            if dataset.endswith("__quarantine"):
+                raise SchemaMismatchError("SchemaMismatchError: 13 vs 14")
+            return super().write_bronze(dataset, ingest_date, df)
+
+    payload = _payload(_call(105.0, delta=0.3), _call(106.0, delta=0.2, ask=0.0), symbol="SPY")
+    with caplog.at_level("ERROR"):
+        result = _ingest_with_fetch(
+            _QuarantineIsBroken(tmp_path), ["SPY"], payloads={"SPY": payload}, right="C"
+        )
+
+    assert result.committed is True
+    assert result.quarantine_path is None
+    failure = next(r for r in caplog.records if "quarantine_write_failed" in r.getMessage())
+    assert failure.getMessage().startswith(
+        f"event=ingestion.option_chain.quarantine_write_failed dataset={CALL_QUARANTINE_DATASET} "
+    )
+
+
+def test_a_call_ingest_validates_against_the_call_contract(tmp_path: Path) -> None:
+    """Under the put contract every call fails its delta sign and the whole
+    wing would land in quarantine."""
+    result = _ingest_with_fetch(
+        DeltaLakeStore(tmp_path),
+        ["SPY"],
+        payloads={"SPY": _payload(_call(105.0, delta=0.3), _call(110.0, delta=0.1))},
+        right="C",
+    )
+    assert (result.valid_rows, result.quarantined_rows) == (2, 0)
+
+
+def test_a_put_ingest_still_writes_the_put_dataset(tmp_path: Path) -> None:
+    store = DeltaLakeStore(tmp_path)
+    result = _ingest_with_fetch(store, ["SPY"], fetch=_fetcher(SPY=_both("SPY")))
+    day = dt.date.fromisoformat(QUOTE_DAY)
+    assert result.dataset == DATASET
+    assert store.read_bronze_as_of(DATASET, day)["strike"].tolist() == [95.0]
+    assert not store.bronze_partition_exists(CALL_DATASET, day)
+
+
+def test_each_wing_logs_its_own_audit_record(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    """STANDARDS §f: one ``ingestion.option_chain.run`` per right, each naming
+    its dataset. ``unparsed_contracts`` = OSI-unparseable symbols (counted
+    before the right filter, so on both records) plus THIS right's rows with
+    an unparseable iv (counted after it)."""
+    payload = _payload(
+        _contract("!!broken!!"),
+        _put(95.0),
+        _call(105.0, delta=0.3),
+        _call(106.0, iv="N/A"),
+        symbol="SPY",
+    )
+    store = DeltaLakeStore(tmp_path)
+    with caplog.at_level("INFO"):
+        puts = _ingest_with_fetch(store, ["SPY"], payloads={"SPY": payload})
+        calls = _ingest_with_fetch(store, ["SPY"], payloads={"SPY": payload}, right="C")
+    assert (puts.unparsed_contracts, calls.unparsed_contracts) == (1, 2)
+    runs = [
+        r.getMessage() for r in caplog.records if "ingestion.option_chain.run" in r.getMessage()
+    ]
+    assert len(runs) == 2
+    assert f"dataset={DATASET} " in runs[0]
+    assert f"dataset={CALL_DATASET} " in runs[1]
+    assert "unparsed_contracts=1 " in runs[0]
+    assert "unparsed_contracts=2 " in runs[1]
+
+
+def test_unparsed_contracts_sum_across_symbols(tmp_path: Path) -> None:
+    """The audit count is the SWEEP's, not the last symbol's: one broken
+    OSI symbol in each of two chains is two unparsed contracts."""
+    payloads = {
+        name: _payload(
+            _contract("!!broken!!"), _contract(f"{name}{NEAR_EXPIRY}P00095000"), symbol=name
+        )
+        for name in ("SPY", "QQQ")
+    }
+    result = _ingest_with_fetch(DeltaLakeStore(tmp_path), ["SPY", "QQQ"], payloads=payloads)
+    assert result.symbols_ok == ("SPY", "QQQ")
+    assert result.unparsed_contracts == 2
+
+
+def test_one_chains_wrong_signs_cost_that_chain_on_the_local_path_too(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    """The same rule the route runs (``Wing.split``): a chain carrying the
+    other wing's delta sign is quarantined whole -- its zero-filled
+    (null-delta) put too, which the contract alone would commit -- and the
+    other 23 land. Two writers must agree on what misrouting costs."""
+    live = [f"SYM{i:02d}" for i in range(23)]
+    payloads = {name: _payload(_put(95.0), symbol=name) for name in live}
+    payloads["XLE"] = _payload(_put(95.0, delta=0.3), _put(96.0, iv=0.0), symbol="XLE")
+    store = DeltaLakeStore(tmp_path)
+    with caplog.at_level("INFO"):
+        result = _ingest_with_fetch(store, [*live, "XLE"], payloads=payloads)
+
+    assert result.symbols_failed == ("XLE",)
+    assert result.symbols_misrouted == ("XLE",)
+    assert (result.valid_rows, result.quarantined_rows) == (23, 2)
+    assert result.committed is True
+    assert any(
+        "ingestion.option_chain.misrouted" in r.getMessage()
+        and "symbols=XLE rows=2" in r.getMessage()
+        for r in caplog.records
+    )
+    (run,) = (
+        r.getMessage() for r in caplog.records if "ingestion.option_chain.run" in r.getMessage()
+    )
+    assert "symbols_misrouted=XLE " in run
+
+
+def test_a_local_refusal_names_misrouted_chains_apart_from_missing_ones(
+    tmp_path: Path,
+) -> None:
+    """The route's twin (test_api_ingest): three chains past the share are
+    quarantined whole and the floor refuses -- but they had quotes, so the
+    error must not list them as "Missing" under advice to re-run, which
+    fetches the same chains."""
+    names = [f"SYM{i:02d}" for i in range(21)] + ["FXI", "HYG", "TLT"]
+    payloads = {
+        name: _payload(
+            *(
+                _put(80.0 + k, delta=0.3 if name in {"FXI", "HYG", "TLT"} and k < 10 else -0.3)
+                for k in range(20)
+            ),
+            symbol=name,
+        )
+        for name in names
+    }
+    store = DeltaLakeStore(tmp_path)
+    with pytest.raises(IncompleteSweepError) as refused:
+        _ingest_with_fetch(store, names, payloads=payloads)
+
+    message = str(refused.value)
+    assert "Missing" not in message.replace("not missing", "")
+    assert "Re-run before" not in message
+    assert "DEFAULT_SNAPSHOT_SYMBOLS" not in message
+    assert "Misrouted, not missing: FXI, HYG, TLT" in message
+
+
+def test_a_sign_glitch_on_three_chains_costs_their_bad_rows_on_the_local_path(
+    tmp_path: Path,
+) -> None:
+    """Review A6: one call-signed put in each of three 20-put chains (5%)
+    must cost those three rows, as the contract alone (without the
+    misrouting guard) would -- not the three chains, which
+    the floor would then count lost and refuse the session over."""
+    names = [f"SYM{i:02d}" for i in range(21)] + ["FXI", "HYG", "TLT"]
+    payloads = {
+        name: _payload(
+            *(
+                _put(80.0 + k, delta=0.3 if name in {"FXI", "HYG", "TLT"} and k == 0 else -0.3)
+                for k in range(20)
+            ),
+            symbol=name,
+        )
+        for name in names
+    }
+    result = _ingest_with_fetch(DeltaLakeStore(tmp_path), names, payloads=payloads)
+
+    assert (result.symbols_failed, result.symbols_misrouted) == ((), ())
+    assert (result.valid_rows, result.quarantined_rows) == (24 * 20 - 3, 3)
+    assert result.committed is True
+
+
+def test_a_chain_with_no_in_band_calls_is_a_failed_symbol_for_the_call_wing(
+    tmp_path: Path,
+) -> None:
+    """A chain listing only puts slices to nothing on the call wing. That is a
+    failed symbol for the calls, not an OK one with zero rows."""
+    live = [f"SYM{i:02d}" for i in range(23)]
+    payloads = {name: _payload(_call(105.0, delta=0.3), symbol=name) for name in live}
+    payloads["PUTONLY"] = _payload(_put(95.0), symbol="PUTONLY")
+    result = _ingest_with_fetch(
+        DeltaLakeStore(tmp_path), [*live, "PUTONLY"], payloads=payloads, right="C"
+    )
+
+    assert result.symbols_failed == ("PUTONLY",)
+    assert result.per_symbol_rows == {name: 1 for name in live}
+    assert result.valid_rows == 23
+
+
+def _break_the_call_band(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Make the call parse raise (a TypeError comparing against a str bound)
+    while the put parse is untouched."""
+    import dataclasses
+
+    from tail_lab.contracts.option_chain import WINGS
+
+    monkeypatch.setitem(WINGS, "C", dataclasses.replace(WINGS["C"], moneyness_min="boom"))
+
+
+def test_a_call_parse_bug_costs_the_calls_not_the_puts(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    """Three failure boundaries, not one: a call-only bug must never push the
+    put session under MIN_SYMBOL_FRACTION. Merging the parse ``try`` blocks
+    makes this red."""
+    fetch = _fetcher(SPY=_both("SPY"), QQQ=_both("QQQ"))
+    baseline_puts, _ = sweep_to_records(["SPY", "QQQ"], fetch=fetch)
+
+    _break_the_call_band(monkeypatch)
+    with caplog.at_level("ERROR"):
+        puts, calls = sweep_to_records(["SPY", "QQQ"], fetch=fetch)
+
+    assert puts == baseline_puts
+    assert calls == []
+    failures = [
+        r
+        for r in caplog.records
+        if "symbol_failed" in r.getMessage() and f"dataset={CALL_DATASET}" in r.getMessage()
+    ]
+    assert len(failures) == 2
+    assert all(r.exc_info is not None for r in failures)
+
+
+def test_a_call_record_conversion_bug_costs_the_calls_not_the_puts(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The ``to_dict``/``.date()`` loop used to sit outside the try: a bug
+    there must stay inside the call wing's boundary too."""
+    import tail_lab.ingestion.option_chain as module
+
+    fetch = _fetcher(SPY=_both("SPY"))
+    baseline_puts, _ = sweep_to_records(["SPY"], fetch=fetch)
+    real_parse = module.parse_cboe_chain
+
+    def call_frame_without_timestamps(
+        payload: Mapping[str, object], right: str = "P"
+    ) -> tuple[pd.DataFrame, int]:
+        frame, unparsed = real_parse(payload, right=right)  # type: ignore[arg-type]
+        if right == "C":
+            frame["quote_date"] = "not a timestamp"
+        return frame, unparsed
+
+    monkeypatch.setattr(module, "parse_cboe_chain", call_frame_without_timestamps)
+    puts, calls = sweep_to_records(["SPY"], fetch=fetch)
+    assert puts == baseline_puts
+    assert calls == []
+
+
+def test_a_put_parse_bug_costs_the_puts_not_the_calls(monkeypatch: pytest.MonkeyPatch) -> None:
+    import dataclasses
+
+    from tail_lab.contracts.option_chain import WINGS
+
+    fetch = _fetcher(SPY=_both("SPY"))
+    _, baseline_calls = sweep_to_records(["SPY"], fetch=fetch)
+    monkeypatch.setitem(WINGS, "P", dataclasses.replace(WINGS["P"], moneyness_min="boom"))
+    puts, calls = sweep_to_records(["SPY"], fetch=fetch)
+    assert puts == []
+    assert calls == baseline_calls
+    assert calls
+
+
+def test_a_call_parse_bug_in_the_local_ingest_leaves_the_put_commit_intact(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """``--local`` runs one ingest per right over the same payloads, so the
+    put commit is the no-calls baseline whatever the call side does."""
+    symbols = [f"S{i}" for i in range(20)]
+    payloads = {s: _both(s) for s in symbols}
+    baseline = _ingest_with_fetch(DeltaLakeStore(tmp_path / "a"), symbols, payloads=payloads)
+
+    _break_the_call_band(monkeypatch)
+    store = DeltaLakeStore(tmp_path / "b")
+    puts = _ingest_with_fetch(store, symbols, payloads=payloads)
+    with pytest.raises(IncompleteSweepError):
+        _ingest_with_fetch(store, symbols, payloads=payloads, right="C")
+
+    assert (puts.valid_rows, puts.symbols_ok, puts.committed) == (
+        baseline.valid_rows,
+        baseline.symbols_ok,
+        True,
+    )
+    day = dt.date.fromisoformat(QUOTE_DAY)
+    assert store.bronze_partition_exists(DATASET, day)
+    assert not store.bronze_partition_exists(CALL_DATASET, day)
+
+
+def test_captured_puts_do_not_make_the_first_call_ingest_a_no_op(tmp_path: Path) -> None:
+    """Each wing asks ITS OWN dataset whether the session is captured. Asking
+    the put dataset would read "already captured" on the first call session
+    and write nothing -- silently, every day, forever."""
+    store = DeltaLakeStore(tmp_path)
+    payloads = {"SPY": _both("SPY")}
+    assert _ingest_with_fetch(store, ["SPY"], payloads=payloads).committed
+    calls = _ingest_with_fetch(store, ["SPY"], payloads=payloads, right="C")
+    assert calls.committed
+    assert store.bronze_partition_exists(CALL_DATASET, dt.date.fromisoformat(QUOTE_DAY))
+    again = _ingest_with_fetch(store, ["SPY"], payloads=payloads, right="C")
+    assert not again.committed

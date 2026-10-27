@@ -143,6 +143,7 @@ account, no API key, no money — the constitution's free-data-first rule.
 | **Cboe CDN** — `{TICKER}_History.csv` | `cboe_strategy` (11 indices, 1975→) | daily | ✅ | none | `make ingest-cboe-strategy` |
 | **Nasdaq** historical | `ohlcv_<symbol>` | daily | ✅ | Yahoo | `make ingest-ohlcv SYMBOL=…` |
 | **Cboe** delayed quote chain | `options_expiry_<symbol>` | daily | ✅ | Yahoo (cookie+crumb) | `make ingest-options-expiry SYMBOL=…` |
+| **Cboe** delayed quote chain (daily sweep) | `option_chain_snapshot`, `option_chain_call_snapshot` (ADR 0020/0031) | daily | ✅ | none — unrecoverable | `daily-chain-snapshot.yml` / `make ingest-option-chain` |
 | **FRED** — ALFRED vintage history | `credit` (HY + IG OAS) | daily | 🔑 `FRED_API_KEY` | none | `make ingest-credit` |
 | **Tiingo** daily prices | `tiingo_eod` — as-traded close, dividends, splits, whole universe, 1993→ | weekly (Sat) | 🔑 `TIINGO_API_KEY` | none | `make ingest-tiingo-eod` (`scripts/weekly_tiingo_refresh.sh`) |
 | **Local vendor file** — lambdaclass `data-v1` | `option_quotes` (42,131 real SPY quotes, 2008→2025) | one-shot | ✅ (manual download) | none | `make ingest-option-quotes` |
