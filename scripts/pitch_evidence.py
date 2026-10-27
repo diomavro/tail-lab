@@ -1,8 +1,10 @@
 """The real-quote evidence behind the Pitch tab: does buying puts pay?
 
 OFFLINE and human-run (``make pitch-evidence``): reads the lake (whatever
-``TAIL_LAB_LAKE_BACKEND`` names -- the optionsDX panels live in the production
-bucket, ``docs/DATA_CONTRACTS.md`` #12) through the store's as-of reads
+``TAIL_LAB_LAKE_BACKEND`` names; the parsed ``optionsdx_quotes_*`` bronze
+tables were measured in the Tigris lake on 2026-10-27 -- the raw vendor
+archives ``docs/DATA_CONTRACTS.md`` #12 describes are not needed) through the
+store's as-of reads
 (``docs/adr/0009``), never writes to it, and writes ONE file of aggregate
 statistics, ``frontend/src/content/pitch_evidence.json``, that the Pitch tab
 renders. No raw quote row is written: the optionsDX licence forbids
@@ -26,6 +28,9 @@ Three questions, all on SPY (2010-2023) and, for the first two, QQQ (2012-2023):
    book over one common window.
 3. **Timing.** 35 gates on six signals, chosen on rolls entered 2010-2016 and
    tested on 2017-2023; Benjamini-Hochberg across every combination.
+4. **2008-09.** The optionsDX panels start in 2010, so the crisis they miss is
+   checked separately on ``option_quotes`` (SPY puts on monthly roll dates
+   only, licence unresolved -- research only) through ``OptionQuotesSource``.
 
 Disclosed simplifications (the page prints them): a flat 1.9% dividend yield
 on both arms (``tiingo_eod`` is not in the lake), fractional contracts,
@@ -42,6 +47,7 @@ import argparse
 import datetime as dt
 import json
 import math
+import subprocess
 import sys
 from collections.abc import Sequence
 from dataclasses import dataclass, field
@@ -55,7 +61,7 @@ from tail_lab.contracts.regime import classify_vix_series
 from tail_lab.lake.store import LakeStore
 from tail_lab.research.backtest.brokerage import COMMISSION_PER_CONTRACT
 from tail_lab.research.backtest.multiple_testing import benjamini_hochberg
-from tail_lab.research.backtest.quote_fills import OptionsDxQuoteSource
+from tail_lab.research.backtest.quote_fills import OptionQuotesSource, OptionsDxQuoteSource
 from tail_lab.research.skew import implied_vol_put
 from tail_lab.research.surface.implied_alpha import fit_implied_alpha
 from tail_lab.research.surface.ladder import Anchor
@@ -307,6 +313,14 @@ def max_drawdown(w: pd.Series) -> float:
     return float((w / w.cummax() - 1.0).min())
 
 
+def drawdown_span(w: pd.Series) -> tuple[str, str]:
+    """(peak date, trough date) of the worst drawdown: says WHICH decline the
+    number measures -- a market fall, or a hedge's own gain given back."""
+    dd = w / w.cummax() - 1.0
+    trough = dd.idxmin()
+    return str(w[:trough].idxmax().date()), str(trough.date())
+
+
 # ------------------------------------------------------------- statistics
 
 
@@ -317,9 +331,13 @@ def block_bootstrap_idx(n: int, block: int, rng: np.random.Generator) -> np.ndar
     return ((starts[:, None] + np.arange(block)[None, :]).ravel() % n)[:n]
 
 
+def ci95(draws: np.ndarray) -> list[float]:
+    """The 2.5th and 97.5th percentiles of a bootstrap distribution."""
+    return [float(np.quantile(draws, 0.025)), float(np.quantile(draws, 0.975))]
+
+
 def boot_mean_ci(x: np.ndarray, rng: np.random.Generator, reps: int = CI_REPS) -> list[float]:
-    ms = np.array([x[block_bootstrap_idx(len(x), BLOCK, rng)].mean() for _ in range(reps)])
-    return [float(np.quantile(ms, 0.025)), float(np.quantile(ms, 0.975))]
+    return ci95(np.array([x[block_bootstrap_idx(len(x), BLOCK, rng)].mean() for _ in range(reps)]))
 
 
 def bootstrap_p(draws: np.ndarray) -> float:
@@ -473,6 +491,7 @@ def hedge(mkt: Market, rolls_by_rule: dict[str, list[Roll]]) -> Json:
                 "growth": g,
                 "edge": g - g0,
                 "max_dd": max_drawdown(w),
+                "max_dd_span": drawdown_span(w),
             }
             if g > g0:
                 n_beat += 1
@@ -483,17 +502,19 @@ def hedge(mkt: Market, rolls_by_rule: dict[str, list[Roll]]) -> Json:
         "window": [str(a.date()), str(b.date())],
         "unhedged_growth": g0,
         "unhedged_max_dd": dd0,
+        "unhedged_max_dd_span": drawdown_span(w0),
         "configs": rows,
         "n_beat": n_beat,
         "n_cut_dd": n_cut_dd,
     }
 
 
-def cboe_benchmark(cboe: pd.DataFrame, span: tuple[str, str]) -> Json:
+def cboe_benchmark(cboe: pd.DataFrame, span: Sequence[str]) -> Json:
+    """Cboe's indices over ``span`` -- the hedge study's own window."""
     piv = cboe.pivot(index="trade_date", columns="index_symbol", values="close").sort_index()[
         span[0] : span[1]
     ]
-    out: Json = {}
+    out: Json = {"span": [str(piv.index[0].date()), str(piv.index[-1].date())]}
     for sym in ("SPX", "PPUT", "PPUT3M", "VXTH"):
         s = piv[sym].dropna()
         out[sym] = {"growth": ann_log_growth(s), "max_dd": max_drawdown(s)}
@@ -521,10 +542,14 @@ def lagged(series: pd.Series, t: pd.Timestamp) -> object:
 def timing_inputs(vix_bronze: pd.DataFrame, rates: pd.DataFrame) -> TimingInputs:
     gold = silver_to_gold(bronze_to_silver(vix_bronze)).set_index("date")
     labels = pd.Series(classify_vix_series(gold["close"].tolist()), index=gold.index)
+    return TimingInputs(gold["close"], gold["z_score"], labels, first_vintage_rate(rates))
+
+
+def first_vintage_rate(rates: pd.DataFrame) -> pd.Series:
+    """DGS3MO as a decimal, one value per observation date: its FIRST vintage,
+    which is what was known at the time (a later revision is look-ahead)."""
     r = rates[rates.series_id == "DGS3MO"].sort_values(["obs_date", "vintage_date"])
-    # The FIRST vintage of each observation is what was known at the time.
-    rate = r.drop_duplicates("obs_date", keep="first").set_index("obs_date")["value"] / 100.0
-    return TimingInputs(gold["close"], gold["z_score"], labels, rate)
+    return r.drop_duplicates("obs_date", keep="first").set_index("obs_date")["value"] / 100.0
 
 
 def _alpha_anchor(mkt: Market, t: pd.Timestamp) -> tuple[Anchor, pd.DataFrame] | None:
@@ -643,7 +668,7 @@ def boot_roi_diff(
         if take[i].sum():
             ds.append(roi[i][take[i]].mean() - roi[i].mean())
     d = np.array(ds)
-    return [float(np.quantile(d, 0.025)), float(np.quantile(d, 0.975))], bootstrap_p(d)
+    return ci95(d), bootstrap_p(d)
 
 
 def hedge_diff_terms(eq: np.ndarray, roi: np.ndarray, take: np.ndarray) -> np.ndarray:
@@ -688,6 +713,18 @@ class Combo:
         }
 
 
+def rule_combos(rule: str, df: pd.DataFrame, sig: pd.DataFrame, eq: np.ndarray) -> list[Combo]:
+    """One Combo per gate. Thresholds come from the IN-SAMPLE signals only;
+    the gate is then applied to every roll, out-of-sample ones included."""
+    is_ = (df.entry <= IS_END).to_numpy()
+    yrs_is = (df.exit[is_].max() - df.entry[is_].min()).days / 365.25
+    yrs_oos = (df.exit[~is_].max() - df.entry[~is_].min()).days / 365.25
+    return [
+        Combo(rule, gname, df.roi.to_numpy(), eq, apply_gate(sig, gate), is_, yrs_is, yrs_oos)
+        for gname, gate in gates(sig[is_]).items()
+    ]
+
+
 def timing_combos(mkt: Market, ti: TimingInputs, span: tuple[str, str]) -> list[Combo]:
     combos: list[Combo] = []
     for sname, (ten, hold) in STRUCTS.items():
@@ -708,22 +745,7 @@ def timing_combos(mkt: Market, ti: TimingInputs, span: tuple[str, str]) -> list[
                 * np.exp(DIV_YIELD * (df.exit - df.entry).dt.days / 365.25)
             ).to_numpy()
             sig = signals(mkt, df, ti)
-            is_ = (df.entry <= IS_END).to_numpy()
-            yrs_is = (df.exit[is_].max() - df.entry[is_].min()).days / 365.25
-            yrs_oos = (df.exit[~is_].max() - df.entry[~is_].min()).days / 365.25
-            for gname, gate in gates(sig[is_]).items():
-                combos.append(
-                    Combo(
-                        f"{int(m)}pct_{sname}",
-                        gname,
-                        df.roi.to_numpy(),
-                        eq,
-                        apply_gate(sig, gate),
-                        is_,
-                        yrs_is,
-                        yrs_oos,
-                    )
-                )
+            combos += rule_combos(f"{int(m)}pct_{sname}", df, sig, eq)
             print(
                 f"timing {int(m)}pct_{sname}: alpha coverage {sig.alpha.notna().mean():.2f}",
                 file=sys.stderr,
@@ -771,7 +793,7 @@ def timing(combos: list[Combo], rng: np.random.Generator) -> Json:
                     for _ in range(P_REPS)
                 ]
             )
-            ci, p = [float(np.quantile(bs, 0.025)), float(np.quantile(bs, 0.975))], bootstrap_p(bs)
+            ci, p = ci95(bs), bootstrap_p(bs)
         out[key] = {
             "eligible": len(ok),
             "rule": c.rule,
@@ -794,9 +816,26 @@ def _mean_without_best(roi: np.ndarray) -> float | None:
     return float(np.delete(roi, int(np.argmax(roi))).mean()) if len(roi) > 1 else None
 
 
+def is_sell_rule(rule: str) -> bool:
+    """A rule sold after a holding period, not held to expiry."""
+    return STRUCTS[rule.split("pct_")[1]][1] is not None
+
+
+def oracle_take(roi: np.ndarray) -> np.ndarray:
+    """A perfect-foresight filter: the best third of rolls by realised return.
+    Its p is the smallest any real filter on these rolls could hope for."""
+    k = math.ceil(len(roi) / 3)
+    take = np.zeros(len(roi), dtype=bool)
+    take[np.argsort(-roi, kind="stable")[:k]] = True
+    return take
+
+
 def benjamini_hochberg_oos(ok: list[tuple[Combo, Json, Json]], rng: np.random.Generator) -> Json:
     """Every eligible combination's OUT-OF-SAMPLE return difference, tested
-    together at a 10% false-discovery rate."""
+    together at a 10% false-discovery rate; then the same over the sold rules
+    alone, and a perfect-foresight filter per rule -- the power check: a rule
+    whose oracle cannot reach significance contributes tests that could not
+    have passed."""
     ps = [boot_roi_diff(c.roi[~c.is_], c.take[~c.is_], rng)[1] for c, _, _ in ok]
     sig = benjamini_hochberg(ps, alpha=FDR)
     survivors = [
@@ -804,6 +843,16 @@ def benjamini_hochberg_oos(ok: list[tuple[Combo, Json, Json]], rng: np.random.Ge
         for (c, _, o), p, s in zip(ok, ps, sig, strict=True)
         if s
     ]
+    sell = [p for (c, _, _), p in zip(ok, ps, strict=True) if is_sell_rule(c.rule)]
+    order = sorted(range(len(ps)), key=lambda i: ps[i])[:8]
+    rules = {c.rule: c for c, _, _ in ok}
+    oracle: Json = {}
+    for name, c in rules.items():
+        roi = c.roi[~c.is_]
+        oracle[name] = {
+            "oos_winners": int((roi > 0).sum()),
+            "p": boot_roi_diff(roi, oracle_take(roi), rng)[1],
+        }
     return {
         "tested": len(ps),
         "fdr": FDR,
@@ -811,21 +860,148 @@ def benjamini_hochberg_oos(ok: list[tuple[Combo, Json, Json]], rng: np.random.Ge
         "min_p": min(ps),
         "p_below_05": sum(p < 0.05 for p in ps),
         "p_floor": 1 / (P_REPS + 1),
+        "sell_rules": {
+            "tested": len(sell),
+            "survivors": int(sum(benjamini_hochberg(sell, alpha=FDR))),
+            "min_p": min(sell),
+        },
+        "smallest_p": [
+            {"rule": ok[i][0].rule, "gate": ok[i][0].gate, "oos": ok[i][2], "oos_p": ps[i]}
+            for i in order
+        ],
+        "oracle": oracle,
     }
+
+
+# ------------------------------------------------------------- 4. 2008-09
+
+CRISIS_SPAN = ("2008-01-01", "2009-12-31")
+
+
+def crisis_rolls(
+    q: pd.DataFrame, spx: pd.Series, moneyness: float, dates: Sequence[pd.Timestamp]
+) -> pd.DataFrame:
+    """One put per monthly roll date, bought at the ask through
+    ``OptionQuotesSource`` (its own guards, open interest included) and held
+    to expiry. Each date lists ONE expiry, so the request is that contract's
+    own tenor: "buy the next monthly put". The panel has no expiry-day spot,
+    so SPY at expiry = SPY at entry x the SPX move (one month of SPY-vs-SPX
+    tracking is the error)."""
+    src = OptionQuotesSource(q)
+    rows: list[Json] = []
+    for t in dates:
+        s0 = float(q.loc[q.quote_date == t, "spot"].iloc[0])
+        listed = pd.Timestamp(q.loc[q.quote_date == t, "expiration"].min())
+        f = src.fill(
+            entry_date=t.date(), spot=s0, moneyness_pct=moneyness, tenor_weeks=(listed - t).days / 7
+        )
+        if f is None:
+            rows.append({"entry": t, "filled": False})
+            continue
+        exp = pd.Timestamp(f.expiry)
+        s1 = s0 * float(spx[:exp].iloc[-1]) / float(spx[:t].iloc[-1])
+        c = 1.0 / (100.0 * f.premium + COMMISSION_PER_CONTRACT)
+        rows.append(
+            {
+                "entry": t,
+                "filled": True,
+                "expiry": exp,
+                "roi": c * 100.0 * max(f.strike - s1, 0.0) - 1.0,
+            }
+        )
+    return pd.DataFrame(rows)
+
+
+def crisis_equity(spx: pd.Series, dates: Sequence[pd.Timestamp], end: pd.Timestamp) -> np.ndarray:
+    """The index's gross return (with the flat dividend accrual) from each roll
+    date to the next, the last to ``end``: the unhedged arm, interval by
+    interval. A refused roll is simply unhedged; it is never dropped."""
+    out = []
+    for t, t2 in zip(dates, [*dates[1:], end], strict=True):
+        a, z = float(spx[:t].iloc[-1]), float(spx[:t2].iloc[-1])
+        out.append(z / a * math.exp(DIV_YIELD * (t2 - t).days / 365.25))
+    return np.array(out)
+
+
+def crisis_books(df: pd.DataFrame, eq: np.ndarray) -> Json:
+    """Per budget: terminal wealth and the worst drawdown on roll dates (no
+    daily marks exist). A book that ends above the unhedged one is rerun with
+    its best roll left unhedged: how much of the win rests on one month."""
+    roi = df["roi"].fillna(-1.0).to_numpy()
+    filled = df["filled"].to_numpy(dtype=bool)
+    best = int(np.argmax(np.where(filled, roi, -np.inf)))
+
+    def path(b: float, skip: int | None = None) -> np.ndarray:
+        bb = np.where(filled, b, 0.0)
+        if skip is not None:
+            bb[skip] = 0.0
+        return np.cumprod((1 - bb) * eq + bb * (1 + roi))
+
+    def mdd(w: np.ndarray) -> float:
+        return float((w / np.maximum.accumulate(np.r_[1.0, w])[1:] - 1).min())
+
+    w0 = path(0.0)
+    books: list[Json] = []
+    for b in BUDGETS:
+        w = path(b)
+        row: Json = {"budget": b, "terminal": float(w[-1]), "max_dd": mdd(w)}
+        if w[-1] > w0[-1]:
+            row["terminal_without_best"] = float(path(b, skip=best)[-1])
+        books.append(row)
+    ok = df[df["filled"]]
+    return {
+        "unhedged": {"terminal": float(w0[-1]), "max_dd": mdd(w0)},
+        "books": books,
+        "n_beat": sum("terminal_without_best" in r for r in books),
+        "rolls": len(df),
+        "filled": len(ok),
+        "mean_roi": float(ok.roi.mean()),
+        "hits": int((ok.roi > 0).sum()),
+        "best_roi": float(ok.roi.max()),
+        "best_entry": str(df.entry[best].date()),
+    }
+
+
+def crisis_2008(q: pd.DataFrame, cboe: pd.DataFrame) -> Json:
+    spx = cboe[cboe.index_symbol == "SPX"].set_index("trade_date")["close"].sort_index()
+    spx.index = pd.DatetimeIndex(pd.to_datetime(spx.index))
+    q = q.assign(quote_date=pd.to_datetime(q.quote_date), expiration=pd.to_datetime(q.expiration))
+    days = pd.DatetimeIndex(q.quote_date.unique()).sort_values()
+    dates = list(days[(days >= CRISIS_SPAN[0]) & (days <= CRISIS_SPAN[1])])
+    out: Json = {"roll_dates": len(dates), "first": str(dates[0].date())}
+    beat = 0
+    for m in DEPTHS:
+        df = crisis_rolls(q, spx, m, dates)
+        last = df[df["filled"]].iloc[-1]
+        end = pd.Timestamp(last["expiry"]) if last["entry"] == dates[-1] else dates[-1]
+        res = crisis_books(df, crisis_equity(spx, dates, end))
+        res["last"] = str(end.date())
+        beat += int(str(res["n_beat"]))
+        out[f"{int(m)}pct"] = res
+    out["n_beat"] = beat
+    out["configs"] = len(DEPTHS) * len(BUDGETS)
+    return out
 
 
 # ------------------------------------------------------------- data + main
 
 
-def data_quality(panel_spot: pd.Series, vix_dates: pd.DatetimeIndex) -> Json:
+def exchange_calendar(cboe: pd.DataFrame) -> pd.DatetimeIndex:
+    """NYSE sessions: the dates Cboe printed an SPX close. Not VIX's dates --
+    since 2022-05-30 the VIX file carries rows on exchange holidays."""
+    spx = cboe.loc[cboe.index_symbol == "SPX", "trade_date"]
+    return pd.DatetimeIndex(pd.to_datetime(spx)).unique().sort_values()
+
+
+def data_quality(panel_spot: pd.Series, calendar: pd.DatetimeIndex) -> Json:
     lo, hi = panel_spot.index[0], panel_spot.index[-1]
-    trading = vix_dates[(vix_dates >= lo) & (vix_dates <= hi)]
+    trading = calendar[(calendar >= lo) & (calendar <= hi)]
     return {
         "sessions": len(panel_spot),
         "first": str(lo.date()),
         "last": str(hi.date()),
         "missing_trading_days": int((~trading.isin(panel_spot.index)).sum()),
-        "sessions_on_closed_days": [str(d.date()) for d in panel_spot.index if d not in vix_dates],
+        "sessions_on_closed_days": [str(d.date()) for d in panel_spot.index if d not in calendar],
     }
 
 
@@ -853,12 +1029,31 @@ def standalone_and_hedge(mkt: Market, span: tuple[str, str], rng: np.random.Gene
     }
 
 
+def code_version() -> Json:
+    """The commit that produced the file, and whether the code that ran
+    (scripts/ and src/) differed from it (README constitution, rule 4)."""
+    here = Path(__file__).resolve().parent
+
+    def git(*args: str) -> str:
+        return subprocess.run(
+            ["git", *args], cwd=here, capture_output=True, text=True, check=True
+        ).stdout.strip()
+
+    return {
+        "sha": git("rev-parse", "HEAD"),
+        "dirty": bool(git("status", "--porcelain", "--", "../scripts", "../src")),
+    }
+
+
 def run(store: LakeStore, as_of: dt.date) -> Json:
     rng = np.random.default_rng(SEED)
     vix_bronze = store.read_bronze_as_of("vix", as_of)
-    vix_dates = pd.DatetimeIndex(pd.to_datetime(vix_bronze["date"]))
+    rates = store.read_bronze_as_of("rates", as_of)
+    cboe = store.read_bronze_as_of("cboe_strategy", as_of)
+    calendar = exchange_calendar(cboe)
     out: Json = {
         "as_of": as_of.isoformat(),
+        "code": code_version(),
         "dividend_yield_assumed": DIV_YIELD,
         "commission_per_contract": COMMISSION_PER_CONTRACT,
         "block_rolls": BLOCK,
@@ -873,20 +1068,39 @@ def run(store: LakeStore, as_of: dt.date) -> Json:
         snaps[ds] = store.bronze_snapshot_id(ds, as_of)
         panel = store.read_bronze_columns_as_of(ds, as_of, PANEL_COLUMNS)
         mkt = market_from_panel(panel, sym)
-        panels[sym] = {**data_quality(mkt.spot, vix_dates), "rows": len(panel)}
+        panels[sym] = {**data_quality(mkt.spot, calendar), "rows": len(panel)}
         out[sym] = standalone_and_hedge(mkt, span, rng)
         if sym == "SPY":
             spy = mkt
-    rates = store.read_bronze_as_of("rates", as_of)
-    cboe = store.read_bronze_as_of("cboe_strategy", as_of)
-    for ds in ("vix", "rates", "cboe_strategy"):
+    for ds in ("vix", "rates", "cboe_strategy", "option_quotes"):
         snaps[ds] = store.bronze_snapshot_id(ds, as_of)
     out["snapshots"], out["panels"] = snaps, panels
-    out["cboe"] = cboe_benchmark(cboe, SPANS["SPY"])
     if spy is None:
         raise LookupError("the SPY panel did not load")
+    hedge_window = spy_hedge_window(out)
+    out["cboe"] = cboe_benchmark(cboe, hedge_window)
+    out["crisis_2008"] = crisis_2008(store.read_bronze_as_of("option_quotes", as_of), cboe)
     out["timing"] = timing(timing_combos(spy, timing_inputs(vix_bronze, rates), SPANS["SPY"]), rng)
     return out
+
+
+def spy_hedge_window(out: Json) -> list[str]:
+    spy = out["SPY"]
+    assert isinstance(spy, dict)
+    window = spy["hedge"]["window"]
+    assert isinstance(window, list)
+    return [str(d) for d in window]
+
+
+def finite(x: object) -> object:
+    """NaN and inf become null: JSON has no NaN, and Vite's import rejects it."""
+    if isinstance(x, float):
+        return x if math.isfinite(x) else None
+    if isinstance(x, dict):
+        return {k: finite(v) for k, v in x.items()}
+    if isinstance(x, list | tuple):
+        return [finite(v) for v in x]
+    return x
 
 
 def main(argv: Sequence[str] | None = None) -> int:
@@ -895,7 +1109,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     ap.add_argument("--out", type=Path, default=Path("frontend/src/content/pitch_evidence.json"))
     args = ap.parse_args(argv)
     result = run(get_lake_store(Settings()), args.as_of)
-    args.out.write_text(json.dumps(result, indent=1, default=str) + "\n")
+    args.out.write_text(json.dumps(finite(result), indent=1, default=str, allow_nan=False) + "\n")
     print(f"wrote {args.out}", file=sys.stderr)
     return 0
 
