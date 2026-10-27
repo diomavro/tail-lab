@@ -20,8 +20,8 @@ twice: the put wing into ``option_chain_snapshot`` and the call wing into its
 own ``option_chain_call_snapshot`` (``docs/adr/0031``), each with its own
 moneyness band, contract, and failure boundary.
 
-Same three-function split as every other adapter here, so tests never touch
-the network:
+The same parse / fetch / ingest split as every other adapter here, plus
+:func:`fetch_chains` shared by both wings, so tests never touch the network:
 
 - :func:`parse_cboe_chain` -- pure, turns one symbol's JSON into one wing's
   slice.
@@ -423,7 +423,7 @@ def ingest_option_chain(
     now: dt.datetime | None = None,
     right: Right = "P",
 ) -> IngestResult:
-    """Sweep ``symbols``, slice each chain, and commit ONE bronze partition.
+    """Slice each payload into one wing and commit ONE bronze partition.
 
     ``right`` picks the wing -- its dataset, quarantine, contract and band all
     come from that one choice (``contracts.option_chain.WINGS``). It never
@@ -452,17 +452,11 @@ def ingest_option_chain(
     wing = WINGS[right]
     parsed = _parse_symbols(symbols, payloads, right)
     # Per symbol, as the route does (``Wing.split``): a chain whose deltas are
-    # the other wing's is quarantined whole, so both writers agree on what a
-    # Cboe sign glitch costs -- that symbol, never the session.
+    # mostly the other wing's is quarantined whole, so both writers agree on
+    # what misrouting costs -- that symbol, and the floor decides the session.
     split = wing.split(parsed.combined())
     if split.misrouted:
-        _LOGGER.warning(
-            "event=ingestion.option_chain.misrouted dataset=%s symbols=%s rows=%d -- their "
-            "deltas are the other wing's; quarantined whole",
-            wing.dataset,
-            ",".join(split.misrouted),
-            split.misrouted_rows,
-        )
+        _LOGGER.warning("event=ingestion.option_chain.misrouted %s", split.describe_misrouted(wing))
 
     # Partition by the SESSION the quotes belong to, never by the clock --
     # see the note in ``api/ingest_routes``. Shared with that route so the two
@@ -478,6 +472,7 @@ def ingest_option_chain(
         ingest_date=ingest_date,
         market_session=market_session,
         now=now,
+        misrouted=split.misrouted,
     )
     valid, quarantined, ingest_date = plan.valid, plan.quarantined, plan.ingest_date
 

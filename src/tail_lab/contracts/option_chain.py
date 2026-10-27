@@ -15,10 +15,12 @@ is to have started five years ago. That asymmetry is why this adapter is
 scheduled rather than run on demand, and why the workflow that drives it
 treats a skipped day as a failure instead of a no-op.
 
-**Schema-compatible with the historical slice on purpose.** The first nine
-columns are exactly ``contracts/option_quotes.OptionQuoteSchema``, so the
-vendor's back-history (SPY monthly rolls, 1990-2023) and this forward
-collection union on their shared columns without a translation layer. The
+**The PUT dataset is schema-compatible with the historical slice on
+purpose.** The first nine columns are exactly
+``contracts/option_quotes.OptionQuoteSchema``, so the vendor's back-history
+(SPY monthly rolls, 1990-2023) and ``option_chain_snapshot`` union on their
+shared columns without a translation layer. The call dataset shares the
+columns but must never be unioned with either (see :data:`CALL_DATASET`). The
 long-run intent is one continuous quote history with a seam, not two
 datasets that need reconciling every time someone asks a question.
 
@@ -145,6 +147,14 @@ class WingSplit(NamedTuple):
     #: How many rows those symbols had, all of them in ``quarantined``.
     misrouted_rows: int
 
+    def describe_misrouted(self, wing: Wing) -> str:
+        """The one warning both writers log when :attr:`misrouted` is set."""
+        return (
+            f"dataset={wing.dataset} symbols={','.join(self.misrouted)} "
+            f"rows={self.misrouted_rows} -- more than {MAX_WRONG_SIGN_SHARE:.0%} of each "
+            "one's signed deltas carry the other wing's sign; quarantined whole"
+        )
+
 
 @dataclass(frozen=True)
 class Wing:
@@ -185,7 +195,9 @@ class Wing:
         :data:`MAX_WRONG_SIGN_SHARE`, upper-cased and sorted."""
         if frame.empty:
             return ()
-        names = frame["underlying"].astype(str).str.upper()
+        return self._misrouted(frame, frame["underlying"].astype(str).str.upper())
+
+    def _misrouted(self, frame: pd.DataFrame, names: pd.Series[str]) -> tuple[str, ...]:
         return tuple(
             sorted(
                 str(name)
@@ -200,17 +212,23 @@ class Wing:
         too, which the contract alone would keep -- and the rest is split
         against this wing's contract (:func:`split_valid_and_quarantined`).
 
-        Per symbol, not per body, and run by BOTH writers: a body refused
-        whole turned one symbol's Cboe sign glitch into a lost session on the
-        ``--post`` path while ``--local`` kept the other 23. A body that is
-        the other wing's, or both wings concatenated, still lands nothing:
-        every symbol in it trips, and the symbol floor refuses the rest.
+        Per symbol, not per body, and run by BOTH writers: refusing a body
+        whole would let one symbol's misrouting cost a session on the
+        ``--post`` path that ``--local`` keeps. A body that is the other
+        wing's, or both wings concatenated, still lands nothing: every symbol
+        in it trips, and the symbol floor refuses the rest. A few wrong-sign
+        rows below :data:`MAX_WRONG_SIGN_SHARE` are not misrouting: the
+        contract quarantines just those rows, as it always has.
         """
-        misrouted = self.misrouted_symbols(frame)
+        if frame.empty:
+            valid, quarantined = split_valid_and_quarantined(frame, self.schema)
+            return WingSplit(valid, quarantined, (), 0)
+        names = frame["underlying"].astype(str).str.upper()
+        misrouted = self._misrouted(frame, names)
         if not misrouted:
             valid, quarantined = split_valid_and_quarantined(frame, self.schema)
             return WingSplit(valid, quarantined, (), 0)
-        bad = frame["underlying"].astype(str).str.upper().isin(misrouted)
+        bad = names.isin(misrouted)
         valid, quarantined = split_valid_and_quarantined(frame.loc[~bad], self.schema)
         return WingSplit(valid, pd.concat([frame.loc[bad], quarantined]), misrouted, int(bad.sum()))
 
@@ -218,12 +236,16 @@ class Wing:
 #: Above this :meth:`Wing.wrong_sign_share`, ONE SYMBOL's rows are taken for
 #: (partly) the other wing's and quarantined whole, rather than split into
 #: quarantine plus a committed null-delta remainder of the other wing. A
-#: correct live symbol measures 0. Not 0.5: a writer that concatenated both
-#: wings sends the call route a body scoring 0.43 (16,665 puts against 21,942
-#: calls), which a half threshold accepted, committing the null-delta puts as
-#: calls. Not 0 either: one stray wrong-sign row from Cboe would then cost the
-#: symbol; at 1% such rows are quarantined alone.
-MAX_WRONG_SIGN_SHARE = 0.01
+#: correct live symbol measures 0. A writer that concatenated both wings
+#: scores every symbol at least 0.29 (measured on the 2026-10-26 bodies: SLV
+#: on the call route, 382 puts against 917 calls; XLE on the put route 0.40),
+#: so a fifth still refuses that body whole, with margin. Not 0.5, which let
+#: such a body through. Not 0.01 either: a misrouted symbol counts against
+#: the floor, so at 1% a sign glitch on 2 of FXI's 176 puts cost all of FXI,
+#: and the same on three chains refused a put session that main commits with
+#: just the bad rows quarantined. Below a fifth, the contract quarantines only
+#: the wrong-sign rows, whatever the chain's size.
+MAX_WRONG_SIGN_SHARE = 0.2
 
 
 WINGS: dict[Right, Wing] = {
@@ -467,6 +489,7 @@ def require_enough_symbols(
     min_fraction: float,
     session: dt.date,
     missing: Sequence[str] = (),
+    misrouted: Collection[str] = (),
 ) -> None:
     """Refuse to define a session from too few chains. See ``MIN_SYMBOL_FRACTION``.
 
@@ -504,14 +527,24 @@ def require_enough_symbols(
     required = max(1, math.ceil(requested * min_fraction))
     if responded >= required:
         return
+    unquoted = [s for s in missing if s not in misrouted]
+    # A misrouted symbol HAD quotes, of the other wing's sign (Wing.split): a
+    # re-run sends the same body, so it is named apart from the re-run advice.
+    wrong_wing = (
+        f" Misrouted, not missing: {', '.join(sorted(misrouted))} -- more than "
+        f"{MAX_WRONG_SIGN_SHARE:.0%} of their signed deltas carry the other wing's sign, "
+        "which a re-run repeats; check which wing the writer sent where."
+        if misrouted
+        else ""
+    )
     raise IncompleteSweepError(
         f"only {responded} of {requested} chains returned usable quotes for session "
         f"{session.isoformat()} (need {required}); refusing to create the partition, "
         "because bronze is immutable and a partial session can never be completed. "
-        f"Missing: {', '.join(missing) if missing else '(unknown)'}. Re-run before the "
-        "next US open -- and if the same names fail every day they are delisted or "
-        "dead, and belong out of DEFAULT_SNAPSHOT_SYMBOLS rather than blocking every "
-        "future session."
+        f"Missing: {', '.join(unquoted) if unquoted else '(none)' if misrouted else '(unknown)'}. "
+        "Re-run before the next US open -- and if the same names fail every day they are "
+        "delisted or dead, and belong out of DEFAULT_SNAPSHOT_SYMBOLS rather than "
+        f"blocking every future session.{wrong_wing}"
     )
 
 
@@ -620,6 +653,7 @@ def plan_session_write(
     ingest_date: dt.date | None = None,
     market_session: dt.date | None = None,
     now: dt.datetime | None = None,
+    misrouted: Collection[str] = (),
 ) -> SessionPlan:
     """Name the session, split off-session rows, and refuse unsafe writes.
 
@@ -627,7 +661,9 @@ def plan_session_write(
     ``fetch_failed`` those that did not. ``market_session`` is the newest
     COMPLETED US equity session according to a source independent of Cboe
     (``None`` when that source could not be read -- the check is then
-    skipped, never guessed).
+    skipped, never guessed). ``misrouted`` are the symbols :meth:`Wing.split`
+    quarantined whole; they still count against the floor, and only change
+    how a refusal names them.
 
     Raises ``IncompleteSweepError`` instead of returning a plan whose write
     would lose a session silently.
@@ -742,6 +778,7 @@ def plan_session_write(
             min_symbol_fraction,
             session,
             missing=sorted(failed),
+            misrouted=misrouted,
         )
     return SessionPlan(
         valid=valid,

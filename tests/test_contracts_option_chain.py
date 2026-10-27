@@ -239,9 +239,10 @@ _WING_DELTA_EDGES = [
 def test_each_wing_keeps_its_delta_edge_and_refuses_just_past_it(
     schema: type[OptionChainSnapshotSchema], edge: float, past: float
 ) -> None:
-    """Below MAX_WRONG_SIGN_SHARE a stray wrong-sign row is caught by the
-    contract alone (ADR 0031: "one stray row is quarantined alone"), so each
-    wing's bound must sit exactly at zero -- for the puts as for the calls."""
+    """Below MAX_WRONG_SIGN_SHARE a wrong-sign row is caught by the contract
+    alone (ADR 0031 §5: below a fifth, only the bad rows are quarantined), so
+    each wing's bound must sit exactly at zero -- for the puts as for the
+    calls."""
     schema.validate(_frame(_row(delta=edge)), lazy=True)
     with pytest.raises(SchemaErrors):
         schema.validate(_frame(_row(delta=past)), lazy=True)
@@ -265,12 +266,17 @@ def test_wrong_sign_share_counts_only_rows_with_a_signed_delta(
     assert WINGS["C" if right == "C" else "P"].wrong_sign_share(frame) == pytest.approx(share)
 
 
-@pytest.mark.parametrize(("wrong", "misrouted"), [(0, False), (1, False), (2, True), (43, True)])
-def test_misrouted_is_more_than_one_percent_of_one_symbols_signed_deltas(
+@pytest.mark.parametrize(
+    ("wrong", "misrouted"), [(0, False), (2, False), (20, False), (21, True), (29, True)]
+)
+def test_misrouted_is_more_than_a_fifth_of_one_symbols_signed_deltas(
     wrong: int, misrouted: bool
 ) -> None:
-    """Pins MAX_WRONG_SIGN_SHARE from both sides: 1 in 100 is a stray row,
-    2 in 100 is refused, and the 43% of a both-wings body is far past it."""
+    """Pins MAX_WRONG_SIGN_SHARE from both sides. A sign glitch on a few rows
+    (2 in 100; FXI has 176 signed puts) is not misrouting -- quarantining the
+    symbol would count it against the floor, and three such chains refused a
+    put session. 21 in 100 is refused, and 29 -- the thinnest symbol of a
+    measured both-wings body (SLV on the call route) -- must be too."""
     frame = pd.DataFrame(
         {
             "underlying": ["spy"] * 102,

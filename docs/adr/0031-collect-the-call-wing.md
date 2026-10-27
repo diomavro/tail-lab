@@ -96,23 +96,28 @@ buys puts.
    put dataset on its own: there is no `right` column, and a zero-filled row
    has a null (or exactly zero) delta, which both contracts accept. So both
    writers, each route and the local ingest, quarantine every row of a SYMBOL
-   (null-delta rows included) when more than 1% of that symbol's rows with a
-   non-null, non-zero delta carry the other wing's sign (`Wing.split`,
+   (null-delta rows included) when more than a fifth of that symbol's rows
+   with a non-null, non-zero delta carry the other wing's sign (`Wing.split`,
    `MAX_WRONG_SIGN_SHARE`), logged with `dataset=`; the symbol floor then
    decides the session. Measured on the 2026-10-26 live bodies, a correct
-   body scores 0 (0 of 16,665 puts, 0 of 21,942 calls) and a misrouted body
-   scores 1; a body carrying both wings scores 0.43 on the call route, which
-   a first threshold of one half let through. A misrouted or two-wing body
-   therefore lands nothing (every symbol trips; 422 on a route). Per symbol,
-   not per body: a whole-body refusal turned one symbol's Cboe sign glitch
-   (4% of a body) into a lost session on the `--post` path while `--local`
-   kept the other 23. 1% rather than zero, so one stray row is quarantined
-   alone. Without the guard, the fixture's call body POSTed to the put route
-   committed its two null-delta ITM calls as puts. A misrouted symbol is
-   named as such (`symbols_misrouted` in the route's answer and in
-   `IngestResult`), and the script reports it by that cause rather than as
-   "no quotes", which would point the operator at a re-run that returns the
-   same glitched chain.
+   body scores 0 (0 of 16,665 puts, 0 of 21,942 calls), a misrouted body
+   scores 1, and a body carrying both wings scores every symbol at least
+   0.29 (SLV on the call route; 0.43 pooled), which a first threshold of one
+   half let through. A misrouted or two-wing body therefore lands nothing
+   (every symbol trips; 422 on a route). Per symbol, not per body: a
+   whole-body refusal would let one misrouted symbol cost a session on the
+   `--post` path that `--local` keeps. A fifth rather than less, because a
+   misrouted symbol counts against the floor: at 1%, two sign-flipped rows
+   among FXI's 176 puts cost all of FXI, and the same on three chains refused
+   a put session that the contract alone commits with just the bad rows
+   quarantined. Below a fifth that is still what happens, so the put dataset
+   keeps the rule it had. Without the guard, the fixture's call body POSTed
+   to the put route committed its two null-delta ITM calls as puts. A
+   misrouted symbol is named as such (`symbols_misrouted` in the route's
+   answer and in `IngestResult`, and apart from "Missing" in the floor's
+   refusal), and the script reports it by that cause rather than as "no
+   quotes", which would point the operator at a re-run that sends the same
+   chain.
 
 6. **Script exit contract** (`scripts/chain_snapshot.py`, both modes):
 

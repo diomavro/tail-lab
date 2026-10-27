@@ -574,9 +574,9 @@ def _report_post(
 
 def _report_symbols(label: str, failed: Sequence[str], misrouted: Sequence[str]) -> None:
     """Name the symbols that landed nothing, by cause. A misrouted symbol HAD
-    quotes -- the other wing's delta signs (``Wing.split``) -- so it is not
-    reported as "no quotes": that would point the operator at a re-run, which
-    returns the same glitched chain."""
+    quotes -- mostly of the other wing's delta sign (``Wing.split``) -- so it
+    is not reported as "no quotes": that would point the operator at a
+    re-run, which sends the same chain."""
     unquoted = [s for s in failed if s not in misrouted]
     if unquoted:
         print(f"::warning::{label}: no quotes landed for {', '.join(unquoted)}")

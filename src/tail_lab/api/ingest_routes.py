@@ -92,18 +92,14 @@ def _split(frame: pd.DataFrame, wing: Wing) -> WingSplit:
     """``wing.split`` plus its log line, and a 422 when nothing is left.
 
     Its own function so ``_ingest_chain`` stays under the complexity ratchet.
-    A symbol carrying the other wing's deltas is quarantined whole
+    A symbol carrying mostly the other wing's deltas is quarantined whole
     (:meth:`Wing.split`), the same rule the local writer runs, so one
-    symbol's glitch costs that symbol and the floor decides the session.
+    misrouted symbol costs that symbol and the floor decides the session.
     """
     split = wing.split(frame)
     if split.misrouted:
         _LOGGER.warning(
-            "event=api.ingest.option_chain.misrouted dataset=%s symbols=%s rows=%d -- "
-            "their deltas are the other wing's; quarantined whole",
-            wing.dataset,
-            ",".join(split.misrouted),
-            split.misrouted_rows,
+            "event=api.ingest.option_chain.misrouted %s", split.describe_misrouted(wing)
         )
     if split.valid.empty:
         why = (
@@ -182,6 +178,7 @@ def _ingest_chain(
             ingest_date=body.ingest_date,
             market_session=body.market_session,
             now=_utcnow(),
+            misrouted=split.misrouted,
         )
     except IngestDateMismatch as exc:
         # 400, not 409/422: the body is well-formed and the rows are fine --

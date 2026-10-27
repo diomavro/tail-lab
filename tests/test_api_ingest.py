@@ -508,8 +508,8 @@ def test_the_call_route_validates_against_the_call_contract(
 ) -> None:
     """A put-signed delta is quarantined on the call route -- into the CALL
     quarantine -- and a call-signed one is kept; the put route would do the
-    reverse. A hundred calls carry the one stray row: alone it would be a
-    misrouted symbol (MAX_WRONG_SIGN_SHARE), quarantined whole."""
+    reverse. A hundred calls carry the one stray row, well under
+    MAX_WRONG_SIGN_SHARE, so only that row is quarantined."""
     _set_token(monkeypatch, TOKEN)
     calls = [_call_row(strike=900.0 + i) for i in range(100)]
     resp = _post_calls(client, _body(*calls, _call_row(strike=810.0, delta=-0.3)))
@@ -565,18 +565,17 @@ def test_put_rows_posted_to_the_call_route_are_refused_whole(
     assert not store.bronze_partition_exists(CALL_QUARANTINE_DATASET, day)
 
 
-@pytest.mark.parametrize(("wrong", "status"), [(1, 200), (2, 422)])
-def test_the_wrong_sign_guard_tolerates_one_percent_and_no_more(
+@pytest.mark.parametrize(("wrong", "status"), [(20, 200), (21, 422)])
+def test_the_wrong_sign_guard_tolerates_a_fifth_and_no_more(
     client: TestClient,
     store: DeltaLakeStore,
     monkeypatch: pytest.MonkeyPatch,
     wrong: int,
     status: int,
 ) -> None:
-    """The guard is a share, not "any": one garbled row in a hundred is
-    quarantined alone. Two in a hundred is past MAX_WRONG_SIGN_SHARE, so the
-    symbol is quarantined whole -- and as the body's only symbol, nothing
-    lands."""
+    """The guard is a share, not "any": twenty garbled rows in a hundred are
+    quarantined alone. Twenty-one is past MAX_WRONG_SIGN_SHARE, so the symbol
+    is quarantined whole -- and as the body's only symbol, nothing lands."""
     _set_token(monkeypatch, TOKEN)
     rows = [_row(strike=500.0 + i) for i in range(100 - wrong)]
     rows += [_row(strike=700.0 + i, delta=0.4) for i in range(wrong)]
@@ -584,7 +583,7 @@ def test_the_wrong_sign_guard_tolerates_one_percent_and_no_more(
 
     assert resp.status_code == status
     if status == 200:
-        assert (resp.json()["rows"], resp.json()["quarantined"]) == (99, 1)
+        assert (resp.json()["rows"], resp.json()["quarantined"]) == (80, 20)
     else:
         assert not store.bronze_partition_exists(DATASET, dt.date(2026, 8, 26))
 
@@ -593,11 +592,11 @@ def test_the_wrong_sign_guard_tolerates_one_percent_and_no_more(
 def test_one_symbols_wrong_signs_cost_that_symbol_not_the_session(
     client: TestClient, store: DeltaLakeStore, monkeypatch: pytest.MonkeyPatch, wing: str
 ) -> None:
-    """24 chains, one of which Cboe serves with the other wing's delta sign
-    (4% of the body's signed rows). Refusing the body whole lost the session
-    on this path while the local writer committed the other 23. The glitching
-    symbol is quarantined whole -- its null-delta row too -- and the floor
-    lets the other 23 land."""
+    """24 chains, one of which carries the other wing's delta sign throughout
+    (4% of the body's signed rows). Refusing the body whole would lose the
+    session on this path while the local writer committed the other 23. The
+    misrouted symbol is quarantined whole -- its null-delta row too -- and
+    the floor lets the other 23 land."""
     _set_token(monkeypatch, TOKEN)
     sign, post, dataset, quarantine = (
         (-1.0, _post, DATASET, QUARANTINE_DATASET)
@@ -621,6 +620,57 @@ def test_one_symbols_wrong_signs_cost_that_symbol_not_the_session(
     day = dt.date(2026, 8, 26)
     assert "XLE" not in set(store.read_bronze_as_of(dataset, day)["underlying"])
     assert set(store.read_bronze_as_of(quarantine, day)["underlying"]) == {"XLE"}
+
+
+def _glitched_put_sweep(flipped: int) -> list[dict[str, Any]]:
+    """24 put chains of 40 signed rows; FXI, HYG and TLT each carry
+    ``flipped`` call-signed deltas."""
+    names = [f"S{i:02d}" for i in range(21)] + ["FXI", "HYG", "TLT"]
+    return [
+        _row(
+            underlying=name,
+            strike=500.0 + k,
+            delta=0.19 if name in {"FXI", "HYG", "TLT"} and k < flipped else -0.19,
+        )
+        for name in names
+        for k in range(40)
+    ]
+
+
+def test_a_sign_glitch_on_three_put_chains_costs_their_bad_rows_not_the_session(
+    client: TestClient, store: DeltaLakeStore, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Review A6, measured on the 2026-10-26 live bodies: 10 flipped deltas in
+    each of FXI, HYG and TLT made the misrouting guard quarantine all three
+    chains, the floor counted them lost, and the put session was refused --
+    where main commits it with the 30 bad rows quarantined. 2 of 40 (5%)
+    here is a glitch, not a misrouted chain: only those rows go."""
+    _set_token(monkeypatch, TOKEN)
+    resp = _post(client, _body(*_glitched_put_sweep(2)))
+
+    assert resp.status_code == 200, resp.text
+    answer = resp.json()
+    assert (answer["rows"], answer["quarantined"]) == (24 * 40 - 6, 6)
+    assert (answer["symbols_failed"], answer["symbols_misrouted"]) == ([], [])
+    assert {"FXI", "HYG", "TLT"} <= set(
+        store.read_bronze_as_of(DATASET, dt.date(2026, 8, 26))["underlying"]
+    )
+
+
+def test_a_refusal_names_misrouted_chains_apart_from_missing_ones(
+    client: TestClient, store: DeltaLakeStore, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Three chains past the share are quarantined whole and the floor
+    refuses -- but they had quotes, so the 409 must not list them as
+    "Missing" under advice to re-run, which sends the same chains."""
+    _set_token(monkeypatch, TOKEN)
+    resp = _post(client, _body(*_glitched_put_sweep(10)))
+
+    assert resp.status_code == 409
+    detail = resp.json()["detail"]
+    assert "Missing: (none)" in detail
+    assert "Misrouted, not missing: FXI, HYG, TLT" in detail
+    assert not store.bronze_partition_exists(DATASET, dt.date(2026, 8, 26))
 
 
 def test_a_body_carrying_both_wings_is_refused_by_the_call_route(

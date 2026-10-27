@@ -1654,10 +1654,10 @@ def test_unparsed_contracts_sum_across_symbols(tmp_path: Path) -> None:
 def test_one_chains_wrong_signs_cost_that_chain_on_the_local_path_too(
     tmp_path: Path, caplog: pytest.LogCaptureFixture
 ) -> None:
-    """The same rule the route runs (``Wing.split``): a chain Cboe serves with
-    the other wing's delta sign is quarantined whole -- its zero-filled
+    """The same rule the route runs (``Wing.split``): a chain carrying the
+    other wing's delta sign is quarantined whole -- its zero-filled
     (null-delta) put too, which the contract alone would commit -- and the
-    other 23 land. Two writers must agree on what that glitch costs."""
+    other 23 land. Two writers must agree on what misrouting costs."""
     live = [f"SYM{i:02d}" for i in range(23)]
     payloads = {name: _payload(_put(95.0), symbol=name) for name in live}
     payloads["XLE"] = _payload(_put(95.0, delta=0.3), _put(96.0, iv=0.0), symbol="XLE")
@@ -1674,6 +1674,30 @@ def test_one_chains_wrong_signs_cost_that_chain_on_the_local_path_too(
         and "symbols=XLE rows=2" in r.getMessage()
         for r in caplog.records
     )
+
+
+def test_a_sign_glitch_on_three_chains_costs_their_bad_rows_on_the_local_path(
+    tmp_path: Path,
+) -> None:
+    """Review A6: one call-signed put in each of three 20-put chains (5%)
+    must cost those three rows, as on main -- not the three chains, which
+    the floor would then count lost and refuse the session over."""
+    names = [f"SYM{i:02d}" for i in range(21)] + ["FXI", "HYG", "TLT"]
+    payloads = {
+        name: _payload(
+            *(
+                _put(80.0 + k, delta=0.3 if name in {"FXI", "HYG", "TLT"} and k == 0 else -0.3)
+                for k in range(20)
+            ),
+            symbol=name,
+        )
+        for name in names
+    }
+    result = _ingest_with_fetch(DeltaLakeStore(tmp_path), names, payloads=payloads)
+
+    assert (result.symbols_failed, result.symbols_misrouted) == ((), ())
+    assert (result.valid_rows, result.quarantined_rows) == (24 * 20 - 3, 3)
+    assert result.committed is True
 
 
 def test_a_chain_with_no_in_band_calls_is_a_failed_symbol_for_the_call_wing(

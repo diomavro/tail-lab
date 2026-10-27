@@ -10,7 +10,9 @@ Date: 2026-08-26
 
 Amended by `docs/adr/0031`: the sweep now also collects the call wing (0.80-2.50
 of spot), from the same fetch, into its own dataset `option_chain_call_snapshot`.
-Decision 2's "Puts only" describes `option_chain_snapshot`, which is unchanged.
+Decision 2's "Puts only" describes `option_chain_snapshot`, which keeps its
+contract; the one new refusal is a symbol whose signed deltas are more than a
+fifth call-signed, quarantined whole as misrouted (ADR 0031 §5).
 
 ## Context
 
