@@ -205,7 +205,7 @@ pitch-evidence:
 # would name code that main does not have. Not a CI gate: a later src/ change
 # on main is expected to make it fail.
 pitch-evidence-current:
-	@test "$$(git rev-parse HEAD:src) $$(git rev-parse HEAD:scripts)" = "$$($(VENV)/bin/python -c "import json; t = json.load(open('frontend/src/content/pitch_evidence.json'))['code']['tree']; print(t['src'], t['scripts'])")" \
+	@test "$$(git rev-parse HEAD:src) $$(git rev-parse HEAD:scripts)" = "$$($(PY) -c "import json; t = json.load(open('frontend/src/content/pitch_evidence.json'))['code']['tree']; print(t['src'], t['scripts'])")" \
 		|| { echo "pitch_evidence.json is stale: src/ or scripts/ changed since it was generated; run make pitch-evidence AS_OF=..."; exit 1; }
 	@test -z "$$(git status --porcelain -- src scripts)" || { echo "src/ or scripts/ has uncommitted changes"; exit 1; }
 	@echo "pitch_evidence.json names HEAD's src/ and scripts/ trees"

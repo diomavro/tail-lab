@@ -241,6 +241,15 @@ test('explains each deeper drawdown by the put open on its peak day', async ({ p
   const bled = deeper.filter((c) => !((c.max_dd_peak_put?.mark_multiple ?? 0) > 2))
   const section = page.locator('#pitch-hedge')
   for (const c of paper) await expect(section).toContainText(`marked ${c.max_dd_peak_put!.mark_multiple.toFixed(1)}× its cost on ${c.max_dd_span[0]}`)
+  // Budgets of one rule that share the same peak put describe it once, with
+  // every budget named: three copies of one sentence read as three findings.
+  const text = await section.innerText()
+  for (const c of paper) {
+    const desc = `bought ${c.max_dd_peak_put!.entry}, marked ${c.max_dd_peak_put!.mark_multiple.toFixed(1)}× its cost on ${c.max_dd_span[0]}`
+    const same = paper.filter((d) => d.rule === c.rule && d.max_dd_span[0] === c.max_dd_span[0] && JSON.stringify(d.max_dd_peak_put) === JSON.stringify(c.max_dd_peak_put))
+    expect(text.split(desc).length - 1).toBe(1)
+    expect(text).toContain(`${ruleLabel(c.rule)}, at ${same.map((d) => (d.budget * 100).toFixed(2)).join('/')}%: ${same.length > 1 ? 'all on the put ' : ''}${desc}`)
+  }
   // A book is either a paper peak or a bled one, never both: the page must not
   // call a book a paper gain and then say no put was marked above 2× in it.
   const name = (c: (typeof deeper)[number]) => `${ruleLabel(c.rule)}, at ${(c.budget * 100).toFixed(2)}%`

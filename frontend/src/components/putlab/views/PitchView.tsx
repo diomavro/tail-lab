@@ -1,4 +1,4 @@
-import { EVIDENCE as E, LIVE, gateLabel, ruleLabel, ruleShort, type EveryDay, type Standalone } from '../../../content/pitch'
+import { EVIDENCE as E, LIVE, gateLabel, ruleLabel, ruleShort, type EveryDay, type HedgeConfig, type Standalone } from '../../../content/pitch'
 import { ConceptInfo } from '../ConceptInfo'
 import { fmtFixed } from '../format'
 
@@ -91,6 +91,19 @@ const PAPER_PEAK = 2
  *  back), or no such put (premium bled). Not by calendar year. */
 const ddPaper = deeperDd.filter((c) => (c.max_dd_peak_put?.mark_multiple ?? 0) > PAPER_PEAK)
 const ddBled = deeperDd.filter((c) => !ddPaper.includes(c))
+/** Configs of one rule that share `key` (a span, a put), so the shared part is
+ *  written once with the budgets listed: the three budgets of one rule often
+ *  share the very same peak put. */
+function sameRule(cs: HedgeConfig[], key: (c: HedgeConfig) => string): HedgeConfig[][] {
+  const m = new Map<string, HedgeConfig[]>()
+  for (const c of cs) {
+    const k = `${c.rule}|${key(c)}`
+    m.set(k, [...(m.get(k) ?? []), c])
+  }
+  return [...m.values()]
+}
+const atBudgets = (g: HedgeConfig[]) =>
+  `${ruleLabel(g[0]!.rule)}, at ${g.map((c) => (c.budget * 100).toFixed(2)).join('/')}%`
 const fate = (x: number) => (x === 0 ? 'expired worthless' : `ended at ${fmtFixed(x, 2)}× its cost`)
 const budgetsPerRule = new Set(SPY.hedge.configs.map((c) => c.budget)).size
 const hedgeRules = [...new Set(SPY.hedge.configs.map((c) => c.rule))]
@@ -320,8 +333,10 @@ export function PitchView() {
             OOM put on SPY at 500 has a strike near 450. Moneyness is strike ÷ spot, so 0.90 is 10% OOM. Here the
             strike is always picked by that distance. (The Workspace can instead pick the strike whose
             Black–Scholes delta, computed at the last 20 days’ realised volatility, hits a target, docs/adr/0029;
-            this study does not.) The one difference from the glossary entry: nothing here is priced by a model.
-            Every premium is a real ask.
+            this study does not.) Differences from the glossary entry: nothing here is priced by a model, so every
+            premium is a real ask; the strike is the nearest listed one within 1 percentage point of the depth, not exactly
+            spot × (1 − depth); and 8 of the 12 rules sell the put at the bid after 4 weeks instead of holding it to
+            expiry.
           </li>
           <li>
             <strong>Roll.</strong> <ConceptInfo id="rolling" /> One put bought, then held to expiry or sold; the
@@ -779,8 +794,8 @@ export function PitchView() {
         <p className="pl-note">
           <strong>Why some hedged books fall further than SPY alone.</strong> A book’s worst drawdown runs from its
           own peak, and the dates say what each one measures:{' '}
-          {deeperDd
-            .map((c) => `${ruleLabel(c.rule)}, at ${(c.budget * 100).toFixed(2)}%: ${pct(c.max_dd)} from ${c.max_dd_span[0]} to ${c.max_dd_span[1]}`)
+          {sameRule(deeperDd, (c) => c.max_dd_span.join())
+            .map((g) => `${atBudgets(g)}: ${g.map((c) => pct(c.max_dd)).join(', ')} from ${g[0]!.max_dd_span[0]} to ${g[0]!.max_dd_span[1]}`)
             .join('; ')}
           .{' '}
           {ddPaper.length > 0 && (
@@ -788,11 +803,11 @@ export function PitchView() {
               In {ddPaper.length === deeperDd.length ? 'every one' : `${ddPaper.length} of them`} the peak is a paper
               gain: on the peak day the open put was marked at its bid far above what it cost, and most of that value
               was gone by the time it was sold or settled (
-              {ddPaper
-                .map(
-                  (c) =>
-                    `${ruleLabel(c.rule)}, at ${(c.budget * 100).toFixed(2)}%: bought ${c.max_dd_peak_put!.entry}, marked ${fmtFixed(c.max_dd_peak_put!.mark_multiple, 1)}× its cost on ${c.max_dd_span[0]}, ${fate(c.max_dd_peak_put!.exit_multiple)} on ${c.max_dd_peak_put!.exit}`,
-                )
+              {sameRule(ddPaper, (c) => JSON.stringify([c.max_dd_span[0], c.max_dd_peak_put]))
+                .map((g) => {
+                  const put = g[0]!.max_dd_peak_put!
+                  return `${atBudgets(g)}: ${g.length > 1 ? 'all on the put ' : ''}bought ${put.entry}, marked ${fmtFixed(put.mark_multiple, 1)}× its cost on ${g[0]!.max_dd_span[0]}, ${fate(put.exit_multiple)} on ${put.exit}`
+                })
                 .join('; ')}
               ). So each of these drawdowns begins with the hedge giving back its own mark, not with the market
               falling; whatever the index did next, and any premium spent before the trough, adds to it.{' '}
@@ -835,7 +850,10 @@ export function PitchView() {
               {b.program} {b.window} {bp(b.margin)} ({b.outcome});{' '}
             </span>
           ))}
-          at an assumed 1.9% dividend yield. The put programs fail in every window; the VIX-call program holds by{' '}
+          at an assumed 1.9% dividend yield. The 2005-01 → 2016-03 window is not chosen here: it is the window of
+          Artemis Capital’s April 2016 letter, which argued that a long-volatility hedge mixed with the S&amp;P 500
+          beat both, and the Book tests that claim on the letter’s own dates (VXTH’s history starts 2006-03), then
+          over each program’s full history. The put programs fail in every window; the VIX-call program holds by{' '}
           {bp(vxth[0]!.margin)} over {vxth[0]!.window}, a decade containing 2008, and by {bp(vxth[1]!.margin)} (
           {vxth[1]!.outcome}) over its whole history.
         </p>
@@ -991,7 +1009,7 @@ export function PitchView() {
           [{pp(selDg.oos_ci95[0]!)}, {pp(selDg.oos_ci95[1]!)}], p = {selDg.oos_p.toFixed(3)}.
         </p>
         <p className="pl-note">
-          Across all {sel.eligible} combinations with enough in-sample trades, {sel.is_positive} improved in sample
+          <strong>Persistence.</strong> Across all {sel.eligible} combinations with enough in-sample trades, {sel.is_positive} improved in sample
           and {sel.is_positive_oos_positive} of those ({Math.round((sel.is_positive_oos_positive / sel.is_positive) * 100)}%)
           also improved out of sample. Is that more than chance? The combinations share rolls, so their signs move
           together and a count of independent coins is no yardstick. The null instead rotates every rule’s
@@ -1011,9 +1029,15 @@ export function PitchView() {
           data. Not every pair splits them. A roll with no implied-alpha or put-IV reading is left out by both sides of
           that threshold, so both sides can beat, or both trail, the mean over all rolls; and elevated has no
           opposite. Part of an alpha or put-IV filter’s apparent effect can therefore be that rolls with a reading
-          differ from rolls without one, not timing on the reading’s value.) The rank correlation between in-sample and out-of-sample results is{' '}
+          differ from rolls without one, not timing on the reading’s value.)
+        </p>
+        <p className="pl-note">
+          <strong>Rank correlation.</strong> The rank correlation between in-sample and out-of-sample results is{' '}
           {fmtFixed(sel.spearman_is_oos)} on mean return and {fmtFixed(selDg.spearman_is_oos)} on growth: an in-sample
-          ranking says almost nothing about the next seven years. The multiple-testing screen that follows is on mean
+          ranking says almost nothing about the next seven years.
+        </p>
+        <p className="pl-note">
+          <strong>Multiple testing.</strong> The multiple-testing screen that follows is on mean
           return only (on growth only the in-sample pick above has a p-value; the other {selDg.eligible - 1}{' '}
           combinations were not tested one by one, so nothing here corrects that objective).{' '}
           {T.bh.p_below_05} of {T.bh.tested} mean-return differences have a raw p below 0.05 — about the {Math.round(T.bh.tested * 0.05)} that
@@ -1033,7 +1057,10 @@ export function PitchView() {
               a filter that loses less is still a loss
             </>
           )}
-          . Could a real effect have passed? The smallest p any test can report is {T.bh.p_floor.toFixed(5)}, under
+          .
+        </p>
+        <p className="pl-note">
+          <strong>Power.</strong> Could a real effect have passed? The smallest p any test can report is {T.bh.p_floor.toFixed(5)}, under
           the first BH step ({(T.bh.fdr / T.bh.tested).toFixed(5)}), but that is not the whole answer. A
           perfect-foresight filter that takes the best third of out-of-sample rolls reaches{' '}
           {soldRules.every(([, o]) => o.p <= T.bh.p_floor * 1.0001)
@@ -1141,7 +1168,7 @@ export function PitchView() {
             reason given in section 3 (that share sits near half whatever the data). Third, that count’s null first
             used every rotation and now drops those fewer than {E.block_rolls} rolls from zero; the change made the observed counts look
             less likely by chance, so both are printed in section 3. On today’s code, over every rotation and then
-            over the narrower window: {sel.null_all_at_least_observed} of {sel.null_all_rotations}, then{' '}
+            over the narrower set of rotations: {sel.null_all_at_least_observed} of {sel.null_all_rotations}, then{' '}
             {sel.null_at_least_observed} of {sel.null_rotations}, on mean return; {selDg.null_all_at_least_observed}{' '}
             of {selDg.null_all_rotations}, then {selDg.null_at_least_observed} of {selDg.null_rotations}, on growth
             (the first run, before the fourth change, printed 7 of 89 and 4 of 89).

@@ -6,7 +6,8 @@ Date: 2026-08-26
 
 **Accepted.** The vocabulary is in force for new surfaces from today. The
 renames and the missing risk surface are queued in `AGENT_TODO.md`; nothing
-here authorizes a sweeping rename PR.
+here authorizes a sweeping rename PR. **Amended 2026-10-27** (below): "Pitch"
+joins the closed list as a Research surface.
 
 ## Context
 

@@ -1146,7 +1146,8 @@ def test_lifting_the_spread_cap_buys_a_wide_quote_at_its_ask_and_restores_the_ca
 def test_standalone_stats_streak_median_ask_and_period_hits() -> None:
     # A zero return is not a winner, in any period. The streak is the longest
     # RUN of non-winners (3), not their count (4); the ask is the median
-    # (1% of spot), not the mean (2.2%).
+    # (1% of spot), not the mean (2.2%); the days to expiry are the median
+    # (28), not the mean (44.8).
     df = pd.DataFrame(
         {
             "entry": pd.to_datetime(
@@ -1158,13 +1159,15 @@ def test_standalone_stats_streak_median_ask_and_period_hits() -> None:
             "roi": [-1.0, 0.0, -1.0, 2.0, -1.0],
             "ask": [1.0, 1.0, 1.0, 4.0, 4.0],
             "spot_entry": [100.0] * 5,
-            "dte": [28] * 5,
+            "dte": [28, 28, 28, 56, 84],
         }
     )
     st = pe.standalone_stats(df, np.random.default_rng(0))
     assert st["longest_losing_streak"] == 3
     assert st["median_ask_pct_spot"] == pytest.approx(1.0)
+    assert st["hits"] == 1
     assert st["by_period"]["2010-2013"]["hits"] == 1
+    assert st["median_dte"] == 28
 
 
 def test_only_an_in_the_money_intrinsic_exit_is_counted_as_one() -> None:

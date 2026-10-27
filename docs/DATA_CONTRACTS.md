@@ -564,8 +564,9 @@ different vendor since (`docs/DISCOVERIES.md` #2).
 
 **Optional by construction.** This dataset is licence-limited (cleared for
 private research use only, `HUMAN_TODO.md`) and its upstream has vanished once
-already. **Nothing in `research/` or `api/` may require it.** The one consumer,
-`research/skew.py`, is a hand-run measurement that is allowed to fail with
+already. **Nothing in `research/` or `api/` may require it.** Its two consumers,
+`research/skew.py` and `scripts/pitch_evidence.py` (the Pitch's 2008-09 crisis
+section), are hand-run measurements that are allowed to fail with
 `LookupError` when the snapshot is absent — unlike the accuracy panel, which
 must never go silent.
 
