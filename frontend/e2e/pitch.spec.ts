@@ -1,5 +1,6 @@
 import { expect, test } from '@playwright/test'
-import { EVIDENCE, LIVE } from '../src/content/pitch'
+import { EVIDENCE, LIVE, ruleLabel } from '../src/content/pitch'
+import { fmtFixed } from '../src/components/putlab/format'
 import { mockPutLabApi } from './fixtures/mock-api'
 
 // The Pitch states a verdict and prints the study it rests on.
@@ -325,4 +326,175 @@ test('the 2008-09 table states its units, its window and what a dash means', asy
 test('the verdict table says its returns are pooled and net of brokerage, so below −1.00 is possible', async ({ page }) => {
   await expect(page.getByTestId('pitch-flips').locator('thead')).toContainText('Calm: return, pooled')
   await expect(page.locator('#pitch-daily')).toContainText('which is why one can fall below −1.00')
+})
+
+// Every figure below is arithmetic the page does on the evidence before
+// printing it. Each test recomputes that figure here, independently, so a
+// slip in the page's arithmetic (a max read as a min, a count inverted)
+// turns the sentence wrong and this file red.
+
+const n = (x: number) => x.toLocaleString('en-US')
+const pp = (x: number) => `${x < 0 ? '−' : '+'}${Math.abs(x * 100).toFixed(2)}pp/yr`
+const pctText = (x: number) => `${x < 0 ? '−' : x > 0 ? '+' : ''}${Math.abs(x * 100).toFixed(2)}%`
+
+test('the verdict sends QQQ to section 1 without saying its cause was never measured', async ({ page }) => {
+  const q = Object.values(EVIDENCE.QQQ.standalone)
+  const neg = q.filter((s) => s.mean_roi < 0).length
+  const ev = EVIDENCE.QQQ.every_day['20pct_4w_hold']!
+  const detail = page.locator('#pitch-verdict-detail')
+  await expect(detail).toContainText(`QQQ: ${neg} of ${q.length} rules negative`)
+  await expect(detail).toContainText(`only ${ev.phases_positive} of ${ev.phases} phasings of that rule come out positive`)
+  await expect(detail).not.toContainText('not measured')
+  await expect(page.locator('#pitch-standalone')).toContainText(`QQQ. ${neg} of ${q.length} rules negative`)
+})
+
+test('the daily-signal line counts verdict flips and dates the latest expiry from the live readings', async ({ page }) => {
+  const v = LIVE.spy_verdicts
+  let flips = 0
+  for (let i = 1; i < v.length; i++) if (v[i]!.verdict !== v[i - 1]!.verdict) flips++
+  const latest = [...v.map((x) => x.last_expiry)].sort().at(-1)!
+  await expect(page.locator('#pitch-verdict-detail')).toContainText(
+    `changed ${flips} times in ${v.length} sessions although every roll behind it had expired by ${latest}`,
+  )
+  await expect(page.locator('#pitch-daily')).toContainText(`Every run’s last roll expired by ${latest}, before the first date`)
+  // The claim the sentence makes: that expiry precedes every dated reading.
+  for (const x of v) expect(latest < x.as_of).toBe(true)
+})
+
+test('the hedge verdict names the rule that sometimes beats unhedged and at how many budgets', async ({ page }) => {
+  const cfg = EVIDENCE.SPY.hedge.configs
+  const budgets = new Set(cfg.map((c) => c.budget)).size
+  const rules = [...new Set(cfg.map((c) => c.rule))]
+  const some = rules.filter((r) => cfg.some((c) => c.rule === r && c.edge > 0))
+  const verdict = page.getByTestId('pitch-verdict')
+  for (const r of some) {
+    const k = cfg.filter((c) => c.rule === r && c.edge > 0).length
+    await expect(verdict).toContainText(`(the other, ${ruleLabel(r)}, beat it at ${k} of ${budgets} budgets`)
+  }
+  await expect(verdict.locator('span')).toHaveCount(some.length)
+})
+
+test('Cboe index gaps are measured against the index plus the assumed dividend', async ({ page }) => {
+  const c = EVIDENCE.cboe
+  const yard = c.SPX.growth + EVIDENCE.dividend_yield_assumed
+  const hedge = page.locator('#pitch-hedge')
+  await expect(hedge).toContainText(`${pctText(c.PPUT.growth)} (${pp(c.PPUT.growth - yard)};`)
+  await expect(hedge).toContainText(`${pctText(c.PPUT3M.growth)} (${pp(c.PPUT3M.growth - yard)};`)
+  await expect(hedge).toContainText(`${pctText(c.VXTH.growth)} (${pp(c.VXTH.growth - yard)};`)
+})
+
+test('the skip-crisis paragraph prints the range of its effects and p-values', async ({ page }) => {
+  const xs = EVIDENCE.timing.bh.smallest_p.filter((x) => x.gate === 'regime=not_crisis')
+  expect(xs.length).toBeGreaterThan(0)
+  const d = xs.map((x) => x.oos.roi_diff ?? 0)
+  const p = xs.map((x) => x.oos_p)
+  await expect(page.locator('#pitch-timing')).toContainText(
+    `lifted their out-of-sample mean by ${fmtFixed(Math.min(...d), 3)} to ${fmtFixed(Math.max(...d), 3)} per dollar, taking ${xs[0]!.oos.taken} of ${xs[0]!.oos.n} rolls, with p from ${Math.min(...p).toFixed(4)} to ${Math.max(...p).toFixed(4)}`,
+  )
+})
+
+test('the one-month claims about 2008-09 are printed exactly when the books bear them out', async ({ page }) => {
+  const c08 = EVIDENCE.crisis_2008
+  const depths = (['5pct', '10pct', '15pct', '20pct'] as const).map((k) => c08[k])
+  const ahead = depths.flatMap((r) => r.books.filter((b) => b.terminal_without_best !== undefined).map((b) => ({ r, b })))
+  const oneMonth =
+    ahead.length > 0 &&
+    ahead.every((x) => x.b.terminal_without_best! < x.r.unhedged.terminal && x.r.best_entry === ahead[0]!.r.best_entry)
+  const detail = page.locator('#pitch-verdict-detail')
+  if (oneMonth) await expect(detail).toContainText(`every one on the roll bought ${ahead[0]!.r.best_entry} and behind without it`)
+  else await expect(detail).not.toContainText('and behind without it')
+  const off = Object.values(c08.spread_guard_off.depths).every((d) =>
+    d.books.every((b) => b.terminal_without_best === undefined || b.terminal_without_best < d.unhedged.terminal),
+  )
+  const claim = 'without it, every one of those books ends behind unhedged'
+  if (off) await expect(page.locator('#pitch-2008')).toContainText(claim)
+  else await expect(page.locator('#pitch-2008')).not.toContainText(claim)
+})
+
+test('counts derived from the standalone table match it', async ({ page }) => {
+  const spy = EVIDENCE.SPY.standalone
+  const periods = Object.values(spy['20pct_4w_hold']!.by_period)
+  await expect(page.locator('#pitch-standalone')).toContainText(
+    `winners fall in ${periods.filter((v) => v.hits > 0).length} of ${periods.length} periods`,
+  )
+  const years = Number(EVIDENCE.panels.SPY.last.slice(0, 4)) - Number(EVIDENCE.panels.SPY.first.slice(0, 4)) + 1
+  await expect(page.locator('#pitch-verdict-detail')).toContainText(`${years} years of quotes cannot tell`)
+  const most = Math.max(...Object.values(spy).map((s) => s.n_rolls))
+  await expect(page.locator('#pitch-caveats')).toContainText(`not on the up to ${most} rolls per rule`)
+  const sold = Object.entries(spy).filter(([r]) => !r.includes('_4w_hold')).map(([, s]) => s)
+  const itm = sold.reduce((k, s) => k + s.exits_at_intrinsic_itm, 0)
+  const rolls = sold.reduce((k, s) => k + s.n_rolls, 0)
+  await expect(page.locator('#pitch-method')).toContainText(`on ${itm} in-the-money exits of ${n(rolls)} sold rolls`)
+})
+
+test('the method states each budget’s yearly premium as the range over the rules', async ({ page }) => {
+  const cfg = EVIDENCE.SPY.hedge.configs
+  const ranges = [...new Set(cfg.map((c) => c.budget))].map((b) => {
+    const xs = cfg.filter((c) => c.budget === b).map((c) => c.premium_pct_per_year)
+    return `${Math.min(...xs).toFixed(1)}–${Math.max(...xs).toFixed(1)}%`
+  })
+  await expect(page.locator('#pitch-method')).toContainText(`(${ranges.join(', ')} of wealth a year`)
+})
+
+test('the method says how often the tail-index fit refused, lowest share first', async ({ page }) => {
+  const [lo, hi] = EVIDENCE.timing.alpha_coverage
+  const refused = [1 - hi!, 1 - lo!].map((x) => Math.round(x * 100))
+  const text = refused[0] === refused[1] ? `${refused[0]}%` : `${refused[0]}–${refused[1]}%`
+  expect(refused[0]).toBeLessThanOrEqual(refused[1]!)
+  await expect(page.locator('#pitch-method')).toContainText(`(${text} of entry sessions here, by rule)`)
+})
+
+test('a deeper drawdown’s peak put that expired worthless says so, not “0.00× its cost”', async ({ page }) => {
+  const h = EVIDENCE.SPY.hedge
+  const paper = h.configs.filter((c) => c.max_dd < h.unhedged_max_dd && (c.max_dd_peak_put?.mark_multiple ?? 0) > 2)
+  const hedge = page.locator('#pitch-hedge')
+  for (const c of paper) {
+    const x = c.max_dd_peak_put!.exit_multiple
+    const fate = x === 0 ? 'expired worthless' : `ended at ${fmtFixed(x, 2)}× its cost`
+    await expect(hedge).toContainText(`${fate} on ${c.max_dd_peak_put!.exit}`)
+  }
+  await expect(hedge).not.toContainText('ended at 0.00× its cost')
+})
+
+test('the bootstrap count is the one the p floor implies, and the formula does not reuse the budget’s b', async ({ page }) => {
+  const reps = n(Math.round(1 / EVIDENCE.timing.bh.p_floor - 1))
+  const method = page.locator('#pitch-method')
+  await expect(method).toContainText(`where k counts resamples at or below zero and R = ${reps} is the number of resamples`)
+  await expect(method).toContainText(`resampled ${reps} times`)
+  await expect(method).not.toContainText('(b + 1)')
+  await expect(page.locator('#pitch-caveats')).toContainText(`R raised to ${reps}`)
+})
+
+test('the persistence null says it leaves out rotations within one block of zero', async ({ page }) => {
+  const sel = EVIDENCE.timing.roi_diff
+  await expect(page.locator('#pitch-timing')).toContainText(
+    `every rotation by ${EVIDENCE.block_rolls} or more rolls in either direction, ${sel.null_rotations} of them`,
+  )
+})
+
+test('tinted table rows are explained, and tint exactly the rows the legend names', async ({ page }) => {
+  await expect(page.locator('#pitch-hedge')).toContainText('Tinted rows grew faster than unhedged SPY.')
+  await expect(page.getByTestId('pitch-hedge').locator('tbody tr.is-winner')).toHaveCount(
+    EVIDENCE.SPY.hedge.configs.filter((c) => c.edge > 0).length,
+  )
+  await expect(page.locator('#pitch-2008')).toContainText('Tinted rows are the books that end ahead of unhedged.')
+  const c08 = EVIDENCE.crisis_2008
+  const ahead = (['5pct', '10pct', '15pct', '20pct'] as const).reduce(
+    (k, d) => k + c08[d].books.filter((b) => b.terminal > c08[d].unhedged.terminal).length,
+    0,
+  )
+  await expect(page.getByTestId('pitch-2008').locator('tbody tr.is-winner')).toHaveCount(ahead)
+})
+
+test('roll counts in the data table carry thousands separators', async ({ page }) => {
+  for (const s of ['SPY', 'QQQ'] as const) {
+    const r = EVIDENCE[s].rolls_on_closed_days
+    await expect(page.getByTestId('pitch-data')).toContainText(`${n(r.touching)} of ${n(r.rolls)} rolls`)
+  }
+})
+
+test('the bill rate is described as published before entry, not as a first vintage', async ({ page }) => {
+  const text = await page.locator('.pl-pitch').innerText()
+  expect(text).not.toContain('first vintage')
+  await expect(page.locator('#pitch-method')).toContainText('3-month bill rate as published before the entry day')
 })

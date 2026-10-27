@@ -1,10 +1,10 @@
 {
  "as_of": "2026-10-27",
  "code": {
-  "sha": "158367213a80123dd299427aeb41cad5b43760c0",
+  "sha": "c86a05f5256e592773ad328c6d6233567164e5a6",
   "tree": {
    "src": "779cbbd61f91c40e7e510497c411fe23fa9dc5d1",
-   "scripts": "1826177d80c853fe192f5ad78dafdd58a49b27c8"
+   "scripts": "25ec337bab7c803fa08dc48688098db18d8420e9"
   },
   "dirty": false
  },
@@ -2941,9 +2941,9 @@
    "oos_p": 0.1052,
    "is_positive": 185,
    "is_positive_oos_positive": 113,
-   "null_rotations": 89,
-   "null_at_least_observed": 7,
-   "spearman_is_oos": 0.14095170046281974,
+   "null_rotations": 79,
+   "null_at_least_observed": 5,
+   "spearman_is_oos": 0.14160274573726728,
    "oos_mean_taken_without_best": -0.298657548039756
   },
   "dg": {
@@ -2977,9 +2977,9 @@
    "oos_p": 0.08819118088191182,
    "is_positive": 181,
    "is_positive_oos_positive": 113,
-   "null_rotations": 89,
-   "null_at_least_observed": 4,
-   "spearman_is_oos": 0.15671538679950256,
+   "null_rotations": 79,
+   "null_at_least_observed": 3,
+   "spearman_is_oos": 0.15736276624672463,
    "oos_mean_taken_without_best": -0.298657548039756
   },
   "bh": {

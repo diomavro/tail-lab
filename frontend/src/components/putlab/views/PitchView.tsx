@@ -198,9 +198,10 @@ export function PitchView() {
                 {backX(s.best_roi)}, bought {s.best_entry}; its interval is {ci(s.mean_roi_ci95)}.{' '}
               </span>
             ))}
-            QQQ: {qqqNegative} of {Object.keys(QQQ.standalone).length} rules negative (
-            <a href="#pitch-standalone">section 1</a>: none of its 20% OOM rolls paid in the 2020 crash; why was not
-            measured).
+            QQQ: {qqqNegative} of {Object.keys(QQQ.standalone).length} rules negative; its monthly 20% OOM
+            rule had {plural(qqq20.hits, 'winning roll', 'winning rolls')} (its calendar missed the 2020 crash), and only{' '}
+            {qev20.phases_positive} of {qev20.phases} phasings of that rule come out positive (
+            <a href="#pitch-standalone">section 1</a>).
           </li>
           <li>
             <strong>As a hedge: insurance, not an edge.</strong> {rulesAlwaysLose.length} of {hedgeRules.length} SPY
@@ -440,7 +441,8 @@ export function PitchView() {
                         ? 'The next trading day is present after every one of them, so they are extra rows, not quotes dated a session early.'
                         : `For ${p.closed_day_then_next_missing} of them the next trading day is missing, so those look like quotes dated a session early.`}{' '}
                       The study uses the dates as given:{' '}
-                      {E[s].rolls_on_closed_days.touching} of {E[s].rolls_on_closed_days.rolls} rolls enter or exit on
+                      {E[s].rolls_on_closed_days.touching.toLocaleString('en-US')} of{' '}
+                      {E[s].rolls_on_closed_days.rolls.toLocaleString('en-US')} rolls enter or exit on
                       one. A missing day is no session: nothing enters or is marked on it. No 2008: the panel starts in{' '}
                       {p.first.slice(0, 4)}.
                     </td>
@@ -472,7 +474,7 @@ export function PitchView() {
               <tr>
                 <td className="pl-pitch-id">{E.snapshots.rates}</td>
                 <td>DGS3MO 1981 →</td>
-                <td>FRED 3-month bill, first vintage of each observation, for implied vol</td>
+                <td>FRED 3-month bill, for implied vol: at each entry, the newest observation FRED had published before that day</td>
                 <td>Vintages begin 2005-06</td>
               </tr>
               <tr>
@@ -559,8 +561,8 @@ export function PitchView() {
             return of the rolls the filter took minus the mean of all rolls (a resample in which the filter takes
             nothing is dropped). For the growth objective each resample instead sums, over the resampled rolls,
             the per-roll log-growth difference between the filtered book and the spend-matched book, and divides by
-            the out-of-sample years; its interval and p are read off that distribution the same way. The one-sided p is (b + 1) ÷ (R + 1), where b counts resamples at or below zero, so
-            no p is ever 0. It is a percentile-bootstrap p — the share of the bootstrap distribution on the wrong side
+            the out-of-sample years; its interval and p are read off that distribution the same way. The one-sided p is (k + 1) ÷ (R + 1), where k counts resamples at or below zero and R ={' '}
+            {bootReps.toLocaleString('en-US')} is the number of resamples, so no p is ever 0. It is a percentile-bootstrap p — the share of the bootstrap distribution on the wrong side
             of zero — not a test under an imposed null. It approximates one only when the bootstrap distribution is
             roughly symmetric about its centre, which nothing here checks. So the p-values, the count below 0.05 and
             the Benjamini–Hochberg step at a {Math.round(T.bh.fdr * 100)}% false-discovery rate
@@ -570,7 +572,7 @@ export function PitchView() {
           <li>
             <strong>Signal definitions.</strong> <em>VIX stretch</em>: (VIX close − its 20-day mean) ÷ its 20-day
             standard deviation (transforms/vix.py). <em>Put IV ÷ VIX</em>: the bought put’s Black–Scholes implied vol
-            at its ask (3-month bill rate, first vintage; flat {pct(E.dividend_yield_assumed)} yield) over VIX ÷ 100.{' '}
+            at its ask (3-month bill rate as published before the entry day; flat {pct(E.dividend_yield_assumed)} yield) over VIX ÷ 100.{' '}
             <em>Implied tail index α</em>: the Surface’s fit (research/surface/implied_alpha.py, docs/adr/0026) of
             the Pareto exponent that best prices the same session’s deeper put mids relative to one anchor — the
             listed put nearest 5% OOM on the first expiry at least 28 days out. A lower α means the market is
@@ -654,7 +656,7 @@ export function PitchView() {
           Unhedged SPY over {SPY.hedge.window[0]} to {SPY.hedge.window[1]}: log growth {pct(SPY.hedge.unhedged_growth, 2)}{' '}
           a year, worst drawdown {pct(SPY.hedge.unhedged_max_dd)} ({SPY.hedge.unhedged_max_dd_span[0]} to{' '}
           {SPY.hedge.unhedged_max_dd_span[1]}). Growth is shown as the change against that; drawdown is each book’s
-          own.
+          own. Tinted rows grew faster than unhedged SPY.
         </p>
         <p className="pl-pitch-scrollhint">The table scrolls sideways →</p>
         <div className="pl-scroll">
@@ -812,7 +814,7 @@ export function PitchView() {
         <p className="pl-note">
           “Ends at” is the book’s wealth on {C08['5pct'].last} as a multiple of its starting wealth; “vs unhedged” is
           that multiple minus the unhedged book’s, not a rate. “w/o best roll” is the same book without its best roll, recomputed only for a book that
-          ends ahead of unhedged; “—” means it did not. “Worst DD” is the book’s worst peak-to-trough drawdown.
+          ends ahead of unhedged; “—” means it did not. Tinted rows are the books that end ahead of unhedged. “Worst DD” is the book’s worst peak-to-trough drawdown.
         </p>
         {c08Rules
           .filter(([, r]) => r.refused.length > 0)
@@ -887,8 +889,9 @@ export function PitchView() {
           and {sel.is_positive_oos_positive} of those ({Math.round((sel.is_positive_oos_positive / sel.is_positive) * 100)}%)
           also improved out of sample. Is that more than chance? The combinations share rolls, so their signs move
           together and a count of independent coins is no yardstick. The null instead rotates every rule’s
-          out-of-sample outcomes by the same number of rolls against the filters’ unmoved choices — every rotation,{' '}
-          {sel.null_rotations} of them — which keeps that dependence and the outcomes’ own clustering and breaks only
+          out-of-sample outcomes by the same number of rolls against the filters’ unmoved choices — every rotation
+          by {E.block_rolls} or more rolls in either direction, {sel.null_rotations} of them (a shift of fewer rolls,
+          one bootstrap block, leaves clustered outcomes nearly where they were, so it is no null) — which keeps that dependence and the outcomes’ own clustering and breaks only
           the link from signal to outcome: {sel.null_at_least_observed} of {sel.null_rotations} rotations reach{' '}
           {sel.is_positive_oos_positive}. On the growth objective {selDg.is_positive_oos_positive} of{' '}
           {selDg.is_positive} persisted, reached by {selDg.null_at_least_observed} of {selDg.null_rotations}. That
@@ -1011,7 +1014,7 @@ export function PitchView() {
             2,000 bootstrap resamples per test and wrote p = 0 when none fell at or below zero, and with that, one
             combination (5% OOM 8-week, not-crisis filter, p reported as 0) passed BH. A p of 0 claims more than 2,000
             draws can resolve, and the floor of 1/2,001 sat above the first BH step, so no honest p could pass at all.
-            The p was corrected to (b + 1) ÷ (R + 1) and R raised to {bootReps.toLocaleString('en-US')}, which puts
+            The p was corrected to (k + 1) ÷ (R + 1) and R raised to {bootReps.toLocaleString('en-US')}, which puts
             the floor below the first step; under the correction the same combination’s p is{' '}
             {(T.bh.smallest_p.find((x) => x.rule === '5pct_8w_sell4w' && x.gate === 'regime=not_crisis')?.oos_p ?? NaN).toFixed(4)}.
             It is a correction of the method, not a search for a setting that kills the result — but a reader should
@@ -1056,7 +1059,7 @@ export function PitchView() {
           From a checkout whose <code>.env</code> points at the production lake (the snapshots above are not in a
           local <code>./data</code>), <code>make pitch-evidence AS_OF={E.as_of}</code> reads them, read only, and
           rewrites <code>frontend/src/content/pitch_evidence.json</code>, which is all this page reads for the
-          study. The generator stops if the <code>tail_lab</code> package it imports is not this checkout’s <code>src/</code> (set <code>PYTHONPATH</code> to it), so the tree hashes below identify the code that ran. That file was generated by commit{' '}
+          study. The make target puts this checkout’s <code>src/</code> first on <code>PYTHONPATH</code>, and the generator stops if the <code>tail_lab</code> package it imports comes from anywhere else, so the tree hashes below identify the code that ran. That file was generated by commit{' '}
           <code data-testid="pitch-code-sha">{E.code.sha.slice(0, 12)}</code>, a branch commit that a squash merge
           does not keep; the code it ran is identified on main by its git tree hashes, src/{' '}
           <code>{E.code.tree.src.slice(0, 12)}</code> and scripts/ <code>{E.code.tree.scripts.slice(0, 12)}</code>
