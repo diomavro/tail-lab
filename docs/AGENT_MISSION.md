@@ -256,8 +256,11 @@ differently:
    code itself, not a live ingestion run.
 6. (`AGENT_TODO.md` is updated in step 3, before the review.)
 7. If nothing clears the value bar, do nothing — no PR, no filler commit.
-   (If your run has a status/log surface, a one-line "nothing proposed
-   today, reason: ..." note there is fine; it does not need a PR.)
+   Every daily run, PR or not, ends with a short decision note as its final
+   message (what you chose, what you passed over and why, which step you
+   stopped at); the workflow publishes it in the run summary, which is
+   public, so it never quotes feedback text or a secret. The exact format is
+   step 8 of the prompt in `.github/workflows/daily-agent.yml`.
 
 ## Self-restraint on scope
 

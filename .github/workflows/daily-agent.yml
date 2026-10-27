@@ -122,12 +122,20 @@ jobs:
         run: echo "START=$(date +%s)" >> "$GITHUB_ENV"
 
       - name: Run the platform agent
+        id: agent
         # Three or more drafts waiting for Dio means stop adding more.
         if: steps.open.outputs.drafts < 3
         timeout-minutes: 80
         uses: anthropics/claude-code-action@cab360f6565aa35a51d6ce9e43f1f4287c0a32ea # v1
         env:
           GH_TOKEN: ${{ github.token }}
+          # The action stops reading at the FIRST `result` message
+          # (base-action/src/run-claude-sdk.ts: "break"). A background Bash
+          # command or subagent lets the model end its turn early to wait,
+          # which emits that result: the job then reports success with the
+          # work unfinished and nothing pushed. A one-shot run never needs
+          # background tasks, so turn them off.
+          CLAUDE_CODE_DISABLE_BACKGROUND_TASKS: "1"
           # The ONE new secret this agent gets, alongside the OAuth token
           # above — read-only feedback pull + resolving issues it fixes.
           # Deliberately NOT FRED/AWS/deploy creds (least privilege).
@@ -212,7 +220,8 @@ jobs:
                research question or measurably sharpens the put-buying cockpit, AND (b) needs NO
                account, API key, or paid service. If an item needs a real-world credential, skip it
                (that is the human's queue). If nothing clears the value bar today, STOP and open
-               nothing — proposing nothing is a valid, expected outcome.
+               nothing — proposing nothing is a valid, expected outcome. Either way, end with the
+               decision note in step 8.
             5. Implement exactly that ONE item — minimal, faithful, extending the proven
                walking-skeleton patterns (do NOT invent new architecture). If it adds or
                renames anything a human reads — a view, a tile, a column header, a
@@ -268,3 +277,107 @@ jobs:
                quietly widen everything else (`docs/adr/0022`, `docs/adr/0030`).
                Do NOT edit those — if a change needs one, describe it in the PR body / propose an
                ADR for a human.
+            8. DECISION NOTE — your final message, every run, whatever happened. The next workflow
+               step publishes it in this run's summary, and this repo is PUBLIC: never quote
+               feedback text, a token or any secret in it. At most ten lines:
+                 Outcome: PR #<n> | draft PR #<n> | nothing proposed | stopped early
+                 Item: <the AGENT_TODO.md heading or feedback id you chose, or "none">
+                 Considered: <the items you looked at and passed over, one reason each>
+                 Stopped at: <the step number above> because <reason>
+                 Review: <rounds run and each round's verdicts, or "not reached">
+               Do not end your turn to wait for anything: there is no later turn.
+
+      # What the run chose and why it stopped, readable on the run page. The
+      # action hides Claude's output because this repo is PUBLIC and the
+      # agent reads private feedback, so this prints only: the result stats,
+      # the agent's own decision note (prompt step 8, written to be public),
+      # the main agent's tool calls cut to one short line each (inputs, never
+      # outputs), and the local git state. Known secrets are redacted.
+      - name: Record the run's decision
+        if: always() && steps.agent.outcome != 'skipped'
+        env:
+          EXEC_FILE: ${{ steps.agent.outputs.execution_file }}
+          REDACT_1: ${{ secrets.TAIL_LAB_FEEDBACK_TOKEN }}
+          REDACT_2: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          REDACT_3: ${{ github.token }}
+        run: |
+          set -uo pipefail
+          f="${EXEC_FILE:-$RUNNER_TEMP/claude-execution-output.json}"
+          python3 -I - "$f" >> "$GITHUB_STEP_SUMMARY" <<'PY'
+          import json, os, sys
+
+          secrets = [v for k, v in os.environ.items() if k.startswith("REDACT_") and len(v) >= 8]
+
+          def clean(text: str, limit: int) -> str:
+              for s in secrets:
+                  text = text.replace(s, "***")
+              text = text.replace("`", "'")
+              return text if len(text) <= limit else text[:limit] + " [...]"
+
+          print("### Agent decision")
+          try:
+              with open(sys.argv[1], encoding="utf-8") as fh:
+                  messages = json.load(fh)
+          except (OSError, ValueError) as exc:
+              print(f"No readable execution file ({type(exc).__name__}): the agent step timed out "
+                    "or crashed before the action wrote it. Nothing below is known.")
+              sys.exit(0)
+          if not isinstance(messages, list):
+              print("Execution file is not a message list.")
+              sys.exit(0)
+          msgs = [m for m in messages if isinstance(m, dict)]
+
+          results = [m for m in msgs if m.get("type") == "result"]
+          res = results[-1] if results else {}
+          print(f"- result: `{res.get('subtype', 'none')}`, is_error={res.get('is_error')}, "
+                f"turns={res.get('num_turns')}, cost=${res.get('total_cost_usd')}, "
+                f"minutes={round((res.get('duration_ms') or 0) / 60000, 1)}")
+
+          trail, sub_calls, background = [], 0, []
+          for m in msgs:
+              if m.get("type") != "assistant":
+                  continue
+              content = (m.get("message") or {}).get("content")
+              for block in content if isinstance(content, list) else []:
+                  if not isinstance(block, dict) or block.get("type") != "tool_use":
+                      continue
+                  if m.get("parent_tool_use_id"):
+                      sub_calls += 1
+                      continue
+                  name = str(block.get("name"))
+                  inp = block.get("input") if isinstance(block.get("input"), dict) else {}
+                  if inp.get("run_in_background"):
+                      background.append(name)
+                  if name == "Bash":
+                      lines = str(inp.get("command", "")).strip().splitlines()
+                      detail = lines[0] if lines else ""
+                  elif name in ("Agent", "Task"):
+                      detail = f"{inp.get('subagent_type', '')}: {inp.get('description', '')}"
+                  else:
+                      detail = str(inp.get("file_path") or inp.get("pattern") or "")
+                  bg = " [background]" if inp.get("run_in_background") else ""
+                  trail.append(f"{len(trail) + 1:3d} {name}{bg} {clean(detail, 140)}")
+          print(f"- main-agent tool calls: {len(trail)}; subagent tool calls: {sub_calls}")
+          if background:
+              print(f"- **background tasks started: {', '.join(background)}** — the action stops "
+                    "at the first result, so work still running then was abandoned")
+
+          note = res.get("result")
+          print("\n**Decision note (the agent's final message):**\n")
+          if isinstance(note, str) and note.strip():
+              print("```\n" + clean(note.strip(), 3000) + "\n```")
+          else:
+              print("_none — the run ended without a final message_")
+
+          print("\n<details><summary>Main-agent tool calls (first line of each input)</summary>\n")
+          print("```\n" + "\n".join(trail[-200:]) + "\n```\n</details>")
+          PY
+          {
+            echo
+            echo "**Local git state after the run:** branch \`$(git rev-parse --abbrev-ref HEAD)\`"
+            echo '```'
+            git status --short | head -30
+            echo "-- commits not on origin/main:"
+            git log --oneline origin/main..HEAD | head -20
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
