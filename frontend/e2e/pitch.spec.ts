@@ -547,6 +547,12 @@ test('the timing correction is said to cover the mean-return objective only', as
   await expect(page.locator('#pitch-method')).toContainText(
     `runs from ${fmtFixed(r[0]!)} to ${fmtFixed(r[2]!)} (median ${fmtFixed(r[1]!)})`,
   )
+  // The skip-crisis skews are a skewness range, not a p or a lift.
+  const nc = bh.smallest_p.filter((x) => x.gate === 'regime=not_crisis').map((x) => x.oos_skew)
+  await expect(page.locator('#pitch-method')).toContainText(
+    `${fmtFixed(Math.min(...nc))} to ${fmtFixed(Math.max(...nc))} for the skip-crisis tests in section 3`,
+  )
+  await expect(page.locator('#pitch-method')).toContainText('spend-matched to the share of rolls the filter took in that resample')
   await expect(page.locator('#pitch-method')).not.toContainText('nothing here checks')
 })
 

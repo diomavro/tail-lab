@@ -240,6 +240,41 @@ def test_mean_without_best_drops_one_roll() -> None:
     assert pe._mean_without_best(np.array([2.0])) is None
 
 
+def test_each_growth_resample_is_spend_matched_to_its_own_take_share(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # The page says each resample compares the filtered book with a book
+    # spend-matched to the share the filter took IN THAT RESAMPLE. Resampling
+    # per-roll terms computed once freezes the match at the full sample's
+    # share, so a resample that takes more (here: every roll but one) is no
+    # longer spend-matched and the draw carries the mismatch.
+    eq = np.array([1.02, 0.90, 1.01, 1.03])
+    roi = np.array([-1.0, 3.0, -1.0, -1.0])
+    take = np.array([True, True, False, False])
+    idx = np.array([0, 1, 1, 2])
+    monkeypatch.setattr(pe, "P_REPS", 1)
+    monkeypatch.setattr(pe, "block_bootstrap_idx", lambda n, b, rng: idx)
+    draws: list[np.ndarray] = []
+    monkeypatch.setattr(pe, "boot_summary", lambda d, obs: draws.append(d))
+    pe.boot_dg(eq, roi, take, 1.0, np.random.default_rng(0))
+    rematched = pe.hedge_diff_terms(eq[idx], roi[idx], take[idx]).sum()
+    frozen = pe.hedge_diff_terms(eq, roi, take)[idx].sum()
+    assert abs(rematched - frozen) > 1e-4
+    assert draws[0][0] == pytest.approx(rematched)
+
+
+def test_spearman_ranks_only_the_rows_testable_out_of_sample() -> None:
+    # An untestable row (out-of-sample NaN) must not hold a rank: ranking
+    # first and dropping it after correlates gapped ranks, not Spearman's rho.
+    # In-sample 1,2,3,4 vs out-of-sample 1,NaN,3,2: over the three testable
+    # rows the ranks are (1,2,3) vs (1,3,2), rho = 0.5.
+    rows = [
+        (None, {"k": a}, {"k": b})
+        for a, b in [(1.0, 1.0), (2.0, float("nan")), (3.0, 3.0), (4.0, 2.0)]
+    ]
+    assert pe._spearman(rows, "k") == pytest.approx(0.5)  # type: ignore[arg-type]
+
+
 def test_the_hedge_comparison_is_spend_matched() -> None:
     # A gate that buys half the rolls is compared with an ungated book spending
     # half as much on every roll. If every roll is the same, that is a wash; an
@@ -426,8 +461,10 @@ def test_boot_roi_diff_centres_its_null_on_the_full_sample_effect(
     roi = np.array([1.0, -1.0, 3.0, -1.0] * 3)
     take = np.array([True, False, True, True] * 3)
     pe.boot_roi_diff(roi, take, np.random.default_rng(0))
-    pe.boot_dg(np.array([0.5, -0.25, 1.0]), 2.0, np.random.default_rng(0))
-    assert seen == [pytest.approx(pe.roi_diff(roi, take)), pytest.approx(1.25 / 2.0)]
+    eq = np.array([1.01, 0.97, 1.02, 0.99] * 3)
+    pe.boot_dg(eq, roi, take, 2.0, np.random.default_rng(0))
+    dg = pe.hedge_diff_terms(eq, roi, take).sum() / 2.0
+    assert seen == [pytest.approx(pe.roi_diff(roi, take)), pytest.approx(dg)]
 
 
 def test_the_alpha_anchor_uses_an_expiry_at_least_28_days_out() -> None:
@@ -1554,7 +1591,12 @@ def test_the_smallest_p_tests_carry_their_in_sample_result_and_skipped_dates(
     [
         (lambda rng: pe.boot_mean_ci(np.arange(12.0), rng, reps=3), 12),
         (lambda rng: pe.boot_roi_diff(np.arange(12.0), np.arange(12) % 2 == 0, rng), 12),
-        (lambda rng: pe.boot_dg(np.arange(12.0), 1.0, rng), 12),
+        (
+            lambda rng: pe.boot_dg(
+                np.ones(12), np.arange(12.0) - 6, np.arange(12) % 3 != 0, 1.0, rng
+            ),
+            12,
+        ),
     ],
     ids=["mean_ci", "roi_diff", "dg"],
 )

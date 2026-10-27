@@ -671,8 +671,8 @@ export function PitchView() {
             times by circular block bootstrap in blocks of {E.block_rolls}; each resample’s statistic is the mean
             return of the rolls the filter took minus the mean of all rolls (a resample in which the filter takes
             nothing is dropped). For the growth objective each resample instead sums, over the resampled rolls,
-            the per-roll log-growth difference between the filtered book and the spend-matched book, and divides by
-            the out-of-sample years; its interval and p are read off that distribution the same way. The one-sided p is (k + 1) ÷ (R + 1), where k counts resamples at or below zero and R ={' '}
+            the per-roll log-growth difference between the filtered book and a book spend-matched to the share of
+            rolls the filter took in that resample, and divides by the out-of-sample years; its interval and p are read off that distribution the same way. The one-sided p is (k + 1) ÷ (R + 1), where k counts resamples at or below zero and R ={' '}
             {bootReps.toLocaleString('en-US')} is the number of resamples, so no p is ever 0. It is a percentile-bootstrap p — the share of the bootstrap distribution on the wrong side
             of zero — not a test under an imposed null. It approximates one only when the bootstrap distribution is
             roughly symmetric about its centre, and here it is not: the skewness of the {T.bh.tested} tests’

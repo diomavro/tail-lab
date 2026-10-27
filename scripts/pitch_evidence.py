@@ -826,13 +826,19 @@ def boot_roi_diff(roi: np.ndarray, take: np.ndarray, rng: np.random.Generator) -
     return boot_summary(np.array(ds), roi_diff(roi, take))
 
 
-def boot_dg(terms: np.ndarray, yrs: float, rng: np.random.Generator) -> Boot:
-    """CI and p for the annualised growth difference: per-roll terms
-    resampled in blocks of ``BLOCK`` rolls, like every other interval here."""
-    bs = np.array(
-        [terms[block_bootstrap_idx(len(terms), BLOCK, rng)].sum() / yrs for _ in range(P_REPS)]
-    )
-    return boot_summary(bs, float(terms.sum() / yrs))
+def boot_dg(
+    eq: np.ndarray, roi: np.ndarray, take: np.ndarray, yrs: float, rng: np.random.Generator
+) -> Boot:
+    """CI and p for the annualised growth difference: ROLLS resampled in
+    blocks of ``BLOCK``, like every other interval here, and the statistic
+    recomputed on each resample -- so the comparison book's spend is matched
+    to the share of rolls the filter takes in THAT resample, not frozen at
+    the full sample's share."""
+    bs = []
+    for _ in range(P_REPS):
+        i = block_bootstrap_idx(len(roi), BLOCK, rng)
+        bs.append(hedge_diff_terms(eq[i], roi[i], take[i]).sum() / yrs)
+    return boot_summary(np.array(bs), float(hedge_diff_terms(eq, roi, take).sum() / yrs))
 
 
 def hedge_diff_terms(eq: np.ndarray, roi: np.ndarray, take: np.ndarray) -> np.ndarray:
@@ -957,6 +963,10 @@ def _testable(rows: list[tuple[Combo, Json, Json]], key: str) -> list[tuple[Comb
 
 
 def _spearman(ok: list[tuple[Combo, Json, Json]], key: str) -> float:
+    """Rank correlation of in- and out-of-sample results over the rows
+    testable out of sample. Ranking first and dropping the untestable pairs
+    after would correlate gapped ranks, which is not Spearman's rho."""
+    ok = _testable(ok, key)
     a = pd.Series([_as_float(r[1][key]) for r in ok]).rank()
     b = pd.Series([_as_float(r[2][key]) for r in ok]).rank()
     return float(a.corr(b))
@@ -985,7 +995,7 @@ def timing(combos: list[Combo], rng: np.random.Generator) -> Json:
         if key == "roi_diff":
             b = boot_roi_diff(c.roi[o], c.take[o], rng)
         else:
-            b = boot_dg(hedge_diff_terms(c.eq[o], c.roi[o], c.take[o]), c.yrs_oos, rng)
+            b = boot_dg(c.eq[o], c.roi[o], c.take[o], c.yrs_oos, rng)
         out[key] = {
             "eligible": len(ok),
             "rule": c.rule,
