@@ -197,6 +197,10 @@ def test_gates_use_in_sample_percentiles_and_five_regime_sets() -> None:
     g = pe.gates(sig)
     assert len(g) == 35
     assert g["vix_lvl<=p50"] == ("vix_lvl", "le", 5.0)
+    # The page prints "its in-sample 33rd, 50th or 67th percentile".
+    vals = np.arange(1.0, 10.0)
+    assert g["vix_lvl<=p33"][2] == pytest.approx(np.nanquantile(vals, 1 / 3))
+    assert g["vix_lvl>=p67"][2] == pytest.approx(np.nanquantile(vals, 2 / 3))
 
 
 def test_drawdown_episodes_need_a_full_recovery_between_them() -> None:
@@ -358,23 +362,55 @@ def test_a_resample_that_takes_no_roll_is_skipped_not_averaged() -> None:
 
 
 def test_the_alpha_anchor_uses_an_expiry_at_least_28_days_out() -> None:
+    # 27 days out is one day short of the floor the page prints; 28 is the first
+    # expiry that qualifies, and it beats the later 35-day one.
     t = pd.Timestamp("2020-01-06")
-    near, far = t + pd.Timedelta(days=7), t + pd.Timedelta(days=35)
+    near, short, at, far = (t + pd.Timedelta(days=n) for n in (7, 27, 28, 35))
     chain = pd.DataFrame(
         {
             "underlying": "SPY",
             "quote_date": t,
-            "expiration": [near, far],
-            "strike": [95.0, 95.0],
-            "bid": [0.10, 0.90],
-            "ask": [0.20, 1.00],
+            "expiration": [near, short, at, far],
+            "strike": 95.0,
+            "bid": [0.10, 0.50, 0.80, 0.90],
+            "ask": [0.20, 0.60, 0.90, 1.00],
             "spot": 100.0,
             "iv": 0.2,
         }
     )
     got = pe._alpha_anchor(pe.market_from_panel(chain, "SPY"), t)
     assert got is not None
-    assert got[0].expiration == far.date()
+    assert got[0].expiration == at.date()
+
+
+def test_a_zero_bid_anchor_is_no_anchor() -> None:
+    # A one-sided quote (bid 0) has no mid to price the fit against.
+    t = pd.Timestamp("2020-01-06")
+    chain = pd.DataFrame(
+        {
+            "underlying": "SPY",
+            "quote_date": t,
+            "expiration": t + pd.Timedelta(days=35),
+            "strike": [95.0, 90.0],
+            "bid": [0.0, 0.40],
+            "ask": [1.00, 0.50],
+            "spot": 100.0,
+            "iv": 0.2,
+        }
+    )
+    assert pe._alpha_anchor(pe.market_from_panel(chain, "SPY"), t) is None
+
+
+def test_a_mid_roll_day_with_no_qualifying_bid_is_marked_at_intrinsic() -> None:
+    # The daily equity behind the printed drawdowns: when the bid fails the
+    # guards on a held day, the put is worth what exercising it pays.
+    panel = _panel([100.0, 90.0, 100.0])
+    panel.loc[1, "bid"] = 0.0
+    mkt = pe.market_from_panel(panel, "SPY")
+    contracts = 0.01
+    vals = pe._path(mkt, SESSIONS[0], SESSIONS[2], contracts, 95.0, SESSIONS[20].date(), 1.0, 0.5)
+    assert vals.iloc[1] == pytest.approx(contracts * 100.0 * (95.0 - 90.0))
+    assert vals.iloc[2] == 0.5
 
 
 def test_put_richness_is_implied_vol_over_vix_in_decimal() -> None:

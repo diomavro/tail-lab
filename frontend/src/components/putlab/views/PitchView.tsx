@@ -127,6 +127,8 @@ const spreadOff = C08.spread_guard_off
 const c08Gaps = C08.months_without_roll_date
 const ev20 = SPY.every_day['20pct_4w_hold']!
 const ev15 = SPY.every_day['15pct_4w_hold']!
+const qev20 = QQQ.every_day['20pct_4w_hold']!
+const qev15 = QQQ.every_day['15pct_4w_hold']!
 /** With the spread cap lifted, does every book that ends ahead still fall
  *  behind unhedged without its best roll? */
 const offOneMonth = Object.values(spreadOff.depths).every((d) =>
@@ -531,7 +533,7 @@ export function PitchView() {
           <li>
             <strong>Hedge.</strong> A book holds SPY plus a flat {pct(E.dividend_yield_assumed)} dividend accrual
             and spends b of its wealth on each roll’s puts, b = {[...new Set(SPY.hedge.configs.map((c) => c.budget))].map((b) => `${b * 100}%`).join(', ')} (
-            {premiumAtBudget.join(', ')} a year, depending on the rule): at
+            {premiumAtBudget.join(', ')} of wealth a year, before resale proceeds, depending on the rule): at
             each roll, b × current wealth goes into the new puts and the rest is held in SPY. It is marked daily at
             the bid. The yardstick is time-average growth, the annualised
             log return — the one a hedge can be sized on (docs/END_STATE.md §4 Q8) — over one common window,{' '}
@@ -555,7 +557,9 @@ export function PitchView() {
             <strong>P-values.</strong> For one combination, the out-of-sample rolls are resampled {bootReps.toLocaleString('en-US')}{' '}
             times by circular block bootstrap in blocks of {E.block_rolls}; each resample’s statistic is the mean
             return of the rolls the filter took minus the mean of all rolls (a resample in which the filter takes
-            nothing is dropped). The one-sided p is (b + 1) ÷ (R + 1), where b counts resamples at or below zero, so
+            nothing is dropped). For the growth objective each resample instead sums, over the resampled rolls,
+            the per-roll log-growth difference between the filtered book and the spend-matched book, and divides by
+            the out-of-sample years; its interval and p are read off that distribution the same way. The one-sided p is (b + 1) ÷ (R + 1), where b counts resamples at or below zero, so
             no p is ever 0. It is a percentile-bootstrap p — the share of the bootstrap distribution on the wrong side
             of zero — not a test under an imposed null. It approximates one only when the bootstrap distribution is
             roughly symmetric about its centre, which nothing here checks. So the p-values, the count below 0.05 and
@@ -617,7 +621,9 @@ export function PitchView() {
           (every {ev20.phases}th session, refused ones dropped) come out positive. At 15% OOM:{' '}
           {fmtFixed(ev15.mean_roi)} over {ev15.entry_days.toLocaleString('en-US')} sessions ({ev15.refused_days.toLocaleString('en-US')}{' '}
           refused), {ev15.phases_positive} of {ev15.phases}. At 5% OOM, {SPY.every_day['5pct_4w_hold']!.phases_positive} of{' '}
-          {SPY.every_day['5pct_4w_hold']!.phases}.
+          {SPY.every_day['5pct_4w_hold']!.phases}. QQQ, the same study: 20% OOM averages {fmtFixed(qev20.mean_roi)} over{' '}
+          {qev20.entry_days.toLocaleString('en-US')} sessions, {qev20.phases_positive} of {qev20.phases} phases positive; 15% OOM{' '}
+          {fmtFixed(qev15.mean_roi)}, {qev15.phases_positive} of {qev15.phases}.
         </p>
         <p className="pl-note">
           <strong>By period.</strong> 20% OOM held to expiry:{' '}
@@ -631,10 +637,13 @@ export function PitchView() {
         </p>
         <p className="pl-note">
           <strong>QQQ.</strong> {qqqNegative} of {Object.keys(QQQ.standalone).length} rules negative. Its 20% OOM
-          rule’s {fmtFixed(qqq20.mean_roi)} is not evidence against SPY’s one positive rule: none of its monthly
-          rolls paid in the February–March 2020 crash ({plural(qqq20.hits, 'winner', 'winners')}), where SPY’s caught it. Why the two
-          calendars fell differently (QQQ’s starts {qqq20.first_entry}, SPY’s {SPY.standalone['20pct_4w_hold']!.first_entry}, and
-          QQQ’s had {qqq20.fill_skips} refused fills) was not measured. QQQ’s 15% OOM rule made {backX(qqq15.best_roi)} on a roll bought{' '}
+          rule’s {fmtFixed(qqq20.mean_roi)} comes from a monthly calendar (starting {qqq20.first_entry}, with{' '}
+          {qqq20.fill_skips} refused fills) none of whose rolls paid in the February–March 2020 crash (
+          {plural(qqq20.hits, 'winner', 'winners')}), where SPY’s calendar (starting{' '}
+          {SPY.standalone['20pct_4w_hold']!.first_entry}) caught it. That is what the phase study above predicts: only{' '}
+          {qev20.phases_positive} of QQQ’s {qev20.phases} phases and {ev20.phases_positive} of SPY’s {ev20.phases} come out
+          positive, so on both underlyings the evidence counts against the far-OOM held rule, and SPY’s positive
+          sign is a matter of which phase its calendar fell in. QQQ’s 15% OOM rule made {backX(qqq15.best_roi)} on a roll bought{' '}
           {qqq15.best_entry}.
         </p>
       </section>
@@ -656,7 +665,7 @@ export function PitchView() {
                 <th className="num">Growth vs unhedged</th>
                 <th className="num">Budget/roll</th>
                 <th className="num">Worst drawdown</th>
-                <th className="num">Premium/yr</th>
+                <th className="num">Premium spent/yr, % of wealth (gross)</th>
               </tr>
             </thead>
             <tbody>
@@ -766,10 +775,10 @@ export function PitchView() {
                 <th className="num">Winners</th>
                 <th className="num">Best</th>
                 <th className="num">Budget/roll</th>
-                <th className="num">Ends at (× start)</th>
-                <th className="num">vs unhedged (× start)</th>
-                <th className="num">Without best roll</th>
-                <th className="num">Worst drawdown</th>
+                <th className="num">Ends at ×</th>
+                <th className="num">vs unhedged ×</th>
+                <th className="num">w/o best roll</th>
+                <th className="num">Worst DD</th>
               </tr>
             </thead>
             <tbody>
@@ -802,8 +811,8 @@ export function PitchView() {
         </div>
         <p className="pl-note">
           “Ends at” is the book’s wealth on {C08['5pct'].last} as a multiple of its starting wealth; “vs unhedged” is
-          that multiple minus the unhedged book’s, not a rate. “Without best roll” is recomputed only for a book that
-          ends ahead of unhedged; “—” means it did not.
+          that multiple minus the unhedged book’s, not a rate. “w/o best roll” is the same book without its best roll, recomputed only for a book that
+          ends ahead of unhedged; “—” means it did not. “Worst DD” is the book’s worst peak-to-trough drawdown.
         </p>
         {c08Rules
           .filter(([, r]) => r.refused.length > 0)
@@ -984,7 +993,8 @@ export function PitchView() {
           </li>
           <li>
             <strong>Simplifications.</strong> Flat {pct(E.dividend_yield_assumed)} dividend on both arms (no
-            measured dividends in the lake); fractional contracts; early exercise ignored; expiry settled on the
+            measured dividends in the lake); fractional contracts; early exercise ignored, except that a sold put with no acceptable exit bid is
+            credited its exercise value (method, Fills); expiry settled on the
             panel’s close; SPY and QQQ only — no single names, so no survivorship within the sample, but the choice
             of two US index ETFs over a bull market is itself hindsight.
           </li>

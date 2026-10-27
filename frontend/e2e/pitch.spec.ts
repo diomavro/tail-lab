@@ -77,6 +77,19 @@ test('the every-session comparison says how many sessions it could not buy', asy
   )
 })
 
+test('QQQ is read through its own every-session phase study, not set aside', async ({ page }) => {
+  const q20 = EVIDENCE.QQQ.every_day['20pct_4w_hold']!
+  const q15 = EVIDENCE.QQQ.every_day['15pct_4w_hold']!
+  const s20 = EVIDENCE.SPY.every_day['20pct_4w_hold']!
+  const section = page.locator('#pitch-standalone')
+  await expect(section).toContainText(
+    `${q20.entry_days.toLocaleString('en-US')} sessions, ${q20.phases_positive} of ${q20.phases} phases positive`,
+  )
+  await expect(section).toContainText(`15% OOM ${q15.mean_roi.toFixed(2).replace('-', '−')}, ${q15.phases_positive} of ${q15.phases}`)
+  await expect(section).toContainText(`only ${q20.phases_positive} of QQQ’s ${q20.phases} phases and ${s20.phases_positive} of SPY’s`)
+  await expect(section).not.toContainText('not evidence against')
+})
+
 test('a missing 2008 roll month names the weeks with no put, not the month', async ({ page }) => {
   // The put bought before the gap is held to its own expiry; the bare weeks
   // are from then to the next roll date.
@@ -114,6 +127,7 @@ test('names the commit that generated the evidence', async ({ page }) => {
   await expect(page.getByTestId('pitch-code-sha')).toHaveText(EVIDENCE.code.sha.slice(0, 12))
   // The branch commit does not survive a squash merge; the tree hashes do.
   await expect(page.locator('#pitch-reproduce')).toContainText(EVIDENCE.code.tree.src.slice(0, 12))
+  await expect(page.locator('#pitch-reproduce')).toContainText(EVIDENCE.code.tree.scripts.slice(0, 12))
 })
 
 test('the headline still fits the evidence it summarises', () => {
@@ -304,7 +318,7 @@ test('the 2008-09 table states its units, its window and what a dash means', asy
   const c08 = EVIDENCE.crisis_2008
   const section = page.locator('#pitch-2008')
   await expect(section).toContainText(`of its starting wealth (${c08.first} → ${c08['5pct'].last})`)
-  await expect(page.getByTestId('pitch-2008').locator('thead')).toContainText('vs unhedged (× start)')
+  await expect(page.getByTestId('pitch-2008').locator('thead')).toContainText('vs unhedged ×')
   await expect(section).toContainText('“—” means it did not')
 })
 
