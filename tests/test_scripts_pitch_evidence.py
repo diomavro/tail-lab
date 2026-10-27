@@ -685,18 +685,21 @@ def test_the_2008_book_runs_to_the_last_filled_rolls_expiry() -> None:
 
 
 def test_cboe_benchmark_reads_only_the_hedge_window() -> None:
-    days = pd.to_datetime(["2009-12-31", "2010-01-04", "2011-01-04", "2012-01-04"])
+    days = pd.to_datetime(
+        ["2009-12-31", "2010-01-04", "2010-06-01", "2011-01-04", "2011-06-01", "2012-01-04"]
+    )
     cboe = pd.DataFrame(
         [
             {"index_symbol": sym, "trade_date": d, "close": c}
             for sym in ("SPX", "PPUT", "PPUT3M", "VXTH")
-            for d, c in zip(days, [50.0, 100.0, 110.0, 400.0], strict=True)
+            for d, c in zip(days, [50.0, 100.0, 80.0, 110.0, 20.0, 400.0], strict=True)
         ]
     )
     out = pe.cboe_benchmark(cboe, ["2010-01-04", "2011-01-04"])
     assert out["span"] == ["2010-01-04", "2011-01-04"]
     assert out["SPX"]["growth"] == pytest.approx(math.log(1.1) / (365 / 365.25))
-    assert out["VXTH"]["max_dd"] == 0.0
+    # The 100 -> 80 fall inside the window, not the 110 -> 20 one after it.
+    assert out["VXTH"]["max_dd"] == pytest.approx(-0.2)
 
 
 def _timing_combo(gate: str, take_is: list[bool], take_oos: list[bool]) -> object:
@@ -724,6 +727,9 @@ def test_timing_picks_the_winner_in_sample_and_scores_it_out_of_sample(
         _timing_combo("bottom", band(0), band(20)),
         _timing_combo("top", band(20), band(0)),
         _timing_combo("middle", band(12), band(8)),  # +0.2 in sample, -0.2 out
+        # Three in-sample takes, ten out of sample: under MIN_IS_TAKEN in
+        # sample, so ineligible however many it takes out of sample.
+        _timing_combo("sparse", band(0)[:3] + [False] * 27, band(20)),
     ]
     out = pe.timing(combos, np.random.default_rng(0))
     for key in ("roi_diff", "dg"):
@@ -732,8 +738,76 @@ def test_timing_picks_the_winner_in_sample_and_scores_it_out_of_sample(
         assert sel["is"]["roi_diff"] == pytest.approx(1.0)
         assert sel["oos"]["roi_diff"] == pytest.approx(-1.0)
         assert sel["spearman_is_oos"] == pytest.approx(-1.0)
-        assert sel["eligible"] == 3
-        assert sel["share_positive_oos"] == pytest.approx(1 / 3)
+        assert sel["eligible"] == 3, key
+        # Top and middle improved in sample; neither did out of sample.
+        assert (sel["is_positive"], sel["is_positive_oos_positive"]) == (2, 0), key
+        assert sel["null_rotations"] == 29, key
+        # The interval and p are the out-of-sample rolls' alone: there "top"
+        # took the ten worst, so the whole interval is below zero. Pooled with
+        # its in-sample ten best it would centre on zero.
+        assert sel["oos_ci95"][1] < 0, key
+        assert sel["oos_p"] > 0.95, key
+        # Its out-of-sample takes return -1.0 .. -0.1; without the best, -0.6.
+        assert sel["oos_mean_taken_without_best"] == pytest.approx(-0.6), key
+
+
+def test_sign_persistence_counts_only_the_in_sample_improvers() -> None:
+    # A gate and its complement always have opposite-signed return
+    # differences, so "share positive out of sample" over both is one half
+    # whatever the data. Persistence asks only of the in-sample improvers.
+    band = [i >= 20 for i in range(30)]
+    c = _timing_combo("g", band, band)
+    rows = [
+        (c, {"roi_diff": 0.3}, {"roi_diff": 0.1}),
+        (c, {"roi_diff": -0.3}, {"roi_diff": -0.1}),  # its complement: excluded
+        (c, {"roi_diff": 0.2}, {"roi_diff": -0.4}),
+        (c, {"roi_diff": -0.2}, {"roi_diff": 0.4}),  # excluded, though positive out of sample
+    ]
+    out = pe.sign_persistence(rows, "roi_diff")
+    assert (out["is_positive"], out["is_positive_oos_positive"]) == (2, 1)
+
+
+def test_the_persistence_null_rotates_outcomes_against_fixed_choices() -> None:
+    # Out of sample the filter takes the ten best rolls (takes 20..29, convex
+    # returns so no rotation ties the mean). Rotating the outcomes k places
+    # moves other rolls under those choices; count by hand the rotations
+    # that still beat the mean.
+    roi = [(i / 10) ** 1.5 - 1.0 for i in range(30)]
+    take = [i >= 20 for i in range(30)]
+    mean = sum(roi) / 30
+    by_hand = sum(sum(roi[(j - k) % 30] for j in range(20, 30)) / 10 > mean for k in range(1, 30))
+    assert 0 < by_hand < 29
+    days = tuple(str(d.date()) for d in pd.bdate_range("2010-01-04", periods=60))
+    c = pe.Combo(
+        "5pct_8w_sell4w",
+        "best",
+        np.array(roi * 2),
+        np.ones(60),
+        np.array(take * 2),
+        np.array([True] * 30 + [False] * 30),
+        1.0,
+        1.0,
+        days,
+    )
+    for key in ("roi_diff", "dg"):
+        out = pe._persistence_null([c], key, observed=1)
+        assert out == {"null_rotations": 29, "null_at_least_observed": by_hand}, key
+
+
+def test_benjamini_hochberg_counts_raw_p_below_five_percent_and_lists_eight(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Ten tests with set p-values: two below 0.05; 0.05 itself and 0.08 are not.
+    ps = iter([0.01, 0.04, 0.05, 0.08, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7])
+    monkeypatch.setattr(pe, "boot_roi_diff", lambda roi, take, rng: ([0.0, 0.0], next(ps, 0.5)))
+    roi = [-1.0, 2.0] * 15
+    ok = [
+        (_combo(roi, roi, [True, False] * 30, "5pct_8w_sell4w"), {}, {"taken": 15})
+        for _ in range(10)
+    ]
+    out = pe.benjamini_hochberg_oos(ok, np.random.default_rng(0))
+    assert out["p_below_05"] == 2
+    assert [s["oos_p"] for s in out["smallest_p"]] == [0.01, 0.04, 0.05, 0.08, 0.2, 0.3, 0.4, 0.5]
 
 
 def test_every_benjamini_hochberg_pass_runs_at_the_stated_fdr(
@@ -802,10 +876,11 @@ def test_drop_best_leaves_out_the_best_roll_not_the_first() -> None:
 
 
 def test_drawdown_span_is_the_worst_declines_own_peak_and_trough() -> None:
-    # Peak 2 on day 1, trough 0.8 on day 3 (-60%); the later 1.9 never makes
-    # a new peak, so the span is (day 1, day 3), not the global max/min dates.
+    # Peak 2 on day 1, trough 0.8 on day 3 (-60%); the book then rises to a
+    # new high of 3.0 on day 4, as real books do after their troughs. The
+    # span is the decline's own peak (day 1), not the global maximum (day 4).
     idx = pd.bdate_range("2020-01-06", periods=6)
-    w = pd.Series([1.0, 2.0, 1.5, 0.8, 1.9, 0.9], index=idx)
+    w = pd.Series([1.0, 2.0, 1.5, 0.8, 3.0, 2.9], index=idx)
     assert pe.drawdown_span(w) == (str(idx[1].date()), str(idx[3].date()))
 
 
@@ -899,3 +974,80 @@ def test_lifting_the_spread_cap_buys_a_wide_quote_at_its_ask_and_restores_the_ca
     assert off["books"][-1]["terminal"] > off["unhedged"]["terminal"]
     assert off["n_beat"] == 3
     assert pe.marks.MAX_RELATIVE_SPREAD == 0.50
+
+
+def test_standalone_stats_streak_median_ask_and_period_hits() -> None:
+    # A zero return is not a winner, in any period. The streak is the longest
+    # RUN of non-winners (3), not their count (4); the ask is the median
+    # (1% of spot), not the mean (2.2%).
+    df = pd.DataFrame(
+        {
+            "entry": pd.to_datetime(
+                ["2010-02-01", "2010-03-01", "2010-04-01", "2010-05-01", "2010-06-01"]
+            ),
+            "exit": pd.to_datetime(
+                ["2010-03-01", "2010-04-01", "2010-05-01", "2010-06-01", "2010-07-01"]
+            ),
+            "roi": [-1.0, 0.0, -1.0, 2.0, -1.0],
+            "ask": [1.0, 1.0, 1.0, 4.0, 4.0],
+            "spot_entry": [100.0] * 5,
+            "dte": [28] * 5,
+        }
+    )
+    st = pe.standalone_stats(df, np.random.default_rng(0))
+    assert st["longest_losing_streak"] == 3
+    assert st["median_ask_pct_spot"] == pytest.approx(1.0)
+    assert st["by_period"]["2010-2013"]["hits"] == 1
+
+
+def test_only_an_in_the_money_intrinsic_exit_is_counted_as_one() -> None:
+    # Both sales find no qualifying bid. With spot at 80 the 95 put is
+    # credited 15 a share; with spot at 100 it is credited 0 and loses its
+    # premium, which is not an in-the-money exit.
+    def sold(spots: list[float]) -> list[object]:
+        panel = _panel(spots)
+        panel.loc[10, "bid"] = 0.0
+        rolls, _ = pe.run_rolls(
+            pe.market_from_panel(panel, "SPY"),
+            moneyness=5.0,
+            tenor_weeks=4.0,
+            hold_weeks=2.0,
+            start="2020-01-06",
+            end="2020-01-06",
+        )
+        return list(rolls)
+
+    rolls = sold([100.0] * 10 + [80.0] * 15) + sold([100.0] * 25)
+    assert pe.intrinsic_exits(rolls) == {"exits_at_intrinsic": 2, "exits_at_intrinsic_itm": 1}
+
+
+def test_an_every_session_put_expiring_after_the_panel_is_refused_not_settled() -> None:
+    # The only listed expiry is the 21st session but the panel stops at the
+    # 15th: no put can be settled, so none is an entry.
+    mkt = pe.market_from_panel(_panel([100.0] * 15), "SPY")
+    out = pe.every_day_entries(mkt, 5.0, ("2020-01-06", "2020-01-24"))
+    assert out["entry_days"] == 0
+    assert out["refused_days"] == 15
+
+
+def test_the_timing_book_accrues_the_dividend_on_the_underlying() -> None:
+    df = pd.DataFrame(
+        {
+            "entry": pd.to_datetime(["2010-01-04"]),
+            "exit": pd.to_datetime(["2011-01-04"]),
+            "spot_entry": [100.0],
+            "spot_exit": [110.0],
+        }
+    )
+    expected = 1.1 * math.exp(pe.DIV_YIELD * 365 / 365.25)
+    assert pe.underlying_gross(df) == pytest.approx([expected])
+
+
+def test_a_missing_roll_month_leaves_unhedged_only_the_weeks_after_the_last_expiry() -> None:
+    # Roll dates 02-15, 04-18, 05-16: the 02-15 put expires 03-22, so the
+    # book is bare from 03-22 to 04-18 -- not "March".
+    dates = list(pd.to_datetime(["2008-02-15", "2008-04-18", "2008-05-16"]))
+    listed = pd.Series(pd.to_datetime(["2008-03-22", "2008-05-17", "2008-06-21"]), index=dates)
+    assert pe.unhedged_spans(dates, listed) == [
+        {"entry": "2008-02-15", "expiry": "2008-03-22", "next_entry": "2008-04-18"}
+    ]

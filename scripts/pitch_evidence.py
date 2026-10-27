@@ -48,6 +48,7 @@ from __future__ import annotations
 
 import argparse
 import datetime as dt
+import itertools
 import json
 import math
 import subprocess
@@ -107,6 +108,7 @@ PERIODS = {
     "2021-2023": ("2021-01-01", "2023-12-31"),
 }
 IS_END = pd.Timestamp("2016-12-31")
+PHASES = 20  # sessions in a 4-week cycle: the every-session study's phases
 TIMING_BUDGET = 0.005
 MIN_IS_TAKEN = 8
 PANEL_COLUMNS = ["underlying", "quote_date", "expiration", "strike", "bid", "ask", "spot", "iv"]
@@ -483,14 +485,14 @@ def every_day_entries(mkt: Market, m: float, span: tuple[str, str]) -> Json:
         c = 1.0 / (100.0 * f.premium + COMMISSION_PER_CONTRACT)
         rois.append(c * 100.0 * max(f.strike - float(mkt.spot[settle]), 0.0) - 1.0)
     g = pd.Series(rois)
-    means = phase_means(g, 20)
+    means = phase_means(g, PHASES)
     ok = g.dropna()
     return {
         "entry_days": len(ok),
         "refused_days": int(g.isna().sum()),
         "mean_roi": float(ok.mean()),
         "hit_rate": float((ok > 0).mean()),
-        "phases": 20,
+        "phases": PHASES,
         "phases_positive": sum(x > 0 for x in means),
         "phase_min": min(means),
         "phase_max": max(means),
@@ -797,11 +799,7 @@ def timing_combos(
                 daily_paths=False,
             )
             df = rolls_frame(rolls)
-            eq = (
-                df.spot_exit
-                / df.spot_entry
-                * np.exp(DIV_YIELD * (df.exit - df.entry).dt.days / 365.25)
-            ).to_numpy()
+            eq = underlying_gross(df)
             sig = signals(mkt, df, ti)
             combos += rule_combos(f"{int(m)}pct_{sname}", df, sig, eq)
             coverage[f"{int(m)}pct_{sname}"] = float(sig.alpha.notna().mean())
@@ -810,6 +808,14 @@ def timing_combos(
                 file=sys.stderr,
             )
     return combos, coverage
+
+
+def underlying_gross(df: pd.DataFrame) -> np.ndarray:
+    """Each roll's unhedged arm: the underlying's gross return from entry to
+    exit, with the flat dividend accrual."""
+    return (
+        df.spot_exit / df.spot_entry * np.exp(DIV_YIELD * (df.exit - df.entry).dt.days / 365.25)
+    ).to_numpy()
 
 
 def _select(rows: list[tuple[Combo, Json, Json]], key: str) -> list[tuple[Combo, Json, Json]]:
@@ -862,12 +868,54 @@ def timing(combos: list[Combo], rng: np.random.Generator) -> Json:
             "oos": oos_s,
             "oos_ci95": ci,
             "oos_p": p,
-            "share_positive_oos": float(np.mean([_as_float(r[2][key]) > 0 for r in ok])),
+            **sign_persistence(ok, key),
             "spearman_is_oos": _spearman(ok, key),
             "oos_mean_taken_without_best": _mean_without_best(c.roi[o][c.take[o]]),
         }
     out["bh"] = benjamini_hochberg_oos(_select(rows, "roi_diff"), rng)
     return out
+
+
+def sign_persistence(ok: list[tuple[Combo, Json, Json]], key: str) -> Json:
+    """Of the combinations that improved in sample, how many also improved
+    out of sample. NOT the share positive out of sample over all of them:
+    nearly every gate has its complement in the set (<= and >= one
+    threshold; calm and not-calm; crisis and not-crisis), and a gate's
+    return difference has the opposite sign to its complement's, so that
+    share is about one half whatever the data. Persistence is about one half with no signal and rises with
+    one."""
+    pos = [r for r in ok if _as_float(r[1][key]) > 0]
+    observed = sum(_as_float(r[2][key]) > 0 for r in pos)
+    return {
+        "is_positive": len(pos),
+        "is_positive_oos_positive": observed,
+        **_persistence_null([r[0] for r in pos], key, observed),
+    }
+
+
+def _oos_effect(c: Combo, key: str, shift: int) -> float:
+    """A combination's out-of-sample effect with its rolls' outcomes rotated
+    ``shift`` places against its filter's (unmoved) choices."""
+    o = ~c.is_
+    roi, eq, take = np.roll(c.roi[o], shift), np.roll(c.eq[o], shift), c.take[o]
+    return (
+        roi_diff(roi, take) if key == "roi_diff" else float(hedge_diff_terms(eq, roi, take).sum())
+    )
+
+
+def _persistence_null(pos: list[Combo], key: str, observed: int) -> Json:
+    """How often persistence reaches ``observed`` by chance. The combinations
+    share rolls, so their out-of-sample signs move together and the count is
+    far noisier than independent coins. The null rotates every rule's
+    out-of-sample outcomes by the same number of rolls against the filters'
+    choices: that keeps the outcomes' own clustering and the combinations'
+    dependence, and breaks only the link from signal to outcome. Every
+    rotation is used, so no random draw is involved."""
+    if not pos:
+        return {"null_rotations": 0, "null_at_least_observed": 0}
+    shifts = range(1, min(int((~c.is_).sum()) for c in pos))
+    hits = sum(sum(_oos_effect(c, key, k) > 0 for c in pos) >= observed for k in shifts)
+    return {"null_rotations": len(shifts), "null_at_least_observed": int(hits)}
 
 
 def _mean_without_best(roi: np.ndarray) -> float | None:
@@ -1091,6 +1139,7 @@ def crisis_2008(q: pd.DataFrame, cboe: pd.DataFrame) -> Json:
         win.groupby("quote_date").expiration.min() - pd.Series(dates, index=dates)
     ).dt.days
     n_exp = win.groupby("quote_date").expiration.nunique()
+    listed = win.groupby("quote_date").expiration.min()
     out: Json = {
         "roll_dates": len(dates),
         "first": str(dates[0].date()),
@@ -1100,6 +1149,7 @@ def crisis_2008(q: pd.DataFrame, cboe: pd.DataFrame) -> Json:
             set(pd.period_range(*CRISIS_SPAN, freq="M").astype(str))
             - {d.strftime("%Y-%m") for d in dates}
         ),
+        "unhedged_spans": unhedged_spans(dates, listed),
     }
     beat = 0
     for m in DEPTHS:
@@ -1110,6 +1160,17 @@ def crisis_2008(q: pd.DataFrame, cboe: pd.DataFrame) -> Json:
     out["configs"] = len(DEPTHS) * len(BUDGETS)
     out["spread_guard_off"] = crisis_without_spread_guard(q, spx, dates)
     return out
+
+
+def unhedged_spans(dates: Sequence[pd.Timestamp], listed: pd.Series) -> list[Json]:
+    """Where a missing roll date leaves the book with no put: the roll before
+    the gap is held to ITS expiry, and nothing is held from then until the
+    next roll date. A missing month is therefore not itself unhedged."""
+    return [
+        {"entry": str(t.date()), "expiry": str(listed[t].date()), "next_entry": str(t2.date())}
+        for t, t2 in itertools.pairwise(dates)
+        if t2 > listed[t]
+    ]
 
 
 def _crisis_depth(q: pd.DataFrame, spx: pd.Series, m: float, dates: list[pd.Timestamp]) -> Json:
@@ -1191,8 +1252,7 @@ def standalone_and_hedge(
             )
             st = standalone_stats(rolls_frame(rolls), rng)
             st["fill_skips"] = skips
-            st["exits_at_intrinsic"] = sum(r.exit_at_intrinsic for r in rolls)
-            st["exits_at_intrinsic_itm"] = sum(r.exit_at_intrinsic and r.roi > -1.0 for r in rolls)
+            st.update(intrinsic_exits(rolls))
             rules[key] = st
             rolls_by_rule[key] = rolls
             print(
@@ -1205,6 +1265,16 @@ def standalone_and_hedge(
         "hedge": hedge(mkt, rolls_by_rule),
         "every_day": {f"{int(m)}pct_4w_hold": every_day_entries(mkt, m, span) for m in DEPTHS},
         "episodes_10pct": drawdown_episodes(mkt.spot[span[0] : span[1]], EPISODE_DD),
+    }
+
+
+def intrinsic_exits(rolls: Sequence[Roll]) -> Json:
+    """Sold rolls credited intrinsic for want of a qualifying exit bid, and
+    of those the ones in the money (an out-of-the-money one is credited 0
+    and loses exactly its premium)."""
+    return {
+        "exits_at_intrinsic": sum(r.exit_at_intrinsic for r in rolls),
+        "exits_at_intrinsic_itm": sum(r.exit_at_intrinsic and r.roi > -1.0 for r in rolls),
     }
 
 
