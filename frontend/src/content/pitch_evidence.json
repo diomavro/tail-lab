@@ -1,11 +1,11 @@
 {
  "as_of": "2026-10-27",
  "code": {
-  "sha": "c8f7e64eaefe37346594e3cfd61fc8c73787eb67",
+  "sha": "13ef287e4fee73b0bcba43701bc426e69c031b8e",
   "tree": {
    "src": "bf06dc927579ecc949411d60665fee72a5134a04"
   },
-  "script": "5d45c830f35cba32d2217d9a47db68bda7f05be7",
+  "script": "28ea10a9f35a3c4351c32c9d8e2c6583abe49a44",
   "dirty": false
  },
  "dividend_yield_assumed": 0.019,
@@ -3156,12 +3156,12 @@
     "mean_roi_all": -0.30404326924508085
    },
    "oos_ci95": [
-    -0.0018622063070046122,
-    0.009740614590749583
+    -0.0011805088913095564,
+    0.009751920547050858
    ],
-   "oos_p": 0.08819118088191182,
-   "oos_p_null": 0.0913908609139086,
-   "oos_skew": 0.08833953191190975,
+   "oos_p": 0.0994900509949005,
+   "oos_p_null": 0.0871912808719128,
+   "oos_skew": 0.3343416684302984,
    "is_positive": 181,
    "is_positive_oos_positive": 113,
    "null_rotations": 79,
