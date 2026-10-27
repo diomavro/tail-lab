@@ -111,10 +111,13 @@ jobs:
                single most valuable thing you can do is refactor one of those functions and
                **lower the corresponding number in the same PR**. That is the loop closing:
                the limit only ever goes down, and you are what pushes it.
+
             2. Duplication in `research/` and `api/`. Note that one adapter per dataset in
                `ingestion/` is a deliberate, sanctioned near-duplicate — leave it alone.
+
             3. Dead code: exported names nothing imports, parameters nothing passes, branches
                nothing reaches, an interface with one implementation and no second one coming.
+
             4. Divergence between `ARCHITECTURE.md` and the real tree. You may not edit
                ARCHITECTURE.md (constitution), but you CAN move the code to match what it says,
                and that is usually the better direction anyway.

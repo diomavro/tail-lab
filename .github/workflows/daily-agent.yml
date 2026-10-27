@@ -200,6 +200,7 @@ jobs:
                    so it drops out of the open list. If an issue needs a human decision or a
                    constitution change, leave it open (do NOT resolve it) and say why in the PR
                    body or as a note — resolving is a claim that it's actually fixed.
+
             2. Check the forward collection is alive, BEFORE picking any work:
                  curl -s https://tail-lab.fly.dev/api/ingest/option-chain/status
                This is the one dataset that cannot be backfilled — nobody sells a retroactive
@@ -208,6 +209,7 @@ jobs:
                daily sweep is broken, and diagnosing it is the highest-value thing available
                to you today — ahead of whatever is at the top of `AGENT_TODO.md`. Say so in
                the PR. If it is fresh, note the last session and move on.
+
             2a. Read what open agent PRs already cover:
                   cat "$RUNNER_TEMP/open-prs.txt"
                 Each entry shows a PR's title, draft flag, files, and its `Feedback-issues:` and
@@ -218,6 +220,7 @@ jobs:
                 claimed fixed by a PR Dio merged: check on main that it really is fixed; if so,
                 resolve it with the step-1 call instead of fixing it again, and if not, treat it
                 as open.
+
             2b. If `$SCRATCH_RUN` is set, skip this step (verification runs must not act on
                 real advisories). Otherwise, pick up the design reviewer's unaddressed findings:
                   gh pr list --state merged --limit 6 --json number,headRefName \
@@ -234,6 +237,7 @@ jobs:
                 it and say so; otherwise add it to `AGENT_TODO.md` so it stops being
                 invisible. Ignoring one silently is the failure mode this step exists to
                 end. A finding already fixed needs nothing — check before you act.
+
             3. Read `docs/AGENT_MISSION.md`, `README.md`, `ARCHITECTURE.md`, `docs/STANDARDS.md`,
                `docs/END_STATE.md` and `AGENT_TODO.md`. `END_STATE.md` §4 is where the
                documented research questions live — step 4 asks you to point at one, so you
@@ -241,6 +245,7 @@ jobs:
                (`docs/AGENT_MISSION.md` §"The exception: work that expires"): work whose cost
                rises the longer it waits, or whose window closes, outranks work with a bigger
                payoff today. Forward data collection is the clear case.
+
             4. Choose the SINGLE highest-value item — an open `issue` from step 1 that fits this
                run, or otherwise the top of `AGENT_TODO.md` — that (a) advances a documented
                research question or measurably sharpens the put-buying cockpit, AND (b) needs NO
@@ -248,6 +253,7 @@ jobs:
                (that is the human's queue). If nothing clears the value bar today, STOP and open
                nothing — proposing nothing is a valid, expected outcome. Either way, end with the
                decision note in step 8.
+
             5. Implement exactly that ONE item — minimal, faithful, extending the proven
                walking-skeleton patterns (do NOT invent new architecture). If it adds or
                renames anything a human reads — a view, a tile, a column header, a
@@ -260,6 +266,7 @@ jobs:
                module dependency rule (import-linter enforces it). Check the item off in
                `AGENT_TODO.md` (or resolve the feedback issue per step 1). If you discover a
                real-world/account blocker, append it to `HUMAN_TODO.md` and stop that thread.
+
             6. VALIDATE before proposing — run exactly what CI runs, and do not open a red PR:
                  ruff check src tests
                  ruff format --check src tests
@@ -274,11 +281,13 @@ jobs:
                backgrounded. Do not start a dev server or `make api` at all; `npm run e2e`
                starts its own.
                If any of these fail, fix it or reduce the change until they pass. Never open a red PR.
+
             6b. REVIEW LOOP — `docs/AGENT_MISSION.md` §Workflow steps 3a and 3b, exactly: commit
                locally (do not push), run the three `adversarial-reviewer` subagents in parallel,
                re-check and fix, at most two rounds, inside the `$START` time budget. It decides
                whether step 7's PR is a draft. Wait for every reviewer's result before you end
                your turn: ending it while one runs ends the whole job with nothing pushed.
+
             7. Push and open ONE pull request, in that order and only now:
                  git push -u origin HEAD && gh pr create --assignee diomavro --body-file "$RUNNER_TEMP/pr-body.md" ...
                (if `gh pr create` fails, `git push origin --delete <branch>`). The branch is named
@@ -308,6 +317,7 @@ jobs:
                quietly widen everything else (`docs/adr/0022`, `docs/adr/0030`).
                Do NOT edit those — if a change needs one, describe it in the PR body / propose an
                ADR for a human.
+
             8. DECISION NOTE — your final message, every run, whatever happened. The next workflow
                step publishes it in this run's summary, and this repo is PUBLIC: never quote a token
                or any secret, and refer to feedback ONLY by its id and kind -- never quote,
