@@ -1703,7 +1703,9 @@ def test_a_local_refusal_names_misrouted_chains_apart_from_missing_ones(
         _ingest_with_fetch(store, names, payloads=payloads)
 
     message = str(refused.value)
-    assert "Missing: (none)" in message
+    assert "Missing" not in message.replace("not missing", "")
+    assert "Re-run before" not in message
+    assert "DEFAULT_SNAPSHOT_SYMBOLS" not in message
     assert "Misrouted, not missing: FXI, HYG, TLT" in message
 
 

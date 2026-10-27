@@ -547,6 +547,7 @@ def test_call_rows_posted_to_the_put_route_are_refused_whole(
 
     assert resp.status_code == 422
     assert "other wing" in resp.json()["detail"]
+    assert resp.json()["detail"].endswith(f"nothing written to {DATASET}")
     day = dt.date(2026, 10, 26)
     assert not store.bronze_partition_exists(DATASET, day)
     assert not store.bronze_partition_exists(QUARANTINE_DATASET, day)
@@ -560,6 +561,7 @@ def test_put_rows_posted_to_the_call_route_are_refused_whole(
     resp = _post_calls(client, _body(*puts))
 
     assert resp.status_code == 422
+    assert resp.json()["detail"].endswith(f"nothing written to {CALL_DATASET}")
     day = dt.date(2026, 8, 26)
     assert not store.bronze_partition_exists(CALL_DATASET, day)
     assert not store.bronze_partition_exists(CALL_QUARANTINE_DATASET, day)
@@ -679,7 +681,9 @@ def test_a_refusal_names_misrouted_chains_apart_from_missing_ones(
 
     assert resp.status_code == 409
     detail = resp.json()["detail"]
-    assert "Missing: (none)" in detail
+    assert "Missing" not in detail.replace("not missing", "")
+    assert "Re-run before" not in detail
+    assert "DEFAULT_SNAPSHOT_SYMBOLS" not in detail
     assert "Misrouted, not missing: FXI, HYG, TLT" in detail
     assert not store.bronze_partition_exists(DATASET, dt.date(2026, 8, 26))
 

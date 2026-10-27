@@ -228,15 +228,20 @@ def test_unsettled_calls_after_failed_puts_claim_no_disagreement(
     assert "neither wing landed" in err
 
 
+@pytest.mark.parametrize(
+    "drop",
+    [http.client.IncompleteRead(b""), ConnectionResetError(104, "Connection reset by peer")],
+    ids=["incomplete-read", "connection-reset"],
+)
 def test_a_refusal_whose_body_cannot_be_read_still_sends_the_calls(
-    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], drop: Exception
 ) -> None:
     """The connection can drop while the error body is read; that must read
     as a failed put wing, not a traceback that skips the call POST."""
 
     class _Dropping(io.BytesIO):
         def read(self, *_a: object) -> bytes:
-            raise http.client.IncompleteRead(b"")
+            raise drop
 
     exc = urllib.error.HTTPError("http://x", 502, "bad", {}, _Dropping())  # type: ignore[arg-type]
     sent = _server(monkeypatch, _raise(exc), _ok())

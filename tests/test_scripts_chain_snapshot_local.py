@@ -26,7 +26,9 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
+import pyarrow as pa
 import pytest
+from deltalake.exceptions import DeltaError
 
 _SPEC = importlib.util.spec_from_file_location(
     "chain_snapshot_local", Path(__file__).resolve().parents[1] / "scripts" / "chain_snapshot.py"
@@ -360,12 +362,21 @@ def test_local_neither_wing_landing_never_says_the_puts_landed(
     assert "puts landed" not in err
 
 
+_LAKE_FAILURES = [
+    OSError("disk full"),
+    DeltaError("schema mismatch"),
+    pa.ArrowInvalid("bad"),
+]
+
+
+@pytest.mark.parametrize("lake_error", _LAKE_FAILURES, ids=["os", "delta", "arrow"])
 def test_local_a_put_lake_write_failure_still_lands_the_calls(
-    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], lake_error: Exception
 ) -> None:
     """``LAKE_WRITE_ERRORS`` used to escape ``_run_local`` as a traceback,
-    which would now also skip the call ingest."""
-    seen = _local(monkeypatch, _local_raise(OSError("disk full")), _Result)
+    which would now also skip the call ingest. One member of each family:
+    the 2026-09-23 SchemaMismatchError is a DeltaError, not an OSError."""
+    seen = _local(monkeypatch, _local_raise(lake_error), _Result)
     assert _run_local() == 1
     assert [kw["right"] for kw in seen] == ["P", "C"]
     assert "::error::puts:" in capsys.readouterr().err

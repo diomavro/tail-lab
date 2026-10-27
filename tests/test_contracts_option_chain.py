@@ -284,6 +284,14 @@ def test_misrouted_is_more_than_a_fifth_of_one_symbols_signed_deltas(
     assert WINGS["P"].split(frame).misrouted == (("SPY",) if misrouted else ())
 
 
+def test_misrouted_symbols_are_named_sorted_not_in_body_order() -> None:
+    """The tuple is what the route's ``symbols_misrouted``, the log line and
+    the floor's refusal print; a body need not arrive alphabetised."""
+    zzz = [_row(underlying="ZZZ", strike=80.0 + i, delta=0.3) for i in range(3)]
+    aaa = [_row(underlying="AAA", strike=80.0 + i, delta=0.3) for i in range(3)]
+    assert WINGS["P"].split(_frame(*zzz, *aaa)).misrouted == ("AAA", "ZZZ")
+
+
 def test_one_symbols_wrong_signs_cost_that_symbol_and_no_other() -> None:
     """The share is per SYMBOL. Pooled over a body, one glitching chain among
     many is a small share, and refusing the body whole lost the session on

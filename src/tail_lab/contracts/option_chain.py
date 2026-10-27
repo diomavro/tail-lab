@@ -530,14 +530,21 @@ def require_enough_symbols(
         if misrouted
         else ""
     )
+    # The re-run advice is for recoverable losses only: when every shortfall
+    # is misrouted, a re-run repeats it and the names are not dead.
+    rerun = (
+        ""
+        if misrouted and not unquoted
+        else f" Missing: {', '.join(unquoted) or '(unknown)'}. "
+        "Re-run before the next US open -- and if the same names fail every day they are "
+        "delisted or dead, and belong out of DEFAULT_SNAPSHOT_SYMBOLS rather than "
+        "blocking every future session."
+    )
     raise IncompleteSweepError(
         f"only {responded} of {requested} chains returned usable quotes for session "
         f"{session.isoformat()} (need {required}); refusing to create the partition, "
-        "because bronze is immutable and a partial session can never be completed. "
-        f"Missing: {', '.join(unquoted) if unquoted else '(none)' if misrouted else '(unknown)'}. "
-        "Re-run before the next US open -- and if the same names fail every day they are "
-        "delisted or dead, and belong out of DEFAULT_SNAPSHOT_SYMBOLS rather than "
-        f"blocking every future session.{wrong_wing}"
+        "because bronze is immutable and a partial session can never be completed."
+        f"{rerun}{wrong_wing}"
     )
 
 
