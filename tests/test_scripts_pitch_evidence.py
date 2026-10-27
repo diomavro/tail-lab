@@ -251,17 +251,31 @@ def test_lagged_reads_the_session_before_entry_not_the_entry_day() -> None:
     assert pe.lagged(vix, idx[0]) is None
 
 
-def test_a_later_rate_vintage_never_replaces_the_first() -> None:
+def test_the_bill_rate_is_what_fred_had_published_before_the_entry_day() -> None:
+    # 01-06 is first printed 01-07 (1.5) and revised 01-09 (9.0); 01-07 is
+    # first printed only on 01-10. Keyed by observation date, an entry on
+    # 01-08 would read 01-07's 2.0, three days before anyone could. A
+    # 01-12 revision of the OLDER 01-06 does not displace the newer 01-07.
     rates = pd.DataFrame(
         {
-            "series_id": ["DGS3MO", "DGS3MO", "DGS10"],
-            "obs_date": pd.to_datetime(["2020-01-06"] * 3),
-            "vintage_date": pd.to_datetime(["2020-01-09", "2020-01-07", "2020-01-07"]),
-            "value": [9.0, 1.5, 4.0],
+            "series_id": ["DGS3MO", "DGS3MO", "DGS3MO", "DGS3MO", "DGS10"],
+            "obs_date": pd.to_datetime(
+                ["2020-01-06", "2020-01-06", "2020-01-07", "2020-01-06", "2020-01-06"]
+            ),
+            "vintage_date": pd.to_datetime(
+                ["2020-01-09", "2020-01-07", "2020-01-10", "2020-01-12", "2020-01-06"]
+            ),
+            "value": [9.0, 1.5, 2.0, 7.0, 4.0],
         }
     )
-    rate = pe.first_vintage_rate(rates)
-    assert rate.tolist() == [pytest.approx(0.015)]  # the 2020-01-07 print, not the revision
+    v = pe.rate_vintages(rates)
+    days = ("2020-01-07", "2020-01-08", "2020-01-10", "2020-01-11", "2020-01-13")
+    at = {d: pe.rate_known_before(v, pd.Timestamp(d)) for d in days}
+    assert at["2020-01-07"] is None  # the 01-07 print is not yet out at the 01-07 entry
+    assert at["2020-01-08"] == pytest.approx(0.015)  # first print, not the later revision
+    assert at["2020-01-10"] == pytest.approx(0.09)  # by 01-10 the revision is public
+    assert at["2020-01-11"] == pytest.approx(0.02)
+    assert at["2020-01-13"] == pytest.approx(0.02)  # the newest observation, not the newest print
 
 
 def _roll_frame(entries: list[str], roi: list[float]) -> pd.DataFrame:
@@ -424,7 +438,9 @@ def test_put_richness_is_implied_vol_over_vix_in_decimal() -> None:
         vix=pd.Series([20.0, 99.0], index=[day_before, SESSIONS[1]]),
         vix_z=pd.Series([0.5], index=[day_before]),
         regime=pd.Series(["elevated"], index=[day_before]),
-        rate=pd.Series([0.01], index=[day_before]),
+        rate=pd.DataFrame(
+            {"obs_date": [day_before], "vintage_date": [day_before], "value": [0.01]}
+        ),
     )
     sig = pe.signals(mkt, df, ti)
     from tail_lab.research.skew import implied_vol_put
@@ -781,7 +797,7 @@ def test_timing_picks_the_winner_in_sample_and_scores_it_out_of_sample(
         assert sel["eligible"] == 3, key
         # Top and middle improved in sample; neither did out of sample.
         assert (sel["is_positive"], sel["is_positive_oos_positive"]) == (2, 0), key
-        assert sel["null_rotations"] == 29, key
+        assert sel["null_rotations"] == 30 - 2 * pe.BLOCK + 1, key  # |shift| >= one block
         # The interval and p are the out-of-sample rolls' alone: there "top"
         # took the ten worst, so the whole interval is below zero. Pooled with
         # its in-sample ten best it would centre on zero.
@@ -815,8 +831,11 @@ def test_the_persistence_null_rotates_outcomes_against_fixed_choices() -> None:
     roi = [(i / 10) ** 1.5 - 1.0 for i in range(30)]
     take = [i >= 20 for i in range(30)]
     mean = sum(roi) / 30
-    by_hand = sum(sum(roi[(j - k) % 30] for j in range(20, 30)) / 10 > mean for k in range(1, 30))
-    assert 0 < by_hand < 29
+    # Rotations within one block of zero (mod 30) leave clustered outcomes
+    # nearly where they were, so they are not a null and are not used.
+    shifts = range(pe.BLOCK, 30 - pe.BLOCK + 1)
+    by_hand = sum(sum(roi[(j - k) % 30] for j in range(20, 30)) / 10 > mean for k in shifts)
+    assert 0 < by_hand < len(shifts)
     days = tuple(str(d.date()) for d in pd.bdate_range("2010-01-04", periods=60))
     c = pe.Combo(
         "5pct_8w_sell4w",
@@ -831,7 +850,7 @@ def test_the_persistence_null_rotates_outcomes_against_fixed_choices() -> None:
     )
     for key in ("roi_diff", "dg"):
         out = pe._persistence_null([c], key, observed=1)
-        assert out == {"null_rotations": 29, "null_at_least_observed": by_hand}, key
+        assert out == {"null_rotations": len(shifts), "null_at_least_observed": by_hand}, key
 
 
 def test_the_growth_null_rotates_each_rolls_index_move_with_its_put() -> None:
@@ -843,7 +862,7 @@ def test_the_growth_null_rotates_each_rolls_index_move_with_its_put() -> None:
     b = pe.TIMING_BUDGET
     roi = [(i / 10) ** 1.5 - 1.0 for i in range(30)]
     eq = [0.7 if r > 2.5 else 1.01 for r in roi]
-    take = [i % 3 == 0 for i in range(30)]
+    take = [i % 3 != 0 for i in range(30)]
     share = sum(take) / 30
 
     def dg(k: int, rotate_eq: bool) -> float:
@@ -855,9 +874,10 @@ def test_the_growth_null_rotates_each_rolls_index_move_with_its_put() -> None:
             total -= math.log((1 - b * share) * e + b * share * (1 + r))
         return total
 
-    by_hand = sum(dg(k, True) > 0 for k in range(1, 30))
+    shifts = range(pe.BLOCK, 30 - pe.BLOCK + 1)
+    by_hand = sum(dg(k, True) > 0 for k in shifts)
     # The fixture can tell the two apart: rotating roi alone counts differently.
-    assert by_hand != sum(dg(k, False) > 0 for k in range(1, 30))
+    assert by_hand != sum(dg(k, False) > 0 for k in shifts)
     days = tuple(str(d.date()) for d in pd.bdate_range("2010-01-04", periods=60))
     c = pe.Combo(
         "5pct_8w_sell4w",
@@ -871,7 +891,7 @@ def test_the_growth_null_rotates_each_rolls_index_move_with_its_put() -> None:
         days,
     )
     out = pe._persistence_null([c], "dg", observed=1)
-    assert out == {"null_rotations": 29, "null_at_least_observed": by_hand}
+    assert out == {"null_rotations": len(shifts), "null_at_least_observed": by_hand}
 
 
 def test_benjamini_hochberg_counts_raw_p_below_five_percent_and_lists_eight(

@@ -573,7 +573,7 @@ class TimingInputs:
     vix: pd.Series
     vix_z: pd.Series
     regime: pd.Series
-    rate: pd.Series
+    rate: pd.DataFrame  # DGS3MO vintages: obs_date, vintage_date, value (decimal)
     alpha_cache: dict[pd.Timestamp, float] = field(default_factory=dict)
 
 
@@ -586,14 +586,24 @@ def lagged(series: pd.Series, t: pd.Timestamp) -> object:
 def timing_inputs(vix_bronze: pd.DataFrame, rates: pd.DataFrame) -> TimingInputs:
     gold = silver_to_gold(bronze_to_silver(vix_bronze)).set_index("date")
     labels = pd.Series(classify_vix_series(gold["close"].tolist()), index=gold.index)
-    return TimingInputs(gold["close"], gold["z_score"], labels, first_vintage_rate(rates))
+    return TimingInputs(gold["close"], gold["z_score"], labels, rate_vintages(rates))
 
 
-def first_vintage_rate(rates: pd.DataFrame) -> pd.Series:
-    """DGS3MO as a decimal, one value per observation date: its FIRST vintage,
-    which is what was known at the time (a later revision is look-ahead)."""
-    r = rates[rates.series_id == "DGS3MO"].sort_values(["obs_date", "vintage_date"])
-    return r.drop_duplicates("obs_date", keep="first").set_index("obs_date")["value"] / 100.0
+def rate_vintages(rates: pd.DataFrame) -> pd.DataFrame:
+    """DGS3MO's vintages as decimals, sorted so the last row of any prefix
+    by vintage is the newest observation in its newest print."""
+    r = rates.loc[rates.series_id == "DGS3MO", ["obs_date", "vintage_date", "value"]]
+    r = r.assign(value=r["value"] / 100.0)
+    return r.sort_values(["obs_date", "vintage_date"]).reset_index(drop=True)
+
+
+def rate_known_before(vintages: pd.DataFrame, t: pd.Timestamp) -> object:
+    """The bill rate as published strictly BEFORE ``t``: the newest
+    observation among vintages dated before ``t``, in its newest such print.
+    Filtering on the observation date instead would read a value FRED had
+    not yet published (first vintages trail their observation by 0-6 days)."""
+    known = vintages[vintages.vintage_date < t]
+    return known["value"].iloc[-1] if len(known) else None
 
 
 def _alpha_anchor(mkt: Market, t: pd.Timestamp) -> tuple[Anchor, pd.DataFrame] | None:
@@ -646,15 +656,16 @@ def _as_float(x: object) -> float:
 
 def signals(mkt: Market, df: pd.DataFrame, ti: TimingInputs) -> pd.DataFrame:
     """Every signal is known at the entry close or earlier: VIX, its stretch
-    and the regime from the day BEFORE entry; the chain signals from the entry
-    session's own close, the same close the put is bought at."""
+    and the regime from the day BEFORE entry; the bill rate as published
+    before the entry day; the chain signals from the entry session's own
+    close, the same close the put is bought at."""
     s = pd.DataFrame(index=df.index)
     s["vix_lvl"] = [_as_float(lagged(ti.vix, t)) for t in df.entry]
     s["vix_z"] = [_as_float(lagged(ti.vix_z, t)) for t in df.entry]
     s["regime"] = [lagged(ti.regime, t) for t in df.entry]
     rich = []
     for r, v in zip(df.itertuples(), s["vix_lvl"], strict=True):
-        rate = _as_float(lagged(ti.rate, r.entry))
+        rate = _as_float(rate_known_before(ti.rate, r.entry))
         iv = implied_vol_put(
             r.ask,
             spot=r.spot_entry,
@@ -914,10 +925,13 @@ def _persistence_null(pos: list[Combo], key: str, observed: int) -> Json:
     out-of-sample outcomes by the same number of rolls against the filters'
     choices: that keeps the outcomes' own clustering and the combinations'
     dependence, and breaks only the link from signal to outcome. Every
-    rotation is used, so no random draw is involved."""
+    rotation at least one bootstrap block from zero (mod n) is used, so no
+    random draw is involved: outcomes cluster, so a rotation by a few rolls
+    either way leaves the alignment nearly intact and is no null."""
     if not pos:
         return {"null_rotations": 0, "null_at_least_observed": 0}
-    shifts = range(1, min(int((~c.is_).sum()) for c in pos))
+    n = min(int((~c.is_).sum()) for c in pos)
+    shifts = range(BLOCK, n - BLOCK + 1)
     hits = sum(sum(_oos_effect(c, key, k) > 0 for c in pos) >= observed for k in shifts)
     return {"null_rotations": len(shifts), "null_at_least_observed": int(hits)}
 

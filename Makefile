@@ -197,7 +197,7 @@ delta-strike-gap:
 # rewrites the Pitch tab's aggregate figures. Never writes to the lake; commit
 # the JSON it produces. docs/adr/0021 (2026-10-27 amendment).
 pitch-evidence:
-	env -u PYTHONPATH $(VENV)/bin/python scripts/pitch_evidence.py $(if $(AS_OF),--as-of $(AS_OF))
+	env -u PYTHONPATH PYTHONPATH=$(CURDIR)/src $(VENV)/bin/python scripts/pitch_evidence.py $(if $(AS_OF),--as-of $(AS_OF))
 
 ingest-credit:
 	env -u PYTHONPATH $(VENV)/bin/python -c "from tail_lab.ingestion.credit import ingest_credit; from tail_lab.config import get_lake_store, get_settings; from tail_lab.observability import configure_logging; configure_logging(); s = [x.upper() for x in '$(SERIES)'.split(',')] if '$(SERIES)' else None; r = ingest_credit(get_lake_store(), s, api_key=get_settings().fred_api_key); print(f'committed {r.valid_rows} rows for {len(r.series_ids)} series -> {r.bronze_path} ({r.quarantined_rows} quarantined)')"
