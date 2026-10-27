@@ -1,4 +1,4 @@
-import { EVIDENCE as E, LIVE, gateLabel, ruleLabel, ruleShort, type Standalone } from '../../../content/pitch'
+import { EVIDENCE as E, LIVE, gateLabel, ruleLabel, ruleShort, type EveryDay, type Standalone } from '../../../content/pitch'
 import { ConceptInfo } from '../ConceptInfo'
 import { fmtFixed } from '../format'
 
@@ -132,6 +132,37 @@ const notCrisisSmallest = T.bh.smallest_p.filter((x) => x.gate === 'regime=not_c
 const notCrisisEverySold =
   notCrisisSmallest.length === T.bh.smallest_p.length &&
   new Set(notCrisisSmallest.map((x) => x.rule)).size === soldRules.length
+/** In sample, the not-crisis filter on the same rules: how many it helped,
+ *  the range of the lift, and the distinct dates it skipped. */
+const notCrisisIs = {
+  helped: notCrisisSmallest.filter((x) => (x.is.roi_diff ?? 0) > 0).length,
+  lo: Math.min(...notCrisisSmallest.map((x) => x.is.roi_diff ?? 0)),
+  hi: Math.max(...notCrisisSmallest.map((x) => x.is.roi_diff ?? 0)),
+  perTest: Math.max(...notCrisisSmallest.map((x) => x.is_skipped.length)),
+  skipped: [...new Set(notCrisisSmallest.flatMap((x) => x.is_skipped))].sort(),
+}
+/** Every-session refusals in words, largest first. */
+const GUARD_WORDS: Record<string, string> = {
+  strike: 'had no listed strike within 1pp of the depth',
+  spread: 'quoted a spread over the cap',
+  no_bid: 'had no bid',
+  no_expiry: 'listed no expiry 28 days out',
+  no_quotes: 'had no quotes',
+  expiry_beyond_panel: 'would have held a put expiring after the panel ends',
+  other: 'were refused by another guard',
+}
+function refusalWords(ev: EveryDay): string {
+  return Object.entries(ev.refused_by_guard)
+    .sort((a, b) => b[1] - a[1])
+    .map(([g, n]) => `${n.toLocaleString('en-US')} ${GUARD_WORDS[g] ?? g}`)
+    .join(', ')
+}
+/** Strike-guard refusals from 2013 through 2019. */
+function strikeRefused1319(ev: EveryDay): number {
+  return Object.entries(ev.strike_refused_by_year)
+    .filter(([y]) => y >= '2013' && y <= '2019')
+    .reduce((a, [, n]) => a + n, 0)
+}
 const qqq20 = QQQ.standalone['20pct_4w_hold']!
 const qqq15 = QQQ.standalone['15pct_4w_hold']!
 /** "a return of +227.5 on its premium (228.5× the premium back)": the page
@@ -144,6 +175,7 @@ const ev20 = SPY.every_day['20pct_4w_hold']!
 const ev15 = SPY.every_day['15pct_4w_hold']!
 const qev20 = QQQ.every_day['20pct_4w_hold']!
 const qev15 = QQQ.every_day['15pct_4w_hold']!
+const ev20strike = ev20.refused_by_guard.strike ?? 0
 /** With the spread cap lifted, does every book that ends ahead still fall
  *  behind unhedged without its best roll? */
 const offOneMonth = Object.values(spreadOff.depths).every((d) =>
@@ -167,6 +199,17 @@ const premiumAtBudget = [...new Set(SPY.hedge.configs.map((c) => c.budget))].map
 })
 const alphaRefused = [1 - T.alpha_coverage[1]!, 1 - T.alpha_coverage[0]!].map((x) => Math.round(x * 100))
 
+/** The best roll and its entry day -- or "—" when every roll lost its whole
+ *  premium: then all tie at −1.0 and the first one's date would mean nothing. */
+function BestRoll({ roi, entry }: { roi: number; entry: string }) {
+  if (roi <= -1) return <>—</>
+  return (
+    <>
+      {fmtFixed(roi, 1)} <span className="dimmer">{entry}</span>
+    </>
+  )
+}
+
 function StandaloneRow({ rule, s }: { rule: string; s: Standalone }) {
   return (
     <tr>
@@ -176,7 +219,7 @@ function StandaloneRow({ rule, s }: { rule: string; s: Standalone }) {
       <td className="num nowrap">{ci(s.mean_roi_ci95)}</td>
       <td className="num">{s.hits}</td>
       <td className="num nowrap">
-        {fmtFixed(s.best_roi, 1)} <span className="dimmer">{s.best_entry}</span>
+        <BestRoll roi={s.best_roi} entry={s.best_entry} />
       </td>
       <td className="num">{s.median_ask_pct_spot.toFixed(2)}%</td>
       <td className="num">{s.fill_skips}</td>
@@ -634,7 +677,8 @@ export function PitchView() {
         <h3>1. Buying puts on their own</h3>
         <p className="pl-note">
           Return per dollar of premium: −1.00 means every dollar lost. “Best” is the single best roll’s return on
-          premium and the day it was bought (+2.0 is three times the premium back). “Median ask” is the typical
+          premium and the day it was bought (+2.0 is three times the premium back); “—” when every roll lost its whole
+          premium, so no roll is best. “Median ask” is the typical
           price paid, as a share of spot. “Refused” counts sessions where no listed put passed the guards.
         </p>
         <p className="pl-pitch-scrollhint">The table scrolls sideways →</p>
@@ -664,11 +708,13 @@ export function PitchView() {
           session instead of on a monthly cycle averages {fmtFixed(ev20.mean_roi)} over the{' '}
           {ev20.entry_days.toLocaleString('en-US')} sessions that could buy one (overlapping); the other{' '}
           {ev20.refused_days.toLocaleString('en-US')} of {(ev20.entry_days + ev20.refused_days).toLocaleString('en-US')}{' '}
-          were refused by the same spread and bid guards that set the monthly calendar, or held a put expiring after
-          the panel ends. Only {ev20.phases_positive} of {ev20.phases} ways to phase a {ev20.phases}-session cycle
+          could not buy one: {refusalWords(ev20)}. Of the {ev20strike.toLocaleString('en-US')} with no strike that deep,{' '}
+          {strikeRefused1319(ev20).toLocaleString('en-US')} fall in 2013–2019, years when strikes 20% below spot were
+          often not listed. So refusal is not random: it is concentrated in calm years, and this mean is over
+          sessions tilted toward volatile periods, not a random draw of them. Only {ev20.phases_positive} of {ev20.phases} ways to phase a {ev20.phases}-session cycle
           (every {ev20.phases}th session, refused ones dropped) come out positive. At 15% OOM:{' '}
           {fmtFixed(ev15.mean_roi)} over {ev15.entry_days.toLocaleString('en-US')} sessions ({ev15.refused_days.toLocaleString('en-US')}{' '}
-          refused), {ev15.phases_positive} of {ev15.phases}. At 5% OOM, {SPY.every_day['5pct_4w_hold']!.phases_positive} of{' '}
+          refused, {ev15.refused_by_guard.strike ?? 0} of them for want of a strike that deep), {ev15.phases_positive} of {ev15.phases}. At 5% OOM, {SPY.every_day['5pct_4w_hold']!.phases_positive} of{' '}
           {SPY.every_day['5pct_4w_hold']!.phases}. QQQ, the same study: 20% OOM averages {fmtFixed(qev20.mean_roi)} over{' '}
           {qev20.entry_days.toLocaleString('en-US')} sessions, {qev20.phases_positive} of {qev20.phases} phases positive; 15% OOM{' '}
           {fmtFixed(qev15.mean_roi)}, {qev15.phases_positive} of {qev15.phases}.
@@ -853,13 +899,7 @@ export function PitchView() {
                     <td className={`num ${r.mean_roi < 0 ? 'pl-neg' : ''}`}>{i === 0 ? fmtFixed(r.mean_roi) : ''}</td>
                     <td className="num">{i === 0 ? r.hits : ''}</td>
                     <td className="num nowrap">
-                      {i === 0 ? (
-                        <>
-                          {fmtFixed(r.best_roi, 1)} <span className="dimmer">{r.best_entry}</span>
-                        </>
-                      ) : (
-                        ''
-                      )}
+                      {i === 0 ? <BestRoll roi={r.best_roi} entry={r.best_entry} /> : ''}
                     </td>
                     <td className="num">{(b.budget * 100).toFixed(2)}%</td>
                     <td className="num">{fmtFixed(b.terminal, 4)}</td>
@@ -1026,7 +1066,13 @@ export function PitchView() {
           {fmtFixed(Math.max(...notCrisisSmallest.map((x) => x.oos.roi_diff ?? 0)), 3)} per dollar, taking{' '}
           {notCrisisSmallest[0]?.oos.taken} of {notCrisisSmallest[0]?.oos.n} rolls, with p from{' '}
           {Math.min(...notCrisisSmallest.map((x) => x.oos_p)).toFixed(4)} to{' '}
-          {Math.max(...notCrisisSmallest.map((x) => x.oos_p)).toFixed(4)}.{' '}
+          {Math.max(...notCrisisSmallest.map((x) => x.oos_p)).toFixed(4)}. In sample ({T.is_period[0]!.slice(0, 4)}–
+          {T.is_period[1]!.slice(0, 4)}, which the 408-test screen does not score) it{' '}
+          {notCrisisIs.helped === notCrisisSmallest.length ? 'also lifted the mean on every one' : `lifted the mean on ${notCrisisIs.helped} of ${notCrisisSmallest.length}`}
+          , by {fmtFixed(notCrisisIs.lo, 3)} to {fmtFixed(notCrisisIs.hi, 3)}, but no test skipped more than{' '}
+          {notCrisisIs.perTest} in-sample rolls, and all of them were entered on{' '}
+          {notCrisisIs.skipped.join(', ')} (the 8- and 12-week rules roll on different days), so that half rests on those
+          few dates.{' '}
           {ovl.same_oos_entries && ovl.same_skipped ? (
             <>
               These are not {ovl.tests} confirmations. The {ovl.tests} tests share the same {ovl.oos_entries}{' '}

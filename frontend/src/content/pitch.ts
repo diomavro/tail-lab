@@ -65,6 +65,12 @@ export interface Hedge {
 export interface EveryDay {
   entry_days: number
   refused_days: number
+  /** Refused sessions by the guard that refused them: strike (none listed
+   *  within 1pp of the depth), no_bid, spread, no_expiry, no_quotes,
+   *  expiry_beyond_panel (the put would outlive the panel), other. */
+  refused_by_guard: Record<string, number>
+  /** The strike-guard refusals, by calendar year. */
+  strike_refused_by_year: Record<string, number>
   mean_roi: number
   hit_rate: number
   phases: number
@@ -99,6 +105,13 @@ export interface PValued {
   gate: string
   oos: ComboStats
   oos_p: number
+}
+
+/** One of the smallest-p tests, with its in-sample result beside it. */
+export interface SmallestP extends PValued {
+  is: ComboStats
+  /** In-sample entry dates the filter skipped. */
+  is_skipped: string[]
 }
 
 export interface CrisisBook {
@@ -226,7 +239,7 @@ export interface PitchEvidence {
       p_floor: number
       /** BH over the sold-after-4-weeks rules alone. */
       sell_rules: { tested: number; survivors: number; min_p: number }
-      smallest_p: PValued[]
+      smallest_p: SmallestP[]
       /** A perfect-foresight filter (the best third of out-of-sample rolls), per rule. */
       oracle: Record<string, { oos_winners: number; p: number }>
       /** How alike the smallest-p tests are: one result seen several times, or several. */

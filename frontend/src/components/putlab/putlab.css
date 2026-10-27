@@ -1485,6 +1485,9 @@
   .pl-pitch-stack, .pl-pitch-stack tbody, .pl-pitch-stack tr, .pl-pitch-stack td { display: block; }
   .pl-pitch-stack tr { padding: var(--space-2) 0; border-bottom: 1px solid var(--rule); }
   .pl-pitch-stack td { white-space: normal; padding: 2px 0; max-width: none; border: 0; }
+  /* Outranks the 14em cap above, so a stacked id wraps at the row's width
+     and its snapshot date stays whole. */
+  .pl-pitch .pl-pitch-stack .pl-pitch-id { max-width: none; }
   .pl-pitch-stack td::before { display: block; font-size: 11px; color: var(--ink-70); text-transform: uppercase; letter-spacing: 0.04em; }
   .pl-pitch-stack td:nth-child(1)::before { content: 'Dataset (lake snapshot)'; }
   .pl-pitch-stack td:nth-child(2)::before { content: 'Span'; }

@@ -74,7 +74,7 @@ test('the every-session comparison says how many sessions it could not buy', asy
   const ev = EVIDENCE.SPY.every_day['20pct_4w_hold']!
   const n = (x: number) => x.toLocaleString('en-US')
   await expect(page.locator('#pitch-standalone')).toContainText(
-    `the other ${n(ev.refused_days)} of ${n(ev.entry_days + ev.refused_days)} were refused`,
+    `the other ${n(ev.refused_days)} of ${n(ev.entry_days + ev.refused_days)} could not buy one`,
   )
 })
 
@@ -644,4 +644,76 @@ test('the forking-paths disclosure lists every post-hoc change and prints both p
   await expect(page.locator('#pitch-timing')).toContainText(
     `as the first run did: ${r.null_all_at_least_observed} of ${r.null_all_rotations} and ${g.null_all_at_least_observed} of ${g.null_all_rotations}.)`,
   )
+})
+
+test('the every-session study names the guard behind each refusal, the strike guard first', async ({ page }) => {
+  // It once blamed "the spread and bid guards"; most refusals are sessions
+  // with no strike listed that deep, and they cluster in calm years.
+  const ev = EVIDENCE.SPY.every_day['20pct_4w_hold']!
+  const g = ev.refused_by_guard
+  const total = Object.values(g).reduce((a, b) => a + b, 0)
+  expect(total).toBe(ev.refused_days)
+  const strike = g.strike ?? 0
+  const top = Math.max(...Object.values(g))
+  expect(strike).toBe(top) // the sentence leads with it, and that is the claim
+  const section = page.locator('#pitch-standalone')
+  await expect(section).toContainText(`could not buy one: ${strike.toLocaleString('en-US')} had no listed strike within 1pp of the depth`)
+  if (g.spread) await expect(section).toContainText(`${g.spread.toLocaleString('en-US')} quoted a spread over the cap`)
+  const y1319 = Object.entries(ev.strike_refused_by_year)
+    .filter(([y]) => y >= '2013' && y <= '2019')
+    .reduce((a, [, n]) => a + n, 0)
+  expect(y1319 * 2).toBeGreaterThan(strike) // "cluster" means most of them
+  await expect(section).toContainText(`Of the ${strike.toLocaleString('en-US')} with no strike that deep, ${y1319.toLocaleString('en-US')} fall in 2013–2019`)
+  await expect(section).not.toContainText('refused by the same spread and bid guards')
+})
+
+test('the not-crisis filter prints its in-sample lift and the few dates it skipped there', async ({ page }) => {
+  const nc = EVIDENCE.timing.bh.smallest_p.filter((x) => x.gate === 'regime=not_crisis')
+  const lo = Math.min(...nc.map((x) => x.is.roi_diff ?? 0))
+  const hi = Math.max(...nc.map((x) => x.is.roi_diff ?? 0))
+  const skipped = [...new Set(nc.flatMap((x) => x.is_skipped))].sort()
+  const perTest = Math.max(...nc.map((x) => x.is_skipped.length))
+  // Every date is in sample: the in-sample half must not borrow an out-of-sample skip.
+  for (const d of skipped) expect(d <= EVIDENCE.timing.is_period[1]!).toBe(true)
+  const section = page.locator('#pitch-timing')
+  await expect(section).toContainText(
+    `by ${fmtFixed(lo, 3)} to ${fmtFixed(hi, 3)}, but no test skipped more than ${perTest} in-sample rolls, and all of them were entered on ${skipped.join(', ')}`,
+  )
+})
+
+test('a 2008-09 depth whose every roll lost its premium prints no best roll', async ({ page }) => {
+  // All tie at −1.0, so the first filled roll's date would read as "the best".
+  const rules = (['5pct', '10pct', '15pct', '20pct'] as const).map((k) => [k, EVIDENCE.crisis_2008[k]] as const)
+  const rows = page.getByTestId('pitch-2008').locator('tbody tr')
+  let i = 0
+  let checked = 0
+  for (const [, r] of rules) {
+    const best = rows.nth(i).locator('td:nth-child(5)')
+    if (r.best_roi <= -1) {
+      await expect(best).toHaveText('—')
+      checked++
+    } else {
+      await expect(best).toContainText(r.best_entry)
+    }
+    i += r.books.length
+  }
+  expect(checked).toBeGreaterThan(0)
+})
+
+test('on a phone a stacked lake snapshot id keeps its date on one line', async ({ page }) => {
+  // The 14em cap on the id outranked the stacked cell's max-width: none,
+  // splitting "@2026-09-03" across lines at 390px.
+  await page.setViewportSize({ width: 390, height: 800 })
+  const ids = page.getByTestId('pitch-data').locator('.pl-pitch-id')
+  const n = await ids.count()
+  expect(n).toBeGreaterThan(0)
+  for (let k = 0; k < n; k++) {
+    const id = ids.nth(k)
+    const row = await id.locator('xpath=..').boundingBox()
+    const box = await id.boundingBox()
+    expect(box!.width).toBeGreaterThan(row!.width * 0.9)
+    // The dataset@date part fits one line: the id is at most two lines tall.
+    const lh = await id.evaluate((el) => parseFloat(getComputedStyle(el).lineHeight) || 18)
+    expect(box!.height).toBeLessThanOrEqual(2 * lh + 4)
+  }
 })
