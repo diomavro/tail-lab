@@ -259,7 +259,8 @@ differently:
    Every daily run, PR or not, ends with a short decision note as its final
    message (what you chose, what you passed over and why, which step you
    stopped at); the workflow publishes it in the run summary, which is
-   public, so it never quotes feedback text or a secret. The exact format is
+   public, so it never quotes a secret and names feedback only by id and
+   kind, never describing what it says. The exact format is
    step 8 of the prompt in `.github/workflows/daily-agent.yml`.
 
 ## Self-restraint on scope
