@@ -1,10 +1,10 @@
 {
  "as_of": "2026-10-27",
  "code": {
-  "sha": "77b20a310a6f19230e48c622e5d7526230f5b228",
+  "sha": "eb4f627d17b0f1cba15713a92370e87d3a30a75a",
   "tree": {
    "src": "779cbbd61f91c40e7e510497c411fe23fa9dc5d1",
-   "scripts": "dab43facf4e89d35c47237e93b59956ab06d8777"
+   "scripts": "182cab3347d8dce3df9a45da4e30e40e957baecc"
   },
   "dirty": false
  },
@@ -2607,6 +2607,13 @@
   "months_without_roll_date": [
    "2008-03"
   ],
+  "unhedged_spans": [
+   {
+    "entry": "2008-02-15",
+    "expiry": "2008-03-22",
+    "next_entry": "2008-04-18"
+   }
+  ],
   "5pct": {
    "unhedged": {
     "terminal": 0.890391392803009,
@@ -2931,7 +2938,10 @@
     1.0514296752332397
    ],
    "oos_p": 0.1052,
-   "share_positive_oos": 0.5171568627450981,
+   "is_positive": 185,
+   "is_positive_oos_positive": 113,
+   "null_rotations": 89,
+   "null_at_least_observed": 7,
    "spearman_is_oos": 0.14095170046281974,
    "oos_mean_taken_without_best": -0.298657548039756
   },
@@ -2964,7 +2974,10 @@
     0.009740614590749583
    ],
    "oos_p": 0.08819118088191182,
-   "share_positive_oos": 0.5171568627450981,
+   "is_positive": 181,
+   "is_positive_oos_positive": 113,
+   "null_rotations": 89,
+   "null_at_least_observed": 4,
    "spearman_is_oos": 0.15671538679950256,
    "oos_mean_taken_without_best": -0.298657548039756
   },

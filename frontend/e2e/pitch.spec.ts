@@ -14,6 +14,9 @@ test.beforeEach(async ({ page }) => {
   await mockPutLabApi(page)
   await page.goto('/')
   await page.getByRole('tab', { name: 'Pitch' }).click()
+  // The Pitch is a lazy chunk: right after the click the panel is a loading
+  // line, and anything measured then measures that line, not the page.
+  await expect(page.getByTestId('pitch-verdict')).toBeVisible()
 })
 
 test('leads with the verdict, built from the evidence file', async ({ page }) => {
@@ -46,6 +49,43 @@ test('the verdict list prints the counts the evidence gives', async ({ page }) =
   await expect(list).toContainText(`${cut.length} of ${h.configs.length} SPY books cut the worst drawdown, ${cutAndLost} of them at a cost in growth`)
   const c08 = EVIDENCE.crisis_2008
   await expect(list).toContainText(`${c08.n_beat} of ${c08.configs} books ended ahead of unhedged`)
+})
+
+test('scores timing by sign persistence, not by a share the filter pairs fix at a half', async ({ page }) => {
+  // Every filter's opposite is in the set and the two differ in sign, so
+  // "share positive out of sample" is ~1/2 whatever the data; persistence is not.
+  const sel = EVIDENCE.timing.roi_diff
+  const share = Math.round((sel.is_positive_oos_positive / sel.is_positive) * 100)
+  await expect(page.locator('#pitch-verdict-detail')).toContainText(
+    `Of the ${sel.is_positive} eligible combinations that improved in sample, ${sel.is_positive_oos_positive} (${share}%) also improved out of sample; ${sel.null_at_least_observed} of ${sel.null_rotations} rotations of the out-of-sample outcomes do as well`,
+  )
+  await expect(page.locator('#pitch-timing')).toContainText(
+    `${sel.null_at_least_observed} of ${sel.null_rotations} rotations reach ${sel.is_positive_oos_positive}`,
+  )
+  await expect(page.locator('#pitch-timing')).toContainText(
+    `${sel.is_positive} improved in sample and ${sel.is_positive_oos_positive} of those (${share}%) also improved out of sample`,
+  )
+  // The same-close sentence and the next one once ran together: "below).In sample".
+  await expect(page.locator('#pitch-timing')).not.toContainText(/\.In sample/)
+})
+
+test('the every-session comparison says how many sessions it could not buy', async ({ page }) => {
+  const ev = EVIDENCE.SPY.every_day['20pct_4w_hold']!
+  const n = (x: number) => x.toLocaleString('en-US')
+  await expect(page.locator('#pitch-standalone')).toContainText(
+    `the other ${n(ev.refused_days)} of ${n(ev.entry_days + ev.refused_days)} were refused`,
+  )
+})
+
+test('a missing 2008 roll month names the weeks with no put, not the month', async ({ page }) => {
+  // The put bought before the gap is held to its own expiry; the bare weeks
+  // are from then to the next roll date.
+  for (const u of EVIDENCE.crisis_2008.unhedged_spans) {
+    await expect(page.locator('#pitch-2008')).toContainText(
+      `the put bought ${u.entry} runs to its ${u.expiry} expiry and none is held from then until ${u.next_entry}`,
+    )
+  }
+  await expect(page.locator('#pitch-2008')).not.toContainText('that month is unhedged')
 })
 
 test('prints the 2008-09 check, one row per depth and budget', async ({ page }) => {
@@ -114,6 +154,7 @@ test('names the lake snapshots the study read', async ({ page }) => {
 
 test('does not scroll sideways at phone width', async ({ page }) => {
   await page.setViewportSize({ width: 375, height: 800 })
+  await expect(page.getByTestId('pitch-data')).toBeVisible()
   const overflow = await page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth)
   expect(overflow).toBeLessThanOrEqual(0)
 })
@@ -209,4 +250,16 @@ test('the timing headline counts the combinations the winner was chosen from', a
   await expect(page.locator('#pitch-verdict-detail')).toContainText(
     `The best of the ${sel.eligible} eligible rule-and-filter combinations (of ${EVIDENCE.timing.combinations})`,
   )
+})
+
+test('a Pitch chunk that fails to load leaves the rest of the app standing', async ({ page }) => {
+  // A deploy replaces the hashed chunk while a visitor has the page open:
+  // the click then 404s it. Without an error boundary React unmounts the
+  // root and every tab vanishes until a reload.
+  await page.route('**/PitchView*', (route) => route.fulfill({ status: 404, body: '' }))
+  await page.goto('/')
+  await page.getByRole('tab', { name: 'Pitch' }).click()
+  await expect(page.getByText('The Pitch could not load. Reload the page.')).toBeVisible()
+  await page.getByRole('tab', { name: 'Glossary' }).click()
+  await expect(page.getByRole('tab', { name: 'Workspace' })).toBeVisible()
 })

@@ -123,6 +123,8 @@ const backX = (roi: number) => `a return of +${fmtFixed(roi, 1)} on its premium 
 const ovl = T.bh.smallest_p_overlap
 const spreadOff = C08.spread_guard_off
 const c08Gaps = C08.months_without_roll_date
+const ev20 = SPY.every_day['20pct_4w_hold']!
+const ev15 = SPY.every_day['15pct_4w_hold']!
 /** With the spread cap lifted, does every book that ends ahead still fall
  *  behind unhedged without its best roll? */
 const offOneMonth = Object.values(spreadOff.depths).every((d) =>
@@ -193,7 +195,8 @@ export function PitchView() {
               </span>
             ))}
             QQQ: {qqqNegative} of {Object.keys(QQQ.standalone).length} rules negative (
-            <a href="#pitch-standalone">section 1</a> says why its 20% rule missed 2020).
+            <a href="#pitch-standalone">section 1</a>: none of its 20% OOM rolls paid in the 2020 crash; why was not
+            measured).
           </li>
           <li>
             <strong>As a hedge: insurance, not an edge.</strong> {rulesAlwaysLose.length} of {hedgeRules.length} SPY
@@ -217,8 +220,11 @@ export function PitchView() {
             <strong>Timing: nothing survives.</strong> The best of the {sel.eligible} eligible rule-and-filter combinations (of {T.combinations})
             chosen on {T.is_period[0]!.slice(0, 4)}–{T.is_period[1]!.slice(0, 4)} improved the out-of-sample mean
             return by {num(sel.oos.roi_diff)} per dollar of premium (95% interval {ci(sel.oos_ci95)}, one-sided p ={' '}
-            {sel.oos_p.toFixed(3)}); {Math.round(sel.share_positive_oos * 100)}% of all combinations were positive
-            out of sample, which is what a coin gives.
+            {sel.oos_p.toFixed(3)}). Of the {sel.is_positive} eligible combinations that improved in sample,{' '}
+            {sel.is_positive_oos_positive} ({Math.round((sel.is_positive_oos_positive / sel.is_positive) * 100)}%) also
+            improved out of sample; {sel.null_at_least_observed} of {sel.null_rotations} rotations of the
+            out-of-sample outcomes do as well (<a href="#pitch-timing">section 3</a>). Weak evidence that in-sample
+            improvement carries forward a little, not a filter that works.
           </li>
           <li>
             <strong>Daily signal: none.</strong> The app re-scores the same in-sample backtests every day. Its one
@@ -437,7 +443,9 @@ export function PitchView() {
                 </td>
                 <td>
                   Licence unresolved: research use only.{' '}
-                  {c08Gaps.length === 0 ? 'Every 2008–09 month has a roll date' : `No roll date in ${c08Gaps.join(', ')}`}
+                  {c08Gaps.length === 0
+                    ? 'Every 2008–09 month has a roll date'
+                    : `No roll date in ${c08Gaps.join(', ')}; no put held ${C08.unhedged_spans.map((u) => `${u.expiry} → ${u.next_entry}`).join(', ')}`}
                 </td>
               </tr>
               <tr>
@@ -455,7 +463,7 @@ export function PitchView() {
               <tr>
                 <td className="pl-pitch-id">{E.snapshots.cboe_strategy}</td>
                 <td>1986 → today</td>
-                <td>Cboe SPX, PPUT, PPUT3M, VXTH: hedge-program indices Cboe prices from real trades; SPX also serves as the exchange session calendar</td>
+                <td>Cboe SPX, and three hedge-program indices Cboe prices from real trades: PPUT (S&amp;P 500 plus a monthly 5% OOM put), PPUT3M (a quarterly 10% OOM put), VXTH (monthly VIX calls); SPX also serves as the exchange session calendar</td>
                 <td>Benchmarks, not tradeable</td>
               </tr>
               <tr>
@@ -585,12 +593,15 @@ export function PitchView() {
         </div>
         <p className="pl-note">
           <strong>The calendar decides the sign of the far-OOM rules.</strong> Buying a 4-week 20% OOM put on every
-          session instead of on a monthly cycle ({SPY.every_day['20pct_4w_hold']!.entry_days.toLocaleString('en-US')}{' '}
-          entries, overlapping) averages {fmtFixed(SPY.every_day['20pct_4w_hold']!.mean_roi)}, and only{' '}
-          {SPY.every_day['20pct_4w_hold']!.phases_positive} of {SPY.every_day['20pct_4w_hold']!.phases} ways to
-          phase a 20-session cycle come out positive. At 15% OOM: {fmtFixed(SPY.every_day['15pct_4w_hold']!.mean_roi)}
-          , {SPY.every_day['15pct_4w_hold']!.phases_positive} of 20. At 5% OOM,{' '}
-          {SPY.every_day['5pct_4w_hold']!.phases_positive} of 20.
+          session instead of on a monthly cycle averages {fmtFixed(ev20.mean_roi)} over the{' '}
+          {ev20.entry_days.toLocaleString('en-US')} sessions that could buy one (overlapping); the other{' '}
+          {ev20.refused_days.toLocaleString('en-US')} of {(ev20.entry_days + ev20.refused_days).toLocaleString('en-US')}{' '}
+          were refused by the same spread and bid guards that set the monthly calendar, or held a put expiring after
+          the panel ends. Only {ev20.phases_positive} of {ev20.phases} ways to phase a {ev20.phases}-session cycle
+          (every {ev20.phases}th session, refused ones dropped) come out positive. At 15% OOM:{' '}
+          {fmtFixed(ev15.mean_roi)} over {ev15.entry_days.toLocaleString('en-US')} sessions ({ev15.refused_days.toLocaleString('en-US')}{' '}
+          refused), {ev15.phases_positive} of {ev15.phases}. At 5% OOM, {SPY.every_day['5pct_4w_hold']!.phases_positive} of{' '}
+          {SPY.every_day['5pct_4w_hold']!.phases}.
         </p>
         <p className="pl-note">
           <strong>By period.</strong> 20% OOM held to expiry:{' '}
@@ -692,11 +703,13 @@ export function PitchView() {
           to {E.cboe.span[1]} (the price index alone: {pct(E.cboe.SPX.growth, 2)}, drawdown {pct(E.cboe.SPX.max_dd)}).
           Against it: PPUT, the S&amp;P 500 with a monthly 5% OOM put, {pct(E.cboe.PPUT.growth, 2)} (
           {pp(E.cboe.PPUT.growth - spxWithDiv)}; drawdown {pct(E.cboe.PPUT.max_dd)}); PPUT3M{' '}
+          (Cboe’s Tail Risk index: a quarterly 10% OOM put){' '}
           {pct(E.cboe.PPUT3M.growth, 2)} ({pp(E.cboe.PPUT3M.growth - spxWithDiv)}; {pct(E.cboe.PPUT3M.max_dd)}); VXTH,
-          the index with VIX calls, {pct(E.cboe.VXTH.growth, 2)} ({pp(E.cboe.VXTH.growth - spxWithDiv)};{' '}
+          Cboe’s VIX Tail Hedge index (the S&amp;P 500 plus monthly VIX calls), {pct(E.cboe.VXTH.growth, 2)} ({pp(E.cboe.VXTH.growth - spxWithDiv)};{' '}
           {pct(E.cboe.VXTH.max_dd)}). All three trail the index with dividends; each cuts the drawdown.
           The Book tab tests the right question — does any mix of program and index out-grow the index alone — and
-          on {LIVE.read_on} answered:{' '}
+          on {LIVE.read_on} answered, as a margin: the CAGR (not log growth) of the best partial mix minus the better
+          of index alone and program alone, with anything within ±1bp/yr inconclusive:{' '}
           {LIVE.book.map((b) => (
             <span key={`${b.program}${b.window}`}>
               {b.program} {b.window} {bp(b.margin)} ({b.outcome});{' '}
@@ -720,7 +733,9 @@ export function PitchView() {
           SPY at expiry is estimated as SPY at entry × the SPX move;{' '}
           {c08Gaps.length === 0
             ? 'every month has a roll date'
-            : `${c08Gaps.join(', ')} ${c08Gaps.length > 1 ? 'have' : 'has'} no roll date, so ${c08Gaps.length > 1 ? 'those months are' : 'that month is'} unhedged`}
+            : `${c08Gaps.join(', ')} ${c08Gaps.length > 1 ? 'have' : 'has'} no roll date, so ${C08.unhedged_spans
+                .map((u) => `the put bought ${u.entry} runs to its ${u.expiry} expiry and none is held from then until ${u.next_entry}`)
+                .join('; ')}`}
           ; the licence is unresolved, so this is research use only. Unhedged, the book ends at{' '}
           {fmtFixed(C08['5pct'].unhedged.terminal, 4)} of its starting wealth, with a {pct(C08['5pct'].unhedged.max_dd)} drawdown.
         </p>
@@ -820,7 +835,7 @@ export function PitchView() {
           bought only when {gateLabel(sel.gate)}.
           {sameClose(sel.gate) && (
             <> That signal is read from the same close the put is bought at, so even this result assumes trading in the closing minutes (see “Same-close signals” below).</>
-          )}
+          )}{' '}
           In sample it took {sel.is.taken} of {sel.is.n} rolls and raised the mean return from{' '}
           {fmtFixed(sel.is.mean_roi_all)} to {num(sel.is.mean_roi_taken)}. Out of sample it took {sel.oos.taken}{' '}
           of {sel.oos.n}: {fmtFixed(sel.oos.mean_roi_all)} to {num(sel.oos.mean_roi_taken)}, an improvement of{' '}
@@ -836,8 +851,20 @@ export function PitchView() {
           [{pp(selDg.oos_ci95[0]!)}, {pp(selDg.oos_ci95[1]!)}], p = {selDg.oos_p.toFixed(3)}.
         </p>
         <p className="pl-note">
-          Across all {sel.eligible} combinations with enough in-sample trades, {Math.round(sel.share_positive_oos * 100)}%
-          improved out of sample, and the rank correlation between in-sample and out-of-sample results is{' '}
+          Across all {sel.eligible} combinations with enough in-sample trades, {sel.is_positive} improved in sample
+          and {sel.is_positive_oos_positive} of those ({Math.round((sel.is_positive_oos_positive / sel.is_positive) * 100)}%)
+          also improved out of sample. Is that more than chance? The combinations share rolls, so their signs move
+          together and a count of independent coins is no yardstick. The null instead rotates every rule’s
+          out-of-sample outcomes by the same number of rolls against the filters’ unmoved choices — every rotation,{' '}
+          {sel.null_rotations} of them — which keeps that dependence and the outcomes’ own clustering and breaks only
+          the link from signal to outcome: {sel.null_at_least_observed} of {sel.null_rotations} rotations reach{' '}
+          {sel.is_positive_oos_positive}. On the growth objective {selDg.is_positive_oos_positive} of{' '}
+          {selDg.is_positive} persisted, reached by {selDg.null_at_least_observed} of {selDg.null_rotations}. That
+          is weak evidence that in-sample improvement carries forward a little; it makes no single filter
+          significant (below). (The share
+          of all combinations positive out of sample is no test: every filter’s opposite is also in the set — below
+          and above one threshold, calm and not calm — and the two always differ in sign, so that share is about half
+          whatever the data.) The rank correlation between in-sample and out-of-sample results is{' '}
           {fmtFixed(sel.spearman_is_oos)}: an in-sample ranking says almost nothing about the next seven years.{' '}
           {T.bh.p_below_05} of {T.bh.tested} have a raw p below 0.05 — about the {Math.round(T.bh.tested * 0.05)} that
           chance would give if these p-values were uniform under no effect and the tests independent (neither is

@@ -274,11 +274,17 @@ test.describe('on a phone-width page', () => {
 
   test('no tab scrolls the page sideways', async ({ page }) => {
     // Measured once each tab's reads have landed: right after the click the
-    // panel is a loading line, which never overflows.
+    // panel is a loading line, which never overflows. networkidle alone does
+    // not wait for that -- it was reached on page load -- so a lazy tab is
+    // also waited for by its own content.
+    const rendered: Record<string, () => Promise<void>> = {
+      Pitch: () => expect(page.getByRole('heading', { level: 2, name: 'No demonstrable edge.' })).toBeVisible(),
+    }
     await page.goto('/')
     for (const name of ['Workspace', 'Portfolio', 'Book', 'Bake-off', 'Regime', 'Surface', 'Pitch', 'Glossary']) {
       await page.getByRole('tab', { name }).click()
       await page.waitForLoadState('networkidle')
+      await rendered[name]?.()
       const overflow = await page.evaluate(
         () => document.documentElement.scrollWidth - document.documentElement.clientWidth,
       )

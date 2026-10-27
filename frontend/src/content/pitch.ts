@@ -126,7 +126,16 @@ export interface Selected {
   oos: ComboStats
   oos_ci95: number[]
   oos_p: number
-  share_positive_oos: number
+  /** Eligible combinations that improved in sample, and of those the ones
+   *  that also improved out of sample. (Not "the share positive out of
+   *  sample": every gate's complement is in the set, so that is ~1/2.) */
+  is_positive: number
+  is_positive_oos_positive: number
+  /** The null: every rule's out-of-sample outcomes rotated 1..n-1 rolls
+   *  against the filters' fixed choices; how many rotations reach the
+   *  observed persistence. */
+  null_rotations: number
+  null_at_least_observed: number
   spearman_is_oos: number
   oos_mean_taken_without_best: number | null
 }
@@ -162,8 +171,11 @@ export interface PitchEvidence {
     /** Days to the nearest listed expiry, min and max over the roll dates. */
     nearest_dte: number[]
     dates_with_two_expiries: string[]
-    /** 2008-01..2009-12 months with no roll date: unhedged. */
+    /** 2008-01..2009-12 months with no roll date. */
     months_without_roll_date: string[]
+    /** Where a missing roll date leaves no put held: from the expiry of the
+     *  put bought on `entry` to the next roll date. */
+    unhedged_spans: { entry: string; expiry: string; next_entry: string }[]
     n_beat: number
     configs: number
     /** The same check with the 50%-of-mid spread cap lifted (a wide quote bought at its ask). */
@@ -275,8 +287,10 @@ export const LIVE = {
   /** gh run list --workflow daily-verdict-sweep.yml: scheduled 06:30 UTC,
    *  started 11:25-13:47 UTC on 2026-10-19..26. */
   verdict_sweep_started: '11:25–13:47 UTC',
-  /** GET /api/putlab/hedge-overlay -- growth margin of the best mix over no
-   *  hedge, per year, at the 1.9% ASSUMED dividend yield (no tiingo_eod). */
+  /** GET /api/putlab/hedge-overlay -- margin: the CAGR of the best partial
+   *  mix minus the better of the two ends (index alone, program alone), per
+   *  year, at the 1.9% ASSUMED dividend yield (no tiingo_eod). Within
+   *  +-1bp/yr (hedge_sizing.MIN_MARGIN) it reads "inconclusive". */
   book: [
     { program: 'PPUT', window: '2005-01 → 2016-03', margin: -0.00203, outcome: 'fails' },
     { program: 'PPUT', window: '1986-06 → 2026-10', margin: -0.00274, outcome: 'fails' },
