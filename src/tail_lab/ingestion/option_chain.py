@@ -344,9 +344,10 @@ def fetch_chains(
         try:
             payloads[symbol] = _fetch_with_retry(fetcher, symbol)
         except Exception:
-            # The ingest loop's process boundary (see ingest_option_chain),
-            # moved one seam earlier: a dead chain costs that symbol both
-            # wings, logged with its traceback, never the other symbols.
+            # The same process boundary as _parse_symbols (see its comment
+            # for the Rule 14 rationale), one seam earlier: a dead chain costs
+            # that symbol both wings, logged with its traceback, never the
+            # other symbols.
             _LOGGER.exception("event=ingestion.option_chain.symbol_failed symbol=%s", symbol)
     return payloads
 
@@ -581,7 +582,7 @@ def _wing_records(
 ) -> list[dict[str, object]]:
     """One wing of one payload as JSON-ready records, or ``[]`` (logged with
     its traceback) if that wing's parse or conversion fails. Broad for the
-    same process-boundary reason as the ingest loop: the other wing, and the
+    same process-boundary reason as ``_parse_symbols``: the other wing, and the
     other symbols, must survive a bug that only this one trips."""
     try:
         frame, _unparsed = parse_cboe_chain(payload, right)
