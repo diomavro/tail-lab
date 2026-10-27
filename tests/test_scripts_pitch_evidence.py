@@ -873,6 +873,10 @@ def test_the_persistence_null_rotates_outcomes_against_fixed_choices() -> None:
     shifts = range(pe.BLOCK, 30 - pe.BLOCK + 1)
     by_hand = sum(sum(roi[(j - k) % 30] for j in range(20, 30)) / 10 > mean for k in shifts)
     assert 0 < by_hand < len(shifts)
+    # The window was chosen after a run over every rotation had printed, so
+    # that count is returned too; the fixture tells the two apart.
+    all_hand = sum(sum(roi[(j - k) % 30] for j in range(20, 30)) / 10 > mean for k in range(1, 30))
+    assert all_hand != by_hand
     days = tuple(str(d.date()) for d in pd.bdate_range("2010-01-04", periods=60))
     c = pe.Combo(
         "5pct_8w_sell4w",
@@ -887,7 +891,12 @@ def test_the_persistence_null_rotates_outcomes_against_fixed_choices() -> None:
     )
     for key in ("roi_diff", "dg"):
         out = pe._persistence_null([c], key, observed=1)
-        assert out == {"null_rotations": len(shifts), "null_at_least_observed": by_hand}, key
+        assert out == {
+            "null_rotations": len(shifts),
+            "null_at_least_observed": by_hand,
+            "null_all_rotations": 29,
+            "null_all_at_least_observed": all_hand,
+        }, key
 
 
 def test_the_growth_null_rotates_each_rolls_index_move_with_its_put() -> None:
@@ -928,7 +937,12 @@ def test_the_growth_null_rotates_each_rolls_index_move_with_its_put() -> None:
         days,
     )
     out = pe._persistence_null([c], "dg", observed=1)
-    assert out == {"null_rotations": len(shifts), "null_at_least_observed": by_hand}
+    assert out == {
+        "null_rotations": len(shifts),
+        "null_at_least_observed": by_hand,
+        "null_all_rotations": 29,
+        "null_all_at_least_observed": sum(dg(k, True) > 0 for k in range(1, 30)),
+    }
 
 
 def test_benjamini_hochberg_counts_raw_p_below_five_percent_and_lists_eight(

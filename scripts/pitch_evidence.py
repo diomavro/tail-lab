@@ -957,13 +957,27 @@ def _persistence_null(pos: list[Combo], key: str, observed: int) -> Json:
     dependence, and breaks only the link from signal to outcome. Every
     rotation at least one bootstrap block from zero (mod n) is used, so no
     random draw is involved: outcomes cluster, so a rotation by a few rolls
-    either way leaves the alignment nearly intact and is no null."""
+    either way leaves the alignment nearly intact and is no null.
+
+    That window was chosen after the first run had printed the null over
+    every rotation 1..n-1, so both are returned (``null_all_*``) and the page
+    prints them side by side."""
     if not pos:
-        return {"null_rotations": 0, "null_at_least_observed": 0}
+        return {
+            "null_rotations": 0,
+            "null_at_least_observed": 0,
+            "null_all_rotations": 0,
+            "null_all_at_least_observed": 0,
+        }
     n = min(int((~c.is_).sum()) for c in pos)
-    shifts = range(BLOCK, n - BLOCK + 1)
-    hits = sum(sum(_oos_effect(c, key, k) > 0 for c in pos) >= observed for k in shifts)
-    return {"null_rotations": len(shifts), "null_at_least_observed": int(hits)}
+    reached = {k: sum(_oos_effect(c, key, k) > 0 for c in pos) >= observed for k in range(1, n)}
+    window = range(BLOCK, n - BLOCK + 1)
+    return {
+        "null_rotations": len(window),
+        "null_at_least_observed": int(sum(reached[k] for k in window)),
+        "null_all_rotations": len(reached),
+        "null_all_at_least_observed": int(sum(reached.values())),
+    }
 
 
 def _mean_without_best(roi: np.ndarray) -> float | None:

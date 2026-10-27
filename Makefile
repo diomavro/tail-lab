@@ -11,7 +11,7 @@ VENV := .venv
 PY := env -u PYTHONPATH $(VENV)/bin/python
 PIP := env -u PYTHONPATH $(VENV)/bin/pip
 
-.PHONY: setup lint format typecheck import-lint test check cov-floors ingest-vix ingest-vix-complex ingest-ohlcv ingest-cboe-strategy ingest-rates ingest-tiingo-eod ingest-credit ingest-event-calendar ingest-option-quotes residual skew tail-alpha api frontend clean ingest-mpd ingest-options-expiry ingest-sp500-constituents ingest-vix-futures ingest-kaggle-spy kaggle-spy-vs-optionsdx delta-strike-gap pitch-evidence
+.PHONY: setup lint format typecheck import-lint test check cov-floors ingest-vix ingest-vix-complex ingest-ohlcv ingest-cboe-strategy ingest-rates ingest-tiingo-eod ingest-credit ingest-event-calendar ingest-option-quotes residual skew tail-alpha api frontend clean ingest-mpd ingest-options-expiry ingest-sp500-constituents ingest-vix-futures ingest-kaggle-spy kaggle-spy-vs-optionsdx delta-strike-gap pitch-evidence pitch-evidence-current
 
 help:
 	@echo "Targets:"
@@ -40,6 +40,7 @@ help:
 	@echo "  ingest-kaggle-spy  Hand-downloaded Kaggle SPY year -> data/vendor parquet (YEAR=2023; OFFLINE cross-check, never served)"
 	@echo "  kaggle-spy-vs-optionsdx  2023 vendor-disagreement report, Kaggle vs optionsDX (read-only; skips if either is absent)"
 	@echo "  delta-strike-gap  Model (realised-vol) vs market (implied-vol) delta strikes from the optionsDX corpus (SYMBOLS='spy qqq' by default; read-only, offline; docs/adr/0029)"
+	@echo "  pitch-evidence-current  Fail if src/ or scripts/ moved since pitch_evidence.json was generated (run before merge)"
 	@echo "  pitch-evidence  Real-quote put study -> frontend/src/content/pitch_evidence.json, the Pitch tab's figures (reads the lake; AS_OF=YYYY-MM-DD)"
 	@echo "  api          Run FastAPI on :8000 with auto-reload"
 	@echo "  frontend     Run the Vite dev server"
@@ -198,6 +199,16 @@ delta-strike-gap:
 # the JSON it produces. docs/adr/0021 (2026-10-27 amendment).
 pitch-evidence:
 	env -u PYTHONPATH PYTHONPATH=$(CURDIR)/src $(VENV)/bin/python scripts/pitch_evidence.py $(if $(AS_OF),--as-of $(AS_OF))
+
+# Run before merging a change to the Pitch: fails when src/ or scripts/ moved
+# after pitch_evidence.json was generated, so the tree hashes the page prints
+# would name code that main does not have. Not a CI gate: a later src/ change
+# on main is expected to make it fail.
+pitch-evidence-current:
+	@test "$$(git rev-parse HEAD:src) $$(git rev-parse HEAD:scripts)" = "$$($(VENV)/bin/python -c "import json; t = json.load(open('frontend/src/content/pitch_evidence.json'))['code']['tree']; print(t['src'], t['scripts'])")" \
+		|| { echo "pitch_evidence.json is stale: src/ or scripts/ changed since it was generated; run make pitch-evidence AS_OF=..."; exit 1; }
+	@test -z "$$(git status --porcelain -- src scripts)" || { echo "src/ or scripts/ has uncommitted changes"; exit 1; }
+	@echo "pitch_evidence.json names HEAD's src/ and scripts/ trees"
 
 ingest-credit:
 	env -u PYTHONPATH $(VENV)/bin/python -c "from tail_lab.ingestion.credit import ingest_credit; from tail_lab.config import get_lake_store, get_settings; from tail_lab.observability import configure_logging; configure_logging(); s = [x.upper() for x in '$(SERIES)'.split(',')] if '$(SERIES)' else None; r = ingest_credit(get_lake_store(), s, api_key=get_settings().fred_api_key); print(f'committed {r.valid_rows} rows for {len(r.series_ids)} series -> {r.bronze_path} ({r.quarantined_rows} quarantined)')"
