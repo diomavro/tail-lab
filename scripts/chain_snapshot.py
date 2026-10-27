@@ -301,10 +301,13 @@ def _ingest_wing(
         print(f"::error::{label}: {exc}", file=sys.stderr)
         return Outcome.FAILED
     except LAKE_WRITE_ERRORS as exc:
-        # A failed bronze write. Annotated rather than raised, so the other
-        # wing still gets its one chance at this session.
-        _LOGGER.exception("event=chain_snapshot.lake_write_failed wing=%s", label)
-        print(f"::error::{label}: the lake write failed: {exc!r}", file=sys.stderr)
+        # A failed lake call -- the partition-exists probe READ as well as the
+        # bronze write (``LAKE_READ_ERRORS`` is the same tuple), so the message
+        # must not claim a write: on a resume-time DNS failure nothing was
+        # written. Annotated rather than raised, so the other wing still gets
+        # its one chance at this session.
+        _LOGGER.exception("event=chain_snapshot.lake_failed wing=%s", label)
+        print(f"::error::{label}: the lake read or write failed: {exc!r}", file=sys.stderr)
         return Outcome.FAILED
     if result.valid_rows < MIN_PLAUSIBLE_ROWS:
         print(
@@ -578,9 +581,9 @@ def _report_post(
 
 def _report_symbols(label: str, failed: Sequence[str], misrouted: Sequence[str]) -> None:
     """Name the symbols that landed nothing, by cause. A misrouted symbol HAD
-    quotes -- mostly of the other wing's delta sign (``Wing.split``) -- so it
-    is not reported as "no quotes": that would point the operator at a
-    re-run, which sends the same chain."""
+    quotes -- over ``MAX_WRONG_SIGN_SHARE`` of them of the other wing's delta
+    sign (``Wing.split``) -- so it is not reported as "no quotes": that would
+    point the operator at a re-run, which sends the same chain."""
     unquoted = [s for s in failed if s not in misrouted]
     if unquoted:
         print(f"::warning::{label}: no quotes landed for {', '.join(unquoted)}")

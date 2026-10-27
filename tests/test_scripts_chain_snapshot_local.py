@@ -400,3 +400,37 @@ def test_local_a_call_failure_is_red_and_says_the_puts_landed(
     _local(monkeypatch, _Result, call)
     assert _run_local() == 1
     assert "calls only; puts landed" in capsys.readouterr().err
+
+
+def test_local_a_lake_read_failure_is_not_reported_as_a_write(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """The partition-exists probe READS the lake before anything is written,
+    and ``LAKE_READ_ERRORS`` is the same tuple ``_ingest_wing`` catches. A
+    resume-time DNS failure (2026-09-22/23) lands there: saying "the lake
+    write failed" would send the operator hunting for a partial partition in
+    immutable bronze when nothing was even attempted. Real ingest, real
+    payload; only the store is fake."""
+    import json
+
+    payload = json.loads(
+        (Path(__file__).parent / "fixtures" / "cboe_chain_calls_sample.json").read_text()
+    )
+
+    class _DnsDownStore:
+        def bronze_partition_exists(self, _dataset: str, _day: dt.date) -> bool:
+            raise OSError("Temporary failure in name resolution")
+
+        def write_bronze(self, *_a: object, **_k: object) -> str:
+            raise AssertionError("nothing may be written when the probe failed")
+
+    monkeypatch.setattr(
+        "tail_lab.ingestion.option_chain.fetch_chains",
+        lambda symbols, *_a: {s: payload for s in symbols},
+    )
+    monkeypatch.setattr("tail_lab.config.get_lake_store", _DnsDownStore)
+    assert chain_snapshot.main(["--local", "--symbols", "spy"]) == 1
+    err = capsys.readouterr().err
+    assert "::error::puts: the lake read or write failed: OSError(" in err
+    assert "::error::calls: the lake read or write failed: OSError(" in err
+    assert "lake write failed" not in err

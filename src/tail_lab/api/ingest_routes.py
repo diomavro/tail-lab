@@ -92,9 +92,10 @@ def _split(frame: pd.DataFrame, wing: Wing) -> WingSplit:
     """``wing.split`` plus its log line, and a 422 when nothing is left.
 
     Its own function so ``_ingest_chain`` stays under the complexity ratchet.
-    A symbol carrying mostly the other wing's deltas is quarantined whole
-    (:meth:`Wing.split`), the same rule the local writer runs, so one
-    misrouted symbol costs that symbol and the floor decides the session.
+    A symbol carrying more than ``MAX_WRONG_SIGN_SHARE`` of the other wing's
+    deltas is quarantined whole (:meth:`Wing.split`), the same rule the local
+    writer runs, so one misrouted symbol costs that symbol and the floor
+    decides the session.
     """
     split = wing.split(frame)
     if split.misrouted:

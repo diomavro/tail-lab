@@ -452,8 +452,8 @@ def ingest_option_chain(
     """
     wing = WINGS[right]
     parsed = _parse_symbols(symbols, payloads, right)
-    # Per symbol, as the route does (``Wing.split``): a chain whose deltas are
-    # mostly the other wing's is quarantined whole, so both writers agree on
+    # Per symbol, as the route does (``Wing.split``): a chain with more than
+    # ``MAX_WRONG_SIGN_SHARE`` of the other wing's deltas is quarantined whole, so both writers agree on
     # what misrouting costs -- that symbol, and the floor decides the session.
     split = wing.split(parsed.combined())
     if split.misrouted:
