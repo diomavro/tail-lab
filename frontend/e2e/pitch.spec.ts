@@ -174,3 +174,39 @@ test('on a phone the hedge table shows growth against unhedged without scrolling
   const box = await cell.boundingBox()
   expect(box!.x + box!.width).toBeLessThanOrEqual(390)
 })
+
+test('does not call the Book static: it is recomputed from daily Cboe closes', async ({ page }) => {
+  // Its full-history margins (VXTH's is a fraction of a basis point) move with
+  // each day's index close; "static" told a reader the answer could not flip.
+  const daily = page.locator('#pitch-daily')
+  await expect(daily).not.toContainText('Static')
+  await expect(daily).toContainText('daily Cboe index closes')
+})
+
+test('prints a roll-schedule leg as a return on premium, not as a payoff multiple', async ({ page }) => {
+  // expected_roi is (payback - cost) / cost: +18.03 is 19.03x back, not 18.03x.
+  const daily = page.locator('#pitch-daily')
+  for (const l of LIVE.roll_schedule_legs) {
+    await expect(daily).toContainText(`a return of +${l.expected_roi.toFixed(1)} on its premium (${(l.expected_roi + 1).toFixed(1)}× the premium back)`)
+  }
+})
+
+test('the 2008-09 table shows how far each book ends from unhedged, so a near-tie reads as one', async ({ page }) => {
+  // A book 0.00004 behind once printed the same 0.8904 as unhedged beside "behind".
+  const rows = page.getByTestId('pitch-2008').locator('tbody tr')
+  let i = 0
+  for (const k of ['5pct', '10pct', '15pct', '20pct'] as const) {
+    const r = EVIDENCE.crisis_2008[k]
+    for (const b of r.books) {
+      const d = b.terminal - r.unhedged.terminal
+      await expect(rows.nth(i++).locator('td:nth-child(8)')).toHaveText(`${d < 0 ? '−' : '+'}${Math.abs(d).toFixed(5)}`)
+    }
+  }
+})
+
+test('the timing headline counts the combinations the winner was chosen from', async ({ page }) => {
+  const sel = EVIDENCE.timing.roi_diff
+  await expect(page.locator('#pitch-verdict-detail')).toContainText(
+    `The best of the ${sel.eligible} eligible rule-and-filter combinations (of ${EVIDENCE.timing.combinations})`,
+  )
+})

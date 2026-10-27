@@ -36,6 +36,14 @@ function ci(c: readonly number[]): string {
 function num(x: number | null, digits = 2): string {
   return x === null ? '—' : fmtFixed(x, digits)
 }
+/** A signed difference in terminal wealth, at 5 dp so a near-tie shows as one. */
+function signed5(x: number): string {
+  return `${x < 0 ? '−' : '+'}${Math.abs(x).toFixed(5)}`
+}
+/** Timing signals read from the close the put is bought at (pitch_evidence.py). */
+function sameClose(gate: string): boolean {
+  return /^(put_rich|put_cost|alpha)/.test(gate)
+}
 function plural(n: number, one: string, many: string): string {
   return `${n} ${n === 1 ? one : many}`
 }
@@ -206,9 +214,9 @@ export function PitchView() {
             <a href="#pitch-2008">section 2b</a>).
           </li>
           <li>
-            <strong>Timing: nothing survives.</strong> The best of {T.combinations} rule-and-filter combinations
+            <strong>Timing: nothing survives.</strong> The best of the {sel.eligible} eligible rule-and-filter combinations (of {T.combinations})
             chosen on {T.is_period[0]!.slice(0, 4)}–{T.is_period[1]!.slice(0, 4)} improved the out-of-sample mean
-            return by {num(sel.oos.roi_diff)} (95% interval {ci(sel.oos_ci95)}, one-sided p ={' '}
+            return by {num(sel.oos.roi_diff)} per dollar of premium (95% interval {ci(sel.oos_ci95)}, one-sided p ={' '}
             {sel.oos_p.toFixed(3)}); {Math.round(sel.share_positive_oos * 100)}% of all combinations were positive
             out of sample, which is what a coin gives.
           </li>
@@ -305,7 +313,7 @@ export function PitchView() {
                 <td>Book (/api/putlab/hedge-overlay)</td>
                 <td>On request</td>
                 <td>How much of a Cboe hedge program to hold</td>
-                <td>Static: changes only when month-end index data arrives</td>
+                <td>No — sizes a whole program, not a trade. Recomputed on request from daily Cboe index closes, rebalanced monthly, so its full-history margins move a little each day</td>
               </tr>
             </tbody>
           </table>
@@ -318,7 +326,7 @@ export function PitchView() {
           {LIVE.read_on}:{' '}
           {LIVE.roll_schedule_legs.map((l) => (
             <span key={l.asset}>
-              leg #{l.rank} {l.asset} ({l.rule}) expected {fmtFixed(l.expected_roi)}× on premium at a model price of $
+              leg #{l.rank} {l.asset} ({l.rule}) expected {backX(l.expected_roi)} at a model price of $
               {l.model_premium < 0.01 ? l.model_premium.toFixed(4) : l.model_premium.toFixed(2)} a share, while the market quoted {l.market};{' '}
             </span>
           ))}
@@ -343,7 +351,7 @@ export function PitchView() {
                 <th className="num">Calm ROI</th>
                 <th className="num">Elevated ROI</th>
                 <th className="num">Crisis rolls</th>
-                <th>Rolls scored</th>
+                <th>First entry → last expiry</th>
               </tr>
             </thead>
             <tbody>
@@ -596,9 +604,10 @@ export function PitchView() {
         </p>
         <p className="pl-note">
           <strong>QQQ.</strong> {qqqNegative} of {Object.keys(QQQ.standalone).length} rules negative. Its 20% OOM
-          rule’s {fmtFixed(qqq20.mean_roi)} is not evidence against SPY’s one positive rule: {qqq20.fill_skips} refused
-          fills shifted its roll calendar so that no roll it held caught February 2020 (
-          {plural(qqq20.hits, 'winner', 'winners')}), while QQQ’s 15% OOM rule made {backX(qqq15.best_roi)} on a roll bought{' '}
+          rule’s {fmtFixed(qqq20.mean_roi)} is not evidence against SPY’s one positive rule: none of its monthly
+          rolls paid in the February–March 2020 crash ({plural(qqq20.hits, 'winner', 'winners')}), where SPY’s caught it. Why the two
+          calendars fell differently (QQQ’s starts {qqq20.first_entry}, SPY’s {SPY.standalone['20pct_4w_hold']!.first_entry}, and
+          QQQ’s had {qqq20.fill_skips} refused fills) was not measured. QQQ’s 15% OOM rule made {backX(qqq15.best_roi)} on a roll bought{' '}
           {qqq15.best_entry}.
         </p>
       </section>
@@ -606,7 +615,7 @@ export function PitchView() {
       <section className="pl-section" id="pitch-hedge">
         <h3>2. Puts as a hedge on the index</h3>
         <p className="pl-note">
-          Unhedged SPY over {SPY.hedge.window[0]} to {SPY.hedge.window[1]}: growth {pct(SPY.hedge.unhedged_growth, 2)}{' '}
+          Unhedged SPY over {SPY.hedge.window[0]} to {SPY.hedge.window[1]}: log growth {pct(SPY.hedge.unhedged_growth, 2)}{' '}
           a year, worst drawdown {pct(SPY.hedge.unhedged_max_dd)} ({SPY.hedge.unhedged_max_dd_span[0]} to{' '}
           {SPY.hedge.unhedged_max_dd_span[1]}). Growth is shown as the change against that; drawdown is each book’s
           own.
@@ -640,7 +649,7 @@ export function PitchView() {
           <strong>Why some hedged books fall further than SPY alone.</strong> A book’s worst drawdown runs from its
           own peak, and the dates say what each one measures:{' '}
           {deeperDd
-            .map((c) => `${ruleShort(c.rule)} at ${(c.budget * 100).toFixed(2)}%, ${pct(c.max_dd)} from ${c.max_dd_span[0]} to ${c.max_dd_span[1]}`)
+            .map((c) => `${ruleLabel(c.rule)}, at ${(c.budget * 100).toFixed(2)}%: ${pct(c.max_dd)} from ${c.max_dd_span[0]} to ${c.max_dd_span[1]}`)
             .join('; ')}
           .{' '}
           {ddPaper.length > 0 && (
@@ -651,7 +660,7 @@ export function PitchView() {
               {ddPaper
                 .map(
                   (c) =>
-                    `${ruleShort(c.rule)} at ${(c.budget * 100).toFixed(2)}%: bought ${c.max_dd_peak_put!.entry}, marked ${fmtFixed(c.max_dd_peak_put!.mark_multiple, 1)}× its cost on ${c.max_dd_span[0]}, ${fate(c.max_dd_peak_put!.exit_multiple)} on ${c.max_dd_peak_put!.exit}`,
+                    `${ruleLabel(c.rule)}, at ${(c.budget * 100).toFixed(2)}%: bought ${c.max_dd_peak_put!.entry}, marked ${fmtFixed(c.max_dd_peak_put!.mark_multiple, 1)}× its cost on ${c.max_dd_span[0]}, ${fate(c.max_dd_peak_put!.exit_multiple)} on ${c.max_dd_peak_put!.exit}`,
                 )
                 .join('; ')}
               ). So each of these drawdowns begins with the hedge giving back its own mark, not with the market
@@ -660,7 +669,7 @@ export function PitchView() {
           )}
           {ddBled.length > 0 && (
             <>
-              In {ddBled.map((c) => `${ruleShort(c.rule)} at ${(c.budget * 100).toFixed(2)}%`).join(', ')} no put
+              In {ddBled.map((c) => `${ruleLabel(c.rule)}, at ${(c.budget * 100).toFixed(2)}%`).join('; ')} no put
               was marked above {PAPER_PEAK}× its cost on the peak day: that drawdown is the index’s fall plus the
               premium spent.
             </>
@@ -679,7 +688,7 @@ export function PitchView() {
         <p className="pl-note">
           <strong>Cboe’s indices, priced from real trades, agree.</strong> PPUT, PPUT3M and VXTH are built on the
           S&amp;P 500 with dividends reinvested, so the yardstick is the SPX price index plus the same{' '}
-          {pct(E.dividend_yield_assumed)} yield the study accrues: {pct(spxWithDiv, 2)} a year over {E.cboe.span[0]}{' '}
+          {pct(E.dividend_yield_assumed)} yield the study accrues, as log growth: {pct(spxWithDiv, 2)} a year over {E.cboe.span[0]}{' '}
           to {E.cboe.span[1]} (the price index alone: {pct(E.cboe.SPX.growth, 2)}, drawdown {pct(E.cboe.SPX.max_dd)}).
           Against it: PPUT, the S&amp;P 500 with a monthly 5% OOM put, {pct(E.cboe.PPUT.growth, 2)} (
           {pp(E.cboe.PPUT.growth - spxWithDiv)}; drawdown {pct(E.cboe.PPUT.max_dd)}); PPUT3M{' '}
@@ -726,7 +735,7 @@ export function PitchView() {
                 <th className="num">Best</th>
                 <th className="num">Budget/roll</th>
                 <th className="num">Ends at</th>
-                <th>vs unhedged</th>
+                <th className="num">vs unhedged</th>
                 <th className="num">Without best roll</th>
                 <th className="num">Worst drawdown</th>
               </tr>
@@ -750,7 +759,7 @@ export function PitchView() {
                     </td>
                     <td className="num">{(b.budget * 100).toFixed(2)}%</td>
                     <td className="num">{fmtFixed(b.terminal, 4)}</td>
-                    <td>{b.terminal > r.unhedged.terminal ? 'ahead' : 'behind'}</td>
+                    <td className="num nowrap">{signed5(b.terminal - r.unhedged.terminal)}</td>
                     <td className="num">{b.terminal_without_best === undefined ? '—' : fmtFixed(b.terminal_without_best, 4)}</td>
                     <td className="num">{pct(b.max_dd)}</td>
                   </tr>
@@ -809,10 +818,13 @@ export function PitchView() {
           The in-sample winner on mean return
           {selDg.rule === sel.rule && selDg.gate === sel.gate ? ' — and on growth —' : ''} was {ruleLabel(sel.rule)},
           bought only when {gateLabel(sel.gate)}.
+          {sameClose(sel.gate) && (
+            <> That signal is read from the same close the put is bought at, so even this result assumes trading in the closing minutes (see “Same-close signals” below).</>
+          )}
           In sample it took {sel.is.taken} of {sel.is.n} rolls and raised the mean return from{' '}
           {fmtFixed(sel.is.mean_roi_all)} to {num(sel.is.mean_roi_taken)}. Out of sample it took {sel.oos.taken}{' '}
           of {sel.oos.n}: {fmtFixed(sel.oos.mean_roi_all)} to {num(sel.oos.mean_roi_taken)}, an improvement of{' '}
-          {num(sel.oos.roi_diff)} with a 95% interval of {ci(sel.oos_ci95)} (p = {sel.oos_p.toFixed(3)}),
+          {num(sel.oos.roi_diff)} per dollar of premium, with a 95% interval of {ci(sel.oos_ci95)} (p = {sel.oos_p.toFixed(3)}),
           resting on {sel.oos.hits_taken} winning rolls.
           {sel.oos_mean_taken_without_best !== null && (
             <> Without its single best out-of-sample roll the filtered mean is {fmtFixed(sel.oos_mean_taken_without_best)}.</>
@@ -860,7 +872,7 @@ export function PitchView() {
           step. One p-value is one draw, not a power calculation: it does not say how often an effect of that size
           would clear the step. On the held-to-expiry rules the
           perfect filter gets only{' '}
-          {heldRules.map(([r, o]) => `${o.p.toFixed(2)} (${ruleShort(r)}, ${plural(o.oos_winners, 'winner', 'winners')})`).join(', ')}
+          {heldRules.map(([r, o]) => `${o.p.toFixed(2)} (${ruleLabel(r)}, ${plural(o.oos_winners, 'winner', 'winners')})`).join(', ')}
           , because with one or a few winning rolls a resample either contains them or does not. Even a perfect
           filter there stays above the first BH step, so those {T.bh.tested - T.bh.sell_rules.tested} tests carry
           almost no power. Benjamini–Hochberg over the{' '}
@@ -980,7 +992,7 @@ export function PitchView() {
           From a checkout whose <code>.env</code> points at the production lake (the snapshots above are not in a
           local <code>./data</code>), <code>make pitch-evidence AS_OF={E.as_of}</code> reads them, read only, and
           rewrites <code>frontend/src/content/pitch_evidence.json</code>, which is all this page reads for the
-          study. The generator refuses to run against another checkout’s code. That file was generated by commit{' '}
+          study. The generator stops if the <code>tail_lab</code> package it imports is not this checkout’s <code>src/</code> (set <code>PYTHONPATH</code> to it), so the tree hashes below identify the code that ran. That file was generated by commit{' '}
           <code data-testid="pitch-code-sha">{E.code.sha.slice(0, 12)}</code>, a branch commit that a squash merge
           does not keep; the code it ran is identified on main by its git tree hashes, src/{' '}
           <code>{E.code.tree.src.slice(0, 12)}</code> and scripts/ <code>{E.code.tree.scripts.slice(0, 12)}</code>
