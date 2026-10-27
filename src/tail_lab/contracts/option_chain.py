@@ -235,8 +235,9 @@ class Wing:
 #: so a fifth still refuses that body whole, with margin. Not 0.5, which let
 #: such a body through. Not 0.01 either: a misrouted symbol counts against
 #: the floor, so at 1% a sign glitch on 2 of FXI's 176 puts cost all of FXI,
-#: and the same on three chains refused a put session that main commits with
-#: just the bad rows quarantined. Below a fifth, the contract quarantines only
+#: and the same on three chains refused a put session that the contract
+#: alone (without the misrouting guard) commits with just the bad rows
+#: quarantined. Below a fifth, the contract quarantines only
 #: the wrong-sign rows, whatever the chain's size.
 MAX_WRONG_SIGN_SHARE = 0.2
 

@@ -1740,7 +1740,8 @@ def test_a_sign_glitch_on_three_chains_costs_their_bad_rows_on_the_local_path(
     tmp_path: Path,
 ) -> None:
     """Review A6: one call-signed put in each of three 20-put chains (5%)
-    must cost those three rows, as on main -- not the three chains, which
+    must cost those three rows, as the contract alone (without the
+    misrouting guard) would -- not the three chains, which
     the floor would then count lost and refuse the session over."""
     names = [f"SYM{i:02d}" for i in range(21)] + ["FXI", "HYG", "TLT"]
     payloads = {

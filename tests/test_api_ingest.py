@@ -664,7 +664,8 @@ def test_a_sign_glitch_on_three_put_chains_costs_their_bad_rows_not_the_session(
     """Review A6, measured on the 2026-10-26 live bodies: 10 flipped deltas in
     each of FXI, HYG and TLT made the misrouting guard quarantine all three
     chains, the floor counted them lost, and the put session was refused --
-    where main commits it with the 30 bad rows quarantined. 2 of 40 (5%)
+    where the contract alone (without the misrouting guard) commits it with
+    the 30 bad rows quarantined. 2 of 40 (5%)
     here is a glitch, not a misrouted chain: only those rows go."""
     _set_token(monkeypatch, TOKEN)
     resp = _post(client, _body(*_glitched_put_sweep(2)))
