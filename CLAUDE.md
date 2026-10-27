@@ -78,8 +78,11 @@ them.
 - **Tests never touch the network.** Ingestion adapters are tested against committed fixtures; live fetches happen only via the human-run `make ingest-*` targets.
 - **Config lives in one place:** `src/tail_lab/config.py` (pydantic-settings, `TAIL_LAB_` prefix, `.env`). Never read `os.environ` elsewhere. `TAIL_LAB_LAKE_BACKEND=local` (default, credential-free — what CI uses, lake at `./data/`) vs `tigris` (S3 on Fly Tigris, plain `AWS_*` env names). The feedback routes 404 unless `TAIL_LAB_FEEDBACK_TOKEN` is set — that's deliberate, not a bug.
 - **The daily chain sweep is the one job that must not miss** (`docs/adr/0020`).
-  `.github/workflows/daily-chain-snapshot.yml` forward-collects the put wing from
-  Cboe's keyless CDN every weekday at 21:30 UTC. Every other source here serves
+  `.github/workflows/daily-chain-snapshot.yml` forward-collects both wings from
+  Cboe's keyless CDN every weekday at 21:30 UTC: puts into
+  `option_chain_snapshot`, and calls (`docs/adr/0031`) into
+  `option_chain_call_snapshot`, a separate dataset that put readers never see.
+  Never union the two: they share a key and neither has a `right` column. Every other source here serves
   history on demand, so a skipped pull is a `make` invocation away from being
   fixed; nobody sells a retroactive option chain, so a skipped session is gone at
   any price. An empty sweep therefore **fails red on purpose** rather than

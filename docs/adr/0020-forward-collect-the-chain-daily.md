@@ -8,6 +8,10 @@ Date: 2026-08-26
 `ingestion/option_chain.py`, `api/ingest_routes.py`,
 `scripts/chain_snapshot.py` and `.github/workflows/daily-chain-snapshot.yml`.
 
+Amended by `docs/adr/0031`: the sweep now also collects the call wing (0.80-2.50
+of spot), from the same fetch, into its own dataset `option_chain_call_snapshot`.
+Decision 2's "Puts only" describes `option_chain_snapshot`, which is unchanged.
+
 ## Context
 
 `README.md` lists six core datasets. Five of them — OHLCV, the volatility
@@ -54,7 +58,7 @@ Yahoo's `/v7/finance/options`, named as the fallback in
 `contracts/options_calendar`, now answers 401 without a cookie+crumb pair; Cboe
 needs neither.
 
-**2. Store a slice, not the chain.** Puts only, strikes within 0.40–1.05 of
+**2. Store a slice, not the chain.** Puts only (amended by 0031), strikes within 0.40–1.05 of
 spot, tenors 0–180 days. SPY's full document is 5.9 MB and 13,288 contracts;
 the slice is ~3,600 rows. The bands match `contracts/option_quotes` so the
 vendor back-history and this forward collection union on their shared columns

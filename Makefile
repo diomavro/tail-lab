@@ -34,7 +34,7 @@ help:
 	@echo "  ingest-sp500-constituents  Live point-in-time S&P 500 membership fetch -> bronze (network; not run in CI)"
 	@echo "  ingest-mpd   Live Minneapolis Fed MPD fetch -> bronze, whole market family (network; not run in CI)"
 	@echo "  ingest-vix-futures  Live VX futures term structure fetch -> bronze (keyless; network; not run in CI)"
-	@echo "  ingest-option-chain  TODAY's put wing from Cboe -> bronze (CHAIN_SYMBOLS=... ; network; UNRECOVERABLE if skipped)"
+	@echo "  ingest-option-chain  TODAY's put + call wings from Cboe -> bronze (CHAIN_SYMBOLS=... ; network; UNRECOVERABLE if skipped)"
 	@echo "  greeks-check Score our greeks vs the exchange's own (read-only; needs a chain snapshot)"
 	@echo "  ingest-optionsdx  Hand-downloaded optionsDX chains -> bronze (OPTIONSDX_SYMBOL=vix; local corpus, no network)"
 	@echo "  ingest-kaggle-spy  Hand-downloaded Kaggle SPY year -> data/vendor parquet (YEAR=2023; OFFLINE cross-check, never served)"
@@ -140,7 +140,8 @@ ingest-rates:
 ingest-tiingo-eod:
 	TAIL_LAB_REPO=$(CURDIR) ./scripts/weekly_tiingo_refresh.sh; status=$$?; tail -n 20 .tiingo-refresh.log; exit $$status
 
-# Forward-collects TODAY's put wing from Cboe's public CDN. Unlike every other
+# Forward-collects TODAY's put and call wings (docs/adr/0031) from Cboe's public
+# CDN, one fetch per chain. Unlike every other
 # ingest-* target this one cannot be caught up later: no free source serves a
 # retroactive chain, so a day not swept is a day lost (docs/adr/0020). The
 # scheduled workflow runs the --post half; this is the human/local path.
