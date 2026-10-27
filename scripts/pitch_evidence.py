@@ -880,10 +880,13 @@ def timing(combos: list[Combo], rng: np.random.Generator) -> Json:
 def sign_persistence(ok: list[tuple[Combo, Json, Json]], key: str) -> Json:
     """Of the combinations that improved in sample, how many also improved
     out of sample. NOT the share positive out of sample over all of them:
-    nearly every gate has its complement in the set (<= and >= one
-    threshold; calm and not-calm; crisis and not-crisis), and a gate's
-    return difference has the opposite sign to its complement's, so that
-    share is about one half whatever the data. Persistence is about one half with no signal and rises with
+    most gates have a near-complement in the set (<= and >= one threshold;
+    calm and not-calm; crisis and not-crisis), and where the pair splits the
+    rolls the two return differences have opposite signs, so that share sits
+    near one half whatever the data. Not every pair splits them: apply_gate
+    drops a NaN reading (alpha, put_rich) from BOTH sides of a threshold, so
+    both can beat, or both trail, the all-roll mean, and "elevated" has no
+    complement. Persistence is about one half with no signal and rises with
     one."""
     pos = [r for r in ok if _as_float(r[1][key]) > 0]
     observed = sum(_as_float(r[2][key]) > 0 for r in pos)

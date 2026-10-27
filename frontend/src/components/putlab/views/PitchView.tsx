@@ -365,8 +365,8 @@ export function PitchView() {
               <tr>
                 <th>As of</th>
                 <th>Verdict</th>
-                <th className="num">Calm ROI</th>
-                <th className="num">Elevated ROI</th>
+                <th className="num">Calm: return, pooled</th>
+                <th className="num">Elevated: return, pooled</th>
                 <th className="num">Crisis rolls</th>
                 <th>First entry → last expiry</th>
               </tr>
@@ -388,7 +388,9 @@ export function PitchView() {
           </table>
         </div>
         <p className="pl-note">
-          Every run’s last roll expired by {lastExpiry}, before the first date in the table, so no price from these
+          The two return columns are the app’s figure, not the per-roll mean defined in Terms: each regime’s total
+          net P&amp;L over its total premium (regime_verdict.py), net of the app’s modelled brokerage, which is why
+          one can fall below −1.00. Every run’s last roll expired by {lastExpiry}, before the first date in the table, so no price from these
           sessions is in any of them (GET /api/putlab/backtest, same parameters). What moved is the four-year
           window’s start, and with it the whole monthly roll calendar: which roll happens to be open across a past
           drop. On {LIVE.spy_verdicts[LIVE.spy_verdicts.length - 1]!.as_of} the first roll moved to{' '}
@@ -751,7 +753,7 @@ export function PitchView() {
                 .map((u) => `the put bought ${u.entry} runs to its ${u.expiry} expiry and none is held from then until ${u.next_entry}`)
                 .join('; ')}`}
           ; the licence is unresolved, so this is research use only. Unhedged, the book ends at{' '}
-          {fmtFixed(C08['5pct'].unhedged.terminal, 4)} of its starting wealth, with a {pct(C08['5pct'].unhedged.max_dd)} drawdown.
+          {fmtFixed(C08['5pct'].unhedged.terminal, 4)} of its starting wealth ({C08.first} → {C08['5pct'].last}), with a {pct(C08['5pct'].unhedged.max_dd)} drawdown.
         </p>
         <p className="pl-pitch-scrollhint">The table scrolls sideways →</p>
         <div className="pl-scroll">
@@ -764,8 +766,8 @@ export function PitchView() {
                 <th className="num">Winners</th>
                 <th className="num">Best</th>
                 <th className="num">Budget/roll</th>
-                <th className="num">Ends at</th>
-                <th className="num">vs unhedged</th>
+                <th className="num">Ends at (× start)</th>
+                <th className="num">vs unhedged (× start)</th>
                 <th className="num">Without best roll</th>
                 <th className="num">Worst drawdown</th>
               </tr>
@@ -798,6 +800,11 @@ export function PitchView() {
             </tbody>
           </table>
         </div>
+        <p className="pl-note">
+          “Ends at” is the book’s wealth on {C08['5pct'].last} as a multiple of its starting wealth; “vs unhedged” is
+          that multiple minus the unhedged book’s, not a rate. “Without best roll” is recomputed only for a book that
+          ends ahead of unhedged; “—” means it did not.
+        </p>
         {c08Rules
           .filter(([, r]) => r.refused.length > 0)
           .map(([k, r]) => (
@@ -878,9 +885,13 @@ export function PitchView() {
           {selDg.is_positive} persisted, reached by {selDg.null_at_least_observed} of {selDg.null_rotations}. That
           is weak evidence that in-sample improvement carries forward a little; it makes no single filter
           significant (below). (The share
-          of all combinations positive out of sample is no test: every filter’s opposite is also in the set — below
-          and above one threshold, calm and not calm — and the two always differ in sign, so that share is about half
-          whatever the data.) The rank correlation between in-sample and out-of-sample results is{' '}
+          of all combinations positive out of sample is no test: most filters come with their opposite in the set —
+          below and above one threshold, calm and not calm, crisis and not crisis — and when a pair splits the rolls
+          between its two sides, the two differences have opposite signs, so that share sits near half whatever the
+          data. Not every pair splits them. A roll with no implied-alpha or put-IV reading is left out by both sides of
+          that threshold, so both sides can beat, or both trail, the mean over all rolls; and elevated has no
+          opposite. Part of an alpha or put-IV filter’s apparent effect can therefore be that rolls with a reading
+          differ from rolls without one, not timing on the reading’s value.) The rank correlation between in-sample and out-of-sample results is{' '}
           {fmtFixed(sel.spearman_is_oos)}: an in-sample ranking says almost nothing about the next seven years.{' '}
           {T.bh.p_below_05} of {T.bh.tested} have a raw p below 0.05 — about the {Math.round(T.bh.tested * 0.05)} that
           chance would give if these p-values were uniform under no effect and the tests independent (neither is

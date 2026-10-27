@@ -52,8 +52,8 @@ test('the verdict list prints the counts the evidence gives', async ({ page }) =
 })
 
 test('scores timing by sign persistence, not by a share the filter pairs fix at a half', async ({ page }) => {
-  // Every filter's opposite is in the set and the two differ in sign, so
-  // "share positive out of sample" is ~1/2 whatever the data; persistence is not.
+  // Most filters' opposites are in the set and differ in sign from them, so
+  // "share positive out of sample" sits near 1/2 whatever the data; persistence does not.
   const sel = EVIDENCE.timing.roi_diff
   const share = Math.round((sel.is_positive_oos_positive / sel.is_positive) * 100)
   await expect(page.locator('#pitch-verdict-detail')).toContainText(
@@ -289,4 +289,26 @@ test('a Pitch chunk that fails to load leaves the rest of the app standing', asy
   await expect(page.getByText('The Pitch could not load. Reload the page.')).toBeVisible()
   await page.getByRole('tab', { name: 'Glossary' }).click()
   await expect(page.getByRole('tab', { name: 'Workspace' })).toBeVisible()
+})
+
+test('does not claim every filter pair differs in sign: missing readings sit out of both sides', async ({ page }) => {
+  // apply_gate drops a NaN alpha/put_rich from both <= and >= of a threshold,
+  // so both sides can beat the all-roll mean; "always differ" was false.
+  const timing = page.locator('#pitch-timing')
+  await expect(timing).not.toContainText('always differ in sign')
+  await expect(timing).toContainText('left out by both sides of that threshold')
+  await expect(timing).toContainText('elevated has no opposite')
+})
+
+test('the 2008-09 table states its units, its window and what a dash means', async ({ page }) => {
+  const c08 = EVIDENCE.crisis_2008
+  const section = page.locator('#pitch-2008')
+  await expect(section).toContainText(`of its starting wealth (${c08.first} → ${c08['5pct'].last})`)
+  await expect(page.getByTestId('pitch-2008').locator('thead')).toContainText('vs unhedged (× start)')
+  await expect(section).toContainText('“—” means it did not')
+})
+
+test('the verdict table says its returns are pooled and net of brokerage, so below −1.00 is possible', async ({ page }) => {
+  await expect(page.getByTestId('pitch-flips').locator('thead')).toContainText('Calm: return, pooled')
+  await expect(page.locator('#pitch-daily')).toContainText('which is why one can fall below −1.00')
 })
