@@ -2830,7 +2830,7 @@ the number to move.
       *2026-10-27:* each added symbol now costs both wings (calls ~1.35x the
       put rows, `docs/adr/0031`). Check any widening against the `memory.peak`
       margin ADR 0031's body-size gate measured, not the put body alone.
-- [ ] **(a) Parity-implied forward / `q` from the call wing, against
+- [ ] **Parity-implied forward / `q` from the call wing, against
       `tiingo_eod`** (`docs/adr/0031`). Near-ATM put-call pairs per expiry from
       `option_chain_snapshot` + `option_chain_call_snapshot` (join on the key,
       by dataset, never a union). **American caveat:** every name is
@@ -2838,10 +2838,10 @@ the number to move.
       early-exercise premium peaks around ex-dividend dates and for ITM puts.
       Use short-tenor near-ATM strikes, or a de-Americanised (binomial) fit.
       Do not promise a fix of the FXI / HYG / TLT `q` weakness.
-- [ ] **(b) Risk-reversal regime signal** from the two wings (25-delta call
+- [ ] **Risk-reversal regime signal** from the two wings (25-delta call
       minus put IV per name and tenor), tested as a regime input beside VIX
       and credit (`docs/adr/0031`).
-- [ ] **(c) Call-wing health: verify, alert and the daily agent.**
+- [ ] **Call-wing health: verify, alert and the daily agent.**
       `chain_sweep_verify.sh` and `GET /api/ingest/option-chain/status` cover
       puts only, so a calls-only loss is visible only as a red
       `daily-chain-snapshot` run. `chain_sweep_alert.sh` fires its "option
@@ -2849,9 +2849,6 @@ the number to move.
       false about the puts when only the calls failed; it must quote the
       script's `calls only; puts landed` line. Then extend the daily agent's
       health check (`docs/AGENT_MISSION.md`, guarded) to the call dataset.
-- [ ] **(d) Model-free IV with both wings** from the first `docs/adr/0031`
-      session onward (PG1, `docs/PRIOR_ART.md` §16): the call wing removes the
-      one-wing truncation; Jiang & Tian (2007) still corrects the rest.
 - [ ] **The screen optimises toward untradeable contracts, and this is the
       deep one.** All 3 collected legs came back `illiquid` — KRE bid 0.00 / OI
       0, XLE bid 0.01 ask 0.20 (a 190%-of-mid spread), XLF bid 0.00. That is
@@ -3215,7 +3212,9 @@ serve; `docs/adr/0021` is why the risk-shaped one comes first.
       the headwind every S1 roll fights and the platform has never once
       measured it. Needs only what is already ingested (OHLCV realized vol
       + the vol complex; per-name IV arrives with `docs/adr/0020`'s
-      collection). Then the payoff: a **VRP-adjusted sensitivity metric** —
+      collection). *2026-10-27:* the implied leg can use both wings from
+      `option_chain_call_snapshot`'s first session (`docs/adr/0031`); earlier
+      sessions are put-only. Then the payoff: a **VRP-adjusted sensitivity metric** —
       rank by sensitivity *per unit of premium paid over realized* rather
       than by raw sensitivity. That is the precise form of the README's
       "cheapness-adjusted variants", and it is a new column in the Screen,

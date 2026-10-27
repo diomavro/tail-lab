@@ -18,9 +18,11 @@ from tail_lab.contracts.option_chain import (
     MONEYNESS_MIN,
     QUARANTINE_DATASET,
     WINGS,
+    IncompleteSweepError,
     OptionCallChainSnapshotSchema,
     OptionChainSnapshotSchema,
     missing_sessions,
+    require_enough_symbols,
     split_valid_and_quarantined,
 )
 from tail_lab.contracts.option_quotes import OptionQuoteSchema
@@ -359,3 +361,24 @@ def test_the_split_validates_against_the_schema_it_is_given() -> None:
     valid, quarantined = split_valid_and_quarantined(calls, schema=OptionChainSnapshotSchema)
     assert valid["strike"].tolist() == [810.0]
     assert quarantined["strike"].tolist() == [800.0]
+
+
+def test_a_mixed_refusal_keeps_the_rerun_advice_for_the_recoverable_names() -> None:
+    """A shortfall with BOTH misrouted and unfetched symbols: the unfetched
+    ones are recoverable only by a re-run before the next US open, so the
+    advice must survive the misrouted one being named apart (a re-run would
+    repeat the misrouting, so it is not listed as missing)."""
+    with pytest.raises(IncompleteSweepError) as refused:
+        require_enough_symbols(
+            19,
+            24,
+            0.9,
+            dt.date(2026, 10, 26),
+            missing=["FXI", "MSTR", "QQQ", "GLD"],
+            misrouted={"GLD"},
+        )
+    message = str(refused.value)
+    assert "Missing: FXI, MSTR, QQQ. Re-run before the next US open" in message
+    assert "Misrouted, not missing: GLD" in message
+    missing_part = message.split("Missing:", 1)[1].split(".", 1)[0]
+    assert "GLD" not in missing_part

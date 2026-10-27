@@ -630,6 +630,14 @@ def test_one_symbols_wrong_signs_cost_that_symbol_not_the_session(
         if r.getMessage().startswith("event=api.ingest.option_chain ")
     )
     assert "symbols_misrouted=XLE " in event
+    # The misrouted warning is the only server-side record of WHICH route
+    # quarantined a whole symbol (STANDARDS §f), so it must name the wing.
+    (warning,) = (
+        r.getMessage()
+        for r in caplog.records
+        if r.getMessage().startswith("event=api.ingest.option_chain.misrouted ")
+    )
+    assert f"dataset={dataset} symbols=XLE " in warning
     day = dt.date(2026, 8, 26)
     assert "XLE" not in set(store.read_bronze_as_of(dataset, day)["underlying"])
     assert set(store.read_bronze_as_of(quarantine, day)["underlying"]) == {"XLE"}

@@ -235,5 +235,6 @@ call delta is the rule working, not a parse fault.
 - Consumers are not part of this change. They are queued in `AGENT_TODO.md`:
   a parity-implied forward / `q` against `tiingo_eod` (with the American
   caveat); a risk-reversal regime signal; the verify and alert scripts and the
-  daily agent's health check covering the call dataset; and model-free IV
-  with both wings from this ADR's first session (PG1).
+  daily agent's health check covering the call dataset. Model-free IV with
+  both wings is not queued separately: it belongs to PG1 (gated) and to the
+  volatility-risk-premium item, both of which now note the call wing.
