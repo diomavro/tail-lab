@@ -262,6 +262,63 @@ def test_status_names_the_symbols_a_partial_sweep_lost(
     assert "SPY" not in payload["missing_symbols"]
 
 
+def test_status_reports_each_wing_from_its_own_dataset(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The wings are separate POSTs, so the calls can be lost while the puts
+    land (``docs/adr/0031``). Puts on 2026-08-26 for SPY and QQQ, calls a
+    session earlier for SPY alone: each half of the answer must describe its
+    own dataset, not the other wing's and not their union."""
+    _set_token(monkeypatch, TOKEN)
+    client.post(
+        "/api/ingest/option-chain",
+        json=_body(_row(strike=700.0), _row(strike=710.0, underlying="QQQ")),
+        headers={"Authorization": f"Bearer {TOKEN}"},
+    )
+    _post_calls(
+        client,
+        _body(
+            _call_row(quote_date="2026-08-25"),
+            _call_row(quote_date="2026-08-25", strike=810.0),
+            _call_row(quote_date="2026-08-25", strike=820.0),
+            ingest_date="2026-08-25",
+        ),
+    )
+
+    payload = client.get("/api/ingest/option-chain/status").json()
+    calls = payload["calls"]
+    assert (payload["dataset"], calls["dataset"]) == (DATASET, CALL_DATASET)
+    assert (payload["last_quote_date"], calls["last_quote_date"]) == ("2026-08-26", "2026-08-25")
+    assert (payload["rows"], calls["rows"]) == (2, 3)
+    assert (payload["symbols"], calls["symbols"]) == (2, 1)
+    assert calls["stale_days"] == payload["stale_days"] + 1
+    assert "QQQ" not in payload["missing_symbols"]
+    assert "QQQ" in calls["missing_symbols"]
+    assert "SPY" not in calls["missing_symbols"]
+
+
+def test_status_reports_a_call_wing_never_collected(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Puts landed, calls never did: the put half is fresh, and only the call
+    half says so -- a null ``stale_days`` and every symbol missing."""
+    _set_token(monkeypatch, TOKEN)
+    client.post(
+        "/api/ingest/option-chain",
+        json=_body(_row()),
+        headers={"Authorization": f"Bearer {TOKEN}"},
+    )
+
+    payload = client.get("/api/ingest/option-chain/status").json()
+    assert payload["last_quote_date"] == "2026-08-26"
+    assert payload["calls"]["last_quote_date"] is None
+    assert payload["calls"]["rows"] == 0
+    assert payload["calls"]["stale_days"] is None
+    assert sorted(payload["calls"]["missing_symbols"]) == sorted(
+        s.upper() for s in DEFAULT_SNAPSHOT_SYMBOLS
+    )
+
+
 def test_the_partition_defaults_to_the_session_not_the_server_clock(
     client: TestClient, store: DeltaLakeStore, monkeypatch: pytest.MonkeyPatch
 ) -> None:

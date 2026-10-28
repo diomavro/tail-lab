@@ -2842,7 +2842,13 @@ the number to move.
       minus put IV per name and tenor), tested as a regime input beside VIX
       and credit (`docs/adr/0031`).
 - [ ] **Call-wing health: verify, alert and the daily agent.**
-      `chain_sweep_verify.sh` and `GET /api/ingest/option-chain/status` cover
+      **Status route done 2026-10-28:** `GET /api/ingest/option-chain/status`
+      now carries the call wing under `calls` (same fields, read from
+      `option_chain_call_snapshot` alone); the put fields stay at the top
+      level, so existing readers are unchanged. Still OPEN below: the
+      verifier, the toast, and the guarded prompt/CLAUDE.md/ADR 0031 wording
+      (which still say the route covers puts only).
+      `chain_sweep_verify.sh` covers
       puts only, so a calls-only loss is visible only as a red
       `daily-chain-snapshot` run. `chain_sweep_alert.sh` fires its "option
       chain was NOT captured" toast on any non-zero `--local` exit, which is
