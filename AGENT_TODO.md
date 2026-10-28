@@ -2846,8 +2846,9 @@ the number to move.
       now carries the call wing under `calls` (same fields, read from
       `option_chain_call_snapshot` alone); the put fields stay at the top
       level, so existing readers are unchanged. Still OPEN below: the
-      verifier, the toast, and the guarded prompt/CLAUDE.md/ADR 0031 wording
-      (which still say the route covers puts only).
+      verifier and the toast; and (guarded, human) ADR 0031 §7 still says
+      there is no call freshness route, while the daily-agent prompt and
+      `AGENT_MISSION.md` do not yet check `calls.stale_days`.
       `chain_sweep_verify.sh` covers
       puts only, so a calls-only loss is visible only as a red
       `daily-chain-snapshot` run. `chain_sweep_alert.sh` fires its "option

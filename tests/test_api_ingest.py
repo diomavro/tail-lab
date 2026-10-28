@@ -311,6 +311,7 @@ def test_status_reports_a_call_wing_never_collected(
 
     payload = client.get("/api/ingest/option-chain/status").json()
     assert payload["last_quote_date"] == "2026-08-26"
+    assert payload["calls"]["dataset"] == CALL_DATASET
     assert payload["calls"]["last_quote_date"] is None
     assert payload["calls"]["rows"] == 0
     assert payload["calls"]["stale_days"] is None
