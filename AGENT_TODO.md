@@ -2850,8 +2850,8 @@ the number to move.
       there is no call freshness route, while the daily-agent prompt and
       `AGENT_MISSION.md` do not yet check `calls.stale_days`.
       `chain_sweep_verify.sh` covers
-      puts only, so a calls-only loss is visible only as a red
-      `daily-chain-snapshot` run. `chain_sweep_alert.sh` fires its "option
+      puts only, so on the local path a calls-only loss shows only as a red
+      `daily-chain-snapshot` run and in the status route's `calls`. `chain_sweep_alert.sh` fires its "option
       chain was NOT captured" toast on any non-zero `--local` exit, which is
       false about the puts when only the calls failed; it must quote the
       script's `calls only; puts landed` line. Then extend the daily agent's

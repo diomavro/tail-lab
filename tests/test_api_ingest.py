@@ -314,6 +314,7 @@ def test_status_reports_a_call_wing_never_collected(
     assert payload["calls"]["dataset"] == CALL_DATASET
     assert payload["calls"]["last_quote_date"] is None
     assert payload["calls"]["rows"] == 0
+    assert payload["calls"]["symbols"] == 0
     assert payload["calls"]["stale_days"] is None
     assert sorted(payload["calls"]["missing_symbols"]) == sorted(
         s.upper() for s in DEFAULT_SNAPSHOT_SYMBOLS
