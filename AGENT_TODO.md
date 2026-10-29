@@ -3219,6 +3219,20 @@ serve; `docs/adr/0021` is why the risk-shaped one comes first.
       than by raw sensitivity. That is the precise form of the README's
       "cheapness-adjusted variants", and it is a new column in the Screen,
       not a new page.
+      **Step 1 done 2026-10-29 -- the measurement, on history:**
+      `research/vrp.py` (`compute_vrp`, `make vrp`) reads the optionsDX panel
+      and the name's OHLCV as of a date. For each quote date it takes the put
+      whose expiry is nearest 30 days at the strike nearest `moneyness x
+      spot`, and subtracts the zero-mean realised vol of that option's own
+      life from its vendor IV. It has not been run here (no lake on the
+      runner), so **run `make vrp` and record the per-name numbers in
+      `docs/DISCOVERIES.md`** before building on them. The span is the
+      panel/OHLCV overlap (SPY 2016-10 .. 2023-12). Still OPEN: (a) the same
+      measurement on the forward `option_chain_snapshot` (Cboe `iv`,
+      zero-fill already null), which needs a partition walk rather than one
+      as-of read; (b) the VRP-adjusted Screen column above. The column needs
+      a per-name VRP that is current as of today, and for the 66 names
+      outside optionsDX, (a) is the only source of one.
 - [ ] **Put ratio backspread as a second structure** (§2.37, §4 Q8). Short
       one near-ATM put, long two further-OTM, often at zero or negative net
       debit — convexity kept, carry financed. It is the textbook answer to
