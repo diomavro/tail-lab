@@ -30,8 +30,16 @@ choice of which observations exist.
 
 **Windows overlap.** One observation per quote date, so a 30-day window
 shares ~29 days with the next. The mean and median are fine; a t-statistic
-over these observations would overstate its own significance by roughly the
-window length, so none is reported.
+over these observations would understate its standard error by roughly the
+square root of the window length, so none is reported.
+
+**A target the panel cannot hold is refused, not approximated.** The panel
+keeps strikes of 0.60-1.02 x spot and expiries up to 120 days
+(``contracts.optionsdx``). A target outside that is a ``ValueError``, and a
+quote date whose nearest put sits more than ``STRIKE_TOLERANCE`` from the
+target strike or ``TENOR_TOLERANCE_DAYS`` from the target tenor yields no
+observation -- otherwise a deep-OTM put's vol would be averaged into an
+"at-the-money" premium under the target's label.
 """
 
 from __future__ import annotations
@@ -44,7 +52,7 @@ import pandas as pd
 from pydantic import BaseModel
 
 from tail_lab.contracts.optionsdx import DATASET as OPTIONSDX_DATASET
-from tail_lab.contracts.optionsdx import month_coverage
+from tail_lab.contracts.optionsdx import MAX_DTE_DAYS, MONEYNESS_MAX, MONEYNESS_MIN, month_coverage
 from tail_lab.lake.store import LakeStore
 from tail_lab.research.backtest.put_roll import load_asof_series
 
@@ -54,6 +62,15 @@ TRADING_DAYS = 252
 #: Fewest daily returns a window may hold. Below this a "realised vol" is a
 #: handful of squared returns, and one gap day dominates it.
 MIN_RETURNS = 5
+
+#: Furthest a chosen strike may sit from ``moneyness x spot``, as a fraction
+#: of spot. 2.5% is several listed strikes on every name in the panel.
+STRIKE_TOLERANCE = 0.025
+
+#: Furthest a chosen expiry may sit from ``target_days``. Weeklies list an
+#: expiry at least every 7 days, so 10 is never binding on a liquid name and
+#: only refuses a date whose chain is genuinely thin.
+TENOR_TOLERANCE_DAYS = 10
 
 #: The panel columns this module reads -- projected, never the whole panel
 #: (SPY is 3.3M rows; ``LakeStore.read_bronze_columns_as_of``).
@@ -83,6 +100,10 @@ class VrpSummary(BaseModel):
     n_observations: int
     start: dt.date
     end: dt.date
+    #: What was actually measured, beside the target above: the mean of the
+    #: chosen puts' strike / spot and days to expiry.
+    mean_moneyness: float
+    mean_dte: float
     mean_implied_vol: float
     mean_realised_vol: float
     mean_vrp: float
@@ -90,9 +111,10 @@ class VrpSummary(BaseModel):
     #: Share of observations where implied exceeded realised -- the buyer
     #: overpaid for movement.
     share_positive: float
-    #: ``YYYYMM`` months inside the quotes' span that hold no quote at all
-    #: (``contracts.optionsdx.month_coverage``): a gap here is a gap in the
-    #: sample, never a calm month.
+    #: ``YYYYMM`` months inside the input quotes' span (after the ``as_of``
+    #: cut) that hold no quote at all (``contracts.optionsdx.month_coverage``):
+    #: a gap in the vendor's coverage, never a calm month. A month whose quotes
+    #: all lacked an IV is NOT listed here; it shows as fewer observations.
     missing_months: list[str]
     observations: list[VrpObservation]
 
@@ -101,19 +123,26 @@ def select_puts(quotes: pd.DataFrame, *, moneyness: float, target_days: int) -> 
     """One put per quote date: the expiry nearest ``target_days`` (ties go to
     the shorter), then the strike nearest ``moneyness x spot`` (ties go to the
     lower). Rows without a positive implied vol are not candidates -- a blank
-    vendor IV means its solver failed, never a zero-vol option. Pure.
+    vendor IV means its solver failed, never a zero-vol option -- and neither
+    are rows outside ``STRIKE_TOLERANCE`` / ``TENOR_TOLERANCE_DAYS`` of the
+    target, so a date with nothing near it is absent rather than approximated.
+    Pure.
     """
     usable = quotes[quotes["iv"].notna() & (quotes["iv"] > 0)].copy()
     usable["quote_date"] = pd.to_datetime(usable["quote_date"])
     usable["expiration"] = pd.to_datetime(usable["expiration"])
     usable["dte"] = (usable["expiration"] - usable["quote_date"]).dt.days
-    usable = usable[usable["dte"] > 0]
     usable["dte_gap"] = (usable["dte"] - target_days).abs()
+    usable["strike_gap"] = (usable["strike"] - usable["spot"] * moneyness).abs()
+    usable = usable[
+        (usable["dte"] > 0)
+        & (usable["dte_gap"] <= TENOR_TOLERANCE_DAYS)
+        & (usable["strike_gap"] <= STRIKE_TOLERANCE * usable["spot"])
+    ]
     expiries = usable.sort_values(["quote_date", "dte_gap", "dte"]).drop_duplicates("quote_date")[
         ["quote_date", "expiration"]
     ]
     chosen = usable.merge(expiries, on=["quote_date", "expiration"])
-    chosen["strike_gap"] = (chosen["strike"] - chosen["spot"] * moneyness).abs()
     return (
         chosen.sort_values(["quote_date", "strike_gap", "strike"])
         .drop_duplicates("quote_date")
@@ -149,16 +178,19 @@ def measure_vrp(
 
     ``quotes`` carries ``QUOTE_COLUMNS``; ``closes`` is a date-indexed close
     series of the same underlying. Raises ``LookupError`` when no observation's
-    window has closed by ``as_of``.
+    window has closed by ``as_of``, and ``ValueError`` for a target outside
+    what the panel holds.
     """
+    if not (MONEYNESS_MIN <= moneyness <= MONEYNESS_MAX and 0 < target_days <= MAX_DTE_DAYS):
+        raise ValueError(
+            f"target {moneyness} x spot, {target_days}d is outside the panel's "
+            f"{MONEYNESS_MIN}-{MONEYNESS_MAX} x spot, 1-{MAX_DTE_DAYS}d"
+        )
     cutoff = pd.Timestamp(as_of)
     known = closes[closes.index <= cutoff].sort_index()
     last_close = known.index.max() if len(known) else None
-    picks = select_puts(
-        quotes[pd.to_datetime(quotes["quote_date"]) <= cutoff],
-        moneyness=moneyness,
-        target_days=target_days,
-    )
+    seen = quotes[pd.to_datetime(quotes["quote_date"]) <= cutoff]
+    picks = select_puts(seen, moneyness=moneyness, target_days=target_days)
 
     observations: list[VrpObservation] = []
     for quote_date, expiration, strike, spot, iv in zip(
@@ -193,7 +225,7 @@ def measure_vrp(
         )
 
     vrps = np.array([o.vrp for o in observations])
-    _, missing = month_coverage(sorted({o.quote_date for o in observations}))
+    _, missing = month_coverage(sorted(pd.to_datetime(seen["quote_date"]).dt.date.unique()))
     return VrpSummary(
         underlying=underlying.upper(),
         moneyness=moneyness,
@@ -202,6 +234,8 @@ def measure_vrp(
         n_observations=len(observations),
         start=observations[0].quote_date,
         end=observations[-1].quote_date,
+        mean_moneyness=float(np.mean([o.moneyness for o in observations])),
+        mean_dte=float(np.mean([(o.expiration - o.quote_date).days for o in observations])),
         mean_implied_vol=float(np.mean([o.implied_vol for o in observations])),
         mean_realised_vol=float(np.mean([o.realised_vol for o in observations])),
         mean_vrp=float(vrps.mean()),
@@ -228,7 +262,9 @@ def compute_vrp(
     (``docs/DATA_CONTRACTS.md`` #12): returns are what a split must not break,
     and the panel's as-traded ``spot`` would read NVDA's and TSLA's splits as
     crashes. So the span is the two datasets' overlap (SPY: 2016-10 onward),
-    reported in the summary's ``start``/``end``. Raises ``LookupError`` when
+    reported in the summary's ``start``/``end``; quotes before the first
+    close are cut here, so ``missing_months`` describes that span and not the
+    panel's earlier years. Raises ``LookupError`` when
     either dataset is absent -- this is a hand-run measurement, not a surface
     that must never go silent.
     """

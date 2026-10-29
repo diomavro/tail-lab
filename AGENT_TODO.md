@@ -3231,8 +3231,10 @@ serve; `docs/adr/0021` is why the risk-shaped one comes first.
       measurement on the forward `option_chain_snapshot` (Cboe `iv`,
       zero-fill already null), which needs a partition walk rather than one
       as-of read; (b) the VRP-adjusted Screen column above. The column needs
-      a per-name VRP that is current as of today, and for the 66 names
-      outside optionsDX, (a) is the only source of one.
+      a per-name VRP that is current as of today. Of the Screen's 66 names
+      outside optionsDX, (a) covers the 20 in `DEFAULT_SNAPSHOT_SYMBOLS`; the
+      other 46 have no implied-vol source today, and the column must say so
+      rather than show a number.
 - [ ] **Put ratio backspread as a second structure** (§2.37, §4 Q8). Short
       one near-ATM put, long two further-OTM, often at zero or negative net
       debit — convexity kept, carry financed. It is the textbook answer to

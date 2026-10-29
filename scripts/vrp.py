@@ -23,7 +23,8 @@ from tail_lab.research.vrp import VrpSummary, compute_vrp
 
 def _report(summary: VrpSummary) -> None:
     print(
-        f"{summary.underlying}  {summary.moneyness:.2f} x spot, ~{summary.target_days}d  "
+        f"{summary.underlying}  target {summary.moneyness:.2f} x spot, {summary.target_days}d "
+        f"(measured {summary.mean_moneyness:.3f} x spot, {summary.mean_dte:.1f}d)  "
         f"{summary.start} .. {summary.end}  n={summary.n_observations} (overlapping windows)"
     )
     print(
@@ -32,7 +33,9 @@ def _report(summary: VrpSummary) -> None:
         f"implied > realised on {summary.share_positive:.0%}"
     )
     if summary.missing_months:
-        print(f"  NO QUOTES in {len(summary.missing_months)} months: {summary.missing_months}")
+        print(
+            f"  NO QUOTES AT ALL in {len(summary.missing_months)} months: {summary.missing_months}"
+        )
     by_year: dict[int, list[float]] = defaultdict(list)
     for obs in summary.observations:
         by_year[obs.quote_date.year].append(obs.vrp)
@@ -59,7 +62,7 @@ def main(argv: list[str] | None = None) -> int:
                 moneyness=args.moneyness,
                 target_days=args.days,
             )
-        except LookupError as exc:
+        except (LookupError, ValueError) as exc:
             print(f"{symbol.upper()}: skipped -- {exc}")
             continue
         _report(summary)

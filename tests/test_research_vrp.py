@@ -21,6 +21,7 @@ from hypothesis import strategies as st
 from tail_lab.lake.store import DeltaLakeStore
 from tail_lab.research.vrp import (
     MIN_RETURNS,
+    TENOR_TOLERANCE_DAYS,
     compute_vrp,
     measure_vrp,
     realised_vol,
@@ -138,7 +139,7 @@ def test_select_puts_skips_a_blank_or_zero_vendor_iv() -> None:
         [
             _quote(day, 30, strike=100.0, iv=None),
             _quote(day, 30, strike=100.5, iv=0.0),
-            _quote(day, 30, strike=103.0, iv=0.27),
+            _quote(day, 30, strike=102.0, iv=0.27),
         ]
     )
     assert select_puts(quotes, moneyness=1.0, target_days=30).loc[0, "iv"] == 0.27
@@ -146,8 +147,37 @@ def test_select_puts_skips_a_blank_or_zero_vendor_iv() -> None:
 
 def test_select_puts_ignores_a_put_expiring_on_its_quote_date() -> None:
     day = DAYS[0]
-    quotes = pd.DataFrame([_quote(day, 0, iv=0.9), _quote(day, 60, iv=0.2)])
+    quotes = pd.DataFrame([_quote(day, 0, iv=0.9), _quote(day, 7, iv=0.2)])
     assert select_puts(quotes, moneyness=1.0, target_days=1).loc[0, "iv"] == 0.2
+
+
+def test_select_puts_refuses_a_strike_beyond_the_tolerance() -> None:
+    """The only listed puts near 30 days are 2.6% and 40% below an ATM
+    target: neither is an at-the-money put, so the date has no observation --
+    rather than one at 0.60 x spot labelled ATM. 2.4% away is accepted."""
+    day = DAYS[0]
+    far = pd.DataFrame([_quote(day, 30, strike=97.4, iv=0.3), _quote(day, 30, strike=60.0)])
+    assert select_puts(far, moneyness=1.0, target_days=30).empty
+    near = pd.DataFrame([_quote(day, 30, strike=97.6, iv=0.3)])
+    assert len(select_puts(near, moneyness=1.0, target_days=30)) == 1
+
+
+def test_select_puts_prefers_a_farther_expiry_with_a_strike_near_the_target() -> None:
+    """The 30-day expiry lists only a deep put; the 35-day lists one at the
+    money. Choosing the expiry first would have averaged the deep put's vol
+    into an ATM series."""
+    day = DAYS[0]
+    quotes = pd.DataFrame(
+        [_quote(day, 30, strike=60.0, iv=0.5), _quote(day, 35, strike=100.0, iv=0.2)]
+    )
+    assert select_puts(quotes, moneyness=1.0, target_days=30).loc[0, "iv"] == 0.2
+
+
+def test_select_puts_refuses_a_tenor_beyond_the_tolerance() -> None:
+    day = DAYS[0]
+    assert TENOR_TOLERANCE_DAYS == 10
+    assert select_puts(pd.DataFrame([_quote(day, 41)]), moneyness=1.0, target_days=30).empty
+    assert len(select_puts(pd.DataFrame([_quote(day, 40)]), moneyness=1.0, target_days=30)) == 1
 
 
 # ---- the premium -------------------------------------------------------------
@@ -170,6 +200,44 @@ def test_vrp_is_implied_minus_realised_on_a_known_path() -> None:
     assert summary.mean_implied_vol == pytest.approx(0.175)
     assert summary.mean_realised_vol == pytest.approx(RV, rel=1e-12)
     assert (summary.start, summary.end) == (DAYS[0].date(), DAYS[5].date())
+    assert summary.mean_dte == 28.0
+
+
+def test_median_and_means_on_a_lopsided_sample() -> None:
+    """Three IVs, one far out: the median is the middle one, not the mean."""
+    ivs = (0.10, 0.12, 0.90)
+    quotes = pd.DataFrame([_quote(DAYS[i * 5], 28, iv=iv) for i, iv in enumerate(ivs)])
+    summary = measure_vrp(quotes, _zigzag(DAYS), underlying="spy", as_of=dt.date(2020, 6, 1))
+    assert summary.median_vrp == pytest.approx(0.12 - RV, rel=1e-12)
+    assert summary.mean_vrp == pytest.approx(sum(ivs) / 3 - RV, rel=1e-12)
+    assert summary.mean_implied_vol == pytest.approx(sum(ivs) / 3, rel=1e-12)
+    assert summary.share_positive == pytest.approx(1 / 3)
+
+
+def test_an_observation_reports_strike_over_that_days_spot() -> None:
+    quotes = pd.DataFrame([_quote(DAYS[0], 28, strike=190.0, spot=200.0)])
+    summary = measure_vrp(
+        quotes, _zigzag(DAYS), underlying="spy", as_of=dt.date(2020, 6, 1), moneyness=0.95
+    )
+    assert summary.observations[0].moneyness == pytest.approx(0.95)
+    assert summary.mean_moneyness == pytest.approx(0.95)
+    assert summary.moneyness == 0.95
+
+
+@pytest.mark.parametrize(
+    ("moneyness", "target_days"), [(1.10, 30), (0.50, 30), (1.0, 0), (1.0, 121)]
+)
+def test_a_target_the_panel_cannot_hold_is_refused(moneyness: float, target_days: int) -> None:
+    quotes = pd.DataFrame([_quote(DAYS[0], 28)])
+    with pytest.raises(ValueError, match="outside the panel"):
+        measure_vrp(
+            quotes,
+            _zigzag(DAYS),
+            underlying="spy",
+            as_of=dt.date(2020, 6, 1),
+            moneyness=moneyness,
+            target_days=target_days,
+        )
 
 
 def test_a_doubled_step_doubles_the_realised_leg() -> None:
@@ -218,18 +286,21 @@ def test_an_expiry_past_the_last_known_close_is_not_yet_measurable() -> None:
     assert [o.quote_date for o in summary.observations] == [DAYS[0].date()]
 
 
-def test_a_window_shorter_than_min_returns_is_dropped() -> None:
-    short = _quote(DAYS[0], 5, iv=0.3)  # Wed -> Mon: 3 sessions
-    long_enough = _quote(DAYS[10], 9, iv=0.3)  # Wed -> Fri next week: 7 sessions
+def test_a_window_needs_exactly_min_returns() -> None:
+    """Quoted on a Monday, so a ``d``-day option lives ``d`` sessions while
+    ``d`` < 5: four returns are dropped, five are kept."""
+    assert MIN_RETURNS == 5
+    monday = pd.Timestamp("2020-01-06")
+    four = _quote(monday, 4, iv=0.3)  # Mon -> Fri: 4 returns
+    five = _quote(monday + pd.Timedelta(days=7), 7, iv=0.3)  # Mon -> Mon: 5 returns
     summary = measure_vrp(
-        pd.DataFrame([short, long_enough]),
+        pd.DataFrame([four, five]),
         _zigzag(DAYS),
         underlying="spy",
         as_of=dt.date(2020, 6, 1),
         target_days=5,
     )
-    assert [o.n_returns for o in summary.observations] == [7]
-    assert MIN_RETURNS > 3
+    assert [o.n_returns for o in summary.observations] == [5]
 
 
 def test_no_closed_window_is_a_lookup_error() -> None:
@@ -244,6 +315,22 @@ def test_a_month_with_no_quote_is_reported_missing() -> None:
     quotes = pd.DataFrame([_quote(jan, 28), _quote(mar, 28)])
     summary = measure_vrp(quotes, _zigzag(dates), underlying="spy", as_of=dt.date(2020, 6, 1))
     assert summary.missing_months == ["202002"]
+
+
+def test_a_month_of_failed_iv_solves_is_not_a_coverage_gap() -> None:
+    """February is quoted, but every IV is blank (the vendor's solver
+    failed). That is fewer observations, not a month the vendor lacks."""
+    dates = pd.bdate_range("2020-01-01", "2020-05-29")
+    quotes = pd.DataFrame(
+        [
+            _quote(pd.Timestamp("2020-01-06"), 28),
+            _quote(pd.Timestamp("2020-02-03"), 28, iv=None),
+            _quote(pd.Timestamp("2020-03-02"), 28),
+        ]
+    )
+    summary = measure_vrp(quotes, _zigzag(dates), underlying="spy", as_of=dt.date(2020, 6, 1))
+    assert summary.missing_months == []
+    assert summary.n_observations == 2
 
 
 @settings(max_examples=40, deadline=None)
@@ -266,8 +353,10 @@ def test_the_summary_does_not_depend_on_row_order(ivs: list[float], seed: int) -
 
 def test_compute_vrp_reads_the_panel_and_ohlcv_and_keeps_their_overlap(tmp_path: Path) -> None:
     """The panel starts before the OHLCV does (as SPY's does: 2010 vs 2016):
-    a quote with no price history under it is outside the overlap and is not
-    measured, rather than measured against nothing."""
+    a quote with no price history under it is not measured, and the months
+    before the first close are not reported as coverage gaps -- the quote a
+    month before the overlap would otherwise put December 2019 in
+    ``missing_months`` (it starts the span at 2019-11)."""
     store = DeltaLakeStore(tmp_path)
     ingest = dt.date(2020, 7, 1)
     prices = DAYS[10:]
@@ -289,7 +378,11 @@ def test_compute_vrp_reads_the_panel_and_ohlcv_and_keeps_their_overlap(tmp_path:
         ),
     )
     panel = pd.DataFrame(
-        [_quote(DAYS[0], 28, iv=0.40), _quote(DAYS[12], 28, iv=0.20, strike=100.0)]
+        [
+            _quote(pd.Timestamp("2019-11-04"), 28, iv=0.40),
+            _quote(DAYS[12], 28, iv=0.20, strike=100.0),
+            _quote(DAYS[12], 14, iv=0.33, strike=90.0),  # the 0.9 x spot, 14-day put
+        ]
     )
     panel["underlying"] = "SPY"
     panel["bid"], panel["ask"], panel["volume"] = 1.0, 1.1, 10
@@ -298,6 +391,11 @@ def test_compute_vrp_reads_the_panel_and_ohlcv_and_keeps_their_overlap(tmp_path:
     summary = compute_vrp(store, underlying="SPY", as_of=ingest)
     assert [o.quote_date for o in summary.observations] == [DAYS[12].date()]
     assert summary.mean_vrp == pytest.approx(0.20 - RV, rel=1e-12)
+    assert summary.missing_months == []
+
+    otm = compute_vrp(store, underlying="spy", as_of=ingest, moneyness=0.9, target_days=14)
+    assert [o.implied_vol for o in otm.observations] == [0.33]
+    assert (otm.moneyness, otm.target_days) == (0.9, 14)
 
 
 def test_compute_vrp_before_any_snapshot_is_a_lookup_error(tmp_path: Path) -> None:
