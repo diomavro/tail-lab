@@ -25,7 +25,7 @@ def _report(summary: VrpSummary) -> None:
     print(
         f"{summary.underlying}  target {summary.moneyness:.2f} x spot, {summary.target_days}d "
         f"(measured {summary.mean_moneyness:.3f} x spot, {summary.mean_dte:.1f}d)  "
-        f"{summary.start} .. {summary.end}  n={summary.n_observations} (overlapping windows)"
+        f"{summary.start} .. {summary.end}  n={summary.n_observations} of {summary.n_quote_dates} dates (overlapping windows)"
     )
     print(
         f"  implied {summary.mean_implied_vol:6.1%}  realised {summary.mean_realised_vol:6.1%}  "

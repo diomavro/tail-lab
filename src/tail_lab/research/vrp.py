@@ -64,12 +64,15 @@ TRADING_DAYS = 252
 MIN_RETURNS = 5
 
 #: Furthest a chosen strike may sit from ``moneyness x spot``, as a fraction
-#: of spot. 2.5% is several listed strikes on every name in the panel.
+#: of spot. 2.5% spans several listed strikes on SPY, QQQ, NVDA and TSLA; on
+#: VIX (0.5-point strikes near 13) it can hold just one.
 STRIKE_TOLERANCE = 0.025
 
-#: Furthest a chosen expiry may sit from ``target_days``. Weeklies list an
-#: expiry at least every 7 days, so 10 is never binding on a liquid name and
-#: only refuses a date whose chain is genuinely thin.
+#: Furthest a chosen expiry may sit from ``target_days``. Within the weekly
+#: listing horizon (~30 days out on single names) an expiry lists at least
+#: every 7 days, so 10 is not binding there. Beyond it only monthlies and
+#: quarterlies list, and a 60- or 120-day target refuses many dates BY DESIGN:
+#: ``n_quote_dates`` against ``n_observations`` shows how many.
 TENOR_TOLERANCE_DAYS = 10
 
 #: The panel columns this module reads -- projected, never the whole panel
@@ -97,6 +100,10 @@ class VrpSummary(BaseModel):
     moneyness: float  # the target strike / spot
     target_days: int
     as_of: dt.date
+    #: Distinct quote dates on or before ``as_of`` in the input; each yields
+    #: at most one observation. The difference from ``n_observations`` is the
+    #: dates refused (no put within tolerance, or a window not yet closed).
+    n_quote_dates: int
     n_observations: int
     start: dt.date
     end: dt.date
@@ -231,6 +238,7 @@ def measure_vrp(
         moneyness=moneyness,
         target_days=target_days,
         as_of=as_of,
+        n_quote_dates=int(pd.to_datetime(seen["quote_date"]).nunique()),
         n_observations=len(observations),
         start=observations[0].quote_date,
         end=observations[-1].quote_date,

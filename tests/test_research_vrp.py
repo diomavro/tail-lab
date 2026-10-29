@@ -224,6 +224,30 @@ def test_an_observation_reports_strike_over_that_days_spot() -> None:
     assert summary.moneyness == 0.95
 
 
+@pytest.mark.parametrize(("moneyness", "target_days"), [(0.60, 30), (1.02, 30), (1.0, 120)])
+def test_a_target_at_the_panels_edge_is_accepted(moneyness: float, target_days: int) -> None:
+    """The fixture holds no put there, so the answer is 'nothing measured'
+    -- a LookupError -- never a refusal of the target itself."""
+    quotes = pd.DataFrame([_quote(DAYS[0], 28, strike=50.0)])
+    with pytest.raises(LookupError):
+        measure_vrp(
+            quotes,
+            _zigzag(DAYS),
+            underlying="spy",
+            as_of=dt.date(2020, 6, 1),
+            moneyness=moneyness,
+            target_days=target_days,
+        )
+
+
+def test_refused_dates_are_counted() -> None:
+    """Two quote dates, one with nothing near the target: one observation
+    of two dates, so the drop is visible rather than silent."""
+    quotes = pd.DataFrame([_quote(DAYS[0], 28), _quote(DAYS[5], 28, strike=80.0)])
+    summary = measure_vrp(quotes, _zigzag(DAYS), underlying="spy", as_of=dt.date(2020, 6, 1))
+    assert (summary.n_observations, summary.n_quote_dates) == (1, 2)
+
+
 @pytest.mark.parametrize(
     ("moneyness", "target_days"), [(1.10, 30), (0.50, 30), (1.0, 0), (1.0, 121)]
 )
@@ -272,9 +296,17 @@ def test_vrp_never_reads_a_close_after_as_of() -> None:
 
 
 def test_vrp_ignores_quotes_dated_after_as_of() -> None:
-    quotes = pd.DataFrame([_quote(DAYS[0], 28, iv=0.30), _quote(DAYS[50], 7, iv=0.99)])
-    summary = measure_vrp(quotes, _zigzag(DAYS), underlying="spy", as_of=DAYS[45].date())
+    """A quote from June must not stretch the coverage span past a March
+    ``as_of``: that would report February-May as gaps from data that did
+    not exist yet."""
+    dates = pd.bdate_range("2020-01-01", "2020-07-31")
+    quotes = pd.DataFrame(
+        [_quote(pd.Timestamp("2020-01-06"), 28), _quote(pd.Timestamp("2020-06-01"), 28)]
+    )
+    summary = measure_vrp(quotes, _zigzag(dates), underlying="spy", as_of=dt.date(2020, 3, 1))
     assert summary.n_observations == 1
+    assert summary.n_quote_dates == 1
+    assert summary.missing_months == []
 
 
 def test_an_expiry_past_the_last_known_close_is_not_yet_measurable() -> None:
