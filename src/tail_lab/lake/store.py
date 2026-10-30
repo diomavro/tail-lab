@@ -115,6 +115,16 @@ class LakeStore(ABC):
         """
 
     @abstractmethod
+    def bronze_ingest_dates(self, dataset: str) -> list[dt.date]:
+        """Every bronze partition date of ``dataset``, sorted; ``[]`` when the
+        table does not exist. Uncached, like :meth:`bronze_partition_exists`.
+
+        Exists for the forward collections that must notice a MISSING day
+        (``api/deribit_routes``): "is there an earlier partition" and "how
+        many partitions, first to last" are not answerable through as-of
+        resolution, which only ever names the latest one."""
+
+    @abstractmethod
     def read_bronze_as_of(self, dataset: str, as_of: dt.date) -> pd.DataFrame:
         """Read the bronze snapshot known as of ``as_of``: the most recent
         snapshot ingested on or before that date. Raises ``LookupError`` if
@@ -351,6 +361,9 @@ class DeltaLakeStore(LakeStore):
         below -- deliberately one expression so the two cannot drift."""
         table_uri = self._table_uri(self._bronze_table_key(dataset))
         return ingest_date.isoformat() in self._existing_bronze_ingest_date_strings(table_uri)
+
+    def bronze_ingest_dates(self, dataset: str) -> list[dt.date]:
+        return self._list_bronze_ingest_dates(self._table_uri(self._bronze_table_key(dataset)))
 
     def write_bronze(self, dataset: str, ingest_date: dt.date, df: pd.DataFrame) -> str:
         table_uri = self._table_uri(self._bronze_table_key(dataset))

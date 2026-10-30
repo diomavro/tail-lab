@@ -4,8 +4,9 @@ from __future__ import annotations
 
 import datetime as dt
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
+from tail_lab.contracts.deribit_options import MS_MAX, MS_MIN
 from tail_lab.feedback.store import FeedbackKind, FeedbackRecord
 from tail_lab.memory.store import RegimeOutcome
 from tail_lab.research.backtest.contribution_plan import BookPlanResult
@@ -261,3 +262,93 @@ class ModelPlanResponse(BaseModel):
     vix_snapshot: str | None
     code_sha: str
     plan: ModelPlanResult
+
+
+class DeribitOptionRow(BaseModel):
+    """One Deribit option on the wire (``docs/adr/0032``): the contract's
+    ``DeribitRecord``, field for field -- a test pins the names AND the types,
+    so the two definitions cannot drift.
+
+    ``extra="forbid"``: with every field defaulted to ``None``, a renamed key
+    would otherwise arrive silently as a null. ``allow_inf_nan=False``: a NaN
+    literal is refused, never committed as a null quote (over HTTP that is a
+    500 with nothing written -- FastAPI's 422 handler cannot echo a NaN --
+    and the script cannot send one, since ``requests`` refuses NaN). Only the
+    creation timestamp is bounded to the 2016..2100 window here; an
+    out-of-window expiry is quarantined row by row by the contract.
+    """
+
+    model_config = ConfigDict(allow_inf_nan=False, extra="forbid")
+
+    instrument_name: str
+    creation_timestamp_ms: int = Field(ge=MS_MIN, lt=MS_MAX)
+    expiration_timestamp_ms: int | None = Field(default=None, ge=-(2**63), lt=2**63)
+    underlying: str | None = None
+    premium_currency: str | None = None
+    strike: float | None = None
+    strike_currency: str | None = None
+    right: str | None = None
+    contract_size: float | None = None
+    tick_size: float | None = None
+    min_trade_amount: float | None = None
+    bid: float | None = None
+    ask: float | None = None
+    mark: float | None = None
+    mark_iv_pct: float | None = None
+    underlying_price: float | None = None
+    underlying_index: str | None = None
+    index_price: float | None = None
+    interest_rate: float | None = None
+    open_interest: float | None = None
+    volume: float | None = None
+    volume_usd: float | None = None
+    invalid_fields: list[str] | None = None
+
+
+class DeribitSnapshotRequest(BaseModel):
+    """One book's capture: the joined rows, and every name ``get_instruments``
+    listed (the coverage rule's witness)."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    rows: list[DeribitOptionRow] = Field(min_length=1)
+    listed: list[str] = Field(min_length=1)
+
+
+class DeribitSnapshotResponse(BaseModel):
+    """What the app did with one book. ``rows`` is 0 and ``bronze_path``
+    ``None`` unless the dataset was committed. On already-captured,
+    ``quarantined``/``expired_dropped`` are 0 and ``quarantine_share`` is
+    ``None``: the plan returned before computing them.
+    ``quarantine_written`` is ``None`` when nothing was quarantined; ``False``
+    means the rows exist only in the app's log, and the script exits 1."""
+
+    dataset: str
+    snapshot_date: dt.date
+    rows: int
+    quarantined: int
+    quarantine_key: str | None
+    quarantine_written: bool | None
+    bronze_path: str | None
+    expired_dropped: int
+    committed: bool
+    already_captured: bool
+    previous_partition_exists: bool | None
+    quarantine_share: float | None
+
+
+class DeribitBookStatus(BaseModel):
+    """One book's forward collection. ``missing_days`` (last - first + 1 -
+    partitions) is information: a past gap cannot be filled."""
+
+    first_snapshot_date: dt.date | None
+    last_snapshot_date: dt.date | None
+    stale_days: int | None
+    partitions: int
+    missing_days: int | None
+
+
+class DeribitSnapshotStatus(BaseModel):
+    """Keyed by the lowercase book: ``btc``, ``eth``, ``usdc``."""
+
+    books: dict[str, DeribitBookStatus]

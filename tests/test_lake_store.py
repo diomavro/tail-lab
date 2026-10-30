@@ -319,3 +319,18 @@ def test_bronze_relation_as_of_is_one_snapshot_or_every_partition_up_to_it(tmp_p
     assert closes(history=True) == [15.0, 16.0]
     with pytest.raises(LookupError):
         store.bronze_relation_as_of(DATASET, dt.date(2025, 12, 31))
+
+
+def test_bronze_ingest_dates_lists_every_partition_sorted(tmp_path: Path) -> None:
+    """The Deribit status route counts gaps from this, and the write plan
+    asks it whether ANY earlier partition exists -- neither is answerable
+    through as-of resolution, which names only the latest snapshot."""
+    store = DeltaLakeStore(tmp_path)
+    assert store.bronze_ingest_dates("nothing_here") == []
+    for day in (dt.date(2026, 10, 30), dt.date(2026, 10, 27), dt.date(2026, 10, 28)):
+        store.write_bronze("ds", day, pd.DataFrame({"x": [1]}))
+    assert store.bronze_ingest_dates("ds") == [
+        dt.date(2026, 10, 27),
+        dt.date(2026, 10, 28),
+        dt.date(2026, 10, 30),
+    ]

@@ -15,13 +15,16 @@ here.
 
 from __future__ import annotations
 
+import datetime as dt
 import json
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping, Sequence
 from pathlib import Path
+from typing import NamedTuple
 
+import pandas as pd
 import pyarrow.fs as pafs
 
-from tail_lab.lake.store import _strip_scheme
+from tail_lab.lake.store import LAKE_WRITE_ERRORS, LakeStore, _strip_scheme
 
 
 class BlobStore:
@@ -100,6 +103,94 @@ class BlobStore:
             with self._fs.open_input_stream(info.path) as f:
                 records.append(_json_object(json.loads(f.read()), info.path))
         return records
+
+
+def write_quarantine(
+    blobs: BlobStore,
+    key: str,
+    doc: Mapping[str, object],
+    *,
+    log_lines: Sequence[Mapping[str, str]],
+    log: Callable[[Mapping[str, str]], None],
+    on_error: Callable[[BaseException], None],
+) -> bool:
+    """Write a quarantine blob, best-effort but never silent; return whether
+    it was written.
+
+    The ONE helper both Deribit writers (the route and ``--local``) call
+    after the dataset write. On exactly :data:`LAKE_WRITE_ERRORS` it calls
+    ``on_error(exc)`` once -- each caller logs the cause, so the fallback
+    never hides why -- and then ``log(line)`` for every prebuilt line, one
+    per quarantined row, which is then the only copy of those rows. Anything
+    else propagates: the caller proved the document serialisable before
+    writing anything, so a ``TypeError`` here would be a bug.
+
+    Takes prebuilt ``log_lines`` and a ``log`` callback rather than building
+    them, so ``lake`` imports nothing new (``ARCHITECTURE.md``: ``lake``
+    imports only ``contracts``).
+    """
+    try:
+        blobs.write_json(key, doc)
+    except LAKE_WRITE_ERRORS as exc:
+        on_error(exc)
+        for line in log_lines:
+            log(line)
+        return False
+    return True
+
+
+class QuarantineWrite(NamedTuple):
+    """Everything :func:`write_quarantine` needs, bundled so a writer hands
+    :func:`commit_then_quarantine` one value with its own log event bound."""
+
+    key: str
+    doc: Mapping[str, object]
+    log_lines: Sequence[Mapping[str, str]]
+    log: Callable[[Mapping[str, str]], None]
+    on_error: Callable[[BaseException], None]
+
+
+def commit_then_quarantine(
+    store: LakeStore,
+    blobs: BlobStore,
+    *,
+    dataset: str,
+    ingest_date: dt.date,
+    valid: pd.DataFrame,
+    quarantine: QuarantineWrite | None,
+) -> tuple[str | None, bool | None]:
+    """``(bronze_path, quarantine_written)``: the dataset first (skipped when
+    ``valid`` is empty -- an empty write breaks a Delta table), then the
+    quarantine blob, best-effort.
+
+    A dataset write that raises may still have landed (delta-rs finding its
+    own commit, or a failed post-commit checkpoint), and a retry would then
+    answer "already captured" -- so the quarantine is attempted BEFORE the
+    dataset's error propagates, and it is that error that propagates. Shared
+    by both Deribit writers so the order cannot drift between them.
+    """
+    bronze_path = None
+    if not valid.empty:
+        try:
+            bronze_path = store.write_bronze(dataset, ingest_date, valid)
+        except LAKE_WRITE_ERRORS:
+            if quarantine is not None:
+                _write(blobs, quarantine)
+            raise
+    if quarantine is None:
+        return bronze_path, None
+    return bronze_path, _write(blobs, quarantine)
+
+
+def _write(blobs: BlobStore, quarantine: QuarantineWrite) -> bool:
+    return write_quarantine(
+        blobs,
+        quarantine.key,
+        quarantine.doc,
+        log_lines=quarantine.log_lines,
+        log=quarantine.log,
+        on_error=quarantine.on_error,
+    )
 
 
 def _json_object(parsed: object, where: str) -> dict[str, object]:
