@@ -1254,9 +1254,11 @@ red too, when the stored partition is this body's own capture: that
 attempt's quarantine share and blob status are unknown, so the script names
 `ops/quarantine/<dataset>/<D>/` and the app log's `quarantine_unwritten`
 event. The answer's `captured_observed_at_ms` (the stored partition's
-earliest observation) tells the two apart: when it differs from the body's
-earliest `creation_timestamp_ms`, an earlier run captured the day and the
-answer is a green no-op; when it is missing, the script assumes the worst.
+earliest observation) tells the two apart: inside the body's own range of
+`creation_timestamp_ms` it is this run's capture (not necessarily at the
+body's minimum, whose rows may all have been quarantined or expired);
+outside it, an earlier run captured the day and the answer is a green no-op;
+when it is missing, the script assumes the worst.
 Either payload (book or instruments) that is not a list, or a book row
 without a string `instrument_name` or an integer `creation_timestamp`, fails
 the whole book (`DeribitApiError`). A malformed instruments row (not an
@@ -1274,7 +1276,8 @@ through `lake/blob_store.BlobStore`, on the lake's root and credentials:
   rewrites the same key with the same content.
 - **Content:** `{"dataset", "snapshot_date", "observed_at", "code_sha",
   "rows": [{"instrument_name", "reason", "payload"}]}`. `payload` is the
-  row's wire dict (`DeribitRecord`), exactly as posted.
+  row's wire dict (`DeribitRecord`), as validated by the wire model
+  `DeribitOptionRow`.
 - **`reason`:** one of the write plan's own reasons, in precedence order
   `invalid_value` > `wrong_book` > `unparseable_expiry`, or else the first
   failing column check as `"<column>:<check>"` (e.g. `strike:not_nullable`),

@@ -28,6 +28,7 @@ from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from typing import Final, NamedTuple, cast
 
+import duckdb
 import requests
 
 from tail_lab.contracts.deribit_options import (
@@ -246,18 +247,23 @@ class DeribitIngestResult:
     instruments_dropped: int
 
 
-#: A lake read fault, or no such partition/column (``LookupError``/``KeyError``).
-_CAPTURED_READ_ERRORS: tuple[type[Exception], ...] = (*LAKE_READ_ERRORS, LookupError)
+#: A lake read fault (DuckDB's own included), or no such partition/column.
+_CAPTURED_READ_ERRORS: tuple[type[Exception], ...] = (*LAKE_READ_ERRORS, LookupError, duckdb.Error)
 
 
 def _captured_observed_at_ms(store: LakeStore, dataset: str, day: dt.date) -> int | None:
     """The stored partition D's earliest ``observed_at`` (ms), so the script
-    can tell its own landed attempt from an earlier run's capture. Read only
-    once D is known to exist, so the as-of resolution names D itself. A failed
-    read is ``None`` -- the script then assumes the worst (red), it does not
+    can tell its own landed attempt from an earlier run's capture.
+
+    Read through ``bronze_relation_as_of``, whose resolution is uncached and,
+    with D known to exist, names D itself -- not through the as-of read
+    cache, which could hand back a resolution made before D landed. A failed
+    read is ``None``: the script then assumes the worst (red); it does not
     turn a green no-op into a 500."""
     try:
-        return earliest_observed_ms(store.read_bronze_column_as_of(dataset, day, "observed_at"))
+        relation = store.bronze_relation_as_of(dataset, day)
+        first = store.query(f"SELECT MIN(observed_at) AS first FROM {relation}")["first"]
+        return earliest_observed_ms(first)
     except _CAPTURED_READ_ERRORS:
         _LOGGER.exception(
             "event=ingestion.deribit_options.captured_read_failed dataset=%s", dataset

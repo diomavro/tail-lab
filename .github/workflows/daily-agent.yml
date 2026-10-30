@@ -215,23 +215,11 @@ jobs:
                The Deribit books are in the same class for this purpose: past sessions are
                not free, only paid Tardis.dev data (`docs/adr/0032`). The response is per-book
                JSON, `books.<btc|eth|usdc>.stale_days`.
-               The Deribit books trade around the clock, so their collection is broken when
-               any of these holds:
-
-               - `stale_days > 1` for any book;
-               - any book's `stale_days` is null while another book's is not;
-               - every book is null while `daily-deribit-snapshot.yml` was added to `main` 2
-                 or more days ago, per
-                 `git log --diff-filter=A --format=%cs -1 -- .github/workflows/daily-deribit-snapshot.yml`
-                 (this also covers a workflow that never runs);
-               - the status response is not JSON with a `books` object holding `btc`, `eth`
-                 and `usdc` (a 404 from the SPA mount, a 5xx, HTML, a curl failure) while the
-                 workflow was added 2 or more days ago -- merged, but never deployed.
-
-               Older gaps (`missing_days`) are information only: they cannot be filled, and
-               alarming on them would bury new losses. A broken Deribit collection is treated
-               exactly like a broken option-chain sweep: diagnose it first, and say so in the
-               PR.
+               The four conditions that mean the Deribit collection is broken (the books trade
+               around the clock) are in `docs/AGENT_MISSION.md`, under "Check the collection
+               before you pick anything" -- apply them exactly, and the reader guardrail beside
+               them. A broken Deribit collection is treated exactly like a broken option-chain
+               sweep: diagnose it first, and say so in the PR.
 
                If both are fresh, note the last sessions and move on.
 

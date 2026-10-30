@@ -2601,8 +2601,10 @@ datasets (marked **Blocked**); the collection-side items are not blocked.
       (:34, :45; amended, not rewritten),
       `.github/workflows/daily-chain-snapshot.yml:7-12` ("gone permanently"),
       the `daily-agent.yml` sentence beginning "This is one of the datasets
-      that cannot be backfilled", and `HUMAN_TODO.md:581` (Dio's file; the
-      agent never edits it).
+      that cannot be backfilled", and `HUMAN_TODO.md:581` (Dio's file, which
+      the agent never edits; besides "nobody sells", its "Every other source
+      here serves history on demand" is a uniqueness claim ADR 0032 made
+      false).
 - [ ] **Doc accuracy, agent-doable part:** the same "not for free" correction
       in unguarded files: `docs/DATA_CONTRACTS.md` §6,
       `scripts/chain_snapshot.py:128`, `src/tail_lab/ingestion/option_chain.py:12`,

@@ -35,7 +35,7 @@ help:
 	@echo "  ingest-mpd   Live Minneapolis Fed MPD fetch -> bronze, whole market family (network; not run in CI)"
 	@echo "  ingest-vix-futures  Live VX futures term structure fetch -> bronze (keyless; network; not run in CI)"
 	@echo "  ingest-option-chain  TODAY's put + call wings from Cboe -> bronze (CHAIN_SYMBOLS=... ; network; UNRECOVERABLE if skipped)"
-	@echo "  ingest-deribit  TODAY's BTC, ETH and USDC option books from Deribit -> bronze (network; never overlap the 08:15 cron against production; docs/adr/0032)"
+	@echo "  ingest-deribit  TODAY's BTC, ETH and USDC option books from Deribit -> bronze (network; never overlap daily-deribit-snapshot.yml (08:15/10:45 UTC crons, often hours late); docs/adr/0032)"
 	@echo "  greeks-check Score our greeks vs the exchange's own (read-only; needs a chain snapshot)"
 	@echo "  ingest-optionsdx  Hand-downloaded optionsDX chains -> bronze (OPTIONSDX_SYMBOL=vix; local corpus, no network)"
 	@echo "  ingest-kaggle-spy  Hand-downloaded Kaggle SPY year -> data/vendor parquet (YEAR=2023; OFFLINE cross-check, never served)"

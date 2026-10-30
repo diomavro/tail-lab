@@ -214,12 +214,15 @@ forbidden_modules = [
 # Deribit's crypto option books are collected but READ BY NOTHING until
 # HUMAN_TODO's question on Deribit's data terms is answered (docs/adr/0032).
 #
-# Machine-checked: no tail_lab module outside ingestion may import the
-# contract, directly or through a chain -- except the write route and its
-# request/response models (api.schemas). import-linter skips a forbidden
-# module that sits inside a source package, so it cannot also forbid other
-# api modules from importing api.deribit_routes; a grimp test does that
-# (tests/test_api_deribit_routes.py::test_only_the_write_path_imports_the_deribit_contract).
+# Machine-checked, in two parts:
+# - here: api, research, transforms, feedback, memory and lake may not reach
+#   the contract by any import chain, except through the write route and its
+#   request/response models (api.schemas);
+# - and (a grimp test, tests/test_api_deribit_routes.py::
+#   test_only_the_write_path_imports_the_deribit_contract) only the three
+#   named modules import the contract directly, and only api.main imports the
+#   route. import-linter skips a forbidden module inside a source package,
+#   so it cannot check that second part itself.
 #
 # NOT checked: a new route added INSIDE api/deribit_routes.py, a reader that
 # names a deribit_options_* dataset in a string, and scripts/ (outside

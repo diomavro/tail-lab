@@ -27,7 +27,7 @@ from pydantic import ValidationError
 
 from tail_lab.api import deribit_routes
 from tail_lab.api.main import app
-from tail_lab.api.schemas import DeribitOptionRow, DeribitSnapshotRequest
+from tail_lab.api.schemas import DeribitOptionRow, DeribitSnapshotRequest, DeribitSnapshotResponse
 from tail_lab.config import Settings
 from tail_lab.contracts import deribit_options as contract
 from tail_lab.contracts.deribit_options import DERIBIT_BOOKS, DeribitRecord
@@ -663,7 +663,50 @@ def test_a_failed_capture_read_is_none_not_a_500(
     def broken(*_a: object) -> object:
         raise OSError("read failed")
 
-    monkeypatch.setattr(lake.store, "read_bronze_column_as_of", broken)
+    monkeypatch.setattr(lake.store, "query", broken)
     again = post(client, "BTC", body(records(20)))
     assert (again["status"], again["already_captured"]) == (200, True)
     assert again["captured_observed_at_ms"] is None
+
+
+def test_a_landed_attempt_whose_earliest_rows_were_quarantined_is_still_its_own(
+    client: TestClient,
+) -> None:
+    """Reproduces the round-4 false green. The body spans several
+    milliseconds (as a live book does), every row at its earliest one is
+    quarantined, so the stored partition begins LATER than the body. The
+    script must still read that as its own landed attempt: red, with the
+    20% share it could not see."""
+    book, instruments = raw_book("BTC", 200)
+    for row in book[::5]:  # every row at the earliest creation ms
+        row["mark_price"] = -1.0
+    payload = deribit_snapshot.book_body(to_records(book, instruments))
+    first = post(client, "BTC", payload)
+    assert (first["committed"], first["quarantined"]) == (True, 40)
+    again = post(client, "BTC", payload)  # the retry after a lost response
+    assert again["captured_observed_at_ms"] == CREATED_MS + 7
+    stamps = [int(r["creation_timestamp"]) for r in book]
+    answer = DeribitSnapshotResponse.model_validate(
+        {k: v for k, v in again.items() if k != "status"}
+    )
+    assert not deribit_snapshot._judge(
+        "btc", answer, may_have_landed=True, own_range=(min(stamps), max(stamps))
+    )
+
+
+def test_the_capture_read_ignores_a_stale_as_of_resolution(
+    client: TestClient, lake: Lake, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The as-of read caches its resolution for 45 s. If anything asked "as
+    of D" while only D - 1 existed, a cached read would report D - 1's
+    capture for D. The capture read must name partition D itself."""
+    day_ms = 86_400_000
+    monkeypatch.setattr(deribit_routes, "_utcnow", lambda: NOW - dt.timedelta(days=1))
+    assert post(client, "BTC", body(records(20, creation_timestamp_ms=CREATED_MS - day_ms)))[
+        "committed"
+    ]
+    lake.store.read_bronze_column_as_of("deribit_options_btc", NOW.date(), "observed_at")
+    monkeypatch.setattr(deribit_routes, "_utcnow", lambda: NOW)
+    assert post(client, "BTC", body(records(20)))["committed"] is True
+    again = post(client, "BTC", body(records(20)))
+    assert again["captured_observed_at_ms"] == CREATED_MS

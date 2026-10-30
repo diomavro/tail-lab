@@ -102,11 +102,22 @@ def raw_instrument_row(name: str, **overrides: object) -> dict[str, object]:
     return row
 
 
+#: A live book is stamped over a spread, not one instant: measured 2026-10-30,
+#: 12-54 distinct ``creation_timestamp`` values over 17-89 ms per response.
+CREATION_SPREAD_MS = (0, 7, 19, 33, 61)
+
+
 def raw_book(currency: str, n: int, *, created_ms: int = CREATED_MS) -> tuple[Payload, Payload]:
     """``n`` live names of ``currency``'s book: ``(book, instruments)``."""
     names = book_names(n, currency)
     return (
-        [raw_book_row(name, creation_timestamp=created_ms) for name in names],
+        [
+            raw_book_row(
+                name,
+                creation_timestamp=created_ms + CREATION_SPREAD_MS[i % len(CREATION_SPREAD_MS)],
+            )
+            for i, name in enumerate(names)
+        ],
         [raw_instrument_row(name) for name in names],
     )
 
@@ -546,12 +557,12 @@ def test_the_run_log_records_the_observation_span(
 ) -> None:
     book, instruments = raw_book("BTC", 120)
     book[0]["creation_timestamp"] = CREATED_MS - 7
-    book[1]["creation_timestamp"] = CREATED_MS + 9
+    book[1]["creation_timestamp"] = CREATED_MS + 99
     fake_fetch(monkeypatch, {"BTC": (book, instruments)})
     with caplog.at_level(logging.INFO):
         _ingest(lake)
     (line,) = _run_log(caplog)
-    assert f"observed_min_ms={CREATED_MS - 7} observed_max_ms={CREATED_MS + 9}" in line
+    assert f"observed_min_ms={CREATED_MS - 7} observed_max_ms={CREATED_MS + 99}" in line
 
 
 def test_already_captured_under_local_reports_the_stored_capture(
@@ -561,3 +572,18 @@ def test_already_captured_under_local_reports_the_stored_capture(
     assert _ingest(lake).captured_observed_at_ms is None
     fake_fetch(monkeypatch, {"BTC": raw_book("BTC", 50)})
     assert _ingest(lake).captured_observed_at_ms == CREATED_MS - 300_000
+
+
+def test_the_local_capture_read_ignores_a_stale_as_of_resolution(
+    monkeypatch: pytest.MonkeyPatch, lake: Lake
+) -> None:
+    """The --local twin of the route's test: the capture read names
+    partition D itself, not a cached "as of D" that resolved to D - 1."""
+    store, _, _ = lake
+    day_ms = 86_400_000
+    fake_fetch(monkeypatch, {"BTC": raw_book("BTC", 50, created_ms=CREATED_MS - day_ms)})
+    assert _ingest(lake, clock=lambda: NOW - dt.timedelta(days=1)).committed
+    store.read_bronze_column_as_of("deribit_options_btc", NOW.date(), "observed_at")
+    fake_fetch(monkeypatch, {"BTC": raw_book("BTC", 50)})
+    assert _ingest(lake).committed
+    assert _ingest(lake).captured_observed_at_ms == CREATED_MS

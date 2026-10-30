@@ -1,8 +1,9 @@
 """The chain sweep must not abandon a session on a transient fault.
 
-This dataset is the one that cannot be repaired: every other source here
-serves history on demand, but nobody sells a retroactive option chain, so an
-attempt given up on costs that session permanently (`docs/adr/0020`).
+This dataset is one of two that cannot be repaired: every other source here
+except Deribit's books serves history on demand, but nobody sells a
+retroactive option chain, so an attempt given up on costs that session
+permanently (`docs/adr/0020`).
 
 On 2026-09-04 the scheduled sweep fetched all 24 chains -- 20,113 quotes --
 and the app answered HTTP 500. The identical body, re-posted by hand, was

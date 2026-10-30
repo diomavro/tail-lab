@@ -6,7 +6,7 @@ Date: 2026-10-30
 
 **Accepted** on the human merge of its PR. It touches guarded paths
 (`README.md`, this ADR, `docs/adr/0020`, `docs/AGENT_MISSION.md`, `CLAUDE.md`,
-`pyproject.toml`, `.github/workflows/`), so it ships as a **draft** PR. It amends
+`pyproject.toml`, `docs/END_STATE.md`, `.github/workflows/`), so it ships as a **draft** PR. It amends
 `docs/adr/0020` (see "Departures" below) and departs from one choice in
 `docs/adr/0031`.
 
@@ -121,11 +121,15 @@ payload checks that run before the plan:
   earlier attempt may have landed is red as well, because that attempt's
   quarantine share and blob status are unknown -- but only when the stored
   partition is this body's own capture. The answer carries
-  `captured_observed_at_ms`, the stored partition's earliest observation;
-  when it differs from the body's earliest `creation_timestamp_ms`, an
-  earlier run captured the day (the routine 10:45 catch-up after a green
-  08:15), the failed attempt landed nothing, and the answer is a green no-op.
-  When the app does not say (an older app, a failed read), it stays red.
+  `captured_observed_at_ms`, the stored partition's earliest observation.
+  Inside the body's own range of `creation_timestamp_ms` (a live book spans
+  17-89 ms), it is this run's capture -- not necessarily at the body's
+  minimum, since every row at that millisecond may have been quarantined or
+  dropped as expired. Outside it, an earlier run captured the day (the
+  routine 10:45 catch-up after a green 08:15; an earlier fetch is minutes to
+  hours earlier, so the ranges never overlap), the failed attempt landed
+  nothing, and the answer is a green no-op. When the app does not say (an
+  older app, a failed read), it stays red.
 
 ### 4. The quarantine is per-capture JSON, not a Delta table
 
@@ -168,6 +172,10 @@ until that question is answered.
   this job may not either. An empty or refused book is red.
 - **0020 §7 (the narrow tradable set):** these books are outside the strategy
   universe. Justified by README's "irrecoverable work outranks the value bar".
+- **`docs/END_STATE.md` §2.1 item 6 ("forward-collected option chains --
+  narrow tradable set only"):** the whole Deribit books are collected,
+  outside the tradable set, as collection only; the item carries a note
+  pointing here.
 - **0031 (no `right` column):** every Deribit row carries `right`. The
   datasets hold both rights by design, and the strict, different schema
   keeps them from being unioned with the equity put datasets.
@@ -237,5 +245,6 @@ until that question is answered.
   record of the crypto option books, which can later only be bought.
 - Two scheduled jobs now may not do nothing: the Cboe sweep and this one. The
   daily agent reads both status routes before picking work.
-- Nothing in `research/` or `api/` reads these datasets yet. Pricer support
-  for inverse options and BTC/ETH as screen candidates are queued.
+- No reader outside the write and status routes touches these datasets yet.
+  Pricer support for inverse options and BTC/ETH as screen candidates are
+  queued.

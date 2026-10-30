@@ -851,8 +851,22 @@ def test_the_marker_counts_only_at_the_start_of_the_detail() -> None:
 
 @pytest.mark.parametrize(
     ("captured", "expected"),
-    [(CREATED_MS - 3 * 3_600_000, 0), (CREATED_MS, 1), (None, 1)],
-    ids=["captured-earlier", "own-attempt-landed", "older-app-says-nothing"],
+    [
+        (CREATED_MS - 3 * 3_600_000, 0),
+        (CREATED_MS - 1, 0),
+        (CREATED_MS, 1),
+        (CREATED_MS + 19, 1),
+        (CREATED_MS + 61, 1),
+        (None, 1),
+    ],
+    ids=[
+        "captured-earlier",
+        "captured-just-before-this-body",
+        "own-attempt-landed-at-its-minimum",
+        "own-attempt-landed-inside-its-spread",
+        "own-attempt-landed-at-its-maximum",
+        "older-app-says-nothing",
+    ],
 )
 def test_a_transient_failure_on_a_day_captured_earlier_is_green(
     monkeypatch: pytest.MonkeyPatch, captured: int | None, expected: int

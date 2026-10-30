@@ -125,9 +125,9 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
 #: to wait between attempts.
 #:
 #: This retries because of what a lost attempt COSTS here, not because the app
-#: is flaky. Every other source in this repo serves history on demand; nobody
-#: sells a retroactive option chain, so an attempt abandoned on a transient
-#: fault costs that session permanently.
+#: is flaky. Every other source in this repo except Deribit's books serves
+#: history on demand; nobody sells a retroactive option chain, so an attempt
+#: abandoned on a transient fault costs that session permanently.
 #:
 #: Measured 2026-09-04: the sweep fetched all 24 chains (20,113 quotes) and the
 #: app answered HTTP 500. The identical sweep, re-posted by hand hours later,

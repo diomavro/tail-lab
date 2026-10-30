@@ -27,9 +27,9 @@ previous day, no quarantine share above 1%, and no quarantine left
 unwritten. An "already captured" answer to a retry whose earlier attempt
 failed after sending (``may_have_landed``) is red too -- that attempt's
 quarantine share and blob status are unknown -- but only when the stored
-partition is THIS body's capture (its ``captured_observed_at_ms`` equals the
-body's earliest ``creation_timestamp_ms``, or the app does not say). A day
-captured by an earlier run is a plain green no-op. 2 for a missing
+partition is THIS body's capture (its ``captured_observed_at_ms`` lies within
+the body's own range of ``creation_timestamp_ms``, or the app does not say).
+A day captured by an earlier run is a plain green no-op. 2 for a missing
 ``--token``. Otherwise 1.
 """
 
@@ -172,32 +172,42 @@ def _report(label: str, answer: _Answer, *, may_have_landed: bool) -> bool:
     return False
 
 
+#: The earliest and latest ``creation_timestamp_ms`` of the body this run sent.
+ObservedRange = tuple[int, int]
+
+
 def _own_attempt_may_have_landed(
-    label: str, answer: _Answer, *, may_have_landed: bool, own_observed_ms: int | None
+    label: str, answer: _Answer, *, may_have_landed: bool, own_range: ObservedRange | None
 ) -> bool:
     """``may_have_landed``, narrowed: an "already captured" answer whose
-    stored partition began at a DIFFERENT observation than this body was
-    captured by an earlier run -- the routine 10:45 catch-up after a green
-    08:15 -- so a transient first-attempt failure landed nothing, and is not
-    an alarm. Unknown (an older app, a failed read) stays "may have"."""
+    stored partition began OUTSIDE this body's observation range was captured
+    by an earlier run -- the routine 10:45 catch-up after a green 08:15 -- so
+    a transient first-attempt failure landed nothing, and is not an alarm.
+
+    A range, not the body's minimum: a live book carries 12-54 distinct
+    ``creation_timestamp`` values over 17-89 ms, and when every row at the
+    body's earliest millisecond is quarantined or dropped as expired, the
+    stored partition begins a few ms LATER than the body. An earlier run's
+    fetch is minutes to hours earlier, so the two never overlap. Unknown (an
+    older app, a failed read) stays "may have"."""
     captured = answer.captured_observed_at_ms
     if not (may_have_landed and answer.already_captured) or captured is None:
         return may_have_landed
-    if captured == own_observed_ms:
+    if own_range is None or own_range[0] <= captured <= own_range[1]:
         return True
     print(
         f"{label}: an attempt failed after sending, but the day was captured by an earlier "
-        f"run (its earliest observation is {captured} ms, this body's {own_observed_ms})"
+        f"run (its earliest observation is {captured} ms; this body spans {own_range} ms)"
     )
     return False
 
 
 def _judge(
-    label: str, answer: _Answer, *, may_have_landed: bool, own_observed_ms: int | None = None
+    label: str, answer: _Answer, *, may_have_landed: bool, own_range: ObservedRange | None = None
 ) -> bool:
     """Whether this book leaves the run green (see the module docstring)."""
     may_have_landed = _own_attempt_may_have_landed(
-        label, answer, may_have_landed=may_have_landed, own_observed_ms=own_observed_ms
+        label, answer, may_have_landed=may_have_landed, own_range=own_range
     )
     ok = _report(label, answer, may_have_landed=may_have_landed)
     if answer.previous_partition_exists is False and (answer.committed or may_have_landed):
@@ -404,8 +414,9 @@ def _post_book(args: argparse.Namespace, currency: str) -> bool:
             file=sys.stderr,
         )
         return False
-    own = min(int(r["creation_timestamp_ms"]) for r in joined.records)
-    return _judge(label, response, may_have_landed=may_have_landed, own_observed_ms=own)
+    stamps = [int(r["creation_timestamp_ms"]) for r in joined.records]
+    own_range = (min(stamps), max(stamps))
+    return _judge(label, response, may_have_landed=may_have_landed, own_range=own_range)
 
 
 # ---- --local -------------------------------------------------------------------
