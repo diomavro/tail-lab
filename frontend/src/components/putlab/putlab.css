@@ -1545,4 +1545,5 @@
   z-index: 2;
 }
 .pl-marks-row:focus { outline: none; }
-.pl-marks-row:focus-visible rect:first-of-type { stroke: var(--cyan); stroke-width: 2; }
+.pl-marks-rowring { stroke: none; pointer-events: none; }
+.pl-marks-row:focus-visible .pl-marks-rowring { stroke: var(--cyan); stroke-width: 2; }

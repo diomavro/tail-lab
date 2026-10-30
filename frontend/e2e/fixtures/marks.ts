@@ -42,5 +42,7 @@ export const MARKS: MarksCoverage = {
   ],
   regime_sessions: { calm: 40, elevated: 20, crisis: 0 },
   price_span: ['2016-10-31', '2026-10-29'],
-  symbols: ['nvda', 'qqq', 'spy', 'tsla'],
+  // One name past the page's own fallback list: the picker must keep what the
+  // server last said, not fall back to four names after an error.
+  symbols: ['iwm', 'nvda', 'qqq', 'spy', 'tsla'],
 }

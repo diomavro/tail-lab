@@ -84,7 +84,10 @@ def putlab_marks(
                 logger, "putlab.marks.read_failed", symbol=name, as_of=resolved, error=repr(exc)
             )
             raise HTTPException(status_code=503, detail="the quote lake could not be read") from exc
-        _remember(key, _TTL_TODAY_S if as_of is None else _TTL_PINNED_S, coverage)
+        # By the date read, not by how it was asked for: an explicit as_of of
+        # today shares the key, and must not pin today's grid for hours.
+        today = dt.datetime.now(dt.UTC).date()
+        _remember(key, _TTL_TODAY_S if resolved >= today else _TTL_PINNED_S, coverage)
     log_event(
         logger,
         "putlab.marks.computed",

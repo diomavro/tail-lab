@@ -56,6 +56,8 @@ interface Hover {
   /** Pixels from the wrapper's top-left, read off the cell's own box. */
   left: number
   top: number
+  /** Open leftward from the cell instead of rightward. */
+  flip: boolean
 }
 
 /** Names a fresh page offers before the first answer lists them all. */
@@ -326,6 +328,15 @@ export function MarksView({ asset, regimes }: Props) {
                   aria-pressed={isFocus}
                   data-oom={oom}
                 >
+                  {/* The keyboard ring: the whole row, drawn only on focus-visible. */}
+                  <rect
+                    className="pl-marks-rowring"
+                    x={LABEL_W - 1}
+                    y={y - 1}
+                    width={GRID_W + 2}
+                    height={ROW_H + 1}
+                    fill="none"
+                  />
                   <text x={LABEL_W - 6} y={y + ROW_H - 2} textAnchor="end" className="pl-marks-axis">
                     {oom % 10 === 0 || isFocus ? `${oom}%` : ''}
                   </text>
@@ -340,6 +351,7 @@ export function MarksView({ asset, regimes }: Props) {
                     return (
                       <rect
                         key={m}
+                        className="pl-marks-cell"
                         x={x(i)}
                         y={y}
                         width={colW + 0.02}
@@ -350,11 +362,15 @@ export function MarksView({ asset, regimes }: Props) {
                           if (!wrap) return
                           const box = e.currentTarget.getBoundingClientRect()
                           const frame = wrap.getBoundingClientRect()
+                          // Past the middle of the visible frame the tip opens
+                          // leftward, so it never widens the scroll area.
+                          const flip = box.right - frame.left > frame.width / 2
                           setHover({
                             month: m,
                             oom,
-                            left: box.right - frame.left + wrap.scrollLeft,
+                            left: (flip ? box.left : box.right) - frame.left + wrap.scrollLeft,
                             top: box.bottom - frame.top + wrap.scrollTop + 4,
+                            flip,
                           })
                         }}
                       />
@@ -423,7 +439,11 @@ export function MarksView({ asset, regimes }: Props) {
             <div
               className="pl-marks-tip"
               role="tooltip"
-              style={{ left: hover.left, top: hover.top }}
+              style={{
+                left: hover.left,
+                top: hover.top,
+                transform: hover.flip ? 'translateX(calc(-100% - 8px))' : undefined,
+              }}
             >
               <strong>
                 {hover.month} · {hover.oom}–{hover.oom + data.oom_step}% out

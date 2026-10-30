@@ -5,6 +5,7 @@ request is served from the memo rather than re-scanning the quote table."""
 from __future__ import annotations
 
 import datetime as dt
+import time
 from collections.abc import Iterator
 from pathlib import Path
 
@@ -109,3 +110,23 @@ def test_a_lake_that_cannot_be_read_is_a_logged_503(
     assert resp.status_code == 503
     assert "putlab.marks.read_failed" in caplog.text
     assert "log unreadable" in caplog.text
+
+
+def test_an_explicit_today_does_not_pin_todays_grid_for_hours(client: TestClient) -> None:
+    today = dt.datetime.now(dt.UTC).date()
+    client.get("/api/putlab/marks", params={"symbol": "spy", "as_of": today.isoformat()})
+    expires, _ = marks_routes._CACHE[("spy", today)]
+    assert expires - time.monotonic() <= marks_routes._TTL_TODAY_S
+
+
+def test_a_corrupt_quote_table_is_a_503_not_a_crash(
+    client: TestClient, store: DeltaLakeStore
+) -> None:
+    # A real DuckDB scan failure, not a mocked one: the parquet bytes are junk.
+    files = list(Path(store.location).rglob("optionsdx_quotes_spy/**/*.parquet"))
+    assert files
+    for f in files:
+        f.write_bytes(b"not parquet")
+    assert (
+        client.get("/api/putlab/marks", params={"symbol": "spy", "as_of": AS_OF}).status_code == 503
+    )
