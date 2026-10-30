@@ -36,9 +36,11 @@ from tail_lab.api.schemas import (
     OptionChainSnapshotRequest,
     OptionChainSnapshotResponse,
     OptionChainSnapshotStatus,
+    OptionChainWingStatus,
 )
 from tail_lab.config import get_lake_store as _get_configured_lake_store
 from tail_lab.contracts.option_chain import (
+    CALL_DATASET,
     DATASET,
     DEFAULT_SNAPSHOT_SYMBOLS,
     WINGS,
@@ -257,15 +259,25 @@ def option_chain_snapshot_status(
     It exists mainly so *staleness is checkable by something other than a
     human remembering to look*: the daily agent reads this before it picks
     any work, and a gap here outranks whatever was next on its backlog.
-    Unlike a failed FRED pull, a gap here can never be filled in.
+    Unlike a failed FRED pull, a gap here can never be filled in. Both
+    wings are reported (``docs/adr/0031``): the puts at the top level, the
+    calls under ``calls``.
     """
     today = dt.date.today()
+    puts = _wing_status(store, DATASET, today)
+    return OptionChainSnapshotStatus(
+        **puts.model_dump(), calls=_wing_status(store, CALL_DATASET, today)
+    )
+
+
+def _wing_status(store: LakeStore, dataset: str, today: dt.date) -> OptionChainWingStatus:
+    """One wing's freshness, read from its own dataset (never a union)."""
     expected = tuple(sorted(s.upper() for s in DEFAULT_SNAPSHOT_SYMBOLS))
     try:
-        frame = store.read_bronze_as_of(DATASET, today)
+        frame = store.read_bronze_as_of(dataset, today)
     except LookupError:
-        return OptionChainSnapshotStatus(
-            dataset=DATASET,
+        return OptionChainWingStatus(
+            dataset=dataset,
             last_quote_date=None,
             rows=0,
             symbols=0,
@@ -275,8 +287,8 @@ def option_chain_snapshot_status(
 
     last_quote = frame["quote_date"].max().date()
     present = set(frame["underlying"].str.upper())
-    return OptionChainSnapshotStatus(
-        dataset=DATASET,
+    return OptionChainWingStatus(
+        dataset=dataset,
         last_quote_date=last_quote,
         rows=len(frame),
         symbols=int(frame["underlying"].nunique()),
