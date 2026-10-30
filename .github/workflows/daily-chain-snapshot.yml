@@ -4,8 +4,9 @@ name: Daily option-chain snapshot
 # own bronze dataset: puts, and calls since docs/adr/0031 (docs/adr/0020,
 # docs/DATA_CONTRACTS.md #6).
 #
-# THIS IS THE ONE WORKFLOW WHOSE MISSED RUNS CANNOT BE REPAIRED. Every other
-# source here serves history on demand — a skipped FRED or Yahoo pull is a
+# THIS IS ONE OF TWO WORKFLOWS (with daily-deribit-snapshot.yml) WHOSE MISSED
+# RUNS CANNOT BE REPAIRED. Every other source here except Deribit's books
+# serves history on demand — a skipped FRED or Yahoo pull is a
 # make target away from being fixed. Nobody sells a free retroactive option
 # chain, so a session that goes un-snapshotted is gone permanently, and the
 # only way to own five years of quotes is to have started five years ago.

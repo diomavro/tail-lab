@@ -434,6 +434,10 @@ _FLOAT_COLUMNS: Final = (
     "volume",
     "volume_usd",
 )
+#: The reason for a row whose ``(snapshot_date, instrument_name)`` is not
+#: unique. Pandera reports it under whichever key column it checked first
+#: (``snapshot_date:multiple_fields_uniqueness``), which names the wrong thing.
+_DUPLICATE: Final = "duplicate_instrument"
 #: Working columns the plan reads and drops before ``schema.validate``.
 _OUT_OF_WINDOW = "_expiry_out_of_window"
 _INVALID = "invalid_fields"
@@ -592,7 +596,10 @@ def _pandera_reasons(stored: pd.DataFrame) -> pd.Series[str]:
             rank.get(str(col), len(rank)) if ctx == "Column" else len(rank) + 1
             for col, ctx in zip(cases["column"], cases["schema_context"], strict=True)
         ],
-        reason=cases["column"].astype(str) + ":" + cases["check"].astype(str),
+        reason=[
+            _DUPLICATE if check == "multiple_fields_uniqueness" else f"{col}:{check}"
+            for col, check in zip(cases["column"], cases["check"], strict=True)
+        ],
     )
     first = cases.sort_values("_rank", kind="stable").drop_duplicates("index")
     return pd.Series(first["reason"].to_numpy(), index=first["index"].to_numpy(), dtype="object")
@@ -668,8 +675,8 @@ def plan_deribit_write(
     live = dated.loc[~expired]
     if live.empty:
         raise DeribitRefusal(422, f"no live rows: all {len(frame)} rows have expired")
-    valid, quarantined = _split(live, currency, day)
     _check_coverage(live, listed, oldest)
+    valid, quarantined = _split(live, currency, day)
     return DeribitWritePlan(
         valid, quarantined, day, False, int(expired.sum()), previous, observed_ms, len(live)
     )

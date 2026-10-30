@@ -2600,8 +2600,11 @@ datasets (marked **Blocked**); the collection-side items are not blocked.
       `.github/workflows/daily-chain-snapshot.yml:7-10` (including "THE ONE
       WORKFLOW ... every other source serves history"), the
       `daily-agent.yml` sentence beginning "This is one of the datasets that
-      cannot be backfilled", `docs/AGENT_MISSION.md:51-53`, and ADR 0020
-      (:33-34, :44; amended, not rewritten).
+      cannot be backfilled", `docs/AGENT_MISSION.md:51-53`, ADR 0020
+      (:33-34, :44; amended, not rewritten), `scripts/chain_snapshot.py:128`,
+      `src/tail_lab/ingestion/option_chain.py:12`, `HUMAN_TODO.md:581`,
+      `tests/test_scripts_chain_snapshot_retry.py:3`,
+      `tests/test_scripts_chain_sweep_verify.py:3` and `docs/PRIOR_ART.md:721`.
 - [ ] **Deribit trade history as a backfill dataset.** `history.deribit.com`
       serves trades from 2016-11-29, keyless; unlike the book snapshots it is
       recoverable later, so it can wait for a reader.

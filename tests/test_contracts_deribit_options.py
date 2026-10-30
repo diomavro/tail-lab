@@ -516,7 +516,7 @@ def test_a_duplicate_that_also_fails_a_column_gets_the_column_reason() -> None:
     plan = run_plan(recs)
     reasons = dict(zip(plan.quarantined.index, plan.quarantined["reason"], strict=True))
     assert reasons[300] == "mark:greater_than_or_equal_to(0.0)"
-    assert reasons[7].endswith(":multiple_fields_uniqueness")
+    assert reasons[7] == "duplicate_instrument"
 
 
 def test_a_failure_with_no_row_index_refuses_with_500(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -730,7 +730,7 @@ def test_coverage_at_exactly_one_percent_missing_commits() -> None:
     assert len(run_plan(recs[:99], listed=[str(r["instrument_name"]) for r in recs]).valid) == 99
 
 
-@pytest.mark.parametrize(("mismatched", "refused"), [(54, True), (50, False)])
+@pytest.mark.parametrize(("mismatched", "refused"), [(51, True), (50, False)])
 def test_the_wrong_book_threshold_is_strictly_above_half(mismatched: int, refused: bool) -> None:
     recs = records(100, "ETH")
     for row in recs[:mismatched]:
@@ -772,3 +772,42 @@ def test_the_valid_frame_is_the_schemas_coerced_output() -> None:
     assert plan.valid["snapshot_date"].dtype == "datetime64[ns]"
     coerced = contract.DeribitOptionsSchema.validate(plan.valid.copy())
     assert (plan.valid.dtypes == coerced.dtypes).all()
+
+
+# ---- review round 2 -------------------------------------------------------------------
+
+
+def test_coverage_is_checked_before_the_quarantine_split(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Rule 6 before rule 7, as the ADR orders them: an incomplete capture is a
+    409 even when the split would fail with a non-attributable 500."""
+    monkeypatch.setattr(contract, "STORED_COLUMNS", (*contract.STORED_COLUMNS, "invalid_fields"))
+    recs = records(100)
+    listed = [str(r["instrument_name"]) for r in recs] + book_names(5, expiry="25DEC26")
+    assert refusal(recs, listed=listed).status == 409
+
+
+def test_exactly_0805_utc_keeps_every_row_and_a_millisecond_earlier_is_425() -> None:
+    at = dt.datetime(2026, 10, 30, 8, 5, tzinfo=dt.UTC)
+    assert len(run_plan(records(10, creation_timestamp_ms=ms(at)), now=at).valid) == 10
+    before = records(10, creation_timestamp_ms=ms(at) - 1)
+    assert refusal(before, now=at).status == 425
+
+
+def test_exactly_five_minutes_in_the_future_is_still_fresh() -> None:
+    plan = run_plan(records(10, creation_timestamp_ms=NOW_MS + 5 * 60_000))
+    assert len(plan.valid) == 10
+
+
+def test_an_empty_invalid_fields_list_is_not_a_fault() -> None:
+    plan = run_plan(records(10, invalid_fields=[]))
+    assert len(plan.valid) == 10
+
+
+def test_an_expiry_at_ms_min_is_in_window_and_expired() -> None:
+    """2016-01-01 is inside the half-open window: an undated name with that
+    expiry is a real, long-expired row -- dropped, not quarantined."""
+    recs = records(100)
+    recs.append(record("ODDNAME", premium_currency="BTC", expiration_timestamp_ms=contract.MS_MIN))
+    plan = run_plan(recs, listed=[str(r["instrument_name"]) for r in recs[:100]])
+    assert plan.expired_dropped == 1
+    assert plan.quarantined.empty

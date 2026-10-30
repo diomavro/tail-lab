@@ -210,3 +210,22 @@ forbidden_modules = [
     "tail_lab.contracts.kaggle_spy",
     "tail_lab.ingestion.kaggle_spy",
 ]
+
+# Deribit's crypto option books are collected but READ BY NOTHING until
+# HUMAN_TODO's question on Deribit's data terms is answered (docs/adr/0032).
+# Only the write route and its request/response models may touch the
+# contract; a research function or another route reading it is a reader.
+[[tool.importlinter.contracts]]
+name = "Nothing reads the Deribit books yet"
+type = "forbidden"
+source_modules = [
+    "tail_lab.api",
+    "tail_lab.research",
+]
+forbidden_modules = [
+    "tail_lab.contracts.deribit_options",
+]
+ignore_imports = [
+    "tail_lab.api.deribit_routes -> tail_lab.contracts.deribit_options",
+    "tail_lab.api.schemas -> tail_lab.contracts.deribit_options",
+]

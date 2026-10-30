@@ -646,4 +646,3 @@ do.
 - [ ] **Confirm `fly scale show` reports ONE machine.** The Deribit route's
       per-book lock only works within one process, so two machines could each
       append the same day (ADR 0032, "Preconditions").
-

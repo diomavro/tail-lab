@@ -585,8 +585,14 @@ def test_the_route_logs_every_refusal_and_every_answer(
         assert post(client, "BTC", body(records(20)))["committed"] is True
     messages = [r.getMessage() for r in caplog.records]
     refused = [m for m in messages if m.startswith("event=api.ingest.deribit_options ")]
-    assert any("dataset=deribit_options_eth refusal=409" in m for m in refused)
-    assert any("dataset=deribit_options_btc" in m and "committed=true" in m for m in refused)
+    assert any(
+        "dataset=deribit_options_eth refusal=409 detail=" in m and "body is for book BTC" in m
+        for m in refused
+    )
+    assert any(
+        "dataset=deribit_options_btc" in m and "committed=true" in m and "rows_posted=20" in m
+        for m in refused
+    )
 
 
 def test_previous_day_is_none_when_only_today_exists(client: TestClient) -> None:
@@ -603,3 +609,15 @@ def test_the_blob_records_the_apps_code_sha(client: TestClient, lake: Lake) -> N
     recs[3]["mark"] = -1.0
     out = post(client, "BTC", body(recs))
     assert lake.blobs.read_json(str(out["quarantine_key"]))["code_sha"] == ROUTE_SHA
+
+
+@pytest.mark.parametrize(
+    ("created", "wire_ok"), [(contract.MS_MAX, False), (contract.MS_MIN, True)]
+)
+def test_the_wire_creation_window_is_half_open(
+    client: TestClient, created: int, wire_ok: bool
+) -> None:
+    """2100-01-01 is refused by the request model (422); 2016-01-01 passes
+    the wire and is then refused as stale by the plan (409)."""
+    out = post(client, "BTC", body(records(5, creation_timestamp_ms=created)))
+    assert out["status"] == (409 if wire_ok else 422)

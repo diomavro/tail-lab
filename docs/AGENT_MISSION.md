@@ -80,6 +80,11 @@ any of these holds:
   and `usdc` (a 404 from the SPA mount, a 5xx, HTML, a curl failure) while the
   workflow was added 2 or more days ago -- merged, but never deployed.
 
+Do not add any reader of `deribit_options_*` -- by import or by dataset name
+-- until `HUMAN_TODO.md`'s Deribit data-terms item is ticked. The import side
+is machine-checked (the "Nothing reads the Deribit books yet" contract in
+`pyproject.toml`); a dataset name in a string is not, so it rests on you.
+
 Older gaps (`missing_days`) are information only: they cannot be filled, and
 alarming on them would bury new losses. A broken Deribit collection is treated
 exactly like a broken option-chain sweep: diagnose it first, and say so in the

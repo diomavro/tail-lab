@@ -539,3 +539,16 @@ def test_previous_day_is_none_when_only_today_exists_under_local(
     assert _ingest(lake).previous_partition_exists is None
     again = _ingest(lake)
     assert again.already_captured and again.previous_partition_exists is None
+
+
+def test_the_run_log_records_the_observation_span(
+    monkeypatch: pytest.MonkeyPatch, lake: Lake, caplog: pytest.LogCaptureFixture
+) -> None:
+    book, instruments = raw_book("BTC", 120)
+    book[0]["creation_timestamp"] = CREATED_MS - 7
+    book[1]["creation_timestamp"] = CREATED_MS + 9
+    fake_fetch(monkeypatch, {"BTC": (book, instruments)})
+    with caplog.at_level(logging.INFO):
+        _ingest(lake)
+    (line,) = _run_log(caplog)
+    assert f"observed_min_ms={CREATED_MS - 7} observed_max_ms={CREATED_MS + 9}" in line

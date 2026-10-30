@@ -1201,7 +1201,7 @@ UTC wall time.
 
 | column | type and rule | source |
 |---|---|---|
-| `snapshot_date` | date; the partition | UTC date of the capture's earliest `observed_at` |
+| `snapshot_date` | timestamp (midnight); the partition | UTC date of the capture's earliest `observed_at` |
 | `observed_at` | timestamp | book `creation_timestamp` (ms) |
 | `instrument_name` | str | book |
 | `underlying` | str | book `base_currency` |
@@ -1248,6 +1248,13 @@ instrument expiry disagrees with the date its name spells is quarantined
 `unparseable_expiry`, never dropped as expired. Each answer says whether
 D - 1 exists, and the script exits 1 when D - 1 is missing on a committed or
 may-have-landed answer: that is the red signal for a lost previous session.
+An "already captured" answer to a retry whose earlier attempt may have landed
+is red too: that attempt's quarantine share and blob status are unknown, so
+the script names `ops/quarantine/<dataset>/<D>/` and the app log's
+`quarantine_unwritten` event. A book payload that is not a list, or a book
+row without a string `instrument_name` or an integer `creation_timestamp`,
+fails the whole book (`DeribitApiError`); every other field fault costs only
+its row.
 
 ### Quarantine — per-capture JSON blobs
 
@@ -1262,7 +1269,9 @@ through `lake/blob_store.BlobStore`, on the lake's root and credentials:
   row's wire dict (`DeribitRecord`), exactly as posted.
 - **`reason`:** one of the write plan's own reasons, in precedence order
   `invalid_value` > `wrong_book` > `unparseable_expiry`, or else the first
-  failing schema check as `"<column>:<check>"` (e.g. `strike:not_nullable`).
+  failing column check as `"<column>:<check>"` (e.g. `strike:not_nullable`),
+  or else `duplicate_instrument` (the row's `(snapshot_date,
+  instrument_name)` is not unique).
   An `invalid_value` row names each bad field in its payload's
   `invalid_fields`, as `"<wire field>=<repr>"` (e.g. `"bid=nan"`,
   `"right='PUT'"`).
@@ -1282,4 +1291,3 @@ recover a row take everything after ` payload=` and strip the outer quotes;
 what is left is the JSON wire dict. The response then says
 `quarantine_written: false` and the script exits 1. How long Fly keeps those
 lines is unmeasured.
-

@@ -22,9 +22,12 @@ still sends the others: each book's session is lost on its own. Every line
 is prefixed ``btc:``, ``eth:`` or ``usdc:``.
 
 Exit codes are the contract with the scheduler. 0 only if every book
-committed or was already captured, with no committed (or possibly landed)
-answer missing the previous day, no quarantine share above 1%, and no
-quarantine left unwritten. 2 for a missing ``--token``. Otherwise 1.
+committed or was already captured, with no committed answer missing the
+previous day, no quarantine share above 1%, and no quarantine left
+unwritten. An "already captured" answer to a retry whose earlier attempt
+failed after sending (``may_have_landed``) is red too: that attempt's
+quarantine share and blob status are unknown. 2 for a missing ``--token``.
+Otherwise 1.
 """
 
 from __future__ import annotations
@@ -128,7 +131,8 @@ class _Answer(Protocol):
 
 
 def _report(label: str, answer: _Answer, *, may_have_landed: bool) -> bool:
-    """Say what happened to the dataset; ``False`` when nothing landed."""
+    """Say what happened to the dataset; ``False`` when nothing landed, or
+    when a landed attempt's quarantine is unknown."""
     if answer.committed:
         print(
             f"{label}: committed {answer.rows} rows "
@@ -143,10 +147,17 @@ def _report(label: str, answer: _Answer, *, may_have_landed: bool) -> bool:
         )
         print(f"{label}: {how}: snapshot {answer.snapshot_date}")
         if may_have_landed:
+            # Red, not a warning: the landed attempt's response was lost, so
+            # whether it quarantined over 1% or failed its blob write is
+            # unknown -- and the catch-up will only ever answer "already
+            # captured" for this day.
             print(
-                f"::warning::{label}: quarantine share and blob status of the landed attempt "
-                f"are unknown; check ops/quarantine/{answer.dataset}/{answer.snapshot_date}/"
+                f"::error::{label}: quarantine share and blob status of the landed attempt "
+                f"are unknown; check ops/quarantine/{answer.dataset}/{answer.snapshot_date}/ "
+                "and the app log for event=api.ingest.deribit_options.quarantine_unwritten",
+                file=sys.stderr,
             )
+            return False
         return True
     print(
         f"::error::{label}: nothing committed -- every live row was quarantined "
@@ -213,15 +224,30 @@ def _causes(exc: BaseException) -> Iterator[BaseException]:
         stack.extend(n for n in [*nested, *current.args] if isinstance(n, BaseException))
 
 
+_DESCRIBE_LIMIT = 300
+
+
 def describe(exc: BaseException) -> str:
-    """``exc``'s type plus its INNERMOST cause, truncated at the end -- so the
-    root cause is never the part cut off, as it was by ``{exc!r:.200}``."""
+    """``exc``'s own message, then its INNERMOST cause (following
+    ``__cause__`` and the implicit ``__context__``, with a cycle guard).
+
+    Both halves matter: the outer message carries Deribit's 4xx body
+    (``_raise_for_status`` appends it and re-raises ``from`` the original),
+    the root carries why a connection failed. A long result is cut in the
+    MIDDLE, so neither end is lost -- ``{exc!r:.200}`` cut the root off.
+    """
+    seen = {id(exc)}
     root = exc
-    while (inner := root.__cause__ or root.__context__) is not None:
+    while (inner := root.__cause__ or root.__context__) is not None and id(inner) not in seen:
+        seen.add(id(inner))
         root = inner
-    if root is exc:
-        return f"{type(exc).__name__}: {exc}"[:300]
-    return f"{type(exc).__name__} <- {type(root).__name__}: {root}"[:300]
+    text = f"{type(exc).__name__}: {exc}"
+    if root is not exc:
+        text = f"{text} <- {type(root).__name__}: {root}"
+    if len(text) <= _DESCRIBE_LIMIT:
+        return text
+    head = _DESCRIBE_LIMIT // 2
+    return f"{text[:head]} ... {text[-(_DESCRIBE_LIMIT - head - 5) :]}"
 
 
 def _deterministic_refusal(exc: requests.RequestException) -> bool:

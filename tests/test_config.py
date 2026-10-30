@@ -53,7 +53,7 @@ def test_quarantine_blobs_share_the_lake_root(tmp_path: Path) -> None:
     """A blob written through ``get_quarantine_blobs`` is readable at the
     root ``get_lake_store`` reports. Explicit settings only: the zero-arg
     getters read ``.env``, which on Dio's checkout is production."""
-    settings = Settings(_env_file=None, lake_root=tmp_path)  # type: ignore[call-arg]
+    settings = Settings(_env_file=None, lake_backend="local", lake_root=tmp_path)  # type: ignore[call-arg]
     get_quarantine_blobs(settings).write_json("ops/quarantine/x.json", {"ok": True})
     assert BlobStore(get_lake_store(settings).location).read_json("ops/quarantine/x.json") == {
         "ok": True

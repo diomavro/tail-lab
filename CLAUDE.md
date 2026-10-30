@@ -77,13 +77,16 @@ them.
 - **Coverage floors differ by layer:** 80% overall, but **90% on `research/` and `transforms/`** — new code there needs near-complete tests, typically including a pinned synthetic case with a known analytic answer (`docs/STANDARDS.md`).
 - **Tests never touch the network.** Ingestion adapters are tested against committed fixtures; live fetches happen only via the human-run `make ingest-*` targets.
 - **Config lives in one place:** `src/tail_lab/config.py` (pydantic-settings, `TAIL_LAB_` prefix, `.env`). Never read `os.environ` elsewhere. `TAIL_LAB_LAKE_BACKEND=local` (default, credential-free — what CI uses, lake at `./data/`) vs `tigris` (S3 on Fly Tigris, plain `AWS_*` env names). The feedback routes 404 unless `TAIL_LAB_FEEDBACK_TOKEN` is set — that's deliberate, not a bug.
-- **The daily chain sweep is one of the two jobs that must not miss (the other: DATA_CONTRACTS §16)** (`docs/adr/0020`).
+- **The daily chain sweep is one of the two jobs that must not miss (the
+  other: DATA_CONTRACTS §16)** (`docs/adr/0020`).
   `.github/workflows/daily-chain-snapshot.yml` forward-collects the put wing from
-  Cboe's keyless CDN every weekday at 21:30 UTC. Every other source here except Deribit's books serves
-  history on demand, so a skipped pull is a `make` invocation away from being
-  fixed; nobody sells a retroactive option chain, so a skipped session is gone at
-  any price. An empty sweep therefore **fails red on purpose** rather than
-  no-opping, and a red build here (or in `daily-deribit-snapshot.yml` -- check `/api/ingest/deribit-options/status` first; a late catch-up's 425 is usually spurious, ADR 0032 §5) is one that should interrupt a day. Check
+  Cboe's keyless CDN every weekday at 21:30 UTC. Every other source here except
+  Deribit's books serves history on demand, so a skipped pull is a `make`
+  invocation away from being fixed; nobody sells a retroactive option chain, so
+  a skipped session is gone at any price. An empty sweep therefore **fails red
+  on purpose** rather than no-opping, and a red build here (or in
+  `daily-deribit-snapshot.yml`; see ADR 0032 §5 before trusting a late 425) is
+  one that should interrupt a day. Check
   `GET /api/ingest/option-chain/status` before assuming it is healthy. Two
   gotchas: **GitHub drops scheduled runs** — the 2026-08-27 evening sweep never fired at all, and an absent run produces no red build, so a second catch-up cron at 05:00 UTC now covers it (free, because the write is idempotent); the sweep must write **one partition for all symbols** (bronze is
   immutable, so a per-symbol write persists only the first), and Cboe
