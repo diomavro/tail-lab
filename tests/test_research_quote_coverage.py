@@ -166,3 +166,67 @@ def test_a_strike_exactly_on_a_bucket_edge_lands_in_the_deeper_bucket(tmp_path: 
     )
     (odx,) = compute_quote_coverage(store, symbol="spy", as_of=dt.date(2026, 1, 2)).sources
     assert sorted(c[1] for c in odx.cells) == [10, 30]
+
+
+def _edge_store(tmp_path: Path, rows: list[dict[str, object]]) -> DeltaLakeStore:
+    store = DeltaLakeStore(tmp_path)
+    store.write_bronze(
+        "vix", dt.date(2026, 1, 1), pd.DataFrame({"date": pd.to_datetime([D1]), "close": [20.0]})
+    )
+    store.write_bronze("optionsdx_quotes_spy", dt.date(2026, 1, 1), pd.DataFrame(rows))
+    return store
+
+
+@pytest.mark.parametrize(
+    ("dte", "band"),
+    [(1, 0), (14, 0), (15, 1), (42, 1), (43, 2), (120, 2)],
+)
+def test_tenor_bands_close_on_their_last_day(tmp_path: Path, dte: int, band: int) -> None:
+    store = _edge_store(tmp_path, [_quote(D1, 90.0, dte, 1.0, 1.1)])
+    (odx,) = compute_quote_coverage(store, symbol="spy", as_of=dt.date(2026, 1, 2)).sources
+    assert [c[2] for c in odx.cells] == [band]
+
+
+@pytest.mark.parametrize("dte", [0, 121])
+def test_outside_the_tenor_window_is_not_a_session(tmp_path: Path, dte: int) -> None:
+    store = _edge_store(tmp_path, [_quote(D1, 90.0, dte, 1.0, 1.1)])
+    with pytest.raises(LookupError):
+        compute_quote_coverage(store, symbol="spy", as_of=dt.date(2026, 1, 2))
+
+
+def test_the_marking_bar_and_the_money_line_are_inclusive(tmp_path: Path) -> None:
+    rows = [
+        _quote(D1, 100.0, 30, 1.0, 1.1),  # at the money: the 0% bucket, counted
+        _quote(D1, 80.0, 30, 0.74, 1.26),  # spread 0.52 / 1.00: just past the bar
+        _quote(D1, 70.0, 30, 0.75, 1.25),  # spread 0.50 / 1.00: exactly on it, usable
+    ]
+    (odx,) = compute_quote_coverage(
+        _edge_store(tmp_path, rows), symbol="spy", as_of=dt.date(2026, 1, 2)
+    ).sources
+    assert sorted(odx.cells) == [(0, 0, 1, 1, 0), (0, 30, 1, 1, 0)]
+
+
+def test_the_archive_is_read_as_one_snapshot_not_pooled_with_superseded_ones(
+    tmp_path: Path,
+) -> None:
+    # Corrections land as a new partition; pooling would count the old rows too.
+    store = _edge_store(tmp_path, [_quote(D1, 90.0, 30, 1.0, 1.1)])
+    store.write_bronze(
+        "optionsdx_quotes_spy", dt.date(2026, 1, 3), pd.DataFrame([_quote(D3, 70.0, 30, 1.0, 1.1)])
+    )
+    (odx,) = compute_quote_coverage(store, symbol="spy", as_of=dt.date(2026, 1, 4)).sources
+    assert (odx.first, odx.last, odx.sessions) == (D3, D3, 1)
+
+
+def test_a_row_dated_after_as_of_is_dropped_even_inside_an_eligible_partition(
+    tmp_path: Path,
+) -> None:
+    store = _edge_store(tmp_path, [_quote(D1, 90.0, 30, 1.0, 1.1)])
+    future = dt.date(2026, 2, 1)
+    store.write_bronze(
+        "option_chain_snapshot",
+        dt.date(2026, 1, 1),
+        pd.DataFrame([{**_quote(future, 90.0, 30, 1.0, 1.1), "underlying": "SPY"}]),
+    )
+    coverage = compute_quote_coverage(store, symbol="spy", as_of=dt.date(2026, 1, 2))
+    assert [s.source for s in coverage.sources] == ["optionsdx"]

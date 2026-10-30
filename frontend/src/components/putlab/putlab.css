@@ -1544,3 +1544,5 @@
   box-shadow: 0 2px 8px color-mix(in srgb, var(--ink) 12%, transparent);
   z-index: 2;
 }
+.pl-marks-row:focus { outline: none; }
+.pl-marks-row:focus-visible rect:first-of-type { stroke: var(--cyan); stroke-width: 2; }

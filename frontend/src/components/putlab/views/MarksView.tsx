@@ -53,9 +53,13 @@ type Load =
 interface Hover {
   month: string
   oom: number
-  x: number
-  y: number
+  /** Pixels from the wrapper's top-left, read off the cell's own box. */
+  left: number
+  top: number
 }
+
+/** Names a fresh page offers before the first answer lists them all. */
+const FALLBACK_SYMBOLS = ['nvda', 'qqq', 'spy', 'tsla']
 
 function monthsBetween(first: string, last: string): string[] {
   const out: string[] = []
@@ -90,12 +94,18 @@ export function MarksView({ asset, regimes }: Props) {
   const [focus, setFocus] = useState(16)
   const [hover, setHover] = useState<Hover | null>(null)
   const [load, setLoad] = useState<Load>({ status: 'loading' })
+  // Kept across a failed read, so an error never strands the picker on the
+  // one name that failed.
+  const [known, setKnown] = useState<string[]>(FALLBACK_SYMBOLS)
 
   useEffect(() => {
     const ctl = new AbortController()
     setLoad({ status: 'loading' })
     fetchMarks(symbol, ctl.signal)
-      .then((data) => setLoad({ status: 'ready', data }))
+      .then((data) => {
+        setLoad({ status: 'ready', data })
+        setKnown(data.symbols)
+      })
       .catch((err: unknown) => {
         if (ctl.signal.aborted) return
         const message =
@@ -112,7 +122,7 @@ export function MarksView({ asset, regimes }: Props) {
   const data = load.status === 'ready' ? load.data : null
   const grid = useMemo(() => (data ? buildGrid(data, band, measure) : null), [data, band, measure])
 
-  const symbols = data?.symbols ?? [symbol]
+  const symbols = known
   const picker = (
     <div className="pl-marks-controls">
       <label className="pl-marks-field">
@@ -234,7 +244,7 @@ export function MarksView({ asset, regimes }: Props) {
         <div className="pl-section-head">
           <h3>Where a quote is held</h3>
         </div>
-        <div className="pl-marks-legend" aria-hidden="true">
+        <div className="pl-marks-legend">
           <span>Share of the month&rsquo;s sessions:</span>
           {STEPS.map((s, i) => (
             <span key={s}>
@@ -282,6 +292,7 @@ export function MarksView({ asset, regimes }: Props) {
               const to = monthIdx.get(em) ?? last
               return (
                 <rect
+                  className="pl-marks-ribbon"
                   key={`${seg.regime}-${seg.start}`}
                   x={x(from)}
                   y={0}
@@ -303,6 +314,16 @@ export function MarksView({ asset, regimes }: Props) {
                   key={oom}
                   className={isFocus ? 'pl-marks-row is-focus' : 'pl-marks-row'}
                   onClick={() => setFocus(oom)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter' || e.key === ' ') {
+                      e.preventDefault()
+                      setFocus(oom)
+                    }
+                  }}
+                  tabIndex={0}
+                  role="button"
+                  aria-label={`Read ${oom}–${oom + data.oom_step}% out`}
+                  aria-pressed={isFocus}
                   data-oom={oom}
                 >
                   <text x={LABEL_W - 6} y={y + ROW_H - 2} textAnchor="end" className="pl-marks-axis">
@@ -324,7 +345,18 @@ export function MarksView({ asset, regimes }: Props) {
                         width={colW + 0.02}
                         height={ROW_H - 1}
                         fill={fill}
-                        onMouseEnter={() => setHover({ month: m, oom, x: x(i), y })}
+                        onMouseEnter={(e) => {
+                          const wrap = e.currentTarget.closest('.pl-marks-wrap')
+                          if (!wrap) return
+                          const box = e.currentTarget.getBoundingClientRect()
+                          const frame = wrap.getBoundingClientRect()
+                          setHover({
+                            month: m,
+                            oom,
+                            left: box.right - frame.left + wrap.scrollLeft,
+                            top: box.bottom - frame.top + wrap.scrollTop + 4,
+                          })
+                        }}
                       />
                     )
                   })}
@@ -335,7 +367,7 @@ export function MarksView({ asset, regimes }: Props) {
                       const n = row?.usable_by_regime[reg] ?? 0
                       const w = (n / maxBar) * BAR_W
                       const rect = (
-                        <rect key={reg} x={at} y={y + 1} width={w} height={ROW_H - 3} fill={REGIME_FILL[reg]}>
+                        <rect key={reg} className="pl-marks-bar" data-regime={reg} x={at} y={y + 1} width={w} height={ROW_H - 3} fill={REGIME_FILL[reg]}>
                           <title>{`${oom}% out, ${reg}: ${fmtYears(n)}`}</title>
                         </rect>
                       )
@@ -369,6 +401,8 @@ export function MarksView({ asset, regimes }: Props) {
               ) : null,
             )}
             {data.price_span &&
+              data.price_span[1].slice(0, 7) >= grid.months[0]! &&
+              data.price_span[0].slice(0, 7) <= grid.months[grid.months.length - 1]! &&
               (() => {
                 const a = monthIdx.get(data.price_span[0].slice(0, 7)) ?? 0
                 const b = monthIdx.get(data.price_span[1].slice(0, 7)) ?? grid.months.length - 1
@@ -389,10 +423,7 @@ export function MarksView({ asset, regimes }: Props) {
             <div
               className="pl-marks-tip"
               role="tooltip"
-              style={{
-                left: `${((hover.x + colW) / (LABEL_W + GRID_W + 12 + BAR_W + 52)) * 100}%`,
-                top: hover.y + ROW_H * 2,
-              }}
+              style={{ left: hover.left, top: hover.top }}
             >
               <strong>
                 {hover.month} · {hover.oom}–{hover.oom + data.oom_step}% out

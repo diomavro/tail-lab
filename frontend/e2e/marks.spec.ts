@@ -50,4 +50,64 @@ test('says so when the lake holds nothing for the name', async ({ page }) => {
   await mockPutLabApi(page, { noData: ['/api/putlab/marks'] })
   await page.getByLabel('Name').selectOption('qqq')
   await expect(page.getByRole('alert')).toContainText('no put quotes for QQQ')
+  // The failed name must not strand the picker: every other name stays offered.
+  await expect(page.getByLabel('Name').locator('option')).toHaveText(['NVDA', 'QQQ', 'SPY', 'TSLA'])
+})
+
+// Each ink step is its own colour-mix percentage (22 / 45 / 70 / 100), so the
+// tests read the step, not just "inked".
+const ink = (pct: number) => new RegExp(`var\\(--cyan\\) ${pct}%`)
+
+test('inks each cell by its own tenor, step and measure', async ({ page }) => {
+  await expect(cell(page, 16, 0)).toHaveAttribute('fill', ink(100)) // 20 of 20, 2-6w
+  await expect(cell(page, 16, 1)).toHaveAttribute('fill', ink(45)) // 5 of 19
+  await page.getByText('up to 2 weeks').click()
+  await expect(cell(page, 16, 0)).toHaveAttribute('fill', ink(22)) // 2 of 20, <=2w only
+  await expect(cell(page, 16, 1)).toHaveAttribute('fill', 'var(--paper-2)')
+  await page.getByText('2–6 weeks').click()
+  await page.locator('.pl-seg-opt', { hasText: 'Traded' }).click()
+  await expect(cell(page, 16, 1)).toHaveAttribute('fill', ink(100)) // traded 19 of 19
+})
+
+test('hatches from the stored depth itself, not one bucket past it', async ({ page }) => {
+  await expect(cell(page, 38, 0)).toHaveAttribute('fill', 'var(--paper-2)')
+  await expect(cell(page, 40, 0)).toHaveAttribute('fill', 'url(#marks-hatch)')
+  await expect(cell(page, 40, 5)).not.toHaveAttribute('fill', 'url(#marks-hatch)')
+})
+
+test('draws the regime ribbon, the regime bars and the price-series line', async ({ page }) => {
+  // Fixture regimes: calm to 2023-02, elevated 2023-02..06, then two after the grid.
+  await expect(page.locator('.pl-marks-ribbon')).toHaveCount(2)
+  const bars = page.locator('.pl-marks-row[data-oom="16"] .pl-marks-bar')
+  // 252 / 189 / 63 sessions against a 504-session widest row, on a 200-wide axis.
+  await expect(bars.nth(0)).toHaveAttribute('width', '100')
+  await expect(bars.nth(1)).toHaveAttribute('width', '75')
+  await expect(bars.nth(2)).toHaveAttribute('width', '25')
+  await expect(page.locator('.pl-marks-price line')).toHaveCount(1)
+})
+
+test('prints a short history in days and a long one in years', async ({ page }) => {
+  await page.getByText('The same counts as a table').click()
+  const table = page.getByRole('table', { name: 'Sessions of quotes held by depth' })
+  await expect(table.locator('tr', { hasText: '16–18%' })).toContainText('2.0 y')
+  await expect(table.locator('tr', { hasText: '50–52%' })).toContainText('21 d')
+})
+
+test('a row is reachable by keyboard', async ({ page }) => {
+  await page.getByRole('button', { name: 'Read 30–32% out' }).focus()
+  await page.keyboard.press('Enter')
+  await expect(page.locator('.pl-hero .pl-kicker').first()).toContainText('30–32% out')
+})
+
+test('the tooltip sits beside the cell it describes, at any width', async ({ page }) => {
+  for (const width of [1280, 400]) {
+    await page.setViewportSize({ width, height: 900 })
+    const target = cell(page, 50, 5)
+    await target.scrollIntoViewIfNeeded()
+    await target.hover()
+    const c = (await target.boundingBox())!
+    const t = (await page.getByRole('tooltip').boundingBox())!
+    expect(Math.abs(t.x - (c.x + c.width))).toBeLessThan(24)
+    expect(Math.abs(t.y - (c.y + c.height))).toBeLessThan(24)
+  }
 })

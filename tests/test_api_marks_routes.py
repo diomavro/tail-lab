@@ -84,3 +84,28 @@ def test_a_repeat_request_is_served_from_the_memo(
             == 200
         )
     assert calls == ["spy"]
+
+
+def test_the_memo_is_bounded_whatever_as_of_a_caller_sends(client: TestClient) -> None:
+    for day in range(1, 41):
+        client.get(
+            "/api/putlab/marks", params={"symbol": "spy", "as_of": f"2026-02-{day % 28 + 1:02d}"}
+        )
+        client.get(
+            "/api/putlab/marks", params={"symbol": "spy", "as_of": f"2026-03-{day % 28 + 1:02d}"}
+        )
+    assert len(marks_routes._CACHE) <= marks_routes._MAX_ENTRIES
+
+
+def test_a_lake_that_cannot_be_read_is_a_logged_503(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    def broken(lake: DeltaLakeStore, *, symbol: str, as_of: dt.date) -> object:
+        raise OSError("log unreadable")
+
+    monkeypatch.setattr(marks_routes, "compute_quote_coverage", broken)
+    with caplog.at_level("INFO", logger="tail_lab.api.marks"):
+        resp = client.get("/api/putlab/marks", params={"symbol": "spy", "as_of": AS_OF})
+    assert resp.status_code == 503
+    assert "putlab.marks.read_failed" in caplog.text
+    assert "log unreadable" in caplog.text
