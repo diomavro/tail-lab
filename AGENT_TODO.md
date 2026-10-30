@@ -2535,8 +2535,9 @@ automerge landed before anyone read them. None is a bug today.
       (`portfolio._max_drawdown`, `model_plan._max_drawdown`).
 - [ ] **Chain sweep script (#171):** `scripts/chain_snapshot.py`'s `_LABEL`
       duplicates the `right -> wing` mapping on `Wing`; `Outcome.UNSETTLED`
-      changes one printed line only; `_run_local` and `main` could share one
-      `_finish` driver. Weekly-cleanup material.
+      changes one printed line only; `_run_local` and `main` both end in
+      `_finish(...)` but each drives its own per-wing loop -- one driver over
+      a `wing -> Outcome` callable would serve both. Weekly-cleanup material.
 - [ ] **Image smoke check (#177, needs a human: touches `.github/`):** no CI
       step runs `LOAD delta` offline as the image's runtime user, so the
       prod-only Marks 503 can come back if the `USER` line moves.
