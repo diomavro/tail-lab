@@ -11,6 +11,7 @@ from __future__ import annotations
 import datetime as dt
 import json
 import logging
+import re
 from collections.abc import Callable, Mapping
 from pathlib import Path
 
@@ -362,6 +363,12 @@ def test_a_failed_blob_write_logs_every_row_one_line_each(
     assert {capture for capture, _ in lines} == {result.quarantine_key}
     expected = to_records(book, instruments).records[1:4]
     assert [payload for _, payload in lines] == expected
+    (failed,) = [
+        r.getMessage()
+        for r in caplog.records
+        if "event=ingestion.deribit_options.quarantine_write_failed " in r.getMessage()
+    ]
+    assert re.search(r"capture=ops/quarantine/\S+ error=\w+: \S", failed), failed
 
 
 def test_a_dataset_write_that_raises_after_landing_still_writes_the_quarantine(
@@ -492,3 +499,43 @@ def test_a_refusal_under_local_writes_nothing(
     if status is not None:
         assert isinstance(caught.value, DeribitRefusal) and caught.value.status == status
     assert _files(lake[2]) == before
+
+
+def _run_log(caplog: pytest.LogCaptureFixture) -> list[str]:
+    return [
+        r.getMessage()
+        for r in caplog.records
+        if r.getMessage().startswith(f"event={ingestion.RUN_EVENT} ")
+    ]
+
+
+def test_the_run_log_records_the_partition_and_dropped_instruments(
+    monkeypatch: pytest.MonkeyPatch, lake: Lake, caplog: pytest.LogCaptureFixture
+) -> None:
+    book, instruments = raw_book("BTC", 120)
+    fake_fetch(monkeypatch, {"BTC": (book, [None, {"strike": 1.0}, *instruments])})
+    with caplog.at_level(logging.INFO):
+        _ingest(lake)
+    (line,) = _run_log(caplog)
+    assert "instruments_dropped=2" in line
+    assert "partition=2026-10-30" in line
+    assert "valid=120" in line
+
+
+def test_the_run_log_records_a_refusal(
+    monkeypatch: pytest.MonkeyPatch, lake: Lake, caplog: pytest.LogCaptureFixture
+) -> None:
+    fake_fetch(monkeypatch, {"BTC": raw_book("BTC", 50, created_ms=CREATED_MS - 40 * 60_000)})
+    with caplog.at_level(logging.INFO), pytest.raises(DeribitRefusal):
+        _ingest(lake)
+    (line,) = _run_log(caplog)
+    assert 'refusal="409: stale' in line
+
+
+def test_previous_day_is_none_when_only_today_exists_under_local(
+    monkeypatch: pytest.MonkeyPatch, lake: Lake
+) -> None:
+    fake_fetch(monkeypatch, {"BTC": raw_book("BTC", 50)})
+    assert _ingest(lake).previous_partition_exists is None
+    again = _ingest(lake)
+    assert again.already_captured and again.previous_partition_exists is None

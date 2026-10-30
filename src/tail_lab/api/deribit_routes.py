@@ -39,6 +39,7 @@ from tail_lab.config import get_quarantine_blobs as _get_configured_quarantine_b
 from tail_lab.config import get_settings
 from tail_lab.contracts.deribit_options import (
     DERIBIT_BOOKS,
+    REFUSAL_MARKER,
     DeribitBook,
     DeribitRefusal,
     QuarantineParts,
@@ -99,7 +100,9 @@ def ingest_deribit_options(
             return _ingest(book, records, body.listed, store, blobs)
         except DeribitRefusal as exc:
             log_event(_LOGGER, EVENT, dataset=book.dataset, refusal=exc.status, detail=exc.detail)
-            raise HTTPException(status_code=exc.status, detail=exc.detail) from exc
+            raise HTTPException(
+                status_code=exc.status, detail=f"{REFUSAL_MARKER}{exc.detail}"
+            ) from exc
 
 
 def _quarantine_write(parts: QuarantineParts | None) -> QuarantineWrite | None:

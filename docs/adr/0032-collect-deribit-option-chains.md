@@ -73,22 +73,40 @@ same bearer token. The app holds the lake keys. `make ingest-deribit`
 `contracts/deribit_options.plan_deribit_write` decides every write, in this
 order. No refusal writes anything.
 
-1. **Freshness, two-sided:** a missing timestamp, an observation more than
-   30 minutes old, or one more than 5 minutes in the future is refused (409).
-   This runs first, so a replayed copy of a captured body is stale, not
-   "already captured".
-2. **The right book:** refused (409) when more than half of the posted rows
-   carry another book's currency. Fewer are quarantined `wrong_book`.
-3. **Partition:** D is the UTC date of the earliest observation. If D exists,
-   the answer is a green no-op.
-4. **Too early:** before 08:05 UTC is a 425.
-5. **Expired rows** (expiry at or before the observation) are dropped and
-   counted. A row with no instrument expiry falls back to its name.
-6. **Nothing left** is a 422.
-7. **Coverage:** more than 1% of the live listed names with no row is a 409.
-8. **Quarantine, then commit:** bad rows are quarantined, the rest committed,
-   and the script exits 1 above a 1% share -- red, with nothing lost.
-9. **Previous day:** each answer says whether D - 1 exists.
+The rules are numbered as the code and its tests number them (rule 0 is the
+wire shape, rule 1b sits between 1 and 2):
+
+- **Rule 0 -- wire and frame.** On the route a missing or out-of-window
+  (2016..2100) `creation_timestamp_ms` is a 422 from the request model; on
+  the fetch, a book row without an integer `creation_timestamp` fails that
+  book as `DeribitApiError`. A field fault elsewhere costs only its row
+  (`invalid_value`).
+- **Rule 1 -- freshness, two-sided:** an observation more than 30 minutes
+  old, or more than 5 minutes in the future, is refused (409). Under
+  `--local`, which has no wire, an out-of-window creation timestamp is also
+  refused here, as a 409 "bad timestamp". This runs first, so a replayed copy
+  of a captured body is stale, not "already captured".
+- **Rule 1b -- the right book:** refused (409) when more than half of the
+  posted rows carry another book's currency. Fewer are quarantined
+  `wrong_book`.
+- **Rule 2 -- partition:** D is the UTC date of the earliest observation. If
+  D exists, the answer is a green no-op.
+- **Rule 3 -- too early:** before 08:05 UTC is a 425.
+- **Rule 4 -- expired rows** (expiry at or before the observation) are
+  dropped and counted. A row with no instrument expiry falls back to the date
+  its name spells. A row whose instrument expiry is out of window, whose name
+  spells no usable date, or whose instrument expiry DISAGREES with its name's
+  date is quarantined `unparseable_expiry` -- never dropped as expired, since
+  either date would be a guess and one of them would drop a live row.
+- **Rule 5 -- nothing left** is a 422.
+- **Rule 6 -- coverage:** more than 1% of the live listed names with no row
+  is a 409.
+- **Rule 7 -- quarantine, then commit:** bad rows are quarantined, the rest
+  committed, and the script exits 1 above a 1% share -- red, with nothing
+  lost.
+- **Rule 8 -- previous day:** each answer says whether D - 1 exists, and the
+  script exits 1 when D - 1 is missing on a committed or may-have-landed
+  answer: that is the red signal for a lost previous session.
 
 ### 4. The quarantine is per-capture JSON, not a Delta table
 
@@ -174,10 +192,13 @@ until that question is answered.
   records each.
 - **An underlying that vanishes from both endpoints** commits as a delisting.
   Coverage against `listed` still catches the book losing it.
-- **A lost response hides a red signal.** If the committing response is lost
-  and the retry answers "already captured", a missing D - 1 or a high
-  quarantine share goes unreported. The quarantine blob (or the log lines)
-  still holds the rows.
+- **A lost response hides part of the red signal.** If the committing
+  response is lost and the retry answers "already captured", a missing D - 1
+  is still reported (the retry carries `may_have_landed`), but a high
+  quarantine share or an unwritten blob is not: the script can only warn that
+  they are unknown. The quarantine blob, or failing that the log lines, still
+  holds the rows. If the blob write also failed, the rows exist only in Fly's
+  log and nothing alarms.
 - **The log fallback depends on Fly's log retention,** which is unmeasured.
 - **The raw Deribit response is not stored:** quarantine payloads hold the
   mapped wire dict, so a renamed source field's value is lost.

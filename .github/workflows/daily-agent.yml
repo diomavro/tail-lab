@@ -205,15 +205,16 @@ jobs:
                  curl -s https://tail-lab.fly.dev/api/ingest/option-chain/status
                This is one of the datasets that cannot be backfilled — nobody sells a retroactive
                option chain, so a session not captured is lost at any price (`docs/adr/0020`).
-                 curl -s https://tail-lab.fly.dev/api/ingest/deribit-options/status
-               The Deribit books are in the same class for this purpose: past sessions are
-               not free, only paid Tardis.dev data (`docs/adr/0032`). The response is per-book
-               JSON, `books.<btc|eth|usdc>.stale_days`.
                For the option-chain status, if `stale_days` is null (never collected) or larger
                than a long weekend, the daily sweep is broken, and diagnosing it is the
                highest-value thing available to you today — ahead of whatever is at the top of
                `AGENT_TODO.md`. Say so in the PR.
 
+               Then check the Deribit books:
+                 curl -s https://tail-lab.fly.dev/api/ingest/deribit-options/status
+               The Deribit books are in the same class for this purpose: past sessions are
+               not free, only paid Tardis.dev data (`docs/adr/0032`). The response is per-book
+               JSON, `books.<btc|eth|usdc>.stale_days`.
                The Deribit books trade around the clock, so their collection is broken when
                any of these holds:
 

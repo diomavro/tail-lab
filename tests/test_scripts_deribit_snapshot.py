@@ -23,6 +23,7 @@ from pathlib import Path
 
 import pytest
 import requests
+import urllib3
 
 from tail_lab.contracts.deribit_options import DERIBIT_BOOKS, DeribitApiError
 from tail_lab.ingestion import deribit_options as ingestion
@@ -593,3 +594,137 @@ def test_the_fixture_rows_are_shaped_like_deribits() -> None:
     """Guard: the shared builder keeps the dropped raw columns, so the
     adapter is tested against what Deribit actually sends."""
     assert {"last", "high", "low", "mid_price"} <= set(raw_book_row("BTC-27NOV26-1000-P"))
+
+
+# ---- review round 1 -------------------------------------------------------------------
+
+
+def test_an_int64_edge_expiry_under_local_costs_one_row_and_the_others_land(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    store = _local_lake(monkeypatch, tmp_path)
+    book, instruments = raw_book("BTC", 200)
+    instruments[4]["expiration_timestamp"] = None
+    instruments[9]["expiration_timestamp"] = 2**63 - 1
+    _fetch_from(monkeypatch, {**_clean_books(), "BTC": (book, instruments)})
+    assert deribit_snapshot.main(["--local"]) == 0
+    assert _committed(store) == {"BTC": 199, "ETH": 120, "USDC": 120}
+
+
+def test_a_landed_retry_warns_that_its_quarantine_is_unknown(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    landed = _ok("BTC", committed=False, already_captured=True, rows=0)
+    code, _ = _run_post(monkeypatch, [_500(), landed])
+    assert code == 0
+    out = capsys.readouterr().out
+    assert "quarantine share and blob status of the landed attempt are unknown" in out
+    assert "check ops/quarantine/deribit_options_btc/2026-10-30/" in out
+
+
+def test_a_plain_catch_up_does_not_warn(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    _run_post(monkeypatch, [_ok("BTC", committed=False, already_captured=True, rows=0)])
+    assert "landed attempt are unknown" not in capsys.readouterr().out
+
+
+def test_retries_exhausted_says_it_may_have_landed(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    _run_post(monkeypatch, [_500(), _500(), _500(), _500()])
+    err = capsys.readouterr().err
+    assert (
+        "btc: retries exhausted (may have landed; check /api/ingest/deribit-options/status)" in err
+    )
+    assert "app rejected the book" not in err
+
+
+def test_the_root_cause_survives_a_long_outer_message() -> None:
+    try:
+        try:
+            raise ConnectionRefusedError("the real reason")
+        except ConnectionRefusedError as inner:
+            raise requests.ConnectionError("x" * 500) from inner
+    except requests.ConnectionError as outer:
+        text = deribit_snapshot.describe(outer)
+    assert text.startswith("ConnectionError <- ConnectionRefusedError: the real reason")
+    assert len(text) <= 300
+
+
+def _refusal_500(detail: str) -> requests.Response:
+    return _response(500, {"detail": detail})
+
+
+def test_a_deterministic_app_refusal_is_not_retried(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    from tail_lab.contracts.deribit_options import REFUSAL_MARKER
+
+    code, app = _run_post(
+        monkeypatch, [_refusal_500(f"{REFUSAL_MARKER}quarantine not serialisable: x")]
+    )
+    assert code == 1
+    assert [c for c, _ in app.posts].count("btc") == 1
+    assert "deterministic, nothing written" in capsys.readouterr().err
+
+
+def test_a_deterministic_refusal_does_not_set_may_have_landed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from tail_lab.contracts.deribit_options import REFUSAL_MARKER
+
+    refusal = requests.HTTPError(response=_refusal_500(f"{REFUSAL_MARKER}x"))
+    assert not deribit_snapshot._retryable(refusal)
+    calls: list[int] = []
+
+    def once(*_a: object) -> object:
+        calls.append(1)
+        raise refusal
+
+    monkeypatch.setattr(deribit_snapshot, "_post_once", once)
+    with pytest.raises(requests.HTTPError):
+        deribit_snapshot._post("u", "t", {}, 1, "btc")
+    assert calls == [1]
+
+
+def test_an_unmarked_500_is_still_retried() -> None:
+    assert deribit_snapshot._retryable(requests.HTTPError(response=_refusal_500("boom")))
+
+
+def test_a_refused_connection_never_reached_the_app() -> None:
+    refused = urllib3.exceptions.NewConnectionError(None, "Connection refused")  # type: ignore[arg-type]
+    exc = requests.ConnectionError(
+        urllib3.exceptions.MaxRetryError(None, "/x", reason=refused)  # type: ignore[arg-type]
+    )
+    assert not deribit_snapshot._failed_after_send(exc)
+    assert deribit_snapshot._failed_after_send(requests.ConnectionError("reset by peer"))
+
+
+@pytest.mark.parametrize(
+    "first",
+    [_500(), _response(429, {}), requests.ConnectionError("reset")],
+    ids=["5xx", "429", "transport"],
+)
+def test_a_retryable_failure_is_retried_and_the_book_lands(
+    monkeypatch: pytest.MonkeyPatch, first: Step
+) -> None:
+    code, app = _run_post(monkeypatch, [first, _ok("BTC")])
+    assert code == 0
+    assert [c for c, _ in app.posts].count("btc") == 2
+
+
+def test_a_landed_retry_with_no_previous_day_is_red_after_two_posts(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    landed = _ok("BTC", committed=False, already_captured=True, previous_partition_exists=False)
+    code, app = _run_post(monkeypatch, [_500(), landed])
+    assert code == 1
+    assert [c for c, _ in app.posts].count("btc") == 2
+
+
+def test_a_quarantine_share_of_exactly_one_percent_is_green(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    ok = _ok("BTC", quarantined=1, quarantine_share=0.01, quarantine_written=True)
+    assert _run_post(monkeypatch, [ok])[0] == 0

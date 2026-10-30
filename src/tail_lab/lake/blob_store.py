@@ -11,6 +11,11 @@ elsewhere so the "who talks to object storage" surface stays in one place
 local-vs-Tigris selection made once in ``tail_lab.config``, just via
 ``pyarrow.fs`` instead of delta-rs/DuckDB since there is no Delta table
 here.
+
+It also holds the Deribit writers' quarantine path (``docs/adr/0032``):
+:func:`commit_then_quarantine` writes a book's dataset first and then its
+per-capture quarantine blob through :func:`write_quarantine`, so the route
+and ``--local`` cannot drift on that order.
 """
 
 from __future__ import annotations
@@ -126,7 +131,7 @@ def write_quarantine(
     writing anything, so a ``TypeError`` here would be a bug.
 
     Takes prebuilt ``log_lines`` and a ``log`` callback rather than building
-    them, so ``lake`` imports nothing new (``ARCHITECTURE.md``: ``lake``
+    them, so ``lake`` gains no import from a higher layer (``ARCHITECTURE.md``: ``lake``
     imports only ``contracts``).
     """
     try:

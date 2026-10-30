@@ -83,7 +83,7 @@ them.
   history on demand, so a skipped pull is a `make` invocation away from being
   fixed; nobody sells a retroactive option chain, so a skipped session is gone at
   any price. An empty sweep therefore **fails red on purpose** rather than
-  no-opping, and a red build here (or in `daily-deribit-snapshot.yml`) is one that should interrupt a day. Check
+  no-opping, and a red build here (or in `daily-deribit-snapshot.yml` -- check `/api/ingest/deribit-options/status` first; a late catch-up's 425 is usually spurious, ADR 0032 §5) is one that should interrupt a day. Check
   `GET /api/ingest/option-chain/status` before assuming it is healthy. Two
   gotchas: **GitHub drops scheduled runs** — the 2026-08-27 evening sweep never fired at all, and an absent run produces no red build, so a second catch-up cron at 05:00 UTC now covers it (free, because the write is idempotent); the sweep must write **one partition for all symbols** (bronze is
   immutable, so a per-symbol write persists only the first), and Cboe

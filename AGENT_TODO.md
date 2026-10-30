@@ -2583,6 +2583,10 @@ lost a second time.
 The collection itself shipped with ADR 0032; nothing reads it yet. These are
 the follow-ups that plan deliberately left out.
 
+**Blocked:** no reader until HUMAN_TODO's Deribit data-terms question is
+answered (ADR 0032). That covers every item below that would READ these
+datasets (marked **Blocked**); the collection-side items are not blocked.
+
 - [ ] **A per-dataset lock on the Cboe chain routes.** `api/ingest_routes`
       has none, so two retried POSTs can both pass the exists-check and both
       append, even on one machine. `api/deribit_routes._LOCKS` is the pattern;
@@ -2606,12 +2610,18 @@ the follow-ups that plan deliberately left out.
 - [ ] **Pricer support for inverse options.** BTC/ETH premiums are in coin;
       USD value is premium x `index_price`. `research/option_pricer.py`
       assumes a linear, dollar-settled put.
+      **Blocked:** no reader until HUMAN_TODO's Deribit data-terms
+      question is answered (ADR 0032).
 - [ ] **BTC and ETH as screen candidates**, once OHLCV for them exists.
+      **Blocked:** no reader until HUMAN_TODO's Deribit data-terms
+      question is answered (ADR 0032).
 - [ ] **The point-in-time test for the first reader.** Partition D's
       `observed_at` can be as late as 23:59:59 UTC, and the date-level as-of
       read does not know it (`docs/DATA_CONTRACTS.md` §16). The first reader
       adds a test in the style of `tests/test_point_in_time_clock.py` that
       fails if it reads D before D's `observed_at`.
+      **Blocked:** no reader until HUMAN_TODO's Deribit data-terms
+      question is answered (ADR 0032).
 - [ ] **Unify the two POST loops** (`scripts/chain_snapshot.py`, urllib, and
       `scripts/deribit_snapshot.py`, requests). Constraint: the chain
       script's tests patch its module globals (`time.sleep`, `_post_once`),

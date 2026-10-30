@@ -34,16 +34,18 @@ import datetime as dt
 import logging
 import sys
 import time
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Iterator, Mapping
 from typing import TYPE_CHECKING, Protocol
 
 import requests
+import urllib3
 from pydantic import ValidationError
 
 from tail_lab.api.schemas import DeribitSnapshotResponse
 from tail_lab.contracts.deribit_options import (
     DERIBIT_BOOKS,
     MAX_QUARANTINE_SHARE,
+    REFUSAL_MARKER,
     DeribitApiError,
     DeribitRefusal,
 )
@@ -102,6 +104,8 @@ class _Answer(Protocol):
     ``--local`` result carry the same field names."""
 
     @property
+    def dataset(self) -> str: ...
+    @property
     def committed(self) -> bool: ...
     @property
     def already_captured(self) -> bool: ...
@@ -138,6 +142,11 @@ def _report(label: str, answer: _Answer, *, may_have_landed: bool) -> bool:
             else "NO-OP: already captured, wrote nothing"
         )
         print(f"{label}: {how}: snapshot {answer.snapshot_date}")
+        if may_have_landed:
+            print(
+                f"::warning::{label}: quarantine share and blob status of the landed attempt "
+                f"are unknown; check ops/quarantine/{answer.dataset}/{answer.snapshot_date}/"
+            )
         return True
     print(
         f"::error::{label}: nothing committed -- every live row was quarantined "
@@ -188,11 +197,50 @@ def _post_once(url: str, token: str, body: Mapping[str, object], timeout: int) -
     return answer
 
 
+def _causes(exc: BaseException) -> Iterator[BaseException]:
+    """``exc`` and everything it wraps: ``__cause__``/``__context__``,
+    exception ``args`` and urllib3's ``.reason`` (how ``MaxRetryError``
+    carries the connection error)."""
+    seen: set[int] = set()
+    stack = [exc]
+    while stack:
+        current = stack.pop()
+        if id(current) in seen:
+            continue
+        seen.add(id(current))
+        yield current
+        nested = [current.__cause__, current.__context__, getattr(current, "reason", None)]
+        stack.extend(n for n in [*nested, *current.args] if isinstance(n, BaseException))
+
+
+def describe(exc: BaseException) -> str:
+    """``exc``'s type plus its INNERMOST cause, truncated at the end -- so the
+    root cause is never the part cut off, as it was by ``{exc!r:.200}``."""
+    root = exc
+    while (inner := root.__cause__ or root.__context__) is not None:
+        root = inner
+    if root is exc:
+        return f"{type(exc).__name__}: {exc}"[:300]
+    return f"{type(exc).__name__} <- {type(root).__name__}: {root}"[:300]
+
+
+def _deterministic_refusal(exc: requests.RequestException) -> bool:
+    """A 5xx the APP raised on purpose (``DeribitRefusal``, detail starting
+    :data:`REFUSAL_MARKER`): it wrote nothing and would refuse again."""
+    if not isinstance(exc, requests.HTTPError) or exc.response is None:
+        return False
+    try:
+        detail = exc.response.json().get("detail")
+    except (ValueError, AttributeError):
+        return False
+    return isinstance(detail, str) and detail.startswith(REFUSAL_MARKER)
+
+
 def _retryable(exc: requests.RequestException) -> bool:
     """A 5xx, a 429 or a transport fault. Never a JSON error: a NaN the
     client refuses to encode, or a 200 whose body does not parse, cannot be
-    fixed by re-sending."""
-    if isinstance(exc, requests.exceptions.InvalidJSONError):
+    fixed by re-sending -- and never the app's own deterministic refusal."""
+    if isinstance(exc, requests.exceptions.InvalidJSONError) or _deterministic_refusal(exc):
         return False
     if isinstance(exc, requests.HTTPError) and exc.response is not None:
         return exc.response.status_code >= 500 or exc.response.status_code == 429
@@ -201,11 +249,14 @@ def _retryable(exc: requests.RequestException) -> bool:
 
 def _failed_after_send(exc: requests.RequestException) -> bool:
     """Whether a retried failure may have followed a commit. A 429 is refused
-    before any work, and a connect timeout never reached the app; anything
-    else -- including a ``ConnectionError``, which in ``requests`` also covers
-    a disconnect after the body went out -- may have."""
+    before any work, and a connect timeout or a refused connection (urllib3's
+    ``NewConnectionError`` in the chain) never reached the app; anything else
+    -- including a ``ConnectionError``, which in ``requests`` also covers a
+    disconnect after the body went out -- may have."""
     if isinstance(exc, requests.HTTPError) and exc.response is not None:
         return exc.response.status_code != 429
+    if any(isinstance(e, urllib3.exceptions.NewConnectionError) for e in _causes(exc)):
+        return False
     return not isinstance(exc, requests.exceptions.ConnectTimeout)
 
 
@@ -224,7 +275,7 @@ def _post(
             may_have_landed = may_have_landed or _failed_after_send(exc)
             wait = POST_BACKOFF_S[min(attempt - 1, len(POST_BACKOFF_S) - 1)]
             print(
-                f"::warning::{label}: attempt {attempt}/{POST_ATTEMPTS} failed ({exc!r:.200}); "
+                f"::warning::{label}: attempt {attempt}/{POST_ATTEMPTS} failed ({describe(exc)}); "
                 f"retrying in {wait}s",
                 file=sys.stderr,
             )
@@ -236,9 +287,14 @@ def _refused(exc: requests.HTTPError, label: str) -> bool:
     status = exc.response.status_code if exc.response is not None else None
     text = exc.response.text[:400] if exc.response is not None else ""
     if status == 425:
-        print(f"::error::{label}: too early, re-run after 08:05 UTC: {text}", file=sys.stderr)
+        why = "too early, re-run after 08:05 UTC"
+    elif _deterministic_refusal(exc):
+        why = "the app refused the book (deterministic, nothing written)"
+    elif status is not None and (status >= 500 or status == 429):
+        why = "retries exhausted (may have landed; check /api/ingest/deribit-options/status)"
     else:
-        print(f"::error::{label}: app rejected the book: HTTP {status} {text}", file=sys.stderr)
+        why = "app rejected the book"
+    print(f"::error::{label}: {why}: HTTP {status} {text}", file=sys.stderr)
     return False
 
 
@@ -248,7 +304,7 @@ def _fetch(currency: str, label: str) -> ingestion.JoinedBook | None:
         fetched = ingestion.fetch_book(currency)
         joined = ingestion.to_records(fetched.book, fetched.instruments)
     except (requests.RequestException, DeribitApiError) as exc:
-        print(f"::error::{label}: could not fetch the book: {exc!r:.300}", file=sys.stderr)
+        print(f"::error::{label}: could not fetch the book: {describe(exc)}", file=sys.stderr)
         return None
     print(
         f"{label}: fetched {len(joined.records)} rows, {len(joined.listed)} listed, "
@@ -271,7 +327,7 @@ def _post_book(args: argparse.Namespace, currency: str) -> bool:
     except requests.HTTPError as exc:
         return _refused(exc, label)
     except requests.RequestException as exc:
-        print(f"::error::{label}: the POST failed: {exc!r:.300}", file=sys.stderr)
+        print(f"::error::{label}: the POST failed: {describe(exc)}", file=sys.stderr)
         return False
     try:
         response = DeribitSnapshotResponse.model_validate(answer)
@@ -306,7 +362,7 @@ def _local_book(
     try:
         result = ingestion.ingest_deribit_options(currency, store, blobs, clock, code_sha)
     except (requests.RequestException, DeribitApiError) as exc:
-        print(f"::error::{label}: could not fetch the book: {exc!r:.300}", file=sys.stderr)
+        print(f"::error::{label}: could not fetch the book: {describe(exc)}", file=sys.stderr)
         return False
     except DeribitRefusal as exc:
         hint = ", re-run after 08:05 UTC" if exc.status == 425 else ""

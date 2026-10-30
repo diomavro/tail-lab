@@ -13,6 +13,7 @@ import contextlib
 import datetime as dt
 import json
 import logging
+import re
 import threading
 from collections.abc import Iterator
 from pathlib import Path
@@ -70,8 +71,11 @@ def lake(tmp_path: Path) -> Lake:
     return Lake(root)
 
 
+ROUTE_SHA = "route-sha-pinned"
+
+
 def _settings(token: str | None) -> Settings:
-    return Settings(_env_file=None, feedback_token=token)  # type: ignore[call-arg]
+    return Settings(_env_file=None, feedback_token=token, code_sha=ROUTE_SHA)  # type: ignore[call-arg]
 
 
 @pytest.fixture
@@ -317,6 +321,9 @@ def _with_listed_extra(n: int, extra: int, expiry: str) -> dict[str, object]:
         (body([record(n) for n in book_names(10, expiry="29OCT26")]), NOW, 422),
         (body([{**r, "creation_timestamp_ms": 10**17} for r in records(5)]), NOW, 422),
         ({"rows": [], "listed": ["x"]}, NOW, 422),
+        ({"rows": records(5), "listed": []}, NOW, 422),
+        (body([{**r, "expiration_timestamp_ms": 2**63} for r in records(5)]), NOW, 422),
+        (body([{**r, "bid_price": 0.01} for r in records(5)]), NOW, 422),
         ({**body(records(5)), "extra": 1}, NOW, 422),
     ],
     ids=[
@@ -329,6 +336,9 @@ def _with_listed_extra(n: int, extra: int, expiry: str) -> dict[str, object]:
         "all-expired",
         "bad-timestamp",
         "empty",
+        "empty-listed",
+        "expiry-past-int64",
+        "row-extra-key",
         "extra-key",
     ],
 )
@@ -398,6 +408,14 @@ def test_a_failed_blob_write_answers_200_and_logs_each_row(
         DeribitOptionRow.model_validate(recs[i]).model_dump(mode="json") for i in (5, 6, 200)
     ]
     assert [payload for _, payload in lines] == expected
+    assert_cause_logged(caplog, "api.ingest.deribit_options.quarantine_write_failed")
+
+
+def assert_cause_logged(caplog: pytest.LogCaptureFixture, event: str) -> None:
+    """The fallback never hides WHY the blob write failed: one record names
+    the capture and the error's type and message."""
+    (failed,) = [r.getMessage() for r in caplog.records if f"event={event} " in r.getMessage()]
+    assert re.search(r"capture=ops/quarantine/\S+ error=\w+: \S", failed), failed
 
 
 def test_a_dataset_write_that_lands_then_raises_still_writes_the_blob(
@@ -500,8 +518,16 @@ def test_status_with_no_tables_is_null(client: TestClient) -> None:
     }
 
 
-def test_status_counts_staleness_and_gaps_per_book(client: TestClient, lake: Lake) -> None:
-    today = NOW.date()
+#: Far from the real date, so a ``date.today()`` leak in the status route
+#: computes nonsense staleness and goes red.
+FAR = NOW + dt.timedelta(days=400)
+
+
+def test_status_counts_staleness_and_gaps_per_book(
+    client: TestClient, lake: Lake, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(deribit_routes, "_utcnow", lambda: FAR)
+    today = FAR.date()
     _seed(lake, "BTC", today - dt.timedelta(days=4), today - dt.timedelta(days=2), today)
     _seed(lake, "ETH", today - dt.timedelta(days=3))
     books = client.get("/api/ingest/deribit-options/status").json()["books"]
@@ -513,8 +539,67 @@ def test_status_counts_staleness_and_gaps_per_book(client: TestClient, lake: Lak
     assert books["usdc"]["stale_days"] is None
 
 
-def test_status_missing_days_is_one_for_one_gap(client: TestClient, lake: Lake) -> None:
-    today = NOW.date()
+def test_status_missing_days_is_one_for_one_gap(
+    client: TestClient, lake: Lake, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(deribit_routes, "_utcnow", lambda: FAR)
+    today = FAR.date()
     _seed(lake, "USDC", today - dt.timedelta(days=2), today)
     usdc = client.get("/api/ingest/deribit-options/status").json()["books"]["usdc"]
     assert (usdc["partitions"], usdc["missing_days"]) == (2, 1)
+
+
+def test_an_int64_edge_expiry_beside_a_null_one_commits_over_http(client: TestClient) -> None:
+    recs = records(200)
+    recs[4]["expiration_timestamp_ms"] = None
+    recs[9]["expiration_timestamp_ms"] = 2**63 - 1
+    out = post(client, "BTC", body(recs))
+    assert (out["status"], out["rows"], out["quarantined"]) == (200, 199, 1)
+
+
+def test_a_refusal_detail_carries_the_stable_marker(client: TestClient, lake: Lake) -> None:
+    """The client stops retrying a 5xx only on this marker: the app's own
+    deterministic refusals write nothing and would refuse again."""
+    resp = client.post(
+        deribit_snapshot.book_url(BASE, "ETH"), json=body(records(20)), headers=_auth()
+    )
+    assert resp.status_code == 409
+    assert resp.json()["detail"].startswith(contract.REFUSAL_MARKER)
+
+
+# ---- review round 1, test strength ------------------------------------------------------
+
+
+def test_a_row_with_an_extra_key_is_refused_by_the_wire_model() -> None:
+    """With every field defaulted to ``None``, a renamed key would otherwise
+    arrive silently as a null."""
+    with pytest.raises(ValidationError):
+        DeribitOptionRow.model_validate({**record(), "x": 1})
+
+
+def test_the_route_logs_every_refusal_and_every_answer(
+    client: TestClient, caplog: pytest.LogCaptureFixture
+) -> None:
+    with caplog.at_level(logging.INFO):
+        assert post(client, "ETH", body(records(20)))["status"] == 409
+        assert post(client, "BTC", body(records(20)))["committed"] is True
+    messages = [r.getMessage() for r in caplog.records]
+    refused = [m for m in messages if m.startswith("event=api.ingest.deribit_options ")]
+    assert any("dataset=deribit_options_eth refusal=409" in m for m in refused)
+    assert any("dataset=deribit_options_btc" in m and "committed=true" in m for m in refused)
+
+
+def test_previous_day_is_none_when_only_today_exists(client: TestClient) -> None:
+    """``has_earlier_partition`` is strictly earlier: today's own partition
+    does not make a missing yesterday a red signal on the first day."""
+    assert post(client, "BTC", body(records(20)))["previous_partition_exists"] is None
+    again = post(client, "BTC", body(records(20)))
+    assert again["already_captured"] is True
+    assert again["previous_partition_exists"] is None
+
+
+def test_the_blob_records_the_apps_code_sha(client: TestClient, lake: Lake) -> None:
+    recs = records(200)
+    recs[3]["mark"] = -1.0
+    out = post(client, "BTC", body(recs))
+    assert lake.blobs.read_json(str(out["quarantine_key"]))["code_sha"] == ROUTE_SHA

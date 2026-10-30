@@ -322,11 +322,48 @@ def test_expired_rows_are_dropped_and_counted_including_an_unmatched_one() -> No
     assert plan.quarantined.empty
 
 
-def test_the_instruments_expiry_beats_the_name() -> None:
-    """The name says 27NOV26; the instrument says 2026-12-25. The instrument wins."""
+def test_the_instruments_expiry_is_used_when_the_name_spells_none() -> None:
+    """A name that spells no date still gets the instruments' expiry."""
     expiry = pd.Timestamp("2026-12-25 08:00")
-    plan = run_plan(records(3, expiration_timestamp_ms=int(expiry.value // 1_000_000)))
-    assert (plan.valid["expiration"] == expiry).all()
+    recs = records(100)
+    recs.append(
+        record(
+            "ODDNAME",
+            premium_currency="BTC",
+            expiration_timestamp_ms=int(expiry.value // 1_000_000),
+        )
+    )
+    plan = run_plan(recs)
+    assert len(plan.valid) == 101
+    assert plan.valid.loc[100, "expiration"] == expiry
+
+
+def test_an_instrument_expiry_that_disagrees_with_the_name_is_quarantined() -> None:
+    """A 2017 expiry on a ``27NOV26`` name: trusting either would be a guess,
+    and trusting the instrument would drop a live row silently as expired."""
+    recs = records(200)
+    recs[6]["expiration_timestamp_ms"] = int(pd.Timestamp("2017-03-31 08:00").value // 1_000_000)
+    recs[7]["expiration_timestamp_ms"] = int(pd.Timestamp("2026-12-25 08:00").value // 1_000_000)
+    plan = run_plan(recs)
+    assert plan.expired_dropped == 0
+    assert plan.quarantined["instrument_name"].tolist() == [
+        recs[6]["instrument_name"],
+        recs[7]["instrument_name"],
+    ]
+    assert set(plan.quarantined["reason"]) == {"unparseable_expiry"}
+
+
+def test_an_int64_edge_expiry_beside_a_null_one_does_not_crash_the_frame() -> None:
+    """Ints plus one ``None`` in ``pd.DataFrame(records)`` go float64, and
+    2**63 - 1 rounds to 2**63, which the ``Int64`` cast refuses with a
+    ``TypeError``: a 500 on the route, a crash of the whole --local run."""
+    recs = records(200)
+    recs[4]["expiration_timestamp_ms"] = None
+    recs[9]["expiration_timestamp_ms"] = 2**63 - 1
+    plan = run_plan(recs)
+    assert len(plan.valid) == 199
+    assert plan.quarantined["instrument_name"].tolist() == [recs[9]["instrument_name"]]
+    assert plan.quarantined["reason"].tolist() == ["unparseable_expiry"]
 
 
 @pytest.mark.parametrize("bad", [10**17, 2**63 - 1, 0])
@@ -663,3 +700,75 @@ def test_the_books_are_keyed_uppercase_and_name_their_datasets_once() -> None:
 def test_an_empty_frame_is_refused() -> None:
     """The wire's ``min_length=1``, for ``--local``, which has no wire."""
     assert refusal([]).status == 422
+
+
+# ---- review round 1, test strength ------------------------------------------------------
+
+
+def test_the_quarantine_share_is_over_live_rows_only() -> None:
+    """Expired rows are dropped before the share is taken: 2 of 100 live is
+    2%, not 2 of 150."""
+    live = records(100)
+    live[1]["mark"] = -1.0
+    live[2]["mark"] = -1.0
+    expired = [record(n) for n in book_names(50, expiry="29OCT26")]
+    plan = run_plan(live + expired, listed=[str(r["instrument_name"]) for r in live])
+    assert plan.expired_dropped == 50
+    assert plan.quarantine_share == 0.02
+
+
+def test_unparseable_listed_names_still_count_for_coverage() -> None:
+    """A listed name whose date cannot be read is kept, not filtered as
+    expired: 2 of 102 missing is 1.96%."""
+    recs = records(100)
+    listed = [str(r["instrument_name"]) for r in recs] + ["BTC-PERPETUAL-X", "BTC-PERPETUAL-Y"]
+    assert refusal(recs, listed=listed).status == 409
+
+
+def test_coverage_at_exactly_one_percent_missing_commits() -> None:
+    recs = records(100)
+    assert len(run_plan(recs[:99], listed=[str(r["instrument_name"]) for r in recs]).valid) == 99
+
+
+@pytest.mark.parametrize(("mismatched", "refused"), [(54, True), (50, False)])
+def test_the_wrong_book_threshold_is_strictly_above_half(mismatched: int, refused: bool) -> None:
+    recs = records(100, "ETH")
+    for row in recs[:mismatched]:
+        row["premium_currency"] = "BTC"
+    if refused:
+        assert refusal(recs, currency="ETH").status == 409
+    else:
+        plan = run_plan(recs, currency="ETH")
+        assert len(plan.valid) == 100 - mismatched
+
+
+def test_an_expiry_at_ms_max_is_out_of_window() -> None:
+    """The window is half-open: exactly 2100-01-01 is outside it. The name
+    spells no date, so nothing else can catch it."""
+    recs = records(100)
+    recs.append(record("ODDNAME", premium_currency="BTC", expiration_timestamp_ms=contract.MS_MAX))
+    plan = run_plan(recs)
+    assert plan.quarantined["reason"].tolist() == ["unparseable_expiry"]
+
+
+def test_exactly_thirty_minutes_old_is_still_fresh() -> None:
+    plan = run_plan(records(10, creation_timestamp_ms=NOW_MS - 30 * 60_000))
+    assert len(plan.valid) == 10
+
+
+def test_an_expiry_equal_to_the_observation_is_expired() -> None:
+    recs = records(100)
+    recs.append(record("ODDNAME", premium_currency="BTC", expiration_timestamp_ms=CREATED_MS))
+    plan = run_plan(recs, listed=[str(r["instrument_name"]) for r in recs[:100]])
+    assert plan.expired_dropped == 1
+    assert len(plan.valid) == 100
+
+
+def test_the_valid_frame_is_the_schemas_coerced_output() -> None:
+    """The second validation is what coerces ``snapshot_date`` to
+    ``datetime64[ns]`` (the frame builds it at microseconds): every capture
+    then writes the same Delta column type."""
+    plan = run_plan(records(10))
+    assert plan.valid["snapshot_date"].dtype == "datetime64[ns]"
+    coerced = contract.DeribitOptionsSchema.validate(plan.valid.copy())
+    assert (plan.valid.dtypes == coerced.dtypes).all()

@@ -53,6 +53,7 @@ from pandera.typing import Series
 
 __all__ = [
     "DERIBIT_BOOKS",
+    "REFUSAL_MARKER",
     "DeribitApiError",
     "DeribitBook",
     "DeribitBookRow",
@@ -133,6 +134,13 @@ class DeribitApiError(ValueError):
     empty ``result``, or a structural fault in the payload. Defined here, not
     in ingestion, because :func:`check_book_rows` raises it and a contract may
     not import ingestion. Costs that one book, never the run."""
+
+
+#: Every refusal detail the route answers starts with this, so the client can
+#: tell the app's own deterministic 500s ("not attributable to a row", "not
+#: serialisable") -- which wrote nothing and would refuse again -- from a
+#: transient fault worth retrying.
+REFUSAL_MARKER: Final = "deribit refusal: "
 
 
 class DeribitRefusal(Exception):
@@ -431,11 +439,19 @@ _OUT_OF_WINDOW = "_expiry_out_of_window"
 _INVALID = "invalid_fields"
 
 
-def _ms_to_naive_utc(raw: pd.Series[int]) -> tuple[pd.Series[pd.Timestamp], pd.Series[bool]]:
+def _ms_to_naive_utc(
+    records: Sequence[Mapping[str, object]], field: str, index: pd.Index
+) -> tuple[pd.Series[pd.Timestamp], pd.Series[bool]]:
     """``(timestamps, out_of_window)``: integer ms masked to
     [:data:`MS_MIN`, :data:`MS_MAX`) BEFORE conversion, so a garbled value is
-    NaT (flagged) rather than a wrapped date or an ``OutOfBoundsDatetime``."""
-    ms = pd.Series(raw, dtype="Int64")
+    NaT (flagged) rather than a wrapped date or an ``OutOfBoundsDatetime``.
+
+    Built straight from the records as nullable ``Int64``, never through
+    ``pd.DataFrame(records)``: there, a column of ints plus one ``None`` goes
+    float64, a value in [2**63 - 512, 2**63 - 1] rounds to 2**63, and the
+    ``Int64`` cast then raises ``TypeError`` -- a 500 before the commit on
+    the route, an uncaught crash of the whole run under ``--local``."""
+    ms = pd.Series([r.get(field) for r in records], dtype="Int64", index=index)
     inside = (ms.ge(MS_MIN) & ms.lt(MS_MAX)).fillna(False).astype(bool)
     stamps = pd.to_datetime(ms.where(inside), unit="ms").astype("datetime64[ns]")
     return stamps, ms.notna() & ~inside
@@ -450,9 +466,10 @@ def deribit_frame(records: Sequence[Mapping[str, object]]) -> pd.DataFrame:
     else (a double division would still pass ``0 < x <= 10``)."""
     frame = pd.DataFrame(list(records), columns=list(DeribitRecord.__annotations__))
     frame = frame.astype({c: "float64" for c in _FLOAT_COLUMNS} | {c: "str" for c in _STR_COLUMNS})
-    frame["observed_at"], _ = _ms_to_naive_utc(frame.pop("creation_timestamp_ms"))
+    frame = frame.drop(columns=["creation_timestamp_ms", "expiration_timestamp_ms"])
+    frame["observed_at"], _ = _ms_to_naive_utc(records, "creation_timestamp_ms", frame.index)
     frame["expiration"], frame[_OUT_OF_WINDOW] = _ms_to_naive_utc(
-        frame.pop("expiration_timestamp_ms")
+        records, "expiration_timestamp_ms", frame.index
     )
     frame["mark_iv"] = frame.pop("mark_iv_pct") / 100.0
     return frame
@@ -529,13 +546,21 @@ def _check_book(currencies: pd.Series[str], currency: str) -> None:
 
 
 def _with_expiry(frame: pd.DataFrame) -> pd.DataFrame:
-    """Rule 4's expiry: the instruments' when present, else the name's. A
-    non-null instrument expiry outside the window is NOT replaced -- it stays
-    NaT and is quarantined ``unparseable_expiry``."""
-    fallback = frame["expiration"].isna() & ~frame[_OUT_OF_WINDOW]
-    named = frame.loc[fallback, "instrument_name"].map(name_expiry)
+    """Rule 4's expiry: the instruments' when present, else the name's.
+
+    Two cases stay NaT, and so are quarantined ``unparseable_expiry`` rather
+    than ever dropped as expired: a non-null instrument expiry outside the
+    window (no name fallback), and an instrument expiry that DISAGREES with
+    the date the name spells. A 2017 expiry on a ``27NOV26`` name would
+    otherwise drop a live row silently as expired."""
+    named = pd.to_datetime(frame["instrument_name"].map(name_expiry).astype(object)).astype(
+        "datetime64[ns]"
+    )
+    instrument = frame["expiration"]
+    fallback = instrument.isna() & ~frame[_OUT_OF_WINDOW]
+    disagrees = instrument.notna() & named.notna() & (instrument != named)
     out = frame.copy()
-    out.loc[fallback, "expiration"] = pd.to_datetime(named.astype(object)).astype("datetime64[ns]")
+    out["expiration"] = instrument.where(~fallback, named).where(~disagrees)
     return out
 
 

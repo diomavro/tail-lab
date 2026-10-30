@@ -1191,6 +1191,9 @@ legitimately do nothing: an empty or refused book is red.
 `stale_days`, `partitions` and `missing_days` (last - first + 1 -
 partitions; information only, a past gap cannot be filled).
 
+**Bronze partition key.** `ingest_date=<snapshot_date>`, one immutable
+partition per book per UTC day; a second capture is a green no-op.
+
 ### Schema — `DeribitOptionsSchema`
 
 Keyed by `(snapshot_date, instrument_name)`. Timestamps are naive and mean
@@ -1203,7 +1206,7 @@ UTC wall time.
 | `instrument_name` | str | book |
 | `underlying` | str | book `base_currency` |
 | `premium_currency` | str; must equal the book (enforced by the write plan, not the schema) | book `quote_currency` |
-| `expiration` | timestamp >= 2016-01-01 | instruments `expiration_timestamp`; else parsed from the name, at 08:00 |
+| `expiration` | timestamp >= 2016-01-01 | instruments `expiration_timestamp`; else parsed from the name, at 08:00 (if both exist and disagree, the row is quarantined) |
 | `strike` | float > 0, in `strike_currency` | instruments |
 | `strike_currency` | str (USD for BTC/ETH, USDC for USDC) | instruments `counter_currency` |
 | `right` | `"P"` or `"C"` | instruments `option_type` (`put`/`call`) |
@@ -1240,7 +1243,11 @@ NOT enforce this; the first reader adds a test for it (`AGENT_TODO.md`).
 wrong-book, too-early (425), empty (422) and incomplete-coverage bodies are
 refused and write nothing; an already-captured day is a green no-op; expired
 rows are dropped and counted; bad rows are quarantined and the rest
-committed, and the script exits 1 above a 1% quarantine share.
+committed, and the script exits 1 above a 1% quarantine share. A row whose
+instrument expiry disagrees with the date its name spells is quarantined
+`unparseable_expiry`, never dropped as expired. Each answer says whether
+D - 1 exists, and the script exits 1 when D - 1 is missing on a committed or
+may-have-landed answer: that is the red signal for a lost previous session.
 
 ### Quarantine — per-capture JSON blobs
 
