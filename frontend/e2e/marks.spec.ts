@@ -101,6 +101,15 @@ test('a row is reachable by keyboard', async ({ page }) => {
     await page.keyboard.press('Tab')
   }
   await expect(row).toBeFocused()
+  // Drawn after every cell, so no cell paints over it.
+  expect(
+    await row.evaluate((g) => {
+      const kids = [...g.children]
+      const ring = kids.findIndex((k) => k.classList.contains('pl-marks-rowring'))
+      const lastCell = kids.map((k) => k.classList.contains('pl-marks-cell')).lastIndexOf(true)
+      return ring > lastCell
+    }),
+  ).toBe(true)
   // The ring spans the row, not one month's cell.
   const ring = row.locator('.pl-marks-rowring')
   await expect(ring).toHaveCSS('stroke-width', '2px')
@@ -129,11 +138,24 @@ test('the tooltip sits beside its cell and inside the visible frame, at any widt
         expect(t.x).toBeGreaterThanOrEqual(frame.x)
         expect(t.x + t.width).toBeLessThanOrEqual(frame.x + frame.width + 0.5)
         const c = (await target.boundingBox())!
-        expect(Math.abs(t.y - (c.y + c.height))).toBeLessThan(24)
+        // Just below the cell, or just above it near the grid's bottom edge.
+        expect(Math.min(Math.abs(t.y - (c.y + c.height)), Math.abs(t.y + t.height - c.y))).toBeLessThan(24)
+        expect(t.y + t.height).toBeLessThanOrEqual(frame.y + frame.height + 0.5)
         // And it never covers the cell it describes when either side has room.
         const room = Math.max(c.x - frame.x, frame.x + frame.width - (c.x + c.width)) >= t.width + 12
         if (room) expect(t.x >= c.x + c.width - 0.5 || t.x + t.width <= c.x + 0.5).toBe(true)
       }
     }
   }
+})
+
+test('a tooltip on the deepest row opens above it rather than hanging past the grid', async ({ page }) => {
+  const wrap = page.locator('.pl-marks-wrap')
+  const before = await wrap.evaluate((el) => el.scrollHeight)
+  const target = cell(page, 58, 5)
+  await target.hover()
+  const t = (await page.getByRole('tooltip').boundingBox())!
+  const c = (await target.boundingBox())!
+  expect(t.y + t.height).toBeLessThanOrEqual(c.y + 0.5)
+  expect(await wrap.evaluate((el) => el.scrollHeight)).toBe(before)
 })

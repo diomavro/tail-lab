@@ -57,9 +57,12 @@ interface Hover {
    *  coordinates (pixels), read off the cell's own box on hover. */
   cellLeft: number
   cellRight: number
-  top: number
+  cellTop: number
+  cellBottom: number
   viewLeft: number
   viewRight: number
+  /** The grid's own bottom edge: a tip below it would grow the scroller. */
+  contentBottom: number
 }
 
 const TIP_GAP = 8
@@ -74,6 +77,12 @@ function placeTip(h: Hover, tipWidth: number): number {
   const lo = h.viewLeft + 4
   const hi = h.viewRight - tipWidth - 4
   return hi < lo ? lo : Math.min(Math.max(preferred, lo), hi)
+}
+
+/** Below the cell, unless that hangs past the grid -- then above it. */
+function placeTipTop(h: Hover, tipHeight: number): number {
+  const below = h.cellBottom + 4
+  return below + tipHeight <= h.contentBottom ? below : Math.max(0, h.cellTop - 4 - tipHeight)
 }
 
 /** Names a fresh page offers before the first answer lists them all. */
@@ -116,10 +125,13 @@ export function MarksView({ asset, regimes }: Props) {
   // one name that failed.
   const [known, setKnown] = useState<string[]>(FALLBACK_SYMBOLS)
   const tipRef = useRef<HTMLDivElement>(null)
-  const [tipLeft, setTipLeft] = useState<number | null>(null)
-  // Measure the rendered tip, then place it: its width depends on its text.
+  const [tipAt, setTipAt] = useState<{ left: number; top: number } | null>(null)
+  // Measure the rendered tip, then place it: its size depends on its text.
   useLayoutEffect(() => {
-    setTipLeft(hover && tipRef.current ? placeTip(hover, tipRef.current.offsetWidth) : null)
+    const tip = tipRef.current
+    setTipAt(
+      hover && tip ? { left: placeTip(hover, tip.offsetWidth), top: placeTipTop(hover, tip.offsetHeight) } : null,
+    )
   }, [hover])
 
   useEffect(() => {
@@ -375,15 +387,20 @@ export function MarksView({ asset, regimes }: Props) {
                           if (!wrap) return
                           const box = e.currentTarget.getBoundingClientRect()
                           const frame = wrap.getBoundingClientRect()
+                          const svg = e.currentTarget.ownerSVGElement
+                          if (!svg) return
                           const dx = wrap.scrollLeft - frame.left
+                          const dy = wrap.scrollTop - frame.top
                           setHover({
                             month: m,
                             oom,
                             cellLeft: box.left + dx,
                             cellRight: box.right + dx,
-                            top: box.bottom - frame.top + wrap.scrollTop + 4,
+                            cellTop: box.top + dy,
+                            cellBottom: box.bottom + dy,
                             viewLeft: wrap.scrollLeft,
                             viewRight: wrap.scrollLeft + wrap.clientWidth,
+                            contentBottom: svg.getBoundingClientRect().bottom + dy,
                           })
                         }}
                       />
@@ -463,7 +480,11 @@ export function MarksView({ asset, regimes }: Props) {
               className="pl-marks-tip"
               role="tooltip"
               ref={tipRef}
-              style={{ left: tipLeft ?? hover.cellRight + TIP_GAP, top: hover.top, visibility: tipLeft === null ? 'hidden' : 'visible' }}
+              style={{
+                left: tipAt?.left ?? hover.cellRight + TIP_GAP,
+                top: tipAt?.top ?? hover.cellBottom + 4,
+                visibility: tipAt === null ? 'hidden' : 'visible',
+              }}
             >
               <strong>
                 {hover.month} · {hover.oom}–{hover.oom + data.oom_step}% out
