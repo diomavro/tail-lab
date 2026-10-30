@@ -39,11 +39,17 @@ RUN pip install --no-cache-dir --upgrade pip \
 COPY --from=frontend-builder /app/dist ./frontend/dist
 
 RUN groupadd --system --gid 1001 taillab \
-    && useradd --system --uid 1001 --gid taillab taillab \
+    && useradd --system --create-home --home-dir /home/taillab --uid 1001 --gid taillab taillab \
     && mkdir -p /data \
     && chown -R taillab:taillab /app /data
 
 USER taillab
+# DuckDB keeps its extensions under ~/.duckdb and, without them, INSTALLs from
+# the network on first use. A --system user has no home, so every
+# LakeStore.query() (the Marks route, #175) failed with "Can't find the home
+# directory" -- 503 in production while every test passed. Install both
+# extensions into the image, so a request never downloads anything.
+RUN python -c "import duckdb; c = duckdb.connect(); c.execute('INSTALL delta'); c.execute('INSTALL httpfs')"
 
 EXPOSE 8080
 
