@@ -4,9 +4,9 @@ import {
   fetchMarks,
   type MarksCoverage,
   type MarksSource,
-  type RegimeLabel,
   type RegimeTimelineView,
 } from '../../../api/client'
+import { REGIME_FILL, REGIME_ORDER } from '../regimeColors'
 
 /* "Do we even hold a quote there?"
  *
@@ -24,12 +24,6 @@ import {
  */
 
 const SESSIONS_PER_YEAR = 252
-const REGIME_ORDER: RegimeLabel[] = ['calm', 'elevated', 'crisis']
-const REGIME_FILL: Record<RegimeLabel, string> = {
-  calm: 'var(--ink-25)',
-  elevated: 'var(--warn-fill)',
-  crisis: 'var(--mag)',
-}
 const BAND_LABEL: Record<string, string> = { '<=2w': 'up to 2 weeks', '2-6w': '2–6 weeks', '6-17w': '6–17 weeks' }
 const SOURCE_LABEL: Record<MarksSource, string> = { optionsdx: 'optionsDX archive', chain: 'Forward sweep' }
 /** Ink steps for the share of sessions covered: 0 is blank paper. */
