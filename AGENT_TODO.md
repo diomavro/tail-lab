@@ -18,6 +18,44 @@ a large one strictly in order.
 
 ## Next increments
 
+- [ ] **The credit half of the regime label is not point-in-time** (found
+      2026-10-30 while answering "is the regime computed only with data we'd
+      have had?"). Two faults, measured against the lake:
+      (a) every `BAMLH0A0HYM2` row has `vintage_date == obs_date`, but an
+      OAS print for day *t* is published the next morning -- so
+      `compute_regime_timeline`'s ffill escalates day *t* on a number nobody
+      had at *t*'s close. Lag credit by one session before aligning.
+      (b) HY OAS starts **2023-10-30** (FRED's three-year ICE window), so the
+      label is VIX-only for 2010-2023 and VIX+credit after: the definition
+      changes mid-sample, and the window slides, so the same past day can
+      relabel as `as_of` moves. Candidate: Moody's `BAA10Y` (FRED, 1986+, not
+      ICE-licensed) as the credit input, thresholds re-documented against its
+      own history. *Success*: a test where a credit spike printed on *t*
+      only escalates *t+1*, and one regime definition across the whole
+      optionsDX span.
+- [ ] **Unlock 2010-2016 for real-quote backtests.** Marks shows optionsDX
+      SPY/QQQ quotes from 2010/2012, but `ohlcv_*` starts 2016-10 (Nasdaq's
+      ~10-year window), so six years of quotes -- including Aug 2011 and
+      Aug 2015 -- never reach a roll. `tiingo_eod` already carries ~33 years
+      of `adjClose`; extend the price path from it (or the panel's own
+      as-traded `spot`, minding the split basis in `contracts/optionsdx.py`).
+      *Success*: the Marks price-series line starts at or before 2010 for SPY.
+- [ ] **VIX/VIX3M as a regime escalation.** `vix_complex` already holds
+      VIX3M from 2009; backwardation (VIX > VIX3M) is a sharper stress
+      signal than the VIX level and needs no new data, unlike the VX-futures
+      item below. Same shape as credit: documented thresholds, hysteresis,
+      most-severe-wins.
+- [ ] **Re-ingest optionsDX wider than 0.60-1.02 moneyness / 120 days**,
+      disk permitting (the raw 7z archives are local in
+      `data/vendor/optionsdx/`). Marks hatches everything past 40% out
+      before 2026 and no LEAP-tenor put exists before the forward sweep. Pair
+      with the SPX chunked bronze write already queued.
+- [ ] **Marks follow-ups** (`research/quote_coverage.py`): add the call wing
+      once `option_chain_call_snapshot` has partitions (ADR 0031); if two
+      sources ever cover the same month, merge them -- today `summarise_source`
+      and the view assume they never overlap (true: optionsDX ends 2023-12,
+      the sweep began 2026-08).
+
 - [x] **The strike × tenor grid scrolls a phone page sideways on real data**
       (found 2026-10-11 while screenshotting the Workspace against a two-name
       scratch lake). At 390px, `SweepGrid`'s `.pl-sweep-cell` buttons whose
