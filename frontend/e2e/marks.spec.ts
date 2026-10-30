@@ -158,4 +158,11 @@ test('a tooltip on the deepest row opens above it rather than hanging past the g
   const c = (await target.boundingBox())!
   expect(t.y + t.height).toBeLessThanOrEqual(c.y + 0.5)
   expect(await wrap.evaluate((el) => el.scrollHeight)).toBe(before)
+
+  // Mid-grid there is room below, and below is where it goes.
+  const mid = cell(page, 16, 0)
+  await mid.hover()
+  const m = (await mid.boundingBox())!
+  const tm = (await page.getByRole('tooltip').boundingBox())!
+  expect(Math.abs(tm.y - (m.y + m.height))).toBeLessThan(8)
 })
