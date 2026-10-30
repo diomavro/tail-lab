@@ -1532,7 +1532,6 @@
 .pl-marks-price text { font-size: 9px; fill: var(--ink-70); }
 .pl-marks-tip {
   position: absolute;
-  transform: translateX(8px);
   pointer-events: none;
   background: var(--paper);
   color: var(--ink);

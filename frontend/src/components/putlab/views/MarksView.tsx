@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import {
   ApiError,
   fetchMarks,
@@ -53,11 +53,27 @@ type Load =
 interface Hover {
   month: string
   oom: number
-  /** Pixels from the wrapper's top-left, read off the cell's own box. */
-  left: number
+  /** The cell's edges and the visible window, in the wrapper's scroll
+   *  coordinates (pixels), read off the cell's own box on hover. */
+  cellLeft: number
+  cellRight: number
   top: number
-  /** Open leftward from the cell instead of rightward. */
-  flip: boolean
+  viewLeft: number
+  viewRight: number
+}
+
+const TIP_GAP = 8
+
+/** Where the tip's left edge goes: right of the cell if it fits in the
+ *  visible window, else left of it, and always clamped inside the window --
+ *  a tip outside it is clipped by the scroller and cannot be scrolled to. */
+function placeTip(h: Hover, tipWidth: number): number {
+  const right = h.cellRight + TIP_GAP
+  const left = h.cellLeft - TIP_GAP - tipWidth
+  const preferred = right + tipWidth <= h.viewRight ? right : left
+  const lo = h.viewLeft + 4
+  const hi = h.viewRight - tipWidth - 4
+  return hi < lo ? lo : Math.min(Math.max(preferred, lo), hi)
 }
 
 /** Names a fresh page offers before the first answer lists them all. */
@@ -99,6 +115,12 @@ export function MarksView({ asset, regimes }: Props) {
   // Kept across a failed read, so an error never strands the picker on the
   // one name that failed.
   const [known, setKnown] = useState<string[]>(FALLBACK_SYMBOLS)
+  const tipRef = useRef<HTMLDivElement>(null)
+  const [tipLeft, setTipLeft] = useState<number | null>(null)
+  // Measure the rendered tip, then place it: its width depends on its text.
+  useLayoutEffect(() => {
+    setTipLeft(hover && tipRef.current ? placeTip(hover, tipRef.current.offsetWidth) : null)
+  }, [hover])
 
   useEffect(() => {
     const ctl = new AbortController()
@@ -328,15 +350,6 @@ export function MarksView({ asset, regimes }: Props) {
                   aria-pressed={isFocus}
                   data-oom={oom}
                 >
-                  {/* The keyboard ring: the whole row, drawn only on focus-visible. */}
-                  <rect
-                    className="pl-marks-rowring"
-                    x={LABEL_W - 1}
-                    y={y - 1}
-                    width={GRID_W + 2}
-                    height={ROW_H + 1}
-                    fill="none"
-                  />
                   <text x={LABEL_W - 6} y={y + ROW_H - 2} textAnchor="end" className="pl-marks-axis">
                     {oom % 10 === 0 || isFocus ? `${oom}%` : ''}
                   </text>
@@ -362,15 +375,15 @@ export function MarksView({ asset, regimes }: Props) {
                           if (!wrap) return
                           const box = e.currentTarget.getBoundingClientRect()
                           const frame = wrap.getBoundingClientRect()
-                          // Past the middle of the visible frame the tip opens
-                          // leftward, so it never widens the scroll area.
-                          const flip = box.right - frame.left > frame.width / 2
+                          const dx = wrap.scrollLeft - frame.left
                           setHover({
                             month: m,
                             oom,
-                            left: (flip ? box.left : box.right) - frame.left + wrap.scrollLeft,
+                            cellLeft: box.left + dx,
+                            cellRight: box.right + dx,
                             top: box.bottom - frame.top + wrap.scrollTop + 4,
-                            flip,
+                            viewLeft: wrap.scrollLeft,
+                            viewRight: wrap.scrollLeft + wrap.clientWidth,
                           })
                         }}
                       />
@@ -394,6 +407,16 @@ export function MarksView({ asset, regimes }: Props) {
                   <text x={LABEL_W + GRID_W + 12 + BAR_W + 4} y={y + ROW_H - 2} className="pl-marks-axis">
                     {row && (oom % 10 === 0 || isFocus) ? fmtYears(row.usable_sessions) : ''}
                   </text>
+                  {/* The keyboard ring: the whole row, drawn only on focus-visible,
+                      after the cells so none of them paints over it. */}
+                  <rect
+                    className="pl-marks-rowring"
+                    x={LABEL_W - 1}
+                    y={y - 1}
+                    width={GRID_W + 2}
+                    height={ROW_H + 1}
+                    fill="none"
+                  />
                   {isFocus && (
                     <rect
                       x={LABEL_W - 1}
@@ -439,11 +462,8 @@ export function MarksView({ asset, regimes }: Props) {
             <div
               className="pl-marks-tip"
               role="tooltip"
-              style={{
-                left: hover.left,
-                top: hover.top,
-                transform: hover.flip ? 'translateX(calc(-100% - 8px))' : undefined,
-              }}
+              ref={tipRef}
+              style={{ left: tipLeft ?? hover.cellRight + TIP_GAP, top: hover.top, visibility: tipLeft === null ? 'hidden' : 'visible' }}
             >
               <strong>
                 {hover.month} · {hover.oom}–{hover.oom + data.oom_step}% out

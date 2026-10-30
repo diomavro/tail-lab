@@ -111,23 +111,29 @@ test('a row is reachable by keyboard', async ({ page }) => {
   await expect(page.locator('.pl-hero .pl-kicker').first()).toContainText('30–32% out')
 })
 
-test('the tooltip sits beside the cell it describes, at any width', async ({ page }) => {
+test('the tooltip sits beside its cell and inside the visible frame, at any width', async ({ page }) => {
+  const wrap = page.locator('.pl-marks-wrap')
   for (const width of [1280, 400]) {
     await page.setViewportSize({ width, height: 900 })
-    const target = cell(page, 50, 5)
-    await target.scrollIntoViewIfNeeded()
-    await target.hover()
-    const c = (await target.boundingBox())!
-    const t = (await page.getByRole('tooltip').boundingBox())!
-    // The last month sits past the middle, so the tip opens leftward: its
-    // right edge meets the cell's left edge, and the scroll area never grows.
-    expect(Math.abs(t.x + t.width - c.x)).toBeLessThan(24)
-    expect(Math.abs(t.y - (c.y + c.height))).toBeLessThan(24)
-    const wrap = page.locator('.pl-marks-wrap')
-    expect(t.x + t.width).toBeLessThanOrEqual((await wrap.boundingBox())!.x + (await wrap.evaluate((el) => el.scrollWidth)) + 1)
-    await cell(page, 16, 0).hover()
-    const first = (await cell(page, 16, 0).boundingBox())!
-    const tip = (await page.getByRole('tooltip').boundingBox())!
-    expect(Math.abs(tip.x - (first.x + first.width))).toBeLessThan(24)
+    for (const scrolled of [false, true]) {
+      await wrap.evaluate((el, end) => (el.scrollLeft = end ? el.scrollWidth : 0), scrolled)
+      for (let col = 0; col < 6; col++) {
+        const target = cell(page, 50, col)
+        await target.hover({ force: true })
+        const tip = page.getByRole('tooltip')
+        await expect(tip).toContainText(`2023-0${col + 1}`)
+        await expect(tip).toBeVisible()
+        const t = (await tip.boundingBox())!
+        const frame = (await wrap.boundingBox())!
+        // Wholly inside what the reader can see -- not clipped by the scroller.
+        expect(t.x).toBeGreaterThanOrEqual(frame.x)
+        expect(t.x + t.width).toBeLessThanOrEqual(frame.x + frame.width + 0.5)
+        const c = (await target.boundingBox())!
+        expect(Math.abs(t.y - (c.y + c.height))).toBeLessThan(24)
+        // And it never covers the cell it describes when either side has room.
+        const room = Math.max(c.x - frame.x, frame.x + frame.width - (c.x + c.width)) >= t.width + 12
+        if (room) expect(t.x >= c.x + c.width - 0.5 || t.x + t.width <= c.x + 0.5).toBe(true)
+      }
+    }
   }
 })
