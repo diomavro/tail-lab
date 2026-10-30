@@ -19,6 +19,7 @@ from collections.abc import Iterator
 from pathlib import Path
 from typing import get_type_hints
 
+import grimp
 import pandas as pd
 import pytest
 from fastapi.testclient import TestClient
@@ -621,3 +622,48 @@ def test_the_wire_creation_window_is_half_open(
     the wire and is then refused as stale by the plan (409)."""
     out = post(client, "BTC", body(records(5, creation_timestamp_ms=created)))
     assert out["status"] == (409 if wire_ok else 422)
+
+
+def test_only_the_write_path_imports_the_deribit_contract() -> None:
+    """Nothing reads the Deribit books until the data-terms question is
+    answered (ADR 0032). import-linter's contract covers chains into the
+    contract but skips api.deribit_routes (it sits inside the source package
+    tail_lab.api), so this pins the direct importers of both: a new module
+    importing either -- an api sibling reaching DERIBIT_BOOKS through the
+    route, a transform, a lake helper -- fails here."""
+    graph = grimp.build_graph("tail_lab")
+    contract_importers = graph.find_modules_that_directly_import(
+        "tail_lab.contracts.deribit_options"
+    )
+    route_importers = graph.find_modules_that_directly_import("tail_lab.api.deribit_routes")
+    assert contract_importers == {
+        "tail_lab.ingestion.deribit_options",
+        "tail_lab.api.deribit_routes",
+        "tail_lab.api.schemas",
+    }
+    assert route_importers == {"tail_lab.api.main"}
+
+
+def test_already_captured_reports_the_stored_capture_s_earliest_observation(
+    client: TestClient,
+) -> None:
+    first = records(20, creation_timestamp_ms=CREATED_MS - 600_000)
+    first[3]["creation_timestamp_ms"] = CREATED_MS - 600_007
+    assert post(client, "BTC", body(first))["captured_observed_at_ms"] is None
+    again = post(client, "BTC", body(records(20)))
+    assert again["already_captured"] is True
+    assert again["captured_observed_at_ms"] == CREATED_MS - 600_007
+
+
+def test_a_failed_capture_read_is_none_not_a_500(
+    client: TestClient, lake: Lake, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    assert post(client, "BTC", body(records(20)))["committed"] is True
+
+    def broken(*_a: object) -> object:
+        raise OSError("read failed")
+
+    monkeypatch.setattr(lake.store, "read_bronze_column_as_of", broken)
+    again = post(client, "BTC", body(records(20)))
+    assert (again["status"], again["already_captured"]) == (200, True)
+    assert again["captured_observed_at_ms"] is None

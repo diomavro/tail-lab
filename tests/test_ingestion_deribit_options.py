@@ -552,3 +552,12 @@ def test_the_run_log_records_the_observation_span(
         _ingest(lake)
     (line,) = _run_log(caplog)
     assert f"observed_min_ms={CREATED_MS - 7} observed_max_ms={CREATED_MS + 9}" in line
+
+
+def test_already_captured_under_local_reports_the_stored_capture(
+    monkeypatch: pytest.MonkeyPatch, lake: Lake
+) -> None:
+    fake_fetch(monkeypatch, {"BTC": raw_book("BTC", 50, created_ms=CREATED_MS - 300_000)})
+    assert _ingest(lake).captured_observed_at_ms is None
+    fake_fetch(monkeypatch, {"BTC": raw_book("BTC", 50)})
+    assert _ingest(lake).captured_observed_at_ms == CREATED_MS - 300_000

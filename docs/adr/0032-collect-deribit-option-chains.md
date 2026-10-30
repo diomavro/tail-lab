@@ -6,7 +6,7 @@ Date: 2026-10-30
 
 **Accepted** on the human merge of its PR. It touches guarded paths
 (`README.md`, this ADR, `docs/adr/0020`, `docs/AGENT_MISSION.md`, `CLAUDE.md`,
-`.github/workflows/`), so it ships as a **draft** PR. It amends
+`pyproject.toml`, `.github/workflows/`), so it ships as a **draft** PR. It amends
 `docs/adr/0020` (see "Departures" below) and departs from one choice in
 `docs/adr/0031`.
 
@@ -79,10 +79,13 @@ payload checks that run before the plan:
 
 - **Rule 0 -- wire and frame.** On the route a missing or out-of-window
   (2016..2100) `creation_timestamp_ms` is a 422 from the request model. On
-  the fetch, a book payload that is not a list, or a book row that is not an
-  object, has no string `instrument_name`, or no integer `creation_timestamp`,
-  fails the whole book as `DeribitApiError`. A field fault elsewhere costs
-  only its row (`invalid_value`).
+  the fetch, either payload (book or instruments) that is not a list, or a
+  book row that is not an object, has no string `instrument_name`, or no
+  integer `creation_timestamp`, fails the whole book as `DeribitApiError`.
+  An instruments row that is not an object or has no string name is dropped
+  and counted (`instruments_dropped`): it leaves `listed`, and the book row it
+  would have joined has null instrument fields and is quarantined. A field
+  fault elsewhere costs only its row (`invalid_value`).
 - **Rule 1 -- freshness, two-sided:** an observation more than 30 minutes
   old, or more than 5 minutes in the future, is refused (409). Under
   `--local`, which has no wire, an out-of-window creation timestamp is also
@@ -96,10 +99,12 @@ payload checks that run before the plan:
 - **Rule 3 -- too early:** before 08:05 UTC is a 425.
 - **Rule 4 -- expired rows** (expiry at or before the observation) are
   dropped and counted. A row with no instrument expiry falls back to the date
-  its name spells. A row whose instrument expiry is out of window, which has
-  no instrument expiry and a name that spells no usable date, or whose
-  instrument expiry DISAGREES with its name's date is quarantined `unparseable_expiry` -- never dropped as expired, since
-  either date would be a guess and one of them would drop a live row.
+  its name spells. Three cases are quarantined `unparseable_expiry` instead,
+  never dropped as expired, since either date would be a guess and one guess
+  would drop a live row:
+  - the instrument expiry is outside the 2016..2100 window;
+  - there is no instrument expiry and the name spells no usable date;
+  - the instrument expiry disagrees with the date the name spells.
 - **Rule 5 -- nothing left** is a 422.
 - **Rule 6 -- coverage:** more than 1% of the live listed names with no row
   is a 409; a `listed` with no live name at all is a 409 "no live listings".
@@ -109,11 +114,18 @@ payload checks that run before the plan:
   lost. A row's reason is the plan's own (`invalid_value` > `wrong_book` >
   `unparseable_expiry`), else its first failing column check, else
   `duplicate_instrument`.
-- **Rule 8 -- previous day:** each answer says whether D - 1 exists, and the
-  script exits 1 when D - 1 is missing on a committed or may-have-landed
-  answer: that is the red signal for a lost previous session. An "already
-  captured" answer to a retry whose earlier attempt may have landed is red as
-  well, because that attempt's quarantine share and blob status are unknown.
+- **Rule 8 -- previous day:** each answer says whether D - 1 exists (null
+  before a book's first partition), and the script exits 1 when D - 1 is
+  missing on a committed or may-have-landed answer: that is the red signal
+  for a lost previous session. An "already captured" answer to a retry whose
+  earlier attempt may have landed is red as well, because that attempt's
+  quarantine share and blob status are unknown -- but only when the stored
+  partition is this body's own capture. The answer carries
+  `captured_observed_at_ms`, the stored partition's earliest observation;
+  when it differs from the body's earliest `creation_timestamp_ms`, an
+  earlier run captured the day (the routine 10:45 catch-up after a green
+  08:15), the failed attempt landed nothing, and the answer is a green no-op.
+  When the app does not say (an older app, a failed read), it stays red.
 
 ### 4. The quarantine is per-capture JSON, not a Delta table
 
@@ -200,14 +212,14 @@ until that question is answered.
 - **An underlying that vanishes from both endpoints** commits as a delisting.
   Coverage against `listed` still catches the book losing it.
 - **A lost response goes red, but cannot say why.** If the committing
-  response is lost and the retry answers "already captured", the run is red
-  (the retry carries `may_have_landed`): a missing D - 1 is named, but the
-  landed attempt's quarantine share and blob status are unknown, so the
-  script points at `ops/quarantine/<dataset>/<D>/` and the app log's
-  `quarantine_unwritten` event instead. If every attempt fails after a landed
-  commit, the run is red as "retries exhausted" and the next catch-up answers
-  "already captured" green. If the blob write also failed, the rows exist
-  only in Fly's log.
+  response is lost and the retry answers "already captured" for this body's
+  own capture, the run is red (the retry carries `may_have_landed`): a
+  missing D - 1 is named, but the landed attempt's quarantine share and blob
+  status are unknown, so the script points at `ops/quarantine/<dataset>/<D>/`
+  and the app log's `quarantine_unwritten` event instead. If every attempt
+  fails after a landed commit, the run is red ("retries exhausted" or "the
+  POST failed") and the next catch-up answers "already captured" green. If
+  the blob write also failed, the rows exist only in Fly's log.
 - **The log fallback depends on Fly's log retention,** which is unmeasured.
 - **The raw Deribit response is not stored:** quarantine payloads hold the
   mapped wire dict, so a renamed source field's value is lost.

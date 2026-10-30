@@ -335,6 +335,13 @@ class DeribitSnapshotResponse(BaseModel):
     already_captured: bool
     previous_partition_exists: bool | None
     quarantine_share: float | None
+    #: On already-captured only: the STORED partition's earliest
+    #: ``observed_at`` (ms). Equal to this body's own earliest
+    #: ``creation_timestamp_ms`` only if one of this run's attempts landed it;
+    #: otherwise an earlier run captured the day. ``None`` otherwise, on a read
+    #: failure, or from an older app -- which the script treats as "may be
+    #: this run's".
+    captured_observed_at_ms: int | None = None
 
 
 class DeribitBookStatus(BaseModel):

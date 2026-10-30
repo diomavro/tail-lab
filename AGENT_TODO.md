@@ -2592,17 +2592,20 @@ datasets (marked **Blocked**); the collection-side items are not blocked.
       append, even on one machine. `api/deribit_routes._LOCKS` is the pattern;
       its concurrency test (a `Barrier` inside a wrapped
       `bronze_partition_exists`) is the one to copy.
-- [ ] **Doc accuracy: "nobody sells a retroactive option chain / gone at any
-      price" overstates it (guarded, human).** Paid vendors (optionsDX,
-      ORATS, Tardis.dev) sell past chains; the accurate claim is "not for
-      free", which ADR 0020:30 already gets right. Files: `README.md:68-72`,
-      `CLAUDE.md` (the daily-chain-sweep bullet), `docs/DATA_CONTRACTS.md` §6,
-      `.github/workflows/daily-chain-snapshot.yml:7-10` (including "THE ONE
-      WORKFLOW ... every other source serves history"), the
-      `daily-agent.yml` sentence beginning "This is one of the datasets that
-      cannot be backfilled", `docs/AGENT_MISSION.md:51-53`, ADR 0020
-      (:33-34, :44; amended, not rewritten), `scripts/chain_snapshot.py:128`,
-      `src/tail_lab/ingestion/option_chain.py:12`, `HUMAN_TODO.md:581`,
+- [ ] **Doc accuracy, guarded part (guarded, human): "nobody sells a
+      retroactive option chain / gone at any price" overstates it.** Paid
+      vendors (optionsDX, ORATS, Tardis.dev) sell past chains; the accurate
+      claim is "not for free", which ADR 0020:31 already gets right. These
+      files need a human-merged PR: `README.md:68-72`, `CLAUDE.md` (the
+      daily-chain-sweep bullet), `docs/AGENT_MISSION.md:51-53`, ADR 0020
+      (:34, :45; amended, not rewritten),
+      `.github/workflows/daily-chain-snapshot.yml:7-12` ("gone permanently"),
+      the `daily-agent.yml` sentence beginning "This is one of the datasets
+      that cannot be backfilled", and `HUMAN_TODO.md:581` (Dio's file; the
+      agent never edits it).
+- [ ] **Doc accuracy, agent-doable part:** the same "not for free" correction
+      in unguarded files: `docs/DATA_CONTRACTS.md` §6,
+      `scripts/chain_snapshot.py:128`, `src/tail_lab/ingestion/option_chain.py:12`,
       `tests/test_scripts_chain_snapshot_retry.py:3`,
       `tests/test_scripts_chain_sweep_verify.py:3` and `docs/PRIOR_ART.md:721`.
 - [ ] **Deribit trade history as a backfill dataset.** `history.deribit.com`

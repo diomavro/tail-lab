@@ -44,12 +44,13 @@ from tail_lab.contracts.deribit_options import (
     DeribitRefusal,
     QuarantineParts,
     deribit_frame,
+    earliest_observed_ms,
     plan_deribit_write,
     prepare_quarantine,
     quarantine_log_records,
 )
 from tail_lab.lake.blob_store import BlobStore, QuarantineWrite, commit_then_quarantine
-from tail_lab.lake.store import LakeStore
+from tail_lab.lake.store import LAKE_READ_ERRORS, LakeStore
 from tail_lab.observability import log_event
 
 router = APIRouter()
@@ -103,6 +104,25 @@ def ingest_deribit_options(
             raise HTTPException(
                 status_code=exc.status, detail=f"{REFUSAL_MARKER}{exc.detail}"
             ) from exc
+
+
+#: A lake read fault, or no such partition/column (``LookupError``/``KeyError``).
+_CAPTURED_READ_ERRORS: tuple[type[Exception], ...] = (*LAKE_READ_ERRORS, LookupError)
+
+
+def _captured_observed_at_ms(store: LakeStore, dataset: str, day: dt.date) -> int | None:
+    """The stored partition D's earliest ``observed_at`` (ms), so the script
+    can tell its own landed attempt from an earlier run's capture. Read only
+    once D is known to exist, so the as-of resolution names D itself. A failed
+    read is ``None`` -- the script then assumes the worst (red), it does not
+    turn a green no-op into a 500."""
+    try:
+        return earliest_observed_ms(store.read_bronze_column_as_of(dataset, day, "observed_at"))
+    except _CAPTURED_READ_ERRORS:
+        _LOGGER.exception(
+            "event=api.ingest.deribit_options.captured_read_failed dataset=%s", dataset
+        )
+        return None
 
 
 def _quarantine_write(parts: QuarantineParts | None) -> QuarantineWrite | None:
@@ -168,6 +188,11 @@ def _ingest(
         already_captured=plan.already_captured,
         previous_partition_exists=plan.previous_partition_exists,
         quarantine_share=plan.quarantine_share,
+        captured_observed_at_ms=(
+            _captured_observed_at_ms(store, book.dataset, plan.snapshot_date)
+            if plan.already_captured
+            else None
+        ),
     )
     log_event(
         _LOGGER,

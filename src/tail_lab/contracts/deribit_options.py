@@ -66,6 +66,7 @@ __all__ = [
     "check_book_rows",
     "check_instrument_rows",
     "deribit_frame",
+    "earliest_observed_ms",
     "name_expiry",
     "plan_deribit_write",
     "prepare_quarantine",
@@ -506,6 +507,13 @@ class DeribitWritePlan:
         return len(self.quarantined) / self.live_rows
 
 
+def earliest_observed_ms(observed: pd.Series[pd.Timestamp]) -> int:
+    """A capture's earliest ``observed_at`` as Deribit's integer ms -- the
+    quarantine key's leaf, and how a writer tells whether a stored partition
+    is THIS body's capture (``captured_observed_at_ms``) or an earlier run's."""
+    return int(pd.Timestamp(observed.min()).value // 1_000_000)
+
+
 def name_expiry(name: str) -> pd.Timestamp | None:
     """The expiry a Deribit name spells (``BTC-1NOV26-...``) at 08:00 UTC, or
     ``None``. Total: a malformed name, or a date before 2016 (``1JAN69``
@@ -665,7 +673,7 @@ def plan_deribit_write(
     day = oldest.date()
     previous = partition_exists(day - dt.timedelta(days=1)) if has_earlier_partition(day) else None
     empty = frame.iloc[0:0]
-    observed_ms = int(oldest.value // 1_000_000)
+    observed_ms = earliest_observed_ms(frame["observed_at"])
     if partition_exists(day):
         return DeribitWritePlan(empty, empty, day, True, 0, previous, observed_ms, 0)
     if oldest.time() < EARLIEST_CAPTURE:

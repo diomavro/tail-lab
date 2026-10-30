@@ -2,7 +2,7 @@
 # Local stand-in for .github/workflows/daily-chain-snapshot.yml.
 #
 # Why this exists: GitHub Actions is blocked on billing (HUMAN_TODO.md), and
-# the chain sweep is the one job that cannot be caught up later -- no free
+# the chain sweep is one of the two jobs that cannot be caught up later -- no free
 # source serves a retroactive option chain, so a weekday not swept is a
 # weekday permanently blank (docs/adr/0020).
 #

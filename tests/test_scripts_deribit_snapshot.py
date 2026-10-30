@@ -836,3 +836,26 @@ def test_the_marker_counts_only_at_the_start_of_the_detail() -> None:
     app's own deterministic answer, and stays retryable."""
     quoted = _response(500, {"detail": f"upstream said: {REFUSAL_MARKER}x"})
     assert deribit_snapshot._retryable(requests.HTTPError(response=quoted))
+
+
+# ---- review round 3 -------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("captured", "expected"),
+    [(CREATED_MS - 3 * 3_600_000, 0), (CREATED_MS, 1), (None, 1)],
+    ids=["captured-earlier", "own-attempt-landed", "older-app-says-nothing"],
+)
+def test_a_transient_failure_on_a_day_captured_earlier_is_green(
+    monkeypatch: pytest.MonkeyPatch, captured: int | None, expected: int
+) -> None:
+    """The routine 10:45 catch-up after a green 08:15: a 502 on its first
+    attempt landed nothing, because the stored partition began hours earlier
+    than this body. Only a stored capture that IS this body (or an app that
+    does not say) leaves the landed attempt's quarantine unknown."""
+    again = _ok("BTC", committed=False, already_captured=True, rows=0)
+    body = json.loads(again.content)
+    again._content = json.dumps({**body, "captured_observed_at_ms": captured}).encode()
+    code, app = _run_post(monkeypatch, [_response(502, "bad gateway"), again])
+    assert code == expected
+    assert [c for c, _ in app.posts].count("btc") == 2

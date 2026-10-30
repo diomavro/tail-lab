@@ -81,9 +81,16 @@ any of these holds:
   workflow was added 2 or more days ago -- merged, but never deployed.
 
 Do not add any reader of `deribit_options_*` -- by import or by dataset name
--- until `HUMAN_TODO.md`'s Deribit data-terms item is ticked. The import side
-is machine-checked (the "Nothing reads the Deribit books yet" contract in
-`pyproject.toml`); a dataset name in a string is not, so it rests on you.
+-- until `HUMAN_TODO.md`'s Deribit data-terms item is ticked.
+
+- **Machine-checked:** an import of the contract (`contracts/deribit_options`)
+  or the write route (`api/deribit_routes`) from any `tail_lab` module except
+  ingestion and the write path itself (the "Nothing reads the Deribit books
+  yet" contract in `pyproject.toml`, and
+  `test_only_the_write_path_imports_the_deribit_contract`).
+- **Not machine-checked, so it rests on you:** a new route added inside
+  `api/deribit_routes.py`, a reader that names a `deribit_options_*` dataset
+  in a string, and anything under `scripts/` (outside the checked package).
 
 Older gaps (`missing_days`) are information only: they cannot be filled, and
 alarming on them would bury new losses. A broken Deribit collection is treated

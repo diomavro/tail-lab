@@ -25,9 +25,12 @@ Exit codes are the contract with the scheduler. 0 only if every book
 committed or was already captured, with no committed answer missing the
 previous day, no quarantine share above 1%, and no quarantine left
 unwritten. An "already captured" answer to a retry whose earlier attempt
-failed after sending (``may_have_landed``) is red too: that attempt's
-quarantine share and blob status are unknown. 2 for a missing ``--token``.
-Otherwise 1.
+failed after sending (``may_have_landed``) is red too -- that attempt's
+quarantine share and blob status are unknown -- but only when the stored
+partition is THIS body's capture (its ``captured_observed_at_ms`` equals the
+body's earliest ``creation_timestamp_ms``, or the app does not say). A day
+captured by an earlier run is a plain green no-op. 2 for a missing
+``--token``. Otherwise 1.
 """
 
 from __future__ import annotations
@@ -128,6 +131,8 @@ class _Answer(Protocol):
     def quarantine_written(self) -> bool | None: ...
     @property
     def quarantine_key(self) -> str | None: ...
+    @property
+    def captured_observed_at_ms(self) -> int | None: ...
 
 
 def _report(label: str, answer: _Answer, *, may_have_landed: bool) -> bool:
@@ -161,14 +166,39 @@ def _report(label: str, answer: _Answer, *, may_have_landed: bool) -> bool:
         return True
     print(
         f"::error::{label}: nothing committed -- every live row was quarantined "
-        f"({answer.quarantined}); the catch-up will retry",
+        f"({answer.quarantined}); a later run will retry",
         file=sys.stderr,
     )
     return False
 
 
-def _judge(label: str, answer: _Answer, *, may_have_landed: bool) -> bool:
+def _own_attempt_may_have_landed(
+    label: str, answer: _Answer, *, may_have_landed: bool, own_observed_ms: int | None
+) -> bool:
+    """``may_have_landed``, narrowed: an "already captured" answer whose
+    stored partition began at a DIFFERENT observation than this body was
+    captured by an earlier run -- the routine 10:45 catch-up after a green
+    08:15 -- so a transient first-attempt failure landed nothing, and is not
+    an alarm. Unknown (an older app, a failed read) stays "may have"."""
+    captured = answer.captured_observed_at_ms
+    if not (may_have_landed and answer.already_captured) or captured is None:
+        return may_have_landed
+    if captured == own_observed_ms:
+        return True
+    print(
+        f"{label}: an attempt failed after sending, but the day was captured by an earlier "
+        f"run (its earliest observation is {captured} ms, this body's {own_observed_ms})"
+    )
+    return False
+
+
+def _judge(
+    label: str, answer: _Answer, *, may_have_landed: bool, own_observed_ms: int | None = None
+) -> bool:
     """Whether this book leaves the run green (see the module docstring)."""
+    may_have_landed = _own_attempt_may_have_landed(
+        label, answer, may_have_landed=may_have_landed, own_observed_ms=own_observed_ms
+    )
     ok = _report(label, answer, may_have_landed=may_have_landed)
     if answer.previous_partition_exists is False and (answer.committed or may_have_landed):
         print(
@@ -367,7 +397,8 @@ def _post_book(args: argparse.Namespace, currency: str) -> bool:
             file=sys.stderr,
         )
         return False
-    return _judge(label, response, may_have_landed=may_have_landed)
+    own = min(int(r["creation_timestamp_ms"]) for r in joined.records)
+    return _judge(label, response, may_have_landed=may_have_landed, own_observed_ms=own)
 
 
 # ---- --local -------------------------------------------------------------------

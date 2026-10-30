@@ -43,6 +43,7 @@ from tail_lab.contracts.deribit_options import (
     check_book_rows,
     check_instrument_rows,
     deribit_frame,
+    earliest_observed_ms,
     plan_deribit_write,
     prepare_quarantine,
     quarantine_log_records,
@@ -51,7 +52,7 @@ from tail_lab.contracts.deribit_options import (
 from tail_lab.ingestion.json_payload import json_object
 from tail_lab.ingestion.sources import is_transient_fetch_error, retry_transient
 from tail_lab.lake.blob_store import BlobStore, QuarantineWrite, commit_then_quarantine
-from tail_lab.lake.store import LakeStore
+from tail_lab.lake.store import LAKE_READ_ERRORS, LakeStore
 from tail_lab.observability import log_event
 
 __all__ = [
@@ -238,10 +239,30 @@ class DeribitIngestResult:
     already_captured: bool
     previous_partition_exists: bool | None
     quarantine_share: float | None
+    captured_observed_at_ms: int | None
     quarantine_key: str | None
     quarantine_written: bool | None
     bronze_path: str | None
     instruments_dropped: int
+
+
+#: A lake read fault, or no such partition/column (``LookupError``/``KeyError``).
+_CAPTURED_READ_ERRORS: tuple[type[Exception], ...] = (*LAKE_READ_ERRORS, LookupError)
+
+
+def _captured_observed_at_ms(store: LakeStore, dataset: str, day: dt.date) -> int | None:
+    """The stored partition D's earliest ``observed_at`` (ms), so the script
+    can tell its own landed attempt from an earlier run's capture. Read only
+    once D is known to exist, so the as-of resolution names D itself. A failed
+    read is ``None`` -- the script then assumes the worst (red), it does not
+    turn a green no-op into a 500."""
+    try:
+        return earliest_observed_ms(store.read_bronze_column_as_of(dataset, day, "observed_at"))
+    except _CAPTURED_READ_ERRORS:
+        _LOGGER.exception(
+            "event=ingestion.deribit_options.captured_read_failed dataset=%s", dataset
+        )
+        return None
 
 
 def _quarantine_write(parts: QuarantineParts | None) -> QuarantineWrite | None:
@@ -341,6 +362,11 @@ def ingest_deribit_options(
         already_captured=plan.already_captured,
         previous_partition_exists=plan.previous_partition_exists,
         quarantine_share=plan.quarantine_share,
+        captured_observed_at_ms=(
+            _captured_observed_at_ms(store, book.dataset, plan.snapshot_date)
+            if plan.already_captured
+            else None
+        ),
         quarantine_key=parts.key if parts is not None else None,
         quarantine_written=written,
         bronze_path=bronze_path,

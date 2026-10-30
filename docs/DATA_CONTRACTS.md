@@ -1248,13 +1248,21 @@ instrument expiry disagrees with the date its name spells is quarantined
 `unparseable_expiry`, never dropped as expired. Each answer says whether
 D - 1 exists, and the script exits 1 when D - 1 is missing on a committed or
 may-have-landed answer: that is the red signal for a lost previous session.
-An "already captured" answer to a retry whose earlier attempt may have landed
-is red too: that attempt's quarantine share and blob status are unknown, so
-the script names `ops/quarantine/<dataset>/<D>/` and the app log's
-`quarantine_unwritten` event. A book payload that is not a list, or a book
-row without a string `instrument_name` or an integer `creation_timestamp`,
-fails the whole book (`DeribitApiError`); every other field fault costs only
-its row.
+`previous_partition_exists` is null before a book's first partition. An
+"already captured" answer to a retry whose earlier attempt may have landed is
+red too, when the stored partition is this body's own capture: that
+attempt's quarantine share and blob status are unknown, so the script names
+`ops/quarantine/<dataset>/<D>/` and the app log's `quarantine_unwritten`
+event. The answer's `captured_observed_at_ms` (the stored partition's
+earliest observation) tells the two apart: when it differs from the body's
+earliest `creation_timestamp_ms`, an earlier run captured the day and the
+answer is a green no-op; when it is missing, the script assumes the worst.
+Either payload (book or instruments) that is not a list, or a book row
+without a string `instrument_name` or an integer `creation_timestamp`, fails
+the whole book (`DeribitApiError`). A malformed instruments row (not an
+object, or no string name) is dropped and counted (`instruments_dropped`):
+it leaves `listed`, and the book row it would have joined is quarantined.
+Every other field fault costs only its row.
 
 ### Quarantine — per-capture JSON blobs
 
