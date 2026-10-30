@@ -110,3 +110,21 @@ def test_write_quarantine_lets_any_other_error_propagate(
     with pytest.raises(TypeError):
         write_quarantine(blobs, "k", {}, log_lines=_LINES, log=rec.log, on_error=rec.on_error)
     assert rec.logged == []
+
+
+def test_write_quarantine_reports_the_cause_before_the_rows(tmp_path: Path) -> None:
+    """The cause comes first, once, so whoever reads the log sees WHY before
+    the rows it explains."""
+    (tmp_path / "ops").write_text("a file where the directory should be")
+    calls: list[str] = []
+    write_quarantine(
+        BlobStore(tmp_path),
+        "ops/q/a.json",
+        {"rows": []},
+        log_lines=_LINES,
+        log=lambda line: calls.append(f"log:{line['payload']}"),
+        on_error=lambda exc: calls.append(f"error:{type(exc).__name__}"),
+    )
+    assert len(calls) == 3
+    assert calls[0].startswith("error:")
+    assert calls[1:] == ["log:{}", "log:[]"]

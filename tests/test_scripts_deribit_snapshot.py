@@ -18,6 +18,7 @@ import os
 import subprocess
 import sys
 import textwrap
+import threading
 from collections.abc import Callable, Mapping
 from pathlib import Path
 
@@ -47,8 +48,15 @@ def _isolated(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     monkeypatch.chdir(tmp_path)
     monkeypatch.setenv("TAIL_LAB_LAKE_BACKEND", "local")
     monkeypatch.setenv("TAIL_LAB_LAKE_ROOT", str(tmp_path / "lake"))
-    monkeypatch.setattr(deribit_snapshot.time, "sleep", lambda _s: None)
     monkeypatch.setattr(deribit_snapshot, "_utcnow", lambda: NOW)
+
+
+@pytest.fixture(autouse=True)
+def sleeps(monkeypatch: pytest.MonkeyPatch) -> list[float]:
+    """Every backoff the POST loop takes, recorded instead of slept."""
+    taken: list[float] = []
+    monkeypatch.setattr(deribit_snapshot.time, "sleep", taken.append)
+    return taken
 
 
 def _clean_books(n: int = 120) -> dict[str, tuple[object, object]]:
@@ -151,9 +159,15 @@ def _500() -> requests.Response:
         (
             [
                 _500(),
-                _ok("BTC", committed=False, already_captured=True, previous_partition_exists=False),
+                _ok(
+                    "BTC",
+                    committed=False,
+                    already_captured=True,
+                    previous_partition_exists=False,
+                    captured_observed_at_ms=CREATED_MS - 3_600_000,
+                ),
             ],
-            1,
+            0,
         ),
         ([_ok("BTC", committed=False, already_captured=True, previous_partition_exists=False)], 0),
         ([_ok("BTC", previous_partition_exists=False)], 1),
@@ -168,12 +182,13 @@ def _500() -> requests.Response:
         ([_response(404, {"detail": "not found"})], 1),
         ([_response(200, "<html>not json")], 1),
         ([_500(), _500(), _500(), _500()], 1),
+        ([_response(429, {})] * 4, 1),
         ([_ok("BTC", quarantined=1, quarantine_share=0.005, quarantine_written=True)], 0),
     ],
     ids=[
         "committed",
         "already-captured",
-        "landed-previous-false",
+        "captured-earlier-previous-false",
         "catch-up-previous-false",
         "committed-previous-false",
         "committed-previous-none",
@@ -187,6 +202,7 @@ def _500() -> requests.Response:
         "404",
         "unparseable-200",
         "retries-exhausted",
+        "rate-limited",
         "share-under-1pct",
     ],
 )
@@ -639,9 +655,10 @@ def test_a_plain_catch_up_does_not_warn(
 
 
 def test_retries_exhausted_says_it_may_have_landed(
-    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], sleeps: list[float]
 ) -> None:
     _run_post(monkeypatch, [_500(), _500(), _500(), _500()])
+    assert sleeps == [15, 60, 180]
     err = capsys.readouterr().err
     assert (
         "btc: retries exhausted (may have landed; check /api/ingest/deribit-options/status)" in err
@@ -660,7 +677,7 @@ def test_the_root_cause_survives_a_long_outer_message() -> None:
     assert text.startswith("ConnectionError: xxx")
     assert text.endswith("<- ConnectionRefusedError: the real reason")
     assert " ... " in text
-    assert len(text) <= 300
+    assert len(text) == 300
 
 
 def _refusal_500(detail: str) -> requests.Response:
@@ -722,15 +739,6 @@ def test_a_retryable_failure_is_retried_and_the_book_lands(
 ) -> None:
     code, app = _run_post(monkeypatch, [first, _ok("BTC")])
     assert code == 0
-    assert [c for c, _ in app.posts].count("btc") == 2
-
-
-def test_a_landed_retry_with_no_previous_day_is_red_after_two_posts(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    landed = _ok("BTC", committed=False, already_captured=True, previous_partition_exists=False)
-    code, app = _run_post(monkeypatch, [_500(), landed])
-    assert code == 1
     assert [c for c, _ in app.posts].count("btc") == 2
 
 
@@ -859,3 +867,76 @@ def test_a_transient_failure_on_a_day_captured_earlier_is_green(
     code, app = _run_post(monkeypatch, [_response(502, "bad gateway"), again])
     assert code == expected
     assert [c for c, _ in app.posts].count("btc") == 2
+
+
+# ---- round 3, test strength -------------------------------------------------------------
+
+
+def test_retry_budget_stays_inside_the_stale_bound() -> None:
+    """The book GET comes before ``observed_at``; the instruments GET (with
+    its retries) and every POST attempt (timeouts plus backoffs) come after
+    it. All of that must fit inside the app's stale bound, or a session that
+    needed every retry is refused as stale on its last attempt."""
+    from tail_lab.contracts.deribit_options import MAX_AGE
+
+    fetch = (
+        ingestion._FETCH_ATTEMPTS * ingestion._TIMEOUT_S
+        + (ingestion._FETCH_ATTEMPTS - 1) * ingestion._FETCH_BACKOFF_S
+    )
+    post = sum(deribit_snapshot.POST_BACKOFF_S) + (
+        deribit_snapshot.POST_ATTEMPTS * deribit_snapshot.POST_TIMEOUT_S
+    )
+    assert len(deribit_snapshot.POST_BACKOFF_S) == deribit_snapshot.POST_ATTEMPTS - 1
+    assert fetch + post < MAX_AGE.total_seconds()
+
+
+def test_exhausted_429s_say_rate_limited_not_landed(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    _run_post(monkeypatch, [_response(429, {})] * 4)
+    err = capsys.readouterr().err
+    assert "btc: rate-limited: retries exhausted" in err
+    assert "may have landed;" not in err
+    assert "app rejected the book" not in err
+
+
+def test_describe_returns_on_a_longer_cycle() -> None:
+    """a -> b -> c -> b: a guard that only remembers the start would loop."""
+    a, b, c = ValueError("a"), ValueError("b"), ValueError("c")
+    a.__context__, b.__context__, c.__context__ = b, c, b
+    out: list[str] = []
+    worker = threading.Thread(target=lambda: out.append(deribit_snapshot.describe(a)), daemon=True)
+    worker.start()
+    worker.join(2)
+    assert not worker.is_alive()
+    assert out == ["ValueError: a <- ValueError: c"]
+
+
+def test_describe_leaves_a_short_text_exactly_as_it_is() -> None:
+    assert deribit_snapshot.describe(ValueError("boom")) == "ValueError: boom"
+    try:
+        try:
+            raise ConnectionRefusedError("inner")
+        except ConnectionRefusedError as inner:
+            raise requests.ConnectionError("outer") from inner
+    except requests.ConnectionError as outer:
+        text = deribit_snapshot.describe(outer)
+    assert text == "ConnectionError: outer <- ConnectionRefusedError: inner"
+
+
+def test_describe_keeps_a_text_of_exactly_the_limit_whole() -> None:
+    message = "x" * (300 - len("ValueError: "))
+    assert deribit_snapshot.describe(ValueError(message)) == f"ValueError: {message}"
+
+
+def test_describe_prefers_the_explicit_cause_over_the_context() -> None:
+    """``raise X from Y`` inside ``except Z``: Y is the reason given, Z only
+    what was being handled."""
+    try:
+        try:
+            raise KeyError("being handled")
+        except KeyError:
+            raise requests.ConnectionError("outer") from ConnectionRefusedError("the cause")
+    except requests.ConnectionError as outer:
+        text = deribit_snapshot.describe(outer)
+    assert text == "ConnectionError: outer <- ConnectionRefusedError: the cause"

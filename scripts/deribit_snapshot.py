@@ -346,7 +346,14 @@ def _refused(exc: requests.HTTPError, label: str) -> bool:
         why = "too early, re-run after 08:05 UTC"
     elif _deterministic_refusal(exc):
         why = "the app refused the book (deterministic, nothing written)"
-    elif status is not None and (status >= 500 or status == 429):
+    elif status == 429:
+        # A 429 is refused before any work. Only an earlier 5xx in the same
+        # run could have landed, which the status route answers.
+        why = (
+            "rate-limited: retries exhausted (a 429 lands nothing; if an earlier attempt "
+            "was a 5xx, check /api/ingest/deribit-options/status)"
+        )
+    elif status is not None and status >= 500:
         why = "retries exhausted (may have landed; check /api/ingest/deribit-options/status)"
     else:
         why = "app rejected the book"
