@@ -919,6 +919,7 @@ def test_exhausted_429s_say_rate_limited_not_landed(
     _run_post(monkeypatch, [_response(429, {})] * 4)
     err = capsys.readouterr().err
     assert "btc: rate-limited: retries exhausted (a 429 lands nothing;" in err
+    assert "check /api/ingest/deribit-options/status" in err
     assert "may have landed;" not in err
     assert "app rejected the book" not in err
 

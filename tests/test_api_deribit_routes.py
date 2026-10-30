@@ -19,6 +19,7 @@ from collections.abc import Iterator
 from pathlib import Path
 from typing import get_type_hints
 
+import duckdb
 import grimp
 import pandas as pd
 import pytest
@@ -658,7 +659,14 @@ def test_already_captured_reports_the_stored_capture_s_earliest_observation(
     assert again["captured_observed_at_ms"] == CREATED_MS - 600_007
 
 
-@pytest.mark.parametrize("fault", [OSError("read failed"), KeyError("observed_at")])
+@pytest.mark.parametrize(
+    "fault",
+    [
+        OSError("read failed"),
+        KeyError("observed_at"),
+        duckdb.IOException("IO Error: delta_scan failed"),
+    ],
+)
 def test_a_failed_capture_read_is_none_not_a_500(
     client: TestClient,
     lake: Lake,
@@ -681,7 +689,9 @@ def test_a_failed_capture_read_is_none_not_a_500(
     assert again["captured_observed_at_ms"] is None
     assert any(
         "event=api.ingest.deribit_options.captured_read_failed dataset=deribit_options_btc "
-        "ingest_date=2026-10-30" in r.getMessage()
+        "ingest_date=2026-10-30"
+        in r.getMessage()
+        and r.exc_info is not None
         for r in caplog.records
     )
 
@@ -695,7 +705,7 @@ def test_a_landed_attempt_whose_earliest_rows_were_quarantined_is_still_its_own(
     script must still read that as its own landed attempt: red, with the
     20% share it could not see."""
     book, instruments = raw_book("BTC", 200)
-    for row in book[::5]:  # every row at the earliest creation ms
+    for row in book[1::5]:  # every row at the earliest creation ms (offset 0)
         row["mark_price"] = -1.0
     payload = deribit_snapshot.book_body(to_records(book, instruments))
     first = post(client, "BTC", payload)
@@ -741,3 +751,20 @@ def test_the_blob_records_the_capture_s_observation_range(client: TestClient, la
     stamps = [int(r["creation_timestamp"]) for r in book]
     assert blob["observed_max_ms"] == max(stamps)
     assert blob["observed_at"] == pd.Timestamp(min(stamps), unit="ms").isoformat()
+
+
+def test_a_capture_read_bug_is_not_swallowed(
+    client: TestClient, lake: Lake, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Only lake faults are survived. A TypeError is a bug, and a broad catch
+    would hide it behind a green "already captured"."""
+    assert post(client, "BTC", body(records(20)))["committed"] is True
+
+    def bug(*_a: object) -> object:
+        raise TypeError("a bug, not a lake fault")
+
+    monkeypatch.setattr(lake.store, "query", bug)
+    resp = client.post(
+        deribit_snapshot.book_url(BASE, "BTC"), json=body(records(20)), headers=_auth()
+    )
+    assert resp.status_code == 500

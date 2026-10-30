@@ -15,6 +15,7 @@ import re
 from collections.abc import Callable, Mapping
 from pathlib import Path
 
+import duckdb
 import pandas as pd
 import pytest
 import requests
@@ -104,7 +105,9 @@ def raw_instrument_row(name: str, **overrides: object) -> dict[str, object]:
 
 #: A live book is stamped over a spread, not one instant: measured 2026-10-30,
 #: 12-54 distinct ``creation_timestamp`` values over 17-89 ms per response.
-CREATION_SPREAD_MS = (0, 7, 19, 33, 61)
+#: Neither the first nor the last row is an extreme, so code that takes the
+#: first/last row for the min/max is caught.
+CREATION_SPREAD_MS = (19, 0, 61, 7, 33)
 
 
 def raw_book(currency: str, n: int, *, created_ms: int = CREATED_MS) -> tuple[Payload, Payload]:
@@ -242,6 +245,10 @@ def test_a_400_is_not_retried_and_keeps_deribits_reason(
     [
         "[1, 2]",
         '{"jsonrpc": "2.0", "error": {"code": 10000}}',
+        '{"jsonrpc": "2.0", "error": {"code": 10028, "message": "too_many_requests"}}',
+        # An "error" member at all means failure under JSON-RPC 2.0, even an
+        # empty one beside a result: never trust the result then.
+        '{"jsonrpc": "2.0", "error": {}, "result": [1]}',
         '{"jsonrpc": "2.0", "result": []}',
         '{"jsonrpc": "2.0"}',
     ],
@@ -259,7 +266,8 @@ def test_an_unusable_200_is_a_deribit_api_error(monkeypatch: pytest.MonkeyPatch,
 def test_to_records_joins_on_name_and_maps_every_field() -> None:
     book, instruments = raw_book("BTC", 2)
     joined = to_records(book, instruments)
-    assert joined.records[0] == record(str(book[0]["instrument_name"]))
+    expected = record(str(book[0]["instrument_name"]))
+    assert joined.records[0] == {**expected, "creation_timestamp_ms": book[0]["creation_timestamp"]}
     assert joined.listed == [str(r["instrument_name"]) for r in instruments]
     assert joined.instruments_dropped == 0
 
@@ -272,8 +280,10 @@ def test_put_and_call_map_to_p_and_c() -> None:
 def test_the_observation_time_comes_from_the_book_never_the_instruments() -> None:
     """The instruments row's ``creation_timestamp`` is its listing time, nine
     days old. Had it won, every book would be refused as stale."""
-    book, instruments = raw_book("BTC", 1)
-    assert to_records(book, instruments).records[0]["creation_timestamp_ms"] == CREATED_MS
+    book, instruments = raw_book("BTC", 5)
+    records_ = to_records(book, instruments).records
+    assert [r["creation_timestamp_ms"] for r in records_] == [r["creation_timestamp"] for r in book]
+    assert all(r["creation_timestamp_ms"] >= CREATED_MS for r in records_)
 
 
 def test_an_unmatched_book_row_keeps_null_instrument_fields() -> None:
@@ -589,7 +599,14 @@ def test_the_local_capture_read_ignores_a_stale_as_of_resolution(
     assert _ingest(lake).captured_observed_at_ms == CREATED_MS
 
 
-@pytest.mark.parametrize("fault", [OSError("read failed"), KeyError("observed_at")])
+@pytest.mark.parametrize(
+    "fault",
+    [
+        OSError("read failed"),
+        KeyError("observed_at"),
+        duckdb.IOException("IO Error: delta_scan failed"),
+    ],
+)
 def test_a_failed_capture_read_under_local_is_none_and_logged(
     monkeypatch: pytest.MonkeyPatch,
     lake: Lake,
@@ -611,6 +628,7 @@ def test_a_failed_capture_read_under_local_is_none_and_logged(
     assert any(
         "event=ingestion.deribit_options.captured_read_failed dataset=deribit_options_btc"
         in r.getMessage()
+        and r.exc_info is not None
         for r in caplog.records
     )
 
@@ -649,3 +667,27 @@ def test_the_local_blob_records_the_capture_s_observation_range(
     assert result.quarantine_key is not None
     blob = blobs.read_json(result.quarantine_key)
     assert blob["observed_max_ms"] == max(int(r["creation_timestamp"]) for r in book)
+
+
+def test_a_capture_read_bug_under_local_propagates(
+    monkeypatch: pytest.MonkeyPatch, lake: Lake
+) -> None:
+    store, _, _ = lake
+    fake_fetch(monkeypatch, {"BTC": raw_book("BTC", 50)})
+    assert _ingest(lake).committed
+
+    def bug(*_a: object) -> object:
+        raise TypeError("a bug, not a lake fault")
+
+    monkeypatch.setattr(store, "query", bug)
+    with pytest.raises(TypeError):
+        _ingest(lake)
+
+
+def test_a_json_rpc_error_on_a_200_names_deribits_reason(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    body = '{"jsonrpc": "2.0", "error": {"code": 10028, "message": "too_many_requests"}}'
+    _scripted_get(monkeypatch, [_response(200, body)])
+    with pytest.raises(DeribitApiError, match="too_many_requests"):
+        ingestion.fetch_book("BTC")

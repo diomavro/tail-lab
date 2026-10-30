@@ -572,7 +572,7 @@ def test_the_quarantine_key_is_per_capture() -> None:
 
 def test_prepare_quarantine_keys_on_the_earliest_observation() -> None:
     recs = records(200)
-    recs[0]["creation_timestamp_ms"] = CREATED_MS - 5
+    recs[7]["creation_timestamp_ms"] = CREATED_MS - 5
     recs[1]["mark"] = -1.0
     plan = run_plan(recs)
     parts = prepare_quarantine(dataset="d", plan=plan, records=recs, code_sha="abc")

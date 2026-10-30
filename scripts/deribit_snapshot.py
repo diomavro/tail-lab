@@ -212,7 +212,7 @@ def _own_attempt_may_have_landed(
 
 
 def _judge(
-    label: str, answer: _Answer, *, may_have_landed: bool, own_range: ObservedRange | None = None
+    label: str, answer: _Answer, *, may_have_landed: bool, own_range: ObservedRange | None
 ) -> bool:
     """Whether this book leaves the run green (see the module docstring)."""
     may_have_landed = _own_attempt_may_have_landed(
@@ -457,7 +457,9 @@ def _local_book(
         print(f"::error::{label}: the lake read or write failed: {exc!r}", file=sys.stderr)
         return False
     print(f"{label}: instruments_dropped={result.instruments_dropped}")
-    return _judge(label, result, may_have_landed=False)
+    # --local sends nothing that "may have landed", so it has no range to
+    # compare: its own capture is the only one this call can be about.
+    return _judge(label, result, may_have_landed=False, own_range=None)
 
 
 def _run_local(clock: Callable[[], dt.datetime]) -> int:
