@@ -676,7 +676,7 @@ def test_the_root_cause_survives_a_long_outer_message() -> None:
         text = deribit_snapshot.describe(outer)
     assert text.startswith("ConnectionError: xxx")
     assert text.endswith("<- ConnectionRefusedError: the real reason")
-    assert " ... " in text
+    assert text[150:155] == " ... "
     assert len(text) == 300
 
 
@@ -869,7 +869,10 @@ def test_the_marker_counts_only_at_the_start_of_the_detail() -> None:
     ],
 )
 def test_a_transient_failure_on_a_day_captured_earlier_is_green(
-    monkeypatch: pytest.MonkeyPatch, captured: int | None, expected: int
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    captured: int | None,
+    expected: int,
 ) -> None:
     """The routine 10:45 catch-up after a green 08:15: a 502 on its first
     attempt landed nothing, because the stored partition began hours earlier
@@ -881,6 +884,8 @@ def test_a_transient_failure_on_a_day_captured_earlier_is_green(
     code, app = _run_post(monkeypatch, [_response(502, "bad gateway"), again])
     assert code == expected
     assert [c for c, _ in app.posts].count("btc") == 2
+    earlier = "btc: an attempt failed after sending, but the day was captured by an earlier run"
+    assert (earlier in capsys.readouterr().out) is (expected == 0)
 
 
 # ---- round 3, test strength -------------------------------------------------------------
@@ -909,7 +914,7 @@ def test_exhausted_429s_say_rate_limited_not_landed(
 ) -> None:
     _run_post(monkeypatch, [_response(429, {})] * 4)
     err = capsys.readouterr().err
-    assert "btc: rate-limited: retries exhausted" in err
+    assert "btc: rate-limited: retries exhausted (a 429 lands nothing;" in err
     assert "may have landed;" not in err
     assert "app rejected the book" not in err
 
@@ -954,3 +959,24 @@ def test_describe_prefers_the_explicit_cause_over_the_context() -> None:
     except requests.ConnectionError as outer:
         text = deribit_snapshot.describe(outer)
     assert text == "ConnectionError: outer <- ConnectionRefusedError: the cause"
+
+
+def test_exhausted_429s_back_off_on_the_same_schedule(
+    monkeypatch: pytest.MonkeyPatch, sleeps: list[float]
+) -> None:
+    _run_post(monkeypatch, [_response(429, {})] * 4)
+    assert sleeps == [15, 60, 180]
+
+
+def test_a_local_catch_up_on_a_captured_day_is_green(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """--local has no retries, so nothing it sends "may have landed": a second
+    run on a captured day is a plain no-op, not the landed-attempt alarm."""
+    _local_lake(monkeypatch, tmp_path)
+    _fetch_from(monkeypatch, _clean_books())
+    assert deribit_snapshot.main(["--local"]) == 0
+    later = CREATED_MS + 120_000
+    _fetch_from(monkeypatch, {c: raw_book(c, 120, created_ms=later) for c in BOOKS})
+    monkeypatch.setattr(deribit_snapshot, "_utcnow", lambda: NOW + dt.timedelta(minutes=2))
+    assert deribit_snapshot.main(["--local"]) == 0

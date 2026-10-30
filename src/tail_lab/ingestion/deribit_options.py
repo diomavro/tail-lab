@@ -28,7 +28,6 @@ from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from typing import Final, NamedTuple, cast
 
-import duckdb
 import requests
 
 from tail_lab.contracts.deribit_options import (
@@ -44,7 +43,6 @@ from tail_lab.contracts.deribit_options import (
     check_book_rows,
     check_instrument_rows,
     deribit_frame,
-    earliest_observed_ms,
     plan_deribit_write,
     prepare_quarantine,
     quarantine_log_records,
@@ -53,7 +51,7 @@ from tail_lab.contracts.deribit_options import (
 from tail_lab.ingestion.json_payload import json_object
 from tail_lab.ingestion.sources import is_transient_fetch_error, retry_transient
 from tail_lab.lake.blob_store import BlobStore, QuarantineWrite, commit_then_quarantine
-from tail_lab.lake.store import LAKE_READ_ERRORS, LakeStore
+from tail_lab.lake.store import LakeStore, earliest_in_partition_ms
 from tail_lab.observability import log_event
 
 __all__ = [
@@ -247,30 +245,6 @@ class DeribitIngestResult:
     instruments_dropped: int
 
 
-#: A lake read fault (DuckDB's own included), or no such partition/column.
-_CAPTURED_READ_ERRORS: tuple[type[Exception], ...] = (*LAKE_READ_ERRORS, LookupError, duckdb.Error)
-
-
-def _captured_observed_at_ms(store: LakeStore, dataset: str, day: dt.date) -> int | None:
-    """The stored partition D's earliest ``observed_at`` (ms), so the script
-    can tell its own landed attempt from an earlier run's capture.
-
-    Read through ``bronze_relation_as_of``, whose resolution is uncached and,
-    with D known to exist, names D itself -- not through the as-of read
-    cache, which could hand back a resolution made before D landed. A failed
-    read is ``None``: the script then assumes the worst (red); it does not
-    turn a green no-op into a 500."""
-    try:
-        relation = store.bronze_relation_as_of(dataset, day)
-        first = store.query(f"SELECT MIN(observed_at) AS first FROM {relation}")["first"]
-        return earliest_observed_ms(first)
-    except _CAPTURED_READ_ERRORS:
-        _LOGGER.exception(
-            "event=ingestion.deribit_options.captured_read_failed dataset=%s", dataset
-        )
-        return None
-
-
 def _quarantine_write(parts: QuarantineParts | None) -> QuarantineWrite | None:
     """The capture's quarantine with this writer's log event bound."""
     if parts is None:
@@ -369,7 +343,13 @@ def ingest_deribit_options(
         previous_partition_exists=plan.previous_partition_exists,
         quarantine_share=plan.quarantine_share,
         captured_observed_at_ms=(
-            _captured_observed_at_ms(store, book.dataset, plan.snapshot_date)
+            earliest_in_partition_ms(
+                store,
+                book.dataset,
+                plan.snapshot_date,
+                "observed_at",
+                event="ingestion.deribit_options.captured_read_failed",
+            )
             if plan.already_captured
             else None
         ),

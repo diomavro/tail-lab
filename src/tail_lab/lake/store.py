@@ -28,6 +28,7 @@ from __future__ import annotations
 
 import datetime as dt
 import hashlib
+import logging
 import time
 from abc import ABC, abstractmethod
 from collections import OrderedDict
@@ -620,3 +621,33 @@ class DeltaLakeStore(LakeStore):
                 _strip_scheme(self._storage_options["AWS_ENDPOINT_URL"]),
             ],
         )
+
+
+#: What :func:`earliest_in_partition_ms` survives: a lake read fault (DuckDB's
+#: own included), or no such partition or column.
+PARTITION_READ_ERRORS: tuple[type[Exception], ...] = (*LAKE_READ_ERRORS, LookupError, duckdb.Error)
+
+_PARTITION_LOGGER = logging.getLogger(__name__)
+
+
+def earliest_in_partition_ms(
+    store: LakeStore, dataset: str, ingest_date: dt.date, column: str, *, event: str
+) -> int | None:
+    """The earliest ``column`` timestamp in bronze partition ``ingest_date``,
+    as epoch milliseconds; ``None`` (logged as ``event``) if it cannot be read.
+
+    Through :meth:`LakeStore.bronze_relation_as_of`, whose resolution is
+    uncached -- not the as-of read cache, which could hand back a resolution
+    made before the partition landed. The caller must already know the
+    partition exists, so "as of ``ingest_date``" names it exactly. The Deribit
+    writers use it to tell their own landed capture from an earlier run's
+    (``docs/adr/0032``); a failed read must not turn their green no-op into a
+    500, so it is logged and answered ``None``.
+    """
+    try:
+        relation = store.bronze_relation_as_of(dataset, ingest_date)
+        first = store.query(f"SELECT MIN({column}) AS first FROM {relation}")["first"].iloc[0]
+        return int(pd.Timestamp(first).value // 1_000_000)
+    except PARTITION_READ_ERRORS:
+        _PARTITION_LOGGER.exception("event=%s dataset=%s", event, dataset)
+        return None

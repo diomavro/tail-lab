@@ -642,6 +642,9 @@ def test_only_the_write_path_imports_the_deribit_contract() -> None:
         "tail_lab.api.schemas",
     }
     assert route_importers == {"tail_lab.api.main"}
+    # An ingestion sibling could otherwise reach DERIBIT_BOOKS through the
+    # adapter (ingestion is outside the import-linter contract's sources).
+    assert graph.find_modules_that_directly_import("tail_lab.ingestion.deribit_options") == set()
 
 
 def test_already_captured_reports_the_stored_capture_s_earliest_observation(
@@ -655,18 +658,32 @@ def test_already_captured_reports_the_stored_capture_s_earliest_observation(
     assert again["captured_observed_at_ms"] == CREATED_MS - 600_007
 
 
+@pytest.mark.parametrize("fault", [OSError("read failed"), KeyError("observed_at")])
 def test_a_failed_capture_read_is_none_not_a_500(
-    client: TestClient, lake: Lake, monkeypatch: pytest.MonkeyPatch
+    client: TestClient,
+    lake: Lake,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+    fault: Exception,
 ) -> None:
+    """A lake fault, or a partition without the column (``LookupError``):
+    either way the answer stays a 200 with nothing claimed, and the cause is
+    logged."""
     assert post(client, "BTC", body(records(20)))["committed"] is True
 
     def broken(*_a: object) -> object:
-        raise OSError("read failed")
+        raise fault
 
     monkeypatch.setattr(lake.store, "query", broken)
-    again = post(client, "BTC", body(records(20)))
+    with caplog.at_level(logging.INFO):
+        again = post(client, "BTC", body(records(20)))
     assert (again["status"], again["already_captured"]) == (200, True)
     assert again["captured_observed_at_ms"] is None
+    assert any(
+        "event=api.ingest.deribit_options.captured_read_failed dataset=deribit_options_btc"
+        in r.getMessage()
+        for r in caplog.records
+    )
 
 
 def test_a_landed_attempt_whose_earliest_rows_were_quarantined_is_still_its_own(

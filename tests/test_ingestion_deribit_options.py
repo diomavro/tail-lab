@@ -587,3 +587,52 @@ def test_the_local_capture_read_ignores_a_stale_as_of_resolution(
     fake_fetch(monkeypatch, {"BTC": raw_book("BTC", 50)})
     assert _ingest(lake).committed
     assert _ingest(lake).captured_observed_at_ms == CREATED_MS
+
+
+@pytest.mark.parametrize("fault", [OSError("read failed"), KeyError("observed_at")])
+def test_a_failed_capture_read_under_local_is_none_and_logged(
+    monkeypatch: pytest.MonkeyPatch,
+    lake: Lake,
+    caplog: pytest.LogCaptureFixture,
+    fault: Exception,
+) -> None:
+    store, _, _ = lake
+    fake_fetch(monkeypatch, {"BTC": raw_book("BTC", 50)})
+    assert _ingest(lake).committed
+
+    def broken(*_a: object) -> object:
+        raise fault
+
+    monkeypatch.setattr(store, "query", broken)
+    with caplog.at_level(logging.INFO):
+        again = _ingest(lake)
+    assert again.already_captured
+    assert again.captured_observed_at_ms is None
+    assert any(
+        "event=ingestion.deribit_options.captured_read_failed dataset=deribit_options_btc"
+        in r.getMessage()
+        for r in caplog.records
+    )
+
+
+def test_fetch_book_uses_the_budgeted_retry_and_timeout(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The stale-bound budget test reads these constants; this proves the
+    fetch actually uses them."""
+    retries: list[tuple[int, float]] = []
+    timeouts: list[object] = []
+    real = ingestion.retry_transient
+
+    def spy_retry(call: Callable[[], object], **kwargs: object) -> object:
+        retries.append((kwargs["attempts"], kwargs["backoff_s"]))  # type: ignore[arg-type]
+        return real(call, **kwargs)  # type: ignore[arg-type]
+
+    def get(_url: str, **kwargs: object) -> requests.Response:
+        timeouts.append(kwargs["timeout"])
+        return _ok([{"instrument_name": "x"}])
+
+    monkeypatch.setattr(ingestion, "retry_transient", spy_retry)
+    monkeypatch.setattr(ingestion.requests, "get", get)
+    ingestion.fetch_book("BTC")
+    budget = (ingestion._FETCH_ATTEMPTS, ingestion._FETCH_BACKOFF_S)
+    assert retries == [budget, budget]
+    assert timeouts == [ingestion._TIMEOUT_S, ingestion._TIMEOUT_S]
