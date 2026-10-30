@@ -12,10 +12,10 @@ local-vs-Tigris selection made once in ``tail_lab.config``, just via
 ``pyarrow.fs`` instead of delta-rs/DuckDB since there is no Delta table
 here.
 
-It also holds the Deribit writers' quarantine path (``docs/adr/0032``):
-:func:`commit_then_quarantine` writes a book's dataset first and then its
-per-capture quarantine blob through :func:`write_quarantine`, so the route
-and ``--local`` cannot drift on that order.
+It also holds a quarantine path for writers that keep their bad rows as
+blobs: :func:`commit_then_quarantine` writes the dataset first and then the
+quarantine blob through :func:`write_quarantine`, so every caller gets the
+same order.
 """
 
 from __future__ import annotations
@@ -122,7 +122,7 @@ def write_quarantine(
     """Write a quarantine blob, best-effort but never silent; return whether
     it was written.
 
-    The ONE helper both Deribit writers (the route and ``--local``) call
+    One helper for every writer that keeps its quarantine as a blob, called
     after the dataset write. On exactly :data:`LAKE_WRITE_ERRORS` it calls
     ``on_error(exc)`` once -- each caller logs the cause, so the fallback
     never hides why -- and then ``log(line)`` for every prebuilt line, one
@@ -171,8 +171,8 @@ def commit_then_quarantine(
     A dataset write that raises may still have landed (delta-rs finding its
     own commit, or a failed post-commit checkpoint), and a retry would then
     answer "already captured" -- so the quarantine is attempted BEFORE the
-    dataset's error propagates, and it is that error that propagates. Shared
-    by both Deribit writers so the order cannot drift between them.
+    dataset's error propagates, and it is that error that propagates. Shared,
+    so the order cannot drift between writers.
     """
     bronze_path = None
     if not valid.empty:

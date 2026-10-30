@@ -17,7 +17,8 @@ fifth call-signed, quarantined whole as misrouted (ADR 0031 §5).
 Amended by `docs/adr/0032`: Deribit's crypto option books are forward-collected
 too, under their own rules (three per-book datasets, a third write endpoint,
 JSON-blob quarantine). This ADR's decisions still govern the Cboe chain (its
-§6 "every other scheduled job" no longer holds; see 0032 Departures).
+§6 "every other scheduled job" and Consequences' "the one red build" no
+longer hold; see 0032 Departures).
 
 ## Context
 

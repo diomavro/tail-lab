@@ -636,7 +636,9 @@ def test_a_landed_retry_is_red_because_its_quarantine_is_unknown(
     """The landed attempt's answer was lost: whether it quarantined over 1% or
     failed its blob write is unknown, and the catch-up will only ever answer
     "already captured". So red, pointing at where to look."""
-    landed = _ok("BTC", committed=False, already_captured=True, rows=0)
+    landed = _ok(
+        "BTC", committed=False, already_captured=True, rows=0, captured_observed_at_ms=CREATED_MS
+    )
     code, app = _run_post(monkeypatch, [_500(), landed])
     assert code == 1
     assert [c for c, _ in app.posts].count("btc") == 2
@@ -857,6 +859,7 @@ def test_the_marker_counts_only_at_the_start_of_the_detail() -> None:
         (CREATED_MS, 1),
         (CREATED_MS + 19, 1),
         (CREATED_MS + 61, 1),
+        (CREATED_MS + 62, 0),
         (None, 1),
     ],
     ids=[
@@ -865,6 +868,7 @@ def test_the_marker_counts_only_at_the_start_of_the_detail() -> None:
         "own-attempt-landed-at-its-minimum",
         "own-attempt-landed-inside-its-spread",
         "own-attempt-landed-at-its-maximum",
+        "captured-after-this-fetch",
         "older-app-says-nothing",
     ],
 )
@@ -980,3 +984,17 @@ def test_a_local_catch_up_on_a_captured_day_is_green(
     _fetch_from(monkeypatch, {c: raw_book(c, 120, created_ms=later) for c in BOOKS})
     monkeypatch.setattr(deribit_snapshot, "_utcnow", lambda: NOW + dt.timedelta(minutes=2))
     assert deribit_snapshot.main(["--local"]) == 0
+
+
+def test_an_unknown_capture_says_the_app_could_not_tell(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Still red -- it may be this run's -- but it says why it cannot tell,
+    rather than claiming an attempt landed."""
+    landed = _ok("BTC", committed=False, already_captured=True, rows=0)
+    code, _ = _run_post(monkeypatch, [_500(), landed])
+    assert code == 1
+    err = capsys.readouterr().err
+    assert "btc: the app could not say which run captured this day" in err
+    assert "captured_read_failed" in err
+    assert "landed attempt are unknown" not in err

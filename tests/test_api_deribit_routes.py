@@ -680,8 +680,8 @@ def test_a_failed_capture_read_is_none_not_a_500(
     assert (again["status"], again["already_captured"]) == (200, True)
     assert again["captured_observed_at_ms"] is None
     assert any(
-        "event=api.ingest.deribit_options.captured_read_failed dataset=deribit_options_btc"
-        in r.getMessage()
+        "event=api.ingest.deribit_options.captured_read_failed dataset=deribit_options_btc "
+        "ingest_date=2026-10-30" in r.getMessage()
         for r in caplog.records
     )
 
@@ -727,3 +727,17 @@ def test_the_capture_read_ignores_a_stale_as_of_resolution(
     assert post(client, "BTC", body(records(20)))["committed"] is True
     again = post(client, "BTC", body(records(20)))
     assert again["captured_observed_at_ms"] == CREATED_MS
+
+
+def test_the_blob_records_the_capture_s_observation_range(client: TestClient, lake: Lake) -> None:
+    """A stored partition belongs to this capture when its earliest
+    observation falls inside [observed_at, observed_max_ms] -- the same range
+    test the script runs, since quarantined earliest rows can push the
+    partition's start a few ms later than the blob's observed_at."""
+    book, instruments = raw_book("BTC", 200)
+    book[0]["mark_price"] = -1.0
+    out = post(client, "BTC", deribit_snapshot.book_body(to_records(book, instruments)))
+    blob = lake.blobs.read_json(str(out["quarantine_key"]))
+    stamps = [int(r["creation_timestamp"]) for r in book]
+    assert blob["observed_max_ms"] == max(stamps)
+    assert blob["observed_at"] == pd.Timestamp(min(stamps), unit="ms").isoformat()

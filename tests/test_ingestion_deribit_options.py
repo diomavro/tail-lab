@@ -636,3 +636,16 @@ def test_fetch_book_uses_the_budgeted_retry_and_timeout(monkeypatch: pytest.Monk
     budget = (ingestion._FETCH_ATTEMPTS, ingestion._FETCH_BACKOFF_S)
     assert retries == [budget, budget]
     assert timeouts == [ingestion._TIMEOUT_S, ingestion._TIMEOUT_S]
+
+
+def test_the_local_blob_records_the_capture_s_observation_range(
+    monkeypatch: pytest.MonkeyPatch, lake: Lake
+) -> None:
+    _, blobs, _ = lake
+    book, instruments = raw_book("BTC", 200)
+    book[0]["mark_price"] = -1.0
+    fake_fetch(monkeypatch, {"BTC": (book, instruments)})
+    result = _ingest(lake)
+    assert result.quarantine_key is not None
+    blob = blobs.read_json(result.quarantine_key)
+    assert blob["observed_max_ms"] == max(int(r["creation_timestamp"]) for r in book)

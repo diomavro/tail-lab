@@ -117,19 +117,22 @@ payload checks that run before the plan:
 - **Rule 8 -- previous day:** each answer says whether D - 1 exists (null
   before a book's first partition), and the script exits 1 when D - 1 is
   missing on a committed or may-have-landed answer: that is the red signal
-  for a lost previous session. An "already captured" answer to a retry whose
-  earlier attempt may have landed is red as well, because that attempt's
-  quarantine share and blob status are unknown -- but only when the stored
-  partition is this body's own capture. The answer carries
-  `captured_observed_at_ms`, the stored partition's earliest observation.
-  Inside the body's own range of `creation_timestamp_ms` (a live book spans
-  17-89 ms), it is this run's capture -- not necessarily at the body's
-  minimum, since every row at that millisecond may have been quarantined or
-  dropped as expired. Outside it, an earlier run captured the day (the
-  routine 10:45 catch-up after a green 08:15; an earlier fetch is minutes to
-  hours earlier, so the ranges never overlap), the failed attempt landed
-  nothing, and the answer is a green no-op. When the app does not say (an
-  older app, a failed read), it stays red.
+  for a lost previous session.
+  - **May have landed.** An "already captured" answer to a retry whose
+    earlier attempt failed after sending is red as well, because that
+    attempt's quarantine share and blob status are unknown -- but only when
+    the stored partition is this body's own capture.
+  - **Telling the runs apart.** The answer carries `captured_observed_at_ms`,
+    the stored partition's earliest observation. Inside the body's own range
+    of `creation_timestamp_ms` (a live book spans 17-89 ms), it is this run's
+    capture -- not necessarily at the body's minimum, since every row at that
+    millisecond may have been quarantined or dropped as expired.
+  - **Another run's capture.** Outside that range, another run captured the
+    day (the routine 10:45 catch-up after a green 08:15; fetches are minutes
+    to hours apart, so the ranges never overlap). The failed attempt landed
+    nothing, and the answer is a green no-op.
+  - **Unknown.** When the app does not say (an older app, a failed read),
+    the script says it cannot tell and stays red.
 
 ### 4. The quarantine is per-capture JSON, not a Delta table
 

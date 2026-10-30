@@ -1239,32 +1239,37 @@ NOT enforce this; the first reader adds a test for it (`AGENT_TODO.md`).
 ### Write rules
 
 `contracts/deribit_options.plan_deribit_write`, shared by the route and
-`--local`; `docs/adr/0032` §3 lists them in order. In short: stale, future,
-wrong-book, too-early (425), empty (422) and incomplete-coverage bodies are
-refused and write nothing; an already-captured day is a green no-op; expired
-rows are dropped and counted; bad rows are quarantined and the rest
-committed, and the script exits 1 above a 1% quarantine share. A row whose
-instrument expiry disagrees with the date its name spells is quarantined
-`unparseable_expiry`, never dropped as expired. Each answer says whether
-D - 1 exists, and the script exits 1 when D - 1 is missing on a committed or
-may-have-landed answer: that is the red signal for a lost previous session.
-`previous_partition_exists` is null before a book's first partition. An
-"already captured" answer to a retry whose earlier attempt may have landed is
-red too, when the stored partition is this body's own capture: that
-attempt's quarantine share and blob status are unknown, so the script names
-`ops/quarantine/<dataset>/<D>/` and the app log's `quarantine_unwritten`
-event. The answer's `captured_observed_at_ms` (the stored partition's
-earliest observation) tells the two apart: inside the body's own range of
-`creation_timestamp_ms` it is this run's capture (not necessarily at the
-body's minimum, whose rows may all have been quarantined or expired);
-outside it, an earlier run captured the day and the answer is a green no-op;
-when it is missing, the script assumes the worst.
-Either payload (book or instruments) that is not a list, or a book row
-without a string `instrument_name` or an integer `creation_timestamp`, fails
-the whole book (`DeribitApiError`). A malformed instruments row (not an
-object, or no string name) is dropped and counted (`instruments_dropped`):
-it leaves `listed`, and the book row it would have joined is quarantined.
-Every other field fault costs only its row.
+`--local`; `docs/adr/0032` §3 lists them in order.
+
+- **Refusals** (nothing written): stale, future, wrong-book, too-early
+  (425), empty (422) and incomplete-coverage bodies.
+- **No-op:** an already-captured day answers green and writes nothing.
+- **Quarantine:** expired rows are dropped and counted; bad rows are
+  quarantined and the rest committed, and the script exits 1 above a 1%
+  quarantine share. A row whose instrument expiry disagrees with the date its
+  name spells is quarantined `unparseable_expiry`, never dropped as expired.
+- **Previous day:** each answer says whether D - 1 exists
+  (`previous_partition_exists`, null before a book's first partition). The
+  script exits 1 when D - 1 is missing on a committed or may-have-landed
+  answer: that is the red signal for a lost previous session.
+- **May have landed:** an "already captured" answer to a retry whose earlier
+  attempt failed after sending is red when the stored partition is this
+  body's own capture, because that attempt's quarantine share and blob status
+  are unknown; the script names `ops/quarantine/<dataset>/<D>/` and the app
+  log's `quarantine_unwritten` event. The answer's `captured_observed_at_ms`
+  (the stored partition's earliest observation) tells the cases apart:
+  - inside the body's own range of `creation_timestamp_ms`, it is this run's
+    capture (not necessarily at the body's minimum, whose rows may all have
+    been quarantined or expired);
+  - outside it, another run captured the day, and the answer is a green no-op;
+  - missing (an older app, or `captured_read_failed`), the script says it
+    cannot tell and stays red.
+- **Payload faults:** either payload (book or instruments) that is not a
+  list, or a book row without a string `instrument_name` or an integer
+  `creation_timestamp`, fails the whole book (`DeribitApiError`). A malformed
+  instruments row (not an object, or no string name) is dropped and counted
+  (`instruments_dropped`): it leaves `listed`, and the book row it would have
+  joined is quarantined. Every other field fault costs only its row.
 
 ### Quarantine — per-capture JSON blobs
 
@@ -1274,10 +1279,12 @@ through `lake/blob_store.BlobStore`, on the lake's root and credentials:
 - **Key:** `ops/quarantine/<dataset>/<snapshot_date>/<earliest observed_at ms>.json`.
   A second capture of the same day gets its own key; a same-body retry
   rewrites the same key with the same content.
-- **Content:** `{"dataset", "snapshot_date", "observed_at", "code_sha",
-  "rows": [{"instrument_name", "reason", "payload"}]}`. `payload` is the
-  row's wire dict (`DeribitRecord`), as validated by the wire model
-  `DeribitOptionRow`.
+- **Content:** `{"dataset", "snapshot_date", "observed_at",
+  "observed_max_ms", "code_sha", "rows": [{"instrument_name", "reason",
+  "payload"}]}`. `observed_at` is the capture's earliest observation and
+  `observed_max_ms` its latest (ms). `payload` is the row's wire dict
+  (`DeribitRecord`): as validated by `DeribitOptionRow` on the route; under
+  `--local`, as `to_records` built it.
 - **`reason`:** one of the write plan's own reasons, in precedence order
   `invalid_value` > `wrong_book` > `unparseable_expiry`, or else the first
   failing column check as `"<column>:<check>"` (e.g. `strike:not_nullable`),
@@ -1288,8 +1295,11 @@ through `lake/blob_store.BlobStore`, on the lake's root and credentials:
   `"right='PUT'"`).
 - **A blob records a capture's quarantine, not that its partition landed.**
   The dataset is written first, but a blob can exist for a capture whose
-  dataset write failed, or whose rows were all quarantined. Join on
-  `observed_at` to tell.
+  dataset write failed, or whose rows were all quarantined. The partition
+  belongs to this capture when its `MIN(observed_at)` falls within the blob's
+  `[observed_at, observed_max_ms]` -- the same range test the script uses.
+  Do not join on `observed_at` alone: when the capture's earliest rows were
+  quarantined, the partition starts a few ms later than the blob.
 
 **When the blob write fails** the rows are logged instead, one line per row:
 

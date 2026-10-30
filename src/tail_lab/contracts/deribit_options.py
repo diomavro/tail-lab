@@ -29,8 +29,9 @@ the first reader adds a test in the style of ``test_point_in_time_clock.py``
 **Two writers, one rulebook.** The scheduled path POSTs to
 ``api/deribit_routes`` and the human path (``--local``) writes directly; both
 build the frame with :func:`deribit_frame`, decide with
-:func:`plan_deribit_write`, and persist bad rows through
-:func:`quarantine_document`. Two writers disagreeing about what a bad row
+:func:`plan_deribit_write`, build the quarantine with
+:func:`prepare_quarantine`, and persist it through
+``lake.blob_store.commit_then_quarantine``. Two writers disagreeing about what a bad row
 costs is how a session gets lost (``contracts/option_chain``).
 
 ``mark`` is Deribit's model value and **never a market price** -- the same
@@ -66,7 +67,6 @@ __all__ = [
     "check_book_rows",
     "check_instrument_rows",
     "deribit_frame",
-    "earliest_observed_ms",
     "name_expiry",
     "plan_deribit_write",
     "prepare_quarantine",
@@ -498,6 +498,10 @@ class DeribitWritePlan:
     observed_at_ms: int
     #: Rows left after the expiry drop -- the quarantine share's denominator.
     live_rows: int
+    #: The capture's latest ``observed_at``, in ms: with ``observed_at_ms``,
+    #: the range a stored partition's earliest observation must fall in to be
+    #: THIS capture (its earliest rows may have been quarantined or expired).
+    observed_max_ms: int
 
     @property
     def quarantine_share(self) -> float | None:
@@ -507,11 +511,14 @@ class DeribitWritePlan:
         return len(self.quarantined) / self.live_rows
 
 
+def _to_ms(stamp: object) -> int:
+    return int(pd.Timestamp(stamp).value // 1_000_000)  # type: ignore[arg-type]
+
+
 def earliest_observed_ms(observed: pd.Series[pd.Timestamp]) -> int:
-    """A capture's earliest ``observed_at`` as Deribit's integer ms -- the
-    quarantine key's leaf, and how a writer tells whether a stored partition
-    is THIS body's capture (``captured_observed_at_ms``) or an earlier run's."""
-    return int(pd.Timestamp(observed.min()).value // 1_000_000)
+    """A capture's earliest ``observed_at`` as integer ms: the quarantine
+    key's leaf."""
+    return _to_ms(observed.min())
 
 
 def name_expiry(name: str) -> pd.Timestamp | None:
@@ -674,8 +681,11 @@ def plan_deribit_write(
     previous = partition_exists(day - dt.timedelta(days=1)) if has_earlier_partition(day) else None
     empty = frame.iloc[0:0]
     observed_ms = earliest_observed_ms(frame["observed_at"])
+    observed_max_ms = _to_ms(frame["observed_at"].max())
     if partition_exists(day):
-        return DeribitWritePlan(empty, empty, day, True, 0, previous, observed_ms, 0)
+        return DeribitWritePlan(
+            empty, empty, day, True, 0, previous, observed_ms, 0, observed_max_ms
+        )
     if oldest.time() < EARLIEST_CAPTURE:
         raise DeribitRefusal(425, f"too early: observed {oldest}, re-run after 08:05 UTC")
     dated = _with_expiry(frame)
@@ -686,7 +696,15 @@ def plan_deribit_write(
     _check_coverage(live, listed, oldest)
     valid, quarantined = _split(live, currency, day)
     return DeribitWritePlan(
-        valid, quarantined, day, False, int(expired.sum()), previous, observed_ms, len(live)
+        valid,
+        quarantined,
+        day,
+        False,
+        int(expired.sum()),
+        previous,
+        observed_ms,
+        len(live),
+        observed_max_ms,
     )
 
 
@@ -714,6 +732,7 @@ def quarantine_document(
         "dataset": dataset,
         "snapshot_date": plan.snapshot_date.isoformat(),
         "observed_at": observed.isoformat(),
+        "observed_max_ms": plan.observed_max_ms,
         "code_sha": code_sha,
         "rows": [
             {"instrument_name": str(name), "reason": str(reason), "payload": dict(records[i])}

@@ -120,10 +120,10 @@ class LakeStore(ABC):
         """Every bronze partition date of ``dataset``, sorted; ``[]`` when the
         table does not exist. Uncached, like :meth:`bronze_partition_exists`.
 
-        Exists for the forward collections that must notice a MISSING day
-        (``api/deribit_routes``): "is there an earlier partition" and "how
-        many partitions, first to last" are not answerable through as-of
-        resolution, which only ever names the latest one."""
+        Exists for callers that must notice a MISSING day: "is there an
+        earlier partition" and "how many partitions, first to last" are not
+        answerable through as-of resolution, which only ever names the latest
+        one."""
 
     @abstractmethod
     def read_bronze_as_of(self, dataset: str, as_of: dt.date) -> pd.DataFrame:
@@ -639,15 +639,16 @@ def earliest_in_partition_ms(
     Through :meth:`LakeStore.bronze_relation_as_of`, whose resolution is
     uncached -- not the as-of read cache, which could hand back a resolution
     made before the partition landed. The caller must already know the
-    partition exists, so "as of ``ingest_date``" names it exactly. The Deribit
-    writers use it to tell their own landed capture from an earlier run's
-    (``docs/adr/0032``); a failed read must not turn their green no-op into a
-    500, so it is logged and answered ``None``.
+    partition exists, so "as of ``ingest_date``" names it exactly. A failed
+    read is logged and answered ``None`` rather than raised: it is meant for
+    a caller that can carry on without the answer.
     """
     try:
         relation = store.bronze_relation_as_of(dataset, ingest_date)
         first = store.query(f"SELECT MIN({column}) AS first FROM {relation}")["first"].iloc[0]
         return int(pd.Timestamp(first).value // 1_000_000)
     except PARTITION_READ_ERRORS:
-        _PARTITION_LOGGER.exception("event=%s dataset=%s", event, dataset)
+        _PARTITION_LOGGER.exception(
+            "event=%s dataset=%s ingest_date=%s", event, dataset, ingest_date.isoformat()
+        )
         return None

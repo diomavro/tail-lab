@@ -2607,8 +2607,8 @@ datasets (marked **Blocked**); the collection-side items are not blocked.
       false).
 - [ ] **Doc accuracy, agent-doable part:** the same "not for free" correction
       in unguarded files: `docs/DATA_CONTRACTS.md` §6,
-      `scripts/chain_snapshot.py:128`, `src/tail_lab/ingestion/option_chain.py:12`,
-      `tests/test_scripts_chain_snapshot_retry.py:3`,
+      `scripts/chain_snapshot.py:129`, `src/tail_lab/ingestion/option_chain.py:15`,
+      `tests/test_scripts_chain_snapshot_retry.py:4`,
       `tests/test_scripts_chain_sweep_verify.py:3` and `docs/PRIOR_ART.md:721`.
 - [ ] **Deribit trade history as a backfill dataset.** `history.deribit.com`
       serves trades from 2016-11-29, keyless; unlike the book snapshots it is

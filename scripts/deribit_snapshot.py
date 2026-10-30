@@ -151,6 +151,15 @@ def _report(label: str, answer: _Answer, *, may_have_landed: bool) -> bool:
             else "NO-OP: already captured, wrote nothing"
         )
         print(f"{label}: {how}: snapshot {answer.snapshot_date}")
+        if may_have_landed and answer.captured_observed_at_ms is None:
+            print(
+                f"::error::{label}: the app could not say which run captured this day (see "
+                "captured_read_failed in the app log); treating it as this run's, whose "
+                f"quarantine is unknown -- check ops/quarantine/{answer.dataset}/"
+                f"{answer.snapshot_date}/",
+                file=sys.stderr,
+            )
+            return False
         if may_have_landed:
             # Red, not a warning: the landed attempt's response was lost, so
             # whether it quarantined over 1% or failed its blob write is

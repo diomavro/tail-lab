@@ -219,8 +219,9 @@ forbidden_modules = [
 #   the contract by any import chain, except through the write route and its
 #   request/response models (api.schemas);
 # - and (a grimp test, tests/test_api_deribit_routes.py::
-#   test_only_the_write_path_imports_the_deribit_contract) only the three
-#   named modules import the contract directly, and only api.main imports the
+#   test_only_the_write_path_imports_the_deribit_contract) only
+#   ingestion.deribit_options, api.deribit_routes and api.schemas import the
+#   contract directly, and only api.main imports the
 #   route. import-linter skips a forbidden module inside a source package,
 #   so it cannot check that second part itself.
 #
