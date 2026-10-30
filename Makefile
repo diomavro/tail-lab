@@ -11,7 +11,7 @@ VENV := .venv
 PY := env -u PYTHONPATH $(VENV)/bin/python
 PIP := env -u PYTHONPATH $(VENV)/bin/pip
 
-.PHONY: setup lint format typecheck import-lint test check cov-floors ingest-vix ingest-vix-complex ingest-ohlcv ingest-cboe-strategy ingest-rates ingest-tiingo-eod ingest-credit ingest-event-calendar ingest-option-quotes residual skew tail-alpha api frontend clean ingest-mpd ingest-options-expiry ingest-sp500-constituents ingest-vix-futures ingest-kaggle-spy kaggle-spy-vs-optionsdx delta-strike-gap pitch-evidence pitch-evidence-current
+.PHONY: setup lint format typecheck import-lint test check cov-floors ingest-vix ingest-vix-complex ingest-ohlcv ingest-cboe-strategy ingest-rates ingest-tiingo-eod ingest-credit ingest-event-calendar ingest-option-quotes residual skew tail-alpha api frontend clean ingest-mpd ingest-options-expiry ingest-sp500-constituents ingest-vix-futures ingest-kaggle-spy kaggle-spy-vs-optionsdx delta-strike-gap pitch-evidence pitch-evidence-current ingest-deribit
 
 help:
 	@echo "Targets:"
@@ -35,6 +35,7 @@ help:
 	@echo "  ingest-mpd   Live Minneapolis Fed MPD fetch -> bronze, whole market family (network; not run in CI)"
 	@echo "  ingest-vix-futures  Live VX futures term structure fetch -> bronze (keyless; network; not run in CI)"
 	@echo "  ingest-option-chain  TODAY's put + call wings from Cboe -> bronze (CHAIN_SYMBOLS=... ; network; UNRECOVERABLE if skipped)"
+	@echo "  ingest-deribit  TODAY's BTC, ETH and USDC option books from Deribit -> bronze (network; never overlap the 08:15 cron against production; docs/adr/0032)"
 	@echo "  greeks-check Score our greeks vs the exchange's own (read-only; needs a chain snapshot)"
 	@echo "  ingest-optionsdx  Hand-downloaded optionsDX chains -> bronze (OPTIONSDX_SYMBOL=vix; local corpus, no network)"
 	@echo "  ingest-kaggle-spy  Hand-downloaded Kaggle SPY year -> data/vendor parquet (YEAR=2023; OFFLINE cross-check, never served)"
@@ -150,6 +151,12 @@ ingest-tiingo-eod:
 CHAIN_SYMBOLS ?=
 ingest-option-chain:
 	env -u PYTHONPATH $(VENV)/bin/python scripts/chain_snapshot.py --local $(if $(CHAIN_SYMBOLS),--symbols $(CHAIN_SYMBOLS),)
+
+# Deribit's three option books, keyless (docs/adr/0032). Runs OUTSIDE the app
+# route's per-book lock, so against the production lake it must never overlap
+# the daily-deribit-snapshot.yml cron (08:15 / 10:45 UTC, often hours late).
+ingest-deribit:
+	env -u PYTHONPATH $(VENV)/bin/python scripts/deribit_snapshot.py --local
 
 # Read-only: scores our greeks against the exchange's own from the forward-
 # collected chain (docs/adr/0020). CI proves the pricer differentiates itself

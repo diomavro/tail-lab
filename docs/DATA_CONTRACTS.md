@@ -331,7 +331,7 @@ catch.
 ships, not what was planned — the plan below it differed in three ways and
 the deltas are recorded rather than quietly overwritten.
 
-**Purpose.** The one dataset here that cannot be backfilled. Nobody sells a
+**Purpose.** One of the datasets here that cannot be backfilled. Nobody sells a
 free retroactive option chain, so this accumulates forward from first run and
 a session not captured is lost at any price. It is a deposit against
 `docs/adr/0004`'s model-priced caveat: in a year it turns the model-vs-market
@@ -350,8 +350,8 @@ answers **401** without a cookie+crumb pair and is no longer viable.
 
 **Cadence.** Weekdays at 21:30 UTC, after the 16:00 ET close in both DST
 regimes (`.github/workflows/daily-chain-snapshot.yml`). An empty sweep exits
-non-zero and turns the workflow red: this is the one scheduled job here that
-may not legitimately do nothing.
+non-zero and turns the workflow red: this is one of the two scheduled jobs here
+(the other: §16) that may not legitimately do nothing.
 
 **The slice.** Puts (this dataset); calls go to
 `option_chain_call_snapshot`, `docs/adr/0031`. Strikes within 0.40-1.05 of
@@ -1158,3 +1158,121 @@ listing-cadence label `/api/putlab/cadence` serves; without a partition the
 route falls back to the static catalogue in `contracts/options_calendar.py`
 (`docs/DATA_FLOW.md` §3.1). This section was missing from this file until
 2026-10-10, though the dataset predates it.
+
+## 16. `deribit_options_<book>` — Deribit's crypto option books
+
+**Status: built 2026-10-30, read by nothing yet** (`docs/adr/0032`). Three
+datasets, one per Deribit book: `deribit_options_btc`, `deribit_options_eth`
+and `deribit_options_usdc`. They are named once, in
+`contracts/deribit_options.DERIBIT_BOOKS`, and share one strict schema
+(`DeribitOptionsSchema`).
+
+**Purpose.** A past order-book snapshot cannot be had for free (Tardis.dev
+sells them), so this accumulates forward from the first run. It sits outside
+the strategy universe.
+
+**Source (free, keyless).** Two public GETs per book, in this order:
+
+1. `https://www.deribit.com/api/v2/public/get_book_summary_by_currency?currency=<C>&kind=option`
+   -- the quotes;
+2. `.../get_instruments?currency=<C>&kind=option` -- strike, expiry, right
+   and contract terms.
+
+They are joined on `instrument_name`. `creation_timestamp`, `quote_currency`
+and `base_currency` come from the **book only**: an instruments row carries
+its own `creation_timestamp`, which is its listing time, days old.
+
+**Cadence.** Daily at 08:15 UTC, with a 10:45 UTC catch-up
+(`.github/workflows/daily-deribit-snapshot.yml`). Like §6, this job may not
+legitimately do nothing: an empty or refused book is red.
+
+**Freshness.** `GET /api/ingest/deribit-options/status` returns
+`books.<btc|eth|usdc>` with `first_snapshot_date`, `last_snapshot_date`,
+`stale_days`, `partitions` and `missing_days` (last - first + 1 -
+partitions; information only, a past gap cannot be filled).
+
+### Schema — `DeribitOptionsSchema`
+
+Keyed by `(snapshot_date, instrument_name)`. Timestamps are naive and mean
+UTC wall time.
+
+| column | type and rule | source |
+|---|---|---|
+| `snapshot_date` | date; the partition | UTC date of the capture's earliest `observed_at` |
+| `observed_at` | timestamp | book `creation_timestamp` (ms) |
+| `instrument_name` | str | book |
+| `underlying` | str | book `base_currency` |
+| `premium_currency` | str; must equal the book (enforced by the write plan, not the schema) | book `quote_currency` |
+| `expiration` | timestamp >= 2016-01-01 | instruments `expiration_timestamp`; else parsed from the name, at 08:00 |
+| `strike` | float > 0, in `strike_currency` | instruments |
+| `strike_currency` | str (USD for BTC/ETH, USDC for USDC) | instruments `counter_currency` |
+| `right` | `"P"` or `"C"` | instruments `option_type` (`put`/`call`) |
+| `contract_size`, `tick_size`, `min_trade_amount` | float > 0 | instruments |
+| `bid` | float >= 0, nullable: null means no resting bid, **not** zero | book `bid_price` |
+| `ask` | float > 0, nullable | book `ask_price` |
+| `mark` | float >= 0; Deribit's model value, **never a market price** | book `mark_price` |
+| `mark_iv` | float, 0 < x <= 10; a fraction (Deribit sends a percent) | book `mark_iv` / 100 |
+| `underlying_price` | float > 0; the forward each expiry is marked against | book |
+| `underlying_index` | str, e.g. `BTC-1NOV26`, `SOL_USDC-13NOV26` | book |
+| `index_price` | float > 0 | book `estimated_delivery_price` |
+| `interest_rate` | float (0.0 today) | book |
+| `open_interest`, `volume` | float >= 0, base-coin units | book |
+| `volume_usd` | float >= 0; 24-hour premium traded | book |
+
+**Units.** Inverse premiums (BTC and ETH books) are in coin; USD value is
+premium x `index_price`. USDC premiums are in USDC per base coin. Contract
+sizes: TRX 10,000, XRP 1,000, AVAX 100, SOL and HYPE 10, BTC and ETH 1.
+
+**Dropped:** `last`, `high`, `low`, `price_change`, `mid_price`,
+`volume_notional`. No moneyness or tenor band: the whole listed book is kept.
+
+### Point-in-time
+
+Partition D is knowable only from its `observed_at`, which can fall anywhere
+from 08:05 to 23:59:59 UTC. A reader deciding before that time must read
+`as_of = D - 1`, or filter on `observed_at`. The date-level as-of read does
+NOT enforce this; the first reader adds a test for it (`AGENT_TODO.md`).
+
+### Write rules
+
+`contracts/deribit_options.plan_deribit_write`, shared by the route and
+`--local`; `docs/adr/0032` §3 lists them in order. In short: stale, future,
+wrong-book, too-early (425), empty (422) and incomplete-coverage bodies are
+refused and write nothing; an already-captured day is a green no-op; expired
+rows are dropped and counted; bad rows are quarantined and the rest
+committed, and the script exits 1 above a 1% quarantine share.
+
+### Quarantine — per-capture JSON blobs
+
+Quarantined rows are NOT a Delta dataset. Each capture writes one blob
+through `lake/blob_store.BlobStore`, on the lake's root and credentials:
+
+- **Key:** `ops/quarantine/<dataset>/<snapshot_date>/<earliest observed_at ms>.json`.
+  A second capture of the same day gets its own key; a same-body retry
+  rewrites the same key with the same content.
+- **Content:** `{"dataset", "snapshot_date", "observed_at", "code_sha",
+  "rows": [{"instrument_name", "reason", "payload"}]}`. `payload` is the
+  row's wire dict (`DeribitRecord`), exactly as posted.
+- **`reason`:** one of the write plan's own reasons, in precedence order
+  `invalid_value` > `wrong_book` > `unparseable_expiry`, or else the first
+  failing schema check as `"<column>:<check>"` (e.g. `strike:not_nullable`).
+  An `invalid_value` row names each bad field in its payload's
+  `invalid_fields`, as `"<wire field>=<repr>"` (e.g. `"bid=nan"`,
+  `"right='PUT'"`).
+- **A blob records a capture's quarantine, not that its partition landed.**
+  The dataset is written first, but a blob can exist for a capture whose
+  dataset write failed, or whose rows were all quarantined. Join on
+  `observed_at` to tell.
+
+**When the blob write fails** the rows are logged instead, one line per row:
+
+```
+event=<api.ingest|ingestion>.deribit_options.quarantine_unwritten capture=<blob key> instrument_name=<name> reason=<reason> payload=<json>
+```
+
+`payload` is always last. The log formatter does not escape quotes, so to
+recover a row take everything after ` payload=` and strip the outer quotes;
+what is left is the JSON wire dict. The response then says
+`quarantine_written: false` and the script exits 1. How long Fly keeps those
+lines is unmeasured.
+

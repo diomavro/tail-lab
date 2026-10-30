@@ -60,10 +60,30 @@ as expiring**, with what is being lost per day of delay stated plainly. Do
 not file it quietly next to items that will keep.
 
 **Check the collection before you pick anything.** Read
-`GET /api/ingest/option-chain/status` at the start of every run. If
-`stale_days` is larger than a long weekend, the daily sweep is broken and
-diagnosing it is the highest-value thing available to you that day —
-ahead of whatever is at the top of `AGENT_TODO.md`. Say so in the PR.
+`GET /api/ingest/option-chain/status` and
+`GET /api/ingest/deribit-options/status` (per-book JSON,
+`books.<btc|eth|usdc>.stale_days`) at the start of every run. For the
+option-chain status, if `stale_days` is larger than a long weekend, the daily
+sweep is broken and diagnosing it is the highest-value thing available to you
+that day — ahead of whatever is at the top of `AGENT_TODO.md`. Say so in the PR.
+
+The Deribit books trade around the clock, so their collection is broken when
+any of these holds:
+
+- `stale_days > 1` for any book;
+- any book's `stale_days` is null while another book's is not;
+- every book is null while `daily-deribit-snapshot.yml` was added to `main` 2
+  or more days ago, per
+  `git log --diff-filter=A --format=%cs -1 -- .github/workflows/daily-deribit-snapshot.yml`
+  (this also covers a workflow that never runs);
+- the status response is not JSON with a `books` object holding `btc`, `eth`
+  and `usdc` (a 404 from the SPA mount, a 5xx, HTML, a curl failure) while the
+  workflow was added 2 or more days ago -- merged, but never deployed.
+
+Older gaps (`missing_days`) are information only: they cannot be filled, and
+alarming on them would bury new losses. A broken Deribit collection is treated
+exactly like a broken option-chain sweep: diagnose it first, and say so in the
+PR.
 
 **It is otherwise fine, and expected, to propose nothing on a given day.** A day with
 no PR is a successful run if nothing on the backlog clears the bar or fits

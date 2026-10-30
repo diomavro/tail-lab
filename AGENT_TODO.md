@@ -2578,6 +2578,48 @@ lost a second time.
       proving the injected payload was used, not a network path that tests
       happen not to exercise.
 
+## Deribit forward collection (2026-10-30, `docs/adr/0032`)
+
+The collection itself shipped with ADR 0032; nothing reads it yet. These are
+the follow-ups that plan deliberately left out.
+
+- [ ] **A per-dataset lock on the Cboe chain routes.** `api/ingest_routes`
+      has none, so two retried POSTs can both pass the exists-check and both
+      append, even on one machine. `api/deribit_routes._LOCKS` is the pattern;
+      its concurrency test (a `Barrier` inside a wrapped
+      `bronze_partition_exists`) is the one to copy.
+- [ ] **Doc accuracy: "nobody sells a retroactive option chain / gone at any
+      price" overstates it (guarded, human).** Paid vendors (optionsDX,
+      ORATS, Tardis.dev) sell past chains; the accurate claim is "not for
+      free", which ADR 0020:30 already gets right. Files: `README.md:68-72`,
+      `CLAUDE.md` (the daily-chain-sweep bullet), `docs/DATA_CONTRACTS.md` §6,
+      `.github/workflows/daily-chain-snapshot.yml:7-10` (including "THE ONE
+      WORKFLOW ... every other source serves history"), the
+      `daily-agent.yml` sentence beginning "This is one of the datasets that
+      cannot be backfilled", `docs/AGENT_MISSION.md:51-53`, and ADR 0020
+      (:33-34, :44; amended, not rewritten).
+- [ ] **Deribit trade history as a backfill dataset.** `history.deribit.com`
+      serves trades from 2016-11-29, keyless; unlike the book snapshots it is
+      recoverable later, so it can wait for a reader.
+- [ ] **DVOL** (Deribit's implied-vol index; daily from at least 2021-06-01).
+      Recoverable later, like trade history.
+- [ ] **Pricer support for inverse options.** BTC/ETH premiums are in coin;
+      USD value is premium x `index_price`. `research/option_pricer.py`
+      assumes a linear, dollar-settled put.
+- [ ] **BTC and ETH as screen candidates**, once OHLCV for them exists.
+- [ ] **The point-in-time test for the first reader.** Partition D's
+      `observed_at` can be as late as 23:59:59 UTC, and the date-level as-of
+      read does not know it (`docs/DATA_CONTRACTS.md` §16). The first reader
+      adds a test in the style of `tests/test_point_in_time_clock.py` that
+      fails if it reads D before D's `observed_at`.
+- [ ] **Unify the two POST loops** (`scripts/chain_snapshot.py`, urllib, and
+      `scripts/deribit_snapshot.py`, requests). Constraint: the chain
+      script's tests patch its module globals (`time.sleep`, `_post_once`),
+      so an extracted loop must keep those patch points or move the tests.
+- [ ] **Top-of-book sizes via `public/ticker`.** Not captured today and not
+      recoverable later. It is one call per instrument: a burst of 800 calls
+      drew 581 HTTP 429s, so a paced run costs about 4 minutes.
+
 ## Operational (2026-09-01)
 
 - [x] **One unparseable `iv` drops a whole symbol from the chain sweep**

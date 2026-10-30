@@ -635,3 +635,15 @@ do.
       key elsewhere during that hour can trip a 429 and fail the run; it is safe
       to re-run (a failed fetch writes nothing). Failures alert as
       `tail-lab-alert@tiingo`, never on the chain sweep's marker.
+
+## Deribit — found 2026-10-30 (`docs/adr/0032`)
+
+- [ ] **Can a Hungarian resident trade on Deribit?** The collection does not
+      depend on it, but any later trading use does.
+- [ ] **What do Deribit's API terms say about storing their data?** Collection
+      started before this was answered, because a missed session cannot be
+      bought back for free (ADR 0032 §6); nothing reads the data until it is.
+- [ ] **Confirm `fly scale show` reports ONE machine.** The Deribit route's
+      per-book lock only works within one process, so two machines could each
+      append the same day (ADR 0032, "Preconditions").
+

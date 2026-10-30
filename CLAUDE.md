@@ -77,13 +77,13 @@ them.
 - **Coverage floors differ by layer:** 80% overall, but **90% on `research/` and `transforms/`** — new code there needs near-complete tests, typically including a pinned synthetic case with a known analytic answer (`docs/STANDARDS.md`).
 - **Tests never touch the network.** Ingestion adapters are tested against committed fixtures; live fetches happen only via the human-run `make ingest-*` targets.
 - **Config lives in one place:** `src/tail_lab/config.py` (pydantic-settings, `TAIL_LAB_` prefix, `.env`). Never read `os.environ` elsewhere. `TAIL_LAB_LAKE_BACKEND=local` (default, credential-free — what CI uses, lake at `./data/`) vs `tigris` (S3 on Fly Tigris, plain `AWS_*` env names). The feedback routes 404 unless `TAIL_LAB_FEEDBACK_TOKEN` is set — that's deliberate, not a bug.
-- **The daily chain sweep is the one job that must not miss** (`docs/adr/0020`).
+- **The daily chain sweep is one of the two jobs that must not miss (the other: DATA_CONTRACTS §16)** (`docs/adr/0020`).
   `.github/workflows/daily-chain-snapshot.yml` forward-collects the put wing from
-  Cboe's keyless CDN every weekday at 21:30 UTC. Every other source here serves
+  Cboe's keyless CDN every weekday at 21:30 UTC. Every other source here except Deribit's books serves
   history on demand, so a skipped pull is a `make` invocation away from being
   fixed; nobody sells a retroactive option chain, so a skipped session is gone at
   any price. An empty sweep therefore **fails red on purpose** rather than
-  no-opping, and a red build here is the one that should interrupt a day. Check
+  no-opping, and a red build here (or in `daily-deribit-snapshot.yml`) is one that should interrupt a day. Check
   `GET /api/ingest/option-chain/status` before assuming it is healthy. Two
   gotchas: **GitHub drops scheduled runs** — the 2026-08-27 evening sweep never fired at all, and an absent run produces no red build, so a second catch-up cron at 05:00 UTC now covers it (free, because the write is idempotent); the sweep must write **one partition for all symbols** (bronze is
   immutable, so a per-symbol write persists only the first), and Cboe
@@ -185,15 +185,16 @@ them.
   recently began paying (META, GOOGL) keeps filing as legacy while its window
   covers the gap between its first and second dividend. `docs/adr/0015`'s
   2026-10-10 amendment is the decision of record.
+- **Deribit's crypto option books are forward-collected too, read by nothing yet** (`docs/adr/0032`): three per-book datasets, a third write route, and a quarantine kept as JSON blobs under `ops/quarantine/`, not Delta. Before touching any of it, read `docs/DATA_CONTRACTS.md` §16 -- especially its point-in-time rule and the log-fallback recovery rule.
 - **Two backlogs:** the agent owns `AGENT_TODO.md`; anything needing an account/key/money goes to `HUMAN_TODO.md` and is never attempted by the agent.
 
 ## ARCHITECTURE.md's tree is partly aspirational
 
 The layer boundaries and dependency rules in `ARCHITECTURE.md` are enforced and real, but its file tree describes the end state, not the current code. As of now:
 
-- `contracts/` is one module per dataset (`vix.py`, `ohlcv.py`, `regime.py`, `options_calendar.py`, `option_quotes.py`, `option_chain.py`, `rates.py`, `credit.py`, `cboe_strategy.py`, `hypothesis.py`, `tiingo_eod.py`), not the single `datasets.py` shown.
-- `lake/` is `store.py` (`LakeStore` protocol + `DeltaLakeStore`, including as-of resolution — there is no separate `asof.py`) and `blob_store.py` (JSON blobs, used by feedback).
-- `api/` is flat (`main.py`, `putlab_routes.py`, `feedback_routes.py`, `ingest_routes.py`, `schemas.py`), no `routes/` subpackage yet.
+- `contracts/` is one module per dataset (`vix.py`, `ohlcv.py`, `regime.py`, `options_calendar.py`, `option_quotes.py`, `option_chain.py`, `rates.py`, `credit.py`, `cboe_strategy.py`, `hypothesis.py`, `tiingo_eod.py`, `calendar.py`, `event_calendar.py`, `kaggle_spy.py`, `mpd.py`, `optionsdx.py`, `options_expiry.py`, `sp500_constituents.py`, `vix_complex.py`, `vix_futures.py`, `deribit_options.py`), not the single `datasets.py` shown.
+- `lake/` is `store.py` (`LakeStore` protocol + `DeltaLakeStore`, including as-of resolution — there is no separate `asof.py`) and `blob_store.py` (JSON blobs, used by feedback, memory and the Deribit quarantine).
+- `api/` is flat (`main.py`, `putlab_routes.py`, `putlab_memory_routes.py`, `feedback_routes.py`, `ingest_routes.py`, `marks_routes.py`, `deribit_routes.py`, `auth.py`, `memo.py`, `schemas.py`), no `routes/` subpackage yet.
 - `feedback/` is a real layer (peer of ingestion/transforms in the import-linter contract) not shown in the tree.
 - `transforms/` gained `dividend_yield.py` (bronze `tiingo_eod` -> the yield `q`), and `research/dividends.py` is its one reader (backtest, ranking, sweep, portfolio, metric screen, roll schedule, Surface; not yet the Book).
 - `research/` currently has `metrics/` (downside_beta, downside_capture, tail_beta, co_skewness, co_kurtosis, vol_beta), `option_pricer.py` (one module, not the `pricing/` package `ARCHITECTURE.md` shows), `skew.py`, `accuracy.py`, `cadence.py`, `vix_stretch.py`, `data_quality.py`, `regimes/timeline.py`, `surface/` (hill, karamata, returns, paretan, ladder, implied_alpha, alpha_bound — the Paretan tail analytics, `docs/adr/0026`), and `backtest/` (put_roll, portfolio, ranking, metric_screen, regime_verdict, brokerage, index_replication, hedge_overlay, sizing, sweep, growth, marks, quote_fills, quote_cache, roll_schedule).

@@ -1,0 +1,63 @@
+name: Daily Deribit snapshot
+
+# Forward-collects Deribit's three listed option books -- BTC, ETH and USDC --
+# each into its own bronze dataset (docs/adr/0032, docs/DATA_CONTRACTS.md #16).
+#
+# Like the option-chain sweep, a missed run here cannot be repaired for free:
+# a past Deribit order-book snapshot is sold (Tardis.dev), not served. Nothing
+# reads these datasets yet; the collection exists so the history exists.
+#
+# Same seam as daily-chain-snapshot.yml: this job fetches Deribit's public API
+# with no credentials and POSTs each book to the live app, which holds the
+# lake keys and does the write. CI needs ONE bearer token and no data
+# credentials.
+
+on:
+  schedule:
+    # 08:15 UTC: after Deribit's 08:00 UTC expiry, so the day's expiring names
+    # are already gone. Measured 2026-08-26..10-30, morning crons here ran a
+    # median 5.5 h late and at worst 12.4 h, which still lands by 20:40 UTC on
+    # the same UTC date.
+    - cron: "15 8 * * *"
+    # CATCH-UP against a DROPPED run, not a late one: lateness on the same day
+    # is correlated ~1.0 across morning crons, so when this one is late the
+    # 08:15 one usually is too. Past 13.25 h late it lands after midnight UTC
+    # and the app answers 425 (too early for the NEXT day) -- red, but usually
+    # spurious, because the 08:15 run has normally captured the day by then.
+    # Check GET /api/ingest/deribit-options/status (last_snapshot_date,
+    # missing_days) before treating that 425 as a loss.
+    - cron: "45 10 * * *"
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+concurrency:
+  group: deribit-snapshot
+  cancel-in-progress: false
+
+jobs:
+  snapshot:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: "3.12"
+
+      # Runtime deps only -- this job runs the adapter, it does not lint it.
+      - name: Install tail_lab
+        run: pip install -e .
+
+      - name: Fetch the books and hand them to the app
+        env:
+          TOKEN: ${{ secrets.TAIL_LAB_FEEDBACK_TOKEN }}
+          BASE: https://tail-lab.fly.dev
+        run: |
+          set -uo pipefail
+          if [ -z "${TOKEN:-}" ]; then
+            echo "::error::TAIL_LAB_FEEDBACK_TOKEN not set — today's Deribit books cannot be recovered for free."
+            exit 1
+          fi
+          python scripts/deribit_snapshot.py --post "$BASE" --token "$TOKEN"
