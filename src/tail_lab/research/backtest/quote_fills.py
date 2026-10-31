@@ -93,7 +93,9 @@ own docstring for exactly where the two diverge and why.
 from __future__ import annotations
 
 import datetime as dt
+import logging
 import math
+import threading
 from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Protocol, cast
@@ -102,21 +104,29 @@ import pandas as pd
 
 from tail_lab.contracts.option_quotes import DATASET as OPTION_QUOTES_DATASET
 from tail_lab.contracts.optionsdx import DATASET as OPTIONSDX_DATASET
+from tail_lab.contracts.optionsdx import SYMBOLS as OPTIONSDX_SYMBOLS
 from tail_lab.lake.store import LakeStore
 from tail_lab.research.backtest.marks import MAX_RELATIVE_SPREAD, _select_expiry, _select_strike
 from tail_lab.research.backtest.marks import _is_liquid as _is_liquid_with_open_interest
 
 __all__ = [
     "BASIS_TOLERANCE",
+    "MAX_SESSION_GAP",
     "MAX_SNAP_MONEYNESS_PP",
     "MAX_TENOR_GAP_FRAC",
+    "SEAM_SESSIONS",
     "SPLIT_FACTORS",
+    "SPLIT_JUMP",
     "Fill",
     "OptionQuotesSource",
     "OptionsDxQuoteSource",
     "QuoteSource",
     "index_nbytes",
+    "panel_snapshot_id",
+    "with_panel_prehistory",
 ]
+
+_LOGGER = logging.getLogger(__name__)
 
 #: The one underlying ``contracts/option_quotes`` holds (guard 2 of
 #: ``OptionQuotesSource``). Not a per-instance argument the way
@@ -764,3 +774,150 @@ class OptionQuotesSource:
             expiry=expiry,
             basis=basis,
         )
+
+
+#: OHLCV sessions, from the start of the price path, on which the panel's own
+#: ``spot`` must agree with OHLCV before the panel's earlier sessions are
+#: trusted as the price path (:func:`with_panel_prehistory`).
+SEAM_SESSIONS = 20
+
+#: A one-session move in the panel's as-traded ``spot`` at least this large,
+#: either way, is read as a split: the basis measured at the seam does not
+#: hold across it, so the splice keeps only the sessions after it. 1.4x is
+#: beyond any close-to-close move these names have printed, and below the
+#: smallest split ratio in :data:`SPLIT_FACTORS` (and a 3:2).
+SPLIT_JUMP = 1.4
+
+#: A hole between two panel sessions longer than this is missing data, not a
+#: market closure: a roll across it would be valued against a price from the
+#: far side of the hole, so the prehistory starts after the last one. Two
+#: weeks, not one: the vendor's SPY file skips 2011-01-19..25 (five sessions,
+#: an 8-day step), and a 7-day cut there dropped all of 2010 -- the year this
+#: splice exists to add. The cost is real but bounded: a roll crossing a kept
+#: hole is marked up to two weeks LATE, on its far side (a listed expiry inside
+#: it settles on the first session after). No hole between 8 and 30 days
+#: exists in any ingested name today (scanned 2026-10-31); a longer one is cut.
+MAX_SESSION_GAP = pd.Timedelta(days=14)
+
+#: Each panel's daily spot is ~3,500 floats; the bound only stops a long-lived
+#: process collecting one per superseded snapshot.
+_SPOT_MEMO_MAX = 8
+_spot_memo: dict[tuple[str, str], pd.Series] = {}
+#: One cold build at a time: each is a DuckDB scan of a 3.28M-row panel, and
+#: the universe ranking asks for several names at once on a 1 GB machine.
+_spot_lock = threading.Lock()
+
+
+def panel_snapshot_id(store: LakeStore, symbol: str, as_of: dt.date) -> str | None:
+    """The optionsDX panel snapshot :func:`with_panel_prehistory` reads for
+    ``symbol`` on ``as_of`` -- ``None`` for a name with no panel in the lake."""
+    symbol = symbol.lower()
+    if symbol not in OPTIONSDX_SYMBOLS:
+        return None
+    try:
+        return store.bronze_snapshot_id(f"{OPTIONSDX_DATASET}_{symbol}", as_of)
+    except LookupError:
+        return None
+
+
+def _panel_spot(store: LakeStore, symbol: str, as_of: dt.date) -> tuple[pd.Series, str] | None:
+    """The panel's as-traded ``spot`` per session known as of ``as_of``, and
+    the snapshot it came from; ``None`` when the lake holds no panel for
+    ``symbol``. Aggregated in DuckDB, so the rows are never materialised, and
+    memoised per snapshot."""
+    snapshot_id = panel_snapshot_id(store, symbol, as_of)
+    if snapshot_id is None:
+        return None
+    dataset = f"{OPTIONSDX_DATASET}_{symbol}"
+    key = (store.location, snapshot_id)
+    with _spot_lock:
+        spot = _spot_memo.get(key)
+        if spot is None:
+            relation = store.bronze_relation_as_of(dataset, as_of)
+            # ``symbol`` is one of OPTIONSDX_SYMBOLS, never user text.
+            frame = store.query(
+                "SELECT CAST(quote_date AS DATE) AS d, median(spot) AS spot "
+                f"FROM {relation} WHERE lower(underlying) = '{symbol}' AND spot > 0 "
+                "GROUP BY 1 ORDER BY 1"
+            )
+            spot = pd.Series(
+                frame["spot"].to_numpy(dtype=float), index=pd.DatetimeIndex(frame["d"])
+            )
+            if len(_spot_memo) >= _SPOT_MEMO_MAX:
+                _spot_memo.pop(next(iter(_spot_memo)))
+            _spot_memo[key] = spot
+    return spot.loc[spot.index <= pd.Timestamp(as_of)], snapshot_id
+
+
+def with_panel_prehistory(
+    store: LakeStore, prices: pd.Series, *, symbol: str, as_of: dt.date
+) -> pd.Series:
+    """``prices`` with the optionsDX panel's earlier sessions in front of it,
+    converted into ``prices``' own basis -- or ``prices`` unchanged.
+
+    Bronze OHLCV is Nasdaq's ~10-year window (``ohlcv_spy`` starts 2016-10),
+    while the panel's quotes reach back to 2010, so without this six years of
+    real quotes -- Aug 2011 and Aug 2015 among them -- never reach a roll.
+    The panel's ``spot`` is the only daily price for those sessions the lake
+    holds today.
+
+    Guard 2 again, from the other side: the panel is as-traded and OHLCV is
+    split-adjusted, so the ratio is MEASURED over the first
+    :data:`SEAM_SESSIONS` OHLCV sessions, every one of which the panel must
+    also hold; it must be ~1 or ~a clean split factor, and must hold on each
+    of them. Anything else returns ``prices`` unchanged rather than a path
+    with a step in it. A move of :data:`SPLIT_JUMP` or more inside the earlier
+    sessions is a split the seam cannot see, and a hole longer than
+    :data:`MAX_SESSION_GAP` is missing data, so only the sessions after the
+    last of either are kept.
+
+    Point-in-time: the panel snapshot is the one known on ``as_of`` and no
+    session after ``as_of`` is read; every added session predates
+    ``prices``' first.
+    """
+    symbol = symbol.lower()
+    found = _panel_spot(store, symbol, as_of) if not prices.empty else None
+    if found is None:
+        return prices
+    spot, snapshot_id = found
+    if not (spot.index < prices.index[0]).any():
+        return prices
+    seam = prices.iloc[:SEAM_SESSIONS]
+    shared = spot.reindex(seam.index).dropna()
+    ratios = shared / seam.loc[shared.index]
+    basis = float(ratios.median())
+    if (
+        len(shared) < SEAM_SESSIONS
+        or not _basis_is_plausible(basis)
+        or ((ratios / basis - 1.0).abs() > BASIS_TOLERANCE).any()
+    ):
+        _LOGGER.warning(
+            "price_prehistory.refused symbol=%s snapshot=%s shared=%d of %d basis=%.6g",
+            symbol,
+            snapshot_id,
+            len(shared),
+            len(seam),
+            basis,
+        )
+        return prices
+
+    path = spot.loc[spot.index <= shared.index[0]]
+    step = path / path.shift(1)
+    gap = path.index.to_series().diff()
+    breaks = path.index[(step >= SPLIT_JUMP) | (step <= 1.0 / SPLIT_JUMP) | (gap > MAX_SESSION_GAP)]
+    earlier = spot.loc[spot.index < prices.index[0]]
+    if len(breaks):
+        earlier = earlier.loc[earlier.index >= breaks[-1]]
+    if earlier.empty:
+        return prices
+    _LOGGER.info(
+        "price_prehistory.spliced symbol=%s snapshot=%s basis=%.6g sessions=%d first=%s",
+        symbol,
+        snapshot_id,
+        basis,
+        len(earlier),
+        earlier.index[0].date().isoformat(),
+    )
+    spliced: pd.Series = pd.concat([earlier / basis, prices])
+    spliced.name = prices.name
+    return spliced

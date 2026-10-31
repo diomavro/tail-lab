@@ -40,6 +40,7 @@ from tail_lab.contracts.ohlcv import dataset_id
 from tail_lab.lake.store import LakeStore
 from tail_lab.memory.store import HypothesisMemory
 from tail_lab.observability import log_event
+from tail_lab.research.backtest.quote_fills import panel_snapshot_id
 from tail_lab.research.backtest.regime_verdict import compute_regime_verdict
 from tail_lab.research.backtest.strike_rule import ByMoneyness
 
@@ -104,6 +105,10 @@ def record_verdict(
     # ...and the dividend basis: a re-record after a new Tiingo snapshot priced
     # with a different q, so it is a different run.
     run_id = f"{resolved.isoformat()}#{ohlcv_snap}#{verdict.dividend_snapshot or 'no-dividends'}"
+    # ...and the optionsDX panel, where the price path's prehistory came from it.
+    panel_snap = panel_snapshot_id(store, asset, resolved)
+    if panel_snap is not None:
+        run_id = f"{run_id}#{panel_snap}"
 
     recorded: list[RecordedRegime] = []
     for sl in verdict.slices:
