@@ -337,10 +337,13 @@ a large one strictly in order.
       Kelly in state-price form (arXiv 2603.13581, read the paper; the
       `long-mathematics/kelly-wagering` repo is preprints only, no code and
       no licence) says a bet on a state is growth-positive only where the
-      physical probability `p` beats the state price `q`. For this repo the
-      state is "SPX down 20% or more over the horizon". `q` is already in the
-      lake: the Minneapolis Fed MPD (`contracts/mpd.py`, DATA_CONTRACTS #9)
-      serves the risk-neutral probability of a 20% decrease. `p` is the
+      physical probability `p` beats its risk-neutral probability `q` (the
+      state price, normalised). For this repo the state is "SPX down by the
+      MPD's large-decline threshold or more over the horizon". `q` is
+      already in the lake: the Minneapolis Fed MPD (`contracts/mpd.py`,
+      DATA_CONTRACTS #9), column `prob_large_decline`, the same one PX2
+      reads -- confirm the threshold there first (PX2 says ±20% is the
+      module's prose, not yet checked against the Fed's documentation). `p` is the
       realised frequency of such drops over the same horizon, point-in-time
       (only drops completed by `as_of`). Serve `p/q` per date and regime. A
       put book with `p/q < 1` throughout is paying for insurance at more than

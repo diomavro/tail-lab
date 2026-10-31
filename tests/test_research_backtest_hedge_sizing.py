@@ -514,27 +514,58 @@ def test_an_extreme_bound_searches_in_log_space() -> None:
         years=4 / 12,
     )
     bound = drawdown_bound(seg, w_star(seg), recommended=None, floor=0.9999, probability=0.01)
+    assert bound.lo == pytest.approx(0.9091, abs=1e-3)
+    assert bound.hi == pytest.approx(0.9827, abs=1e-3)
+
+
+def test_the_bound_shrinks_a_hedge_that_overshoots_it() -> None:
+    """The case against cash, here against a rallying index: the program
+    dominates (``w* = 1``), but past ``hi`` the crash month's give-back
+    breaches the bound, so ``w_rck`` is clipped DOWN to ``hi``. And the
+    upper edge carries the same W_TOL tolerance as the lower."""
+    seg = _pair((1.2, 0.9), (0.85, 1.05))
+    bound = drawdown_bound(seg, w_star(seg), recommended=None)
     assert bound.lo is not None and bound.hi is not None
-    assert 0.0 < bound.lo < bound.hi < 1.0
+    assert w_star(seg) == pytest.approx(1.0)
+    assert bound.hi < 1.0
+    assert bound.w_rck == bound.hi
+    inside = drawdown_bound(seg, 1.0, recommended=bound.hi + W_TOL / 2)
+    outside = drawdown_bound(seg, 1.0, recommended=bound.hi + 2 * W_TOL)
+    assert (inside.recommended_meets, outside.recommended_meets) == (True, False)
 
 
-@pytest.mark.parametrize(("floor", "probability"), [(1.0, 0.1), (0.7, 0.0), (1.2, 0.1)])
+@pytest.mark.parametrize(
+    ("floor", "probability"), [(1.0, 0.1), (0.0, 0.1), (0.7, 0.0), (0.7, 1.0), (1.2, 0.1)]
+)
 def test_a_bound_outside_the_unit_interval_is_refused(floor: float, probability: float) -> None:
     with pytest.raises(ValueError, match="strictly between 0 and 1"):
         drawdown_bound(_two_state(), 0.25, None, floor=floor, probability=probability)
 
 
 def test_a_strict_bound_still_finds_both_edges() -> None:
-    """At a 99% floor held 99% of the time ``lam ~ 458``, and a 90% month is
-    ``0.1^-458``: past float range. The edges must still be found,
+    """At a 99% floor held 99% of the time ``lam ~ 458``. The edges must be
+    found exactly,
     which here is about where each month's return reaches 1 (the other
     month's gain lets each edge sit a hair past that point)."""
     seg = _pair((3.0, 0.98), (0.1, 1.2))
     bound = drawdown_bound(seg, w_star(seg), recommended=None, floor=0.99, probability=0.01)
     assert bound.lo is not None and bound.hi is not None
     # r1 = 0.1 + 2.9 w = 1 at w = 0.3103...; r2 = 1.2 - 0.22 w = 1 at 0.909...
-    assert bound.lo == pytest.approx(0.9 / 2.9, abs=0.01)
-    assert bound.hi == pytest.approx(0.2 / 0.22, abs=0.01)
+    # Each edge sits a hair outside those points (values from an exact
+    # log-space bisection at 1e-9).
+    assert bound.lo == pytest.approx(0.309824, abs=1e-5)
+    assert bound.hi == pytest.approx(0.915962, abs=1e-5)
+
+
+def test_size_judges_the_size_it_holds_not_full_kelly() -> None:
+    """The program dominates, so w* = 1 meets the default bound while the
+    0.5 held (the cap) sits below its floor: the reading is of the 0.5."""
+    seg = _pair((1.1, 0.95), (0.85, 1.02))
+    answer = size(_inputs(seg))
+    assert answer.recommended_ratio == 0.5 and answer.at_cap
+    assert answer.drawdown.lo is not None and answer.drawdown.lo > 0.5
+    assert answer.drawdown.recommended_meets is False
+    assert answer.drawdown.w_rck == pytest.approx(1.0)
 
 
 def test_size_serves_the_bound_for_the_size_it_recommends() -> None:

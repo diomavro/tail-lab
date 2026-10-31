@@ -39,8 +39,9 @@ any mix with ``mean(r^-lam) <= 1`` over the monthly gross returns ``r`` keeps
 the chance that MONTH-END wealth ever falls below ``alpha`` of its start
 under ``beta`` -- if months are drawn independently from this history (the
 partial first and last months included as if whole), the same one-history
-caveat ``w*`` carries. A fall and recovery inside one month, as in March
-2020, is not bounded: the blend is only observed at its rebalances. ``r`` is linear in ``w`` and ``r^-lam``
+caveat ``w*`` carries. "Month-end" means the rebalance points (each month's
+first close): a fall and recovery between two of them, as in March 2020, is
+not bounded, though ``blend_nav`` draws it daily. ``r`` is linear in ``w`` and ``r^-lam``
 convex, so the ratios that meet it form one interval. Against cash, the
 constraint shrinks a bet; against the INDEX it can do the opposite: the drop
 being bounded comes from the index, so the interval may start above 0 and
