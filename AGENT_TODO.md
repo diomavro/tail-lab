@@ -53,7 +53,13 @@ a large one strictly in order.
       measures the panel/OHLCV basis over the first 20 shared sessions
       (refused unless ~1 or a clean split factor, on every one of them),
       drops prehistory before any >= 1.4x one-session step (a split), and
-      memoises each panel's daily spot per snapshot. Not done: (1) a
+      memoises each panel's daily spot per snapshot. What it changes today:
+      the Marks price-series line, and every MODEL-priced roll (Workspace,
+      ranking, sweep, metric screen, Bake-off) whose lookback reaches before
+      2016-10 -- `years` above ~10 at today's as_of, up to the API's 20. No
+      route runs a quote-priced roll yet (`scripts/pitch_evidence.py` reads
+      the panel's spot itself), so "real-quote backtests" here means the
+      `PricingBasis(quotes=...)` path once one does. Not done: (1) a
       result's `snapshot_ids`/run log still cite only `ohlcv_<sym>` when the
       path was spliced -- the splice logs its own `price_prehistory.spliced`
       line with the panel snapshot, but provenance per result should name it;
