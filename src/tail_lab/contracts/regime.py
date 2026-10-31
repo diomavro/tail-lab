@@ -26,8 +26,8 @@ Credit levels (HY OAS, ``docs/DATA_CONTRACTS.md`` #4) are chosen against its
 own history: the long-run range for a calm credit market is roughly 3-4%,
 single episodes of real but non-crisis stress (the 2016 oil selloff, the
 2018 Q4 selloff) sit in the high-single-digits, and both the 2020 COVID
-spike (~10.9%) and the 2008 crisis peak (~19.9%, this module's own schema
-ceiling) clear it comfortably:
+spike (near 11%) and the 2008 peak (above 20%, far below the 50% schema
+ceiling in ``contracts/credit.py``) clear it comfortably:
 
     calm      HY OAS < 5.0
     elevated  5.0 <= HY OAS < 8.0
