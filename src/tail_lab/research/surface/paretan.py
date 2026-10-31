@@ -206,22 +206,7 @@ class ParetanTail:
         if strike <= 0.0:
             raise ValueError(f"strike must be positive, got {strike}")
         if self.basis == "price":
-            if spot is not None:
-                raise ValueError(
-                    "a price-basis tail prices calls on strike alone; spot is not used"
-                )
-            if strike < self.karamata_l:
-                # The implied survival probability (l/strike)^alpha would say it
-                # better, but computing it inside the message can itself raise
-                # OverflowError -- from the guard whose contract is ValueError.
-                raise ValueError(
-                    f"strike {strike} is inside the Karamata constant {self.karamata_l}; "
-                    "the strong Pareto law does not hold there, and the survival "
-                    "probability it implies at the anchor exceeds 1"
-                )
-            return float(
-                strike ** (1.0 - self.alpha) * self.karamata_l**self.alpha / (self.alpha - 1.0)
-            )
+            return self._price_basis_call_price(strike=strike, spot=spot)
 
         if spot is None:
             raise ValueError("a returns-basis tail needs spot to price a call")
@@ -237,6 +222,22 @@ class ParetanTail:
             (self.karamata_l * spot) ** self.alpha
             * (strike - spot) ** (1.0 - self.alpha)
             / (self.alpha - 1.0)
+        )
+
+    def _price_basis_call_price(self, *, strike: float, spot: float | None) -> float:
+        if spot is not None:
+            raise ValueError("a price-basis tail prices calls on strike alone; spot is not used")
+        if strike < self.karamata_l:
+            # The implied survival probability (l/strike)^alpha would say it
+            # better, but computing it inside the message can itself raise
+            # OverflowError -- from the guard whose contract is ValueError.
+            raise ValueError(
+                f"strike {strike} is inside the Karamata constant {self.karamata_l}; "
+                "the strong Pareto law does not hold there, and the survival "
+                "probability it implies at the anchor exceeds 1"
+            )
+        return float(
+            strike ** (1.0 - self.alpha) * self.karamata_l**self.alpha / (self.alpha - 1.0)
         )
 
 

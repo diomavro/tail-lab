@@ -415,6 +415,18 @@ def _is_liquid(row: pd.Series) -> bool:
     return mid > 0.0 and (ask - bid) / mid <= MAX_RELATIVE_SPREAD
 
 
+def _tenor_gap_too_wide(
+    realized_dte: int, *, tenor_weeks: float, max_tenor_gap: float | None
+) -> bool:
+    if max_tenor_gap is None:
+        return False
+    # Relative to the request, not a fixed number of days — see
+    # MAX_TENOR_GAP_FRAC. `>` not `>=`: a gap exactly at the tolerance is
+    # accepted, which is what the boundary test pins.
+    requested_days = round(tenor_weeks * 7)
+    return abs(realized_dte - requested_days) > max_tenor_gap * requested_days
+
+
 def _fill(
     index: dict[pd.Timestamp, pd.DataFrame],
     *,
@@ -454,13 +466,8 @@ def _fill(
         return None
 
     realized_dte = (expiry.date() - entry_date).days
-    if max_tenor_gap is not None:
-        # Relative to the request, not a fixed number of days — see
-        # MAX_TENOR_GAP_FRAC. `>` not `>=`: a gap exactly at the tolerance is
-        # accepted, which is what the boundary test pins.
-        requested_days = round(tenor_weeks * 7)
-        if abs(realized_dte - requested_days) > max_tenor_gap * requested_days:
-            return None
+    if _tenor_gap_too_wide(realized_dte, tenor_weeks=tenor_weeks, max_tenor_gap=max_tenor_gap):
+        return None
 
     # Resolved in the PANEL's basis (guard 2) — never the caller's.
     target_strike = panel_spot * (1.0 - moneyness_pct / 100.0)
