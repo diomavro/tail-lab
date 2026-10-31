@@ -17,6 +17,7 @@ from __future__ import annotations
 import datetime as dt
 from typing import ClassVar
 
+import numpy as np
 import pandas as pd
 import pandera.pandas as pa
 from pandera.typing import Series
@@ -90,7 +91,12 @@ def resolve_credit_history(live: pd.DataFrame, archive: pd.DataFrame) -> pd.Seri
     archive_series = _newest_per_obs(archive)
     archive_end = archive_series.index.max()
     after = live_series.loc[live_series.index > archive_end]
-    return pd.concat([archive_series, after]).sort_index().rename("hy_oas")
+    joined = pd.Series(
+        np.concatenate([archive_series.to_numpy(), after.to_numpy()]),
+        index=archive_series.index.append(after.index),
+        name="hy_oas",
+    )
+    return joined.sort_index()
 
 
 class CreditRowSchema(pa.DataFrameModel):

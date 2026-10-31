@@ -11,7 +11,7 @@ VENV := .venv
 PY := env -u PYTHONPATH $(VENV)/bin/python
 PIP := env -u PYTHONPATH $(VENV)/bin/pip
 
-.PHONY: setup lint format typecheck import-lint test check cov-floors ingest-vix ingest-vix-complex ingest-ohlcv ingest-cboe-strategy ingest-rates ingest-tiingo-eod ingest-credit ingest-event-calendar ingest-option-quotes residual skew tail-alpha api frontend clean ingest-mpd ingest-options-expiry ingest-sp500-constituents ingest-vix-futures ingest-kaggle-spy kaggle-spy-vs-optionsdx delta-strike-gap pitch-evidence pitch-evidence-current ingest-deribit vrp
+.PHONY: setup lint format typecheck import-lint test check cov-floors ingest-vix ingest-vix-complex ingest-ohlcv ingest-cboe-strategy ingest-rates ingest-tiingo-eod ingest-credit ingest-credit-archive ingest-event-calendar ingest-option-quotes residual skew tail-alpha api frontend clean ingest-mpd ingest-options-expiry ingest-sp500-constituents ingest-vix-futures ingest-kaggle-spy kaggle-spy-vs-optionsdx delta-strike-gap pitch-evidence pitch-evidence-current ingest-deribit vrp
 
 help:
 	@echo "Targets:"
@@ -30,7 +30,8 @@ help:
 	@echo "  ingest-rates Live FRED rates fetch -> bronze (SERIES=... ; needs FRED_API_KEY; network; not run in CI)"
 	@echo "  ingest-tiingo-eod Live Tiingo EOD + dividends + splits for the universe -> bronze (needs TIINGO_API_KEY; ~95 min, throttled; runs scripts/weekly_tiingo_refresh.sh; not run in CI)"
 	@echo "  ingest-credit Live FRED credit-spread fetch -> bronze (SERIES=... ; needs FRED_API_KEY; network; not run in CI)"
-	@echo "  ingest-event-calendar  Live FOMC + earnings calendar fetch -> ONE bronze snapshot (keyless; network; not run in CI)"
+	@echo "  ingest-credit-archive ONE-OFF pinned Wayback HY OAS history (1996-2025) -> bronze credit_archive (ICE data: confirm the licence first; network; not run in CI; docs/adr/0033)"
+	@echo "  ingest-event-calendar Live FOMC + earnings calendar fetch -> ONE bronze snapshot (keyless; network; not run in CI)"
 	@echo "  ingest-sp500-constituents  Live point-in-time S&P 500 membership fetch -> bronze (network; not run in CI)"
 	@echo "  ingest-mpd   Live Minneapolis Fed MPD fetch -> bronze, whole market family (network; not run in CI)"
 	@echo "  ingest-vix-futures  Live VX futures term structure fetch -> bronze (keyless; network; not run in CI)"
@@ -235,6 +236,12 @@ pitch-evidence-current:
 
 ingest-credit:
 	env -u PYTHONPATH $(VENV)/bin/python -c "from tail_lab.ingestion.credit import ingest_credit; from tail_lab.config import get_lake_store, get_settings; from tail_lab.observability import configure_logging; configure_logging(); s = [x.upper() for x in '$(SERIES)'.split(',')] if '$(SERIES)' else None; r = ingest_credit(get_lake_store(), s, api_key=get_settings().fred_api_key); print(f'committed {r.valid_rows} rows for {len(r.series_ids)} series -> {r.bronze_path} ({r.quarantined_rows} quarantined)')"
+
+# One-off and human-run, against the production lake, after Dio confirms the
+# ICE licence (docs/adr/0033). Idempotent: a later run is a no-op, and it
+# refuses (non-zero exit) on any failed check. Not in CI, not scheduled.
+ingest-credit-archive:
+	env -u PYTHONPATH $(VENV)/bin/python -c "from tail_lab.ingestion.credit_archive import ingest_credit_archive; from tail_lab.config import get_lake_store; from tail_lab.observability import configure_logging; configure_logging(); r = ingest_credit_archive(get_lake_store()); print('already ingested; nothing written' if r.skipped else f'committed {r.rows} rows ({r.dropped_blank} blanks dropped) -> {r.bronze_path}')"
 
 # FOMC and earnings share the event_calendar dataset -- one immutable snapshot
 # per day -- so they are fetched and committed together, never separately
