@@ -1241,8 +1241,13 @@ NOT enforce this; the first reader adds a test for it (`AGENT_TODO.md`).
 `contracts/deribit_options.plan_deribit_write`, shared by the route and
 `--local`; `docs/adr/0032` §3 lists them in order.
 
-- **Refusals** (nothing written): stale, future, wrong-book, too-early
-  (425), empty (422) and incomplete-coverage bodies.
+- **Refusals** (nothing written): stale, future and "bad timestamp" (409),
+  wrong-book (409), too-early (425), empty (422), incomplete coverage and "no
+  live listings" (409).
+- **Deterministic 500s** (nothing written): "schema failure not attributable
+  to a row" and "quarantine not serialisable" are the app's own faults. Their
+  detail starts with `REFUSAL_MARKER` ("deribit refusal: "), so the script
+  does not retry them.
 - **No-op:** an already-captured day answers green and writes nothing.
 - **Quarantine:** expired rows are dropped and counted; bad rows are
   quarantined and the rest committed, and the script exits 1 above a 1%

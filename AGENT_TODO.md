@@ -2595,10 +2595,10 @@ datasets (marked **Blocked**); the collection-side items are not blocked.
 - [ ] **Doc accuracy, guarded part (guarded, human): "nobody sells a
       retroactive option chain / gone at any price" overstates it.** Paid
       vendors (optionsDX, ORATS, Tardis.dev) sell past chains; the accurate
-      claim is "not for free", which ADR 0020:31 already gets right. These
+      claim is "not for free", which ADR 0020:32 already gets right. These
       files need a human-merged PR: `README.md:68-72`, `CLAUDE.md` (the
       daily-chain-sweep bullet), `docs/AGENT_MISSION.md:51-53`, ADR 0020
-      (:34, :45; amended, not rewritten),
+      (:35, :46; amended, not rewritten),
       `.github/workflows/daily-chain-snapshot.yml:7-12` ("gone permanently"),
       the `daily-agent.yml` sentence beginning "This is one of the datasets
       that cannot be backfilled", and `HUMAN_TODO.md:581` (Dio's file, which

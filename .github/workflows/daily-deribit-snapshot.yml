@@ -14,8 +14,8 @@ name: Daily Deribit snapshot
 
 on:
   schedule:
-    # 08:15 UTC: after Deribit's 08:00 UTC expiry, so the day's expiring names
-    # are already gone. Measured 2026-08-26..10-30, morning crons here ran a
+    # 08:15 UTC: after Deribit's 08:00 UTC expiry; any of the day's expiring
+    # names still listed are dropped as expired (rule 4). Measured 2026-08-26..10-30, morning crons here ran a
     # median 5.5 h late and at worst 12.4 h, which still lands by 20:40 UTC on
     # the same UTC date.
     - cron: "15 8 * * *"

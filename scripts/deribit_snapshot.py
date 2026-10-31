@@ -18,8 +18,8 @@ Two modes, one rulebook (the contract's ``plan_deribit_write``):
         ``--local`` run must never overlap the cron.
 
 Books are handled one at a time -- BTC, ETH, USDC -- and one book failing
-still sends the others: each book's session is lost on its own. Every line
-is prefixed ``btc:``, ``eth:`` or ``usdc:``.
+still sends the others: each book's session is lost on its own. Every
+per-book line is prefixed ``btc:``, ``eth:`` or ``usdc:``.
 
 Exit codes are the contract with the scheduler. 0 only if every book
 committed or was already captured, with no committed answer missing the
@@ -193,8 +193,8 @@ def _own_attempt_may_have_landed(
     by an earlier run -- the routine 10:45 catch-up after a green 08:15 -- so
     a transient first-attempt failure landed nothing, and is not an alarm.
 
-    A range, not the body's minimum: a live book carries 12-54 distinct
-    ``creation_timestamp`` values over 17-89 ms, and when every row at the
+    A range, not the body's minimum: a live book's ``creation_timestamp``
+    values spread over 17-89 ms (measured 2026-10-30), and when every row at the
     body's earliest millisecond is quarantined or dropped as expired, the
     stored partition begins a few ms LATER than the body. An earlier run's
     fetch is minutes to hours earlier, so the two never overlap. Unknown (an
@@ -225,6 +225,13 @@ def _judge(
             file=sys.stderr,
         )
         ok = False
+    elif answer.previous_partition_exists is False and answer.already_captured:
+        # Another run captured this day and went red for the missing day
+        # then; name it here too, so it is not only in that run's log.
+        print(
+            f"::warning::{label}: the day before {answer.snapshot_date} was never captured "
+            "(the run that captured this day went red for it)"
+        )
     share = answer.quarantine_share
     if share is not None and share > MAX_QUARANTINE_SHARE:
         print(
@@ -358,20 +365,29 @@ def _post(
     raise AssertionError("POST_ATTEMPTS must be >= 1")
 
 
+#: What a refusal with this status means for the operator, checked first.
+_STATUS_HINTS: dict[int, str] = {
+    425: (
+        "too early, re-run after 08:05 UTC; if this is a catch-up after 00:00 UTC, check "
+        "/api/ingest/deribit-options/status for yesterday instead"
+    ),
+    # A 429 is refused before any work. Only an earlier 5xx in the same run
+    # could have landed, which the status route answers.
+    429: (
+        "rate-limited: retries exhausted (a 429 lands nothing; if an earlier attempt "
+        "was a 5xx, check /api/ingest/deribit-options/status)"
+    ),
+    404: "app rejected the book: route not deployed yet? (check deploy.yml) or token unset on the app",
+}
+
+
 def _refused(exc: requests.HTTPError, label: str) -> bool:
     status = exc.response.status_code if exc.response is not None else None
     text = exc.response.text[:400] if exc.response is not None else ""
-    if status == 425:
-        why = "too early, re-run after 08:05 UTC"
+    if status in _STATUS_HINTS:
+        why = _STATUS_HINTS[status]
     elif _deterministic_refusal(exc):
         why = "the app refused the book (deterministic, nothing written)"
-    elif status == 429:
-        # A 429 is refused before any work. Only an earlier 5xx in the same
-        # run could have landed, which the status route answers.
-        why = (
-            "rate-limited: retries exhausted (a 429 lands nothing; if an earlier attempt "
-            "was a 5xx, check /api/ingest/deribit-options/status)"
-        )
     elif status is not None and status >= 500:
         why = "retries exhausted (may have landed; check /api/ingest/deribit-options/status)"
     else:

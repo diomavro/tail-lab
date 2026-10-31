@@ -109,6 +109,11 @@ payload checks that run before the plan:
 - **Rule 6 -- coverage:** more than 1% of the live listed names with no row
   is a 409; a `listed` with no live name at all is a 409 "no live listings".
   It runs before the quarantine split, so a coverage failure is always a 409.
+- **Deterministic 500s.** Two refusals are the app's own faults, not the
+  body's: "schema failure not attributable to a row" and "quarantine not
+  serialisable". Like every refusal they write nothing, and their detail
+  starts with `REFUSAL_MARKER` ("deribit refusal: "), so the script does not
+  retry them -- they would refuse again.
 - **Rule 7 -- quarantine, then commit:** bad rows are quarantined, the rest
   committed, and the script exits 1 above a 1% share -- red, with nothing
   lost. A row's reason is the plan's own (`invalid_value` > `wrong_book` >
@@ -124,7 +129,7 @@ payload checks that run before the plan:
     the stored partition is this body's own capture.
   - **Telling the runs apart.** The answer carries `captured_observed_at_ms`,
     the stored partition's earliest observation. Inside the body's own range
-    of `creation_timestamp_ms` (a live book spans 17-89 ms), it is this run's
+    of `creation_timestamp_ms` (measured 2026-10-30: 17-89 ms), it is this run's
     capture -- not necessarily at the body's minimum, since every row at that
     millisecond may have been quarantined or dropped as expired.
   - **Another run's capture.** Outside that range, another run captured the
@@ -171,8 +176,10 @@ until that question is answered.
   immutable Delta partition per day silently dropped a second capture's
   quarantine behind the first, and an all-null typed column broke the next
   write.
-- **0020 §6 ("every other scheduled job here may legitimately do nothing"):**
-  this job may not either. An empty or refused book is red.
+- **0020 §6 ("every other scheduled job here may legitimately do nothing")
+  and its Consequences' "the one red build that should interrupt a day":**
+  this job may not do nothing either, and its red builds interrupt a day too.
+  An empty or refused book is red.
 - **0020 §7 (the narrow tradable set):** these books are outside the strategy
   universe. Justified by README's "irrecoverable work outranks the value bar".
 - **`docs/END_STATE.md` §2.1 item 6 ("forward-collected option chains --

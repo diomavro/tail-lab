@@ -85,7 +85,7 @@ Do not add any reader of `deribit_options_*` -- by import or by dataset name
 
 - **Machine-checked:** an import of the contract (`contracts/deribit_options`)
   or the write route (`api/deribit_routes`) from any `tail_lab` module except
-  ingestion and the write path itself (the "Nothing reads the Deribit books
+  `ingestion.deribit_options` and the write path itself (the "Nothing reads the Deribit books
   yet" contract in `pyproject.toml`, and
   `test_only_the_write_path_imports_the_deribit_contract`).
 - **Not machine-checked, so it rests on you:** a new route added inside

@@ -999,3 +999,39 @@ def test_an_unknown_capture_says_the_app_could_not_tell(
     assert "btc: the app could not say which run captured this day" in err
     assert "captured_read_failed" in err
     assert "landed attempt are unknown" not in err
+
+
+# ---- review round 6 -------------------------------------------------------------------
+
+
+def test_a_425_points_a_late_catch_up_at_yesterday(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A catch-up that runs after midnight UTC gets a 425 for the new day;
+    the hint says to check yesterday, which the 08:15 run usually captured."""
+    _run_post(monkeypatch, [_response(425, {"detail": f"{REFUSAL_MARKER}too early"})])
+    err = capsys.readouterr().err
+    assert "if this is a catch-up after 00:00 UTC, check" in err
+    assert "/api/ingest/deribit-options/status for yesterday instead" in err
+
+
+def test_a_404_suggests_an_undeployed_route_or_an_unset_token(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    _run_post(monkeypatch, [_response(404, {"detail": "not found"})])
+    err = capsys.readouterr().err
+    assert "route not deployed yet? (check deploy.yml) or token unset on the app" in err
+
+
+def test_a_plain_catch_up_names_a_missing_previous_day_without_going_red(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """The run that captured this day already went red for the missing day;
+    the catch-up names it again as a warning so it is not lost in one log."""
+    again = _ok(
+        "BTC", committed=False, already_captured=True, rows=0, previous_partition_exists=False
+    )
+    code, _ = _run_post(monkeypatch, [again])
+    assert code == 0
+    out = capsys.readouterr().out
+    assert "::warning::btc: the day before 2026-10-30 was never captured" in out

@@ -5,8 +5,9 @@ Keyless: two public GETs per book, ``get_book_summary_by_currency`` (the
 quotes) and ``get_instruments`` (strike, expiry, right and contract terms),
 fetched in that order and joined on ``instrument_name``. The book comes first
 so every book row has an instrument unless that name expires or is delisted
-between the calls; the plan's name fallback handles those, and a name listed
-between the calls is absorbed by the coverage rule's 1% tolerance.
+between the calls; the plan's name fallback handles those. A few names listed
+between the calls are absorbed by the coverage rule's 1% tolerance; a whole
+new expiry listed in that gap is ADR 0032's "Unmeasured" gap.
 
 This module is the fetch and the join, plus the ``--local`` writer. The
 scheduled path never runs the writer: ``scripts/deribit_snapshot.py`` POSTs

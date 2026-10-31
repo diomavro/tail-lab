@@ -719,8 +719,8 @@ hour helps — GitHub's docs name the start of every hour as a high-load time.
 **New risk from going public:** GitHub disables scheduled workflows in a
 public repository after **60 days without repository activity**. That rule did
 not apply while private, it kills both jobs that cannot be backfilled (the
-Cboe sweep and, since ADR 0032, the Deribit snapshot), and it disables **both
-crons together** — so the two-cron redundancy is no
+Cboe sweep and, since ADR 0032, the Deribit snapshot), and it disables **every
+scheduled workflow at once** — so the two-cron redundancy is no
 defence. A push-triggered watchdog asserting the workflow is still `active`
 and that its newest scheduled run is under 36 hours old closes it, because
 push-triggered workflows are never auto-disabled.

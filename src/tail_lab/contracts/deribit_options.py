@@ -108,7 +108,8 @@ _INT64_MAX: Final = 2**63 - 1
 _FLOAT_INT_LIMIT: Final = 2**1023
 
 #: Every Deribit expiry settles at 08:00 UTC; nothing is captured before five
-#: minutes past, so the day's expiring names are already gone.
+#: minutes past, and any of the day's expiring names still listed are dropped
+#: as expired (rule 4).
 EXPIRY_TIME: Final = dt.time(8, 0)
 EARLIEST_CAPTURE: Final = dt.time(8, 5)
 #: Two-sided freshness. 30 minutes covers the worst retry path (about 15.4
