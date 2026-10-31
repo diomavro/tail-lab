@@ -638,11 +638,39 @@ do.
 
 ## Deribit — found 2026-10-30 (`docs/adr/0032`)
 
-- [ ] **Can a Hungarian resident trade on Deribit?** The collection does not
-      depend on it, but any later trading use does.
-- [ ] **What do Deribit's API terms say about storing their data?** Collection
-      started before this was answered, because a missed session cannot be
-      bought back for free (ADR 0032 §6); nothing reads the data until it is.
+- [ ] **Can a Hungarian resident trade on Deribit?** Matters only if this
+      ever trades crypto; the collection and research do not depend on it.
+      Researched 2026-10-31, not settled: the official restricted list
+      ([support article 25944487427741](https://support.deribit.com/hc/en-us/articles/25944487427741-Restricted-Jurisdictions))
+      names no EU state in what could be read of it, but ESMA ended MiCA
+      grandfathering on 2026-07-01, and no source confirmed Deribit holds a
+      MiCA licence. Check ESMA's CASP register before opening an account.
+- [x] **What do Deribit's terms say about the data?** Answered 2026-10-31:
+      the Exchange Membership Terms (Deribit FZE, 2026-01-26, §2.10) say
+      market data and derived data are **for personal use only**. The 2021
+      terms add: no aggregating, reselling, publishing or forwarding without
+      explicit approval. Storing it for our own research is personal use.
+      **Showing it on the public site is publishing**, so any public route
+      that serves Deribit-derived numbers needs written approval from
+      Deribit first. The freshness check (counts and dates only) is not
+      market data.
 - [ ] **Confirm `fly scale show` reports ONE machine.** The Deribit route's
       per-book lock only works within one process, so two machines could each
       append the same day (ADR 0032, "Preconditions").
+
+## FRED credit spreads — found 2026-10-31
+
+- [ ] **FRED's high-yield spread (`BAMLH0A0HYM2`) now serves only 3 years.**
+      Since April 2026, FRED keeps a rolling 3-year window; the API's first
+      observation is 2023-10-31. The credit regime (`contracts/regime.py`)
+      is built on this series, so any backfill from FRED can no longer
+      reach 2008 or 2020. Production has no credit data yet. Decide:
+      1. find another source for the full history (ICE directly, or an
+         archived copy, if its licence allows); or
+      2. accept a 3-year credit regime and say so where the regime is shown.
+
+      **Licence:** ICE's notes on FRED restrict the data to **internal use**
+      and forbid publishing or reproducing it without ICE's written approval.
+      Showing raw spread values on the public site is publishing; ask ICE
+      before doing that. The IG series (`BAMLC0A0CM`) is ICE data too, so the
+      same terms apply to it.
