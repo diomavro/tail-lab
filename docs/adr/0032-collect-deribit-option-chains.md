@@ -6,7 +6,7 @@ Date: 2026-10-30
 
 **Accepted** on the human merge of its PR. It touches guarded paths
 (`README.md`, this ADR, `docs/adr/0020`, `docs/AGENT_MISSION.md`, `CLAUDE.md`,
-`pyproject.toml`, `docs/END_STATE.md`, `.github/workflows/`), so it ships as a **draft** PR. It amends
+`pyproject.toml`, `docs/END_STATE.md`, `ARCHITECTURE.md`, `.github/workflows/`), so it ships as a **draft** PR. It amends
 `docs/adr/0020` (see "Departures" below) and departs from one choice in
 `docs/adr/0031`.
 

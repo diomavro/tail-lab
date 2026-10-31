@@ -4,7 +4,7 @@
 #
 # WHAT THIS IS NOT: it does **not** sweep the option chain. That has its own
 # unit (`tail-lab-chain.timer`) for a reason -- it is one of the two sources
-# nobody sells retroactively, so it must run AFTER the US close. An early write used
+# no free vendor serves retroactively, so it must run AFTER the US close. An early write used
 # to claim the session's partition and silently no-op the post-close run; the
 # 2026-09-25 settle-time guard now refuses it, but a morning run from here
 # would still be pointless at best and a false red at worst. Every

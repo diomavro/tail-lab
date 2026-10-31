@@ -210,7 +210,7 @@ Rules, precisely. **Distinguish two different arrows:**
 - **`contracts/` imports nothing else in `tail_lab`.** It is the leaf every other layer depends on.
 - **`lake/` is the foundation above `contracts/`.** It imports nothing internal except `contracts/`. It must never import `ingestion`, `transforms`, `research`, or `api` — the storage layer knows nothing about who fills it or reads it.
 - **Two deliberate carve-outs: neither `api` nor `research` may import `ingestion`.** Fetching from external sources is a write-path concern triggered by the ingestion schedule or the agent, never by an HTTP request and never by a metric/backtest. The read/serve side depends only on data already in the lake. If an endpoint or a metric seems to need `ingestion`, that data belongs in a gold mart instead.
-- **No reverse imports, ever.** Enforced by `import-linter` in CI (a `layers` contract for the stack + a `forbidden` contract for the two ingestion carve-outs — see `pyproject.toml`). A violation fails the build; it is not a style suggestion.
+- **No reverse imports, ever.** Enforced by `import-linter` in CI (a `layers` contract for the stack, plus forbidden contracts — the ingestion carve-outs, the Kaggle corpus, the Deribit no-reader rule — see `pyproject.toml`). A violation fails the build; it is not a style suggestion.
 - **`frontend/` talks to `api/` over HTTP only.** No frontend code imports
   Python, and no backend code imports `frontend/`.
 

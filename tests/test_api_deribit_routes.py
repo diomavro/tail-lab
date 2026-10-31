@@ -592,7 +592,10 @@ def test_the_route_logs_every_refusal_and_every_answer(
         for m in refused
     )
     assert any(
-        "dataset=deribit_options_btc" in m and "committed=true" in m and "rows_posted=20" in m
+        "dataset=deribit_options_btc" in m
+        and "committed=true" in m
+        and "rows_posted=20" in m
+        and f"code_sha={ROUTE_SHA}" in m
         for m in refused
     )
 

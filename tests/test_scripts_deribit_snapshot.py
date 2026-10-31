@@ -838,7 +838,9 @@ def test_a_landed_retry_still_names_a_missing_previous_day(
     still be named, or the operator chases the wrong failure."""
     landed = _ok("BTC", committed=False, already_captured=True, previous_partition_exists=False)
     _run_post(monkeypatch, [_500(), landed])
-    assert "btc: the day before 2026-10-30 was never captured" in capsys.readouterr().err
+    captured = capsys.readouterr()
+    assert "btc: the day before 2026-10-30 was never captured" in captured.err
+    assert "went red for it" not in captured.out
 
 
 def test_the_marker_counts_only_at_the_start_of_the_detail() -> None:
@@ -1068,3 +1070,43 @@ def test_a_small_quarantine_is_a_green_warning(
     code, _ = _run_post(monkeypatch, [ok])
     assert code == 0
     assert "::warning::btc: 1 rows quarantined" in capsys.readouterr().out
+
+
+# ---- round 7, test strength -------------------------------------------------------------
+
+
+def test_no_missing_day_is_named_before_a_book_s_first_partition(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    again = _ok(
+        "BTC", committed=False, already_captured=True, rows=0, previous_partition_exists=None
+    )
+    assert _run_post(monkeypatch, [again])[0] == 0
+    captured = capsys.readouterr()
+    assert "was never captured" not in captured.out + captured.err
+
+
+def test_an_all_quarantined_answer_does_not_claim_another_run_went_red(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Nothing was committed, so no run 'captured this day' -- the
+    catch-up's warning must not fire."""
+    none = _ok(
+        "BTC",
+        committed=False,
+        rows=0,
+        bronze_path=None,
+        quarantine_share=1.0,
+        previous_partition_exists=False,
+    )
+    assert _run_post(monkeypatch, [none])[0] == 1
+    assert "went red for it" not in capsys.readouterr().out
+
+
+def test_a_401_is_a_plain_rejection_not_a_landing(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    _run_post(monkeypatch, [_response(401, {"detail": "unauthorized"})])
+    err = capsys.readouterr().err
+    assert "btc: app rejected the book: HTTP 401" in err
+    assert "may have landed" not in err

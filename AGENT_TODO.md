@@ -2609,12 +2609,18 @@ datasets (marked **Blocked**); the collection-side items are not blocked.
       in unguarded files: `docs/DATA_CONTRACTS.md` §6,
       `scripts/chain_snapshot.py:129`, `src/tail_lab/ingestion/option_chain.py:15`,
       `tests/test_scripts_chain_snapshot_retry.py:4`,
-      `tests/test_scripts_chain_sweep_verify.py:3` and `docs/PRIOR_ART.md:721`.
+      `tests/test_scripts_chain_sweep_verify.py:3`, `docs/PRIOR_ART.md:721`,
+      `Makefile:147-149`, `scripts/local_chain_sweep.sh:5-7`,
+      `scripts/chain_sweep_alert.sh:167` and `scripts/chain_sweep_verify.sh:112`.
 - [ ] **Deribit trade history as a backfill dataset.** `history.deribit.com`
       serves trades from 2016-11-29, keyless; unlike the book snapshots it is
       recoverable later, so it can wait for a reader.
+      **Blocked:** HUMAN_TODO's Deribit data-terms question; ADR 0032 §6's
+      exception covers only irrecoverable snapshots.
 - [ ] **DVOL** (Deribit's implied-vol index; daily from at least 2021-06-01).
       Recoverable later, like trade history.
+      **Blocked:** HUMAN_TODO's Deribit data-terms question; ADR 0032 §6's
+      exception covers only irrecoverable snapshots.
 - [ ] **Pricer support for inverse options.** BTC/ETH premiums are in coin;
       USD value is premium x `index_price`. `research/option_pricer.py`
       assumes a linear, dollar-settled put.

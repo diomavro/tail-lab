@@ -700,3 +700,15 @@ def test_a_json_rpc_error_on_a_200_names_deribits_reason(
     _scripted_get(monkeypatch, [_response(200, body)])
     with pytest.raises(DeribitApiError, match="too_many_requests"):
         ingestion.fetch_book("BTC")
+
+
+def test_the_run_log_says_a_second_local_run_was_a_no_op(
+    monkeypatch: pytest.MonkeyPatch, lake: Lake, caplog: pytest.LogCaptureFixture
+) -> None:
+    fake_fetch(monkeypatch, {"BTC": raw_book("BTC", 50)})
+    assert _ingest(lake).committed
+    caplog.clear()
+    with caplog.at_level(logging.INFO):
+        _ingest(lake)
+    (line,) = _run_log(caplog)
+    assert 'partition="no-op, exists"' in line

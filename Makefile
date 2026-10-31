@@ -144,8 +144,8 @@ ingest-tiingo-eod:
 	TAIL_LAB_REPO=$(CURDIR) ./scripts/weekly_tiingo_refresh.sh; status=$$?; tail -n 20 .tiingo-refresh.log; exit $$status
 
 # Forward-collects TODAY's put and call wings (docs/adr/0031) from Cboe's public
-# CDN, one fetch per chain. Unlike every other
-# ingest-* target this one cannot be caught up later: no free source serves a
+# CDN, one fetch per chain. Like ingest-deribit, and unlike every other
+# ingest-* target, this one cannot be caught up later: no free source serves a
 # retroactive chain, so a day not swept is a day lost (docs/adr/0020). The
 # scheduled workflow runs the --post half; this is the human/local path.
 CHAIN_SYMBOLS ?=
