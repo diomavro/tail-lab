@@ -281,6 +281,13 @@ def _sizing_fields(sizing: SizingAnswer) -> list[tuple[str, object]]:
         ("g0", sizing.g0),
         ("g_star", sizing.g_star),
         ("margins", ",".join(f"{k}:{v:.6f}" for k, v in sizing.margin_by_leg.items())),
+        ("w_rck", "none" if sizing.drawdown.w_rck is None else sizing.drawdown.w_rck),
+        (
+            "rck_meets",
+            "withheld"
+            if sizing.drawdown.recommended_meets is None
+            else sizing.drawdown.recommended_meets,
+        ),
     ]
 
 

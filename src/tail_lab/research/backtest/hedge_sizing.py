@@ -32,6 +32,18 @@ the cap ``w* = 1`` the program dominates the index at every mix; the answer
 is 0.5, and it is not called half-Kelly. Degraded inputs (no measured
 dividends, no T-bills) withhold the recommendation -- ``None``, with why --
 rather than gate on a partial leg set.
+
+**The drawdown bound** (:func:`drawdown_bound`) is risk-constrained Kelly
+(Busseti, Ryu & Boyd, arXiv 1603.06183): with ``lam = ln(beta) / ln(alpha)``,
+any mix with ``mean(r^-lam) <= 1`` over the monthly gross returns ``r`` keeps
+the chance that wealth ever falls below ``alpha`` of its start under ``beta``
+-- if months are drawn independently from this history, which is the same
+one-history caveat ``w*`` carries. ``r`` is linear in ``w`` and ``r^-lam``
+convex, so the ratios that meet it form one interval. Against cash, the
+constraint shrinks a bet; against the INDEX it can do the opposite: the drop
+being bounded comes from the index, so the interval may start above 0 and
+above ``w*/2``. It is served beside the recommendation and does not change
+it: whether the size held meets the bound is the reading, not a new gate.
 """
 
 from __future__ import annotations
@@ -46,6 +58,7 @@ import numpy as np
 import pandas as pd
 from pydantic import BaseModel
 from scipy.optimize import brentq
+from scipy.special import logsumexp
 
 from tail_lab.research.backtest.index_replication import DAYS_PER_YEAR
 from tail_lab.research.optimise import golden_section
@@ -65,6 +78,11 @@ DECISIVE_MONTHS = 3
 
 #: Points on the served ``g(w)`` curve, 0 to 1 inclusive.
 CURVE_POINTS = 41
+
+#: The drawdown bound's default: wealth below 70% of its start (``alpha``)
+#: with probability at most 10% (``beta``).
+RCK_FLOOR = 0.7
+RCK_PROB = 0.1
 
 
 @dataclass(frozen=True)
@@ -150,6 +168,22 @@ class CurvePoint(BaseModel):
 BreakEvenStatus = Literal["found", "beyond_1", "none"]
 
 
+class DrawdownBound(BaseModel):
+    """The ratios that keep ``P(wealth < floor * start) <= probability``
+    (risk-constrained Kelly), and where the size held sits against them."""
+
+    floor: float
+    probability: float
+    lam: float
+    #: The interval of ratios meeting the bound; ``None`` when no mix does.
+    lo: float | None
+    hi: float | None
+    #: The growth-optimal ratio inside the interval: ``w*`` clipped to it.
+    w_rck: float | None
+    #: Whether the recommended ratio meets the bound (``None`` if withheld).
+    recommended_meets: bool | None
+
+
 class SizingAnswer(BaseModel):
     """How much of the book to hold in one program over one window."""
 
@@ -186,6 +220,7 @@ class SizingAnswer(BaseModel):
     halves: list[HalfWindow]
     decisive_months: list[DecisiveMonth]
     curve: list[CurvePoint]
+    drawdown: DrawdownBound
 
 
 def _bp(x: float) -> str:
@@ -213,6 +248,52 @@ def naive_kelly(seg: Segments) -> float | None:
         return None
     cov = float(np.cov(seg.e - 1.0, d, ddof=1)[0, 1])
     return (float(d.mean()) - cov) / var
+
+
+def drawdown_bound(
+    seg: Segments,
+    w: float,
+    recommended: float | None,
+    floor: float = RCK_FLOOR,
+    probability: float = RCK_PROB,
+) -> DrawdownBound:
+    """Risk-constrained Kelly on ``[0, 1]``: the interval where
+    ``ln mean(r^-lam) <= 0``, and ``w`` (the full-Kelly ratio) clipped to it.
+
+    The log-mean is taken through ``logsumexp``: at a strict bound a deep
+    month's ``r^-lam`` is past float range, and the log stays finite. It is quasi-convex in the ratio (the log of a
+    convex function), so its minimum is found by golden section and each
+    edge by a bracketed root."""
+    lam = math.log(probability) / math.log(floor)
+
+    def excess(x: float) -> float:
+        mix = x * seg.p + (1.0 - x) * seg.e
+        return float(logsumexp(-lam * np.log(mix)) - math.log(len(mix)))
+
+    best = golden_max(lambda x: -excess(x))
+    if excess(best) > 0.0:
+        return DrawdownBound(
+            floor=floor,
+            probability=probability,
+            lam=lam,
+            lo=None,
+            hi=None,
+            w_rck=None,
+            recommended_meets=None if recommended is None else False,
+        )
+    lo = 0.0 if excess(0.0) <= 0.0 else float(brentq(excess, 0.0, best, xtol=W_TOL))
+    hi = 1.0 if excess(1.0) <= 0.0 else float(brentq(excess, best, 1.0, xtol=W_TOL))
+    return DrawdownBound(
+        floor=floor,
+        probability=probability,
+        lam=lam,
+        lo=lo,
+        hi=hi,
+        w_rck=min(max(w, lo), hi),
+        recommended_meets=(
+            None if recommended is None else lo - W_TOL <= recommended <= hi + W_TOL
+        ),
+    )
 
 
 def stability(seg: Segments, w: float) -> tuple[list[HalfWindow], list[DecisiveMonth]]:
@@ -331,4 +412,5 @@ def size(inputs: SizingInputs) -> SizingAnswer:
             CurvePoint(weight=float(x), cagr=seg.cagr(float(x)))
             for x in np.linspace(0.0, 1.0, CURVE_POINTS)
         ],
+        drawdown=drawdown_bound(seg, w, recommended),
     )

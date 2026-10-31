@@ -302,9 +302,22 @@ a large one strictly in order.
       amendment) solves `w*` exactly on the self-financed blend, with `g(0)`,
       the break-even and a naive-Kelly contrast. Still OPEN: `sizing.py`
       itself, the Workspace's fixed $1,000 premium budget (now labelled
-      "Standalone · fixed premium, not a size recommendation"), and
-      drawdown-constrained sizing (the `kelly_code` bound below). Do not build
+      "Standalone · fixed premium, not a size recommendation"). Do not build
       a second Book sizer.
+      **Drawdown bound served 2026-10-31** (risk-constrained Kelly, arXiv
+      1603.06183): every `SizingAnswer` carries `drawdown` -- the interval of
+      ratios keeping `P(wealth < 70% of start) <= 10%`, `w_rck` (`w*` clipped
+      to it) and whether the size held meets it. It does not change the
+      recommendation. The reading it exists for: against the INDEX the bound
+      can push the hedge UP, so half-Kelly -- the house's "conservative" size
+      -- can be the one that fails it (pinned in the tests). Still OPEN:
+      (1) show it on the Book's "How much to hold" (`HoldSize.tsx`); the
+      `hedge-overlay.ts` e2e fixtures are recorded real results, so
+      regenerate them from a real `run_hedge_overlay` rather than typing
+      numbers in; (2) run it on the real Cboe programs and record in
+      `docs/DISCOVERIES.md` which windows' half-Kelly fails the bound;
+      (3) decide in an ADR 0027 amendment whether a size that fails the bound
+      should be raised to `lo`, withheld, or only flagged.
       `docs/PRIOR_ART.md` §14. `premium_budget_per_leg` is a hardcoded $1,000.
       `docs/END_STATE.md` §4 Q8 objects that `l* = (mu-r)/sigma^2` cannot
       transfer because a put's variance is mostly upside — and Riskfolio-Lib's
@@ -318,6 +331,23 @@ a large one strictly in order.
       bound — conservatism with a stated constraint rather than a folk factor.
       NOTE the constraint the README already imposes: evaluate the COMBINED
       portfolio, never the put book alone.
+
+- [ ] **State-price Kelly: is the tail priced above its physical odds?**
+      Kelly in state-price form (arXiv 2603.13581, read the paper; the
+      `long-mathematics/kelly-wagering` repo is preprints only, no code and
+      no licence) says a bet on a state is growth-positive only where the
+      physical probability `p` beats the state price `q`. For this repo the
+      state is "SPX down 20% or more over the horizon". `q` is already in the
+      lake: the Minneapolis Fed MPD (`contracts/mpd.py`, DATA_CONTRACTS #9)
+      serves the risk-neutral probability of a 20% decrease. `p` is the
+      realised frequency of such drops over the same horizon, point-in-time
+      (only drops completed by `as_of`). Serve `p/q` per date and regime. A
+      put book with `p/q < 1` throughout is paying for insurance at more than
+      fair odds, and only the portfolio effect `hedge_sizing` measures can
+      justify it. This is the standalone half of END_STATE §4 Q8 stated in
+      probabilities, and a check on the Pitch's "no demonstrable edge"
+      finding (#172) from a source independent of the quote panel. Never
+      report it as a size.
 
 - [ ] **Verify SPY's pre-2005 expense ratios against the SPDR annual reports.**
       `research/backtest/index_leg.SPY_FEES` carries 0.20% for 1993-2005 as an
