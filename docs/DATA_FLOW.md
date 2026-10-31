@@ -31,6 +31,7 @@ flowchart LR
         FRED["FRED (keyed)<br/>rates · credit"]
         LOCAL["Local vendor file<br/>real option quotes<br/>(licence-limited)"]
         STATIC["Static catalogue<br/>in contracts/"]
+        DERIBIT["Deribit public API<br/>crypto option books<br/>(collected, read by nothing yet)"]
     end
     subgraph L["② Lake — immutable, partitioned by ingest_date"]
         BRONZE["bronze/<br/>vix · ohlcv_* · cboe_strategy<br/>options_expiry_* · credit · option_quotes"]
@@ -51,6 +52,7 @@ flowchart LR
     CHAIN --> BRONZE
     FRED -.optional, not yet ingested in prod.-> BRONZE
     LOCAL -.optional.-> BRONZE
+    DERIBIT -.forward-collected, no reader.-> BRONZE
     STATIC --> ROUTES
     BRONZE --> SG
     BRONZE --> CALC
@@ -146,6 +148,7 @@ account, no API key, no money — the constitution's free-data-first rule.
 | **Nasdaq** historical | `ohlcv_<symbol>` | daily | ✅ | Yahoo | `make ingest-ohlcv SYMBOL=…` |
 | **Cboe** delayed quote chain | `options_expiry_<symbol>` | daily | ✅ | Yahoo (cookie+crumb) | `make ingest-options-expiry SYMBOL=…` |
 | **Cboe** delayed quote chain (daily sweep) | `option_chain_snapshot`, `option_chain_call_snapshot` (ADR 0020/0031) | daily | ✅ | none — unrecoverable | `daily-chain-snapshot.yml` / `make ingest-option-chain` |
+| **Deribit** public API — `get_book_summary_by_currency` + `get_instruments` | `deribit_options_btc`, `deribit_options_eth`, `deribit_options_usdc` (ADR 0032, `docs/DATA_CONTRACTS.md` #16) | daily | ✅ | none — past sessions are sold (Tardis.dev), not served | `daily-deribit-snapshot.yml` / `make ingest-deribit` |
 | **FRED** — ALFRED vintage history | `credit` (HY + IG OAS) | daily | 🔑 `FRED_API_KEY` | none | `make ingest-credit` |
 | **Tiingo** daily prices | `tiingo_eod` — as-traded close, dividends, splits, whole universe, 1993→ | weekly (Sat) | 🔑 `TIINGO_API_KEY` | none | `make ingest-tiingo-eod` (`scripts/weekly_tiingo_refresh.sh`) |
 | **Local vendor file** — lambdaclass `data-v1` | `option_quotes` (42,131 real SPY quotes, 2008→2025) | one-shot | ✅ (manual download) | none | `make ingest-option-quotes` |
@@ -251,6 +254,7 @@ free source here has already degraded at least once: Yahoo went from "works" to
 | **Cboe chains + Yahoo** | nothing yet — no production partition exists to lose (§3.1) | everything, including the cadence panel (fallback to the static catalogue) | n/a |
 | **FRED credit** | nothing yet — no production partition exists to lose (§3.2) | everything, including the Regime tab (fallback to the VIX-only label) | n/a |
 | **Tiingo `tiingo_eod`** | nothing breaks: every price keeps the last yields with their age — a measured yield (including a scaled `short_history` one) is labelled **carried**, then `stale` after 21 days; a real zero (`non_payer`, `suspended`) keeps its own label however old; a symbol never fetched (or withheld for a bad row) prices at q = 0 labelled `unknown`. Before the first ingest every roll is `unknown` — the old q = 0 prices | everything; the Surface falls back to its old assumed 1.9% yield, labelled; the Book falls back to SPX plus an assumed 1.9% yield, labelled, and **withholds every recommended size** ("sizing needs measured dividends"). A feed more than 14 days behind the Cboe calendar is not extended, so Book windows show as clipped | `tail-lab-alert@tiingo` on a failed weekly run; every result's `q_source` / `dividend_snapshot` |
+| **Deribit** | nothing — no reader outside the write and status routes touches the three datasets yet | everything | `GET /api/ingest/deribit-options/status` (`stale_days` per book); the daily agent reads it. A missed session is lost unless it is bought from Tardis.dev |
 | **`option_quotes`** (licence-limited) | `make skew` and `make pitch-evidence` (its 2008–09 section; the read raises before anything is written, so the committed Pitch keeps serving the last `pitch_evidence.json`) | **everything** — by construction | raises `LookupError` |
 
 **The asymmetry is deliberate.** The licence-limited source is the one whose

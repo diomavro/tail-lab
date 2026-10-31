@@ -9,8 +9,9 @@ greeks all arrive in one document. (Yahoo's ``/v7/finance/options`` endpoint,
 named as the fallback in ``contracts/options_calendar``, now answers 401
 without a cookie+crumb pair; Cboe needs neither.)
 
-**This adapter is the one that cannot wait.** Every other source here serves
-history on demand, so a day we forget to ingest is recoverable. A live chain
+**This adapter is one of two that cannot wait.** Every other source here
+except Deribit's books serves history on demand, so a day we forget to ingest
+is recoverable. A live chain
 is not: no free vendor sells a retroactive quote, so an un-snapshotted day is
 lost for good. That is why this runs on a schedule that treats an empty day
 as a failure, and why the slice below is tuned to be cheap enough to run

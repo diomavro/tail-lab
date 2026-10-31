@@ -84,6 +84,8 @@ at a glance and lets him drill in before placing a trade by hand.
 4. Credit — HY/IG OAS.
 5. Event calendar — scheduled + manual unscheduled table.
 6. Forward-collected option chains — narrow tradable set only.
+   (Exception: Deribit's whole crypto option books are collected too,
+   outside the tradable set and as collection only -- `docs/adr/0032`.)
 
 ### 2.2 Deferred backlog (beyond v1)
 

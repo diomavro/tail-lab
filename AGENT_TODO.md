@@ -2610,6 +2610,78 @@ lost a second time.
       proving the injected payload was used, not a network path that tests
       happen not to exercise.
 
+## Deribit forward collection (2026-10-30, `docs/adr/0032`)
+
+The collection itself shipped with ADR 0032; nothing reads it yet. These are
+the follow-ups that plan deliberately left out.
+
+**Blocked:** no reader until HUMAN_TODO's Deribit data-terms question is
+answered (ADR 0032). That covers every item below that would READ these
+datasets (marked **Blocked**); the collection-side items are not blocked.
+
+- [ ] **A per-dataset lock on the Cboe chain routes.** `api/ingest_routes`
+      has none, so two retried POSTs can both pass the exists-check and both
+      append, even on one machine. `api/deribit_routes._LOCKS` is the pattern;
+      its concurrency test (a `Barrier` inside a wrapped
+      `bronze_partition_exists`) is the one to copy.
+- [ ] **Doc accuracy, guarded part (guarded, human): "nobody sells a
+      retroactive option chain / gone at any price" overstates it.** Paid
+      vendors (optionsDX, ORATS, Tardis.dev) sell past chains; the accurate
+      claim is "not for free", which ADR 0020:32 already gets right. These
+      files need a human-merged PR: `README.md:68-72`, `CLAUDE.md` (the
+      daily-chain-sweep bullet), `docs/AGENT_MISSION.md:51-53`, ADR 0020
+      (:35, :46; amended, not rewritten),
+      `.github/workflows/daily-chain-snapshot.yml:7-12` ("gone permanently"),
+      the `daily-agent.yml` sentence beginning "This is one of the datasets
+      that cannot be backfilled", and `HUMAN_TODO.md:581` (Dio's file, which
+      the agent never edits; besides "nobody sells", its "Every other source
+      here serves history on demand" is a uniqueness claim ADR 0032 made
+      false).
+- [ ] **Doc accuracy, agent-doable part:** the same "not for free" correction
+      in unguarded files.
+      - "Nobody sells" (should be "no free source sells"):
+        `docs/DATA_CONTRACTS.md` §6, `scripts/chain_snapshot.py:129`,
+        `src/tail_lab/ingestion/option_chain.py:112` and `:264`,
+        `tests/test_scripts_chain_snapshot_retry.py:4`,
+        `tests/test_scripts_chain_sweep_verify.py:4`,
+        `tests/test_ingestion_option_chain.py:252` and `:1367`,
+        `scripts/chain_sweep_verify.sh:112`.
+      - "Gone permanently / unrecoverable / permanently blank" (should be
+        "cannot be recovered for free"): `src/tail_lab/contracts/option_chain.py:13`,
+        `scripts/local_chain_sweep.sh:5-7`, `scripts/chain_sweep_alert.sh:167`,
+        `scripts/chain_sweep_verify.sh:162`.
+- [ ] **Deribit trade history as a backfill dataset.** `history.deribit.com`
+      serves trades from 2016-11-29, keyless; unlike the book snapshots it is
+      recoverable later, so it can wait for a reader.
+      **Blocked:** HUMAN_TODO's Deribit data-terms question; ADR 0032 §6's
+      exception covers only irrecoverable snapshots.
+- [ ] **DVOL** (Deribit's implied-vol index; daily from at least 2021-06-01).
+      Recoverable later, like trade history.
+      **Blocked:** HUMAN_TODO's Deribit data-terms question; ADR 0032 §6's
+      exception covers only irrecoverable snapshots.
+- [ ] **Pricer support for inverse options.** BTC/ETH premiums are in coin;
+      USD value is premium x `index_price`. `research/option_pricer.py`
+      assumes a linear, dollar-settled put.
+      **Blocked:** no reader until HUMAN_TODO's Deribit data-terms
+      question is answered (ADR 0032).
+- [ ] **BTC and ETH as screen candidates**, once OHLCV for them exists.
+      **Blocked:** no reader until HUMAN_TODO's Deribit data-terms
+      question is answered (ADR 0032).
+- [ ] **The point-in-time test for the first reader.** Partition D's
+      `observed_at` can be as late as 23:59:59 UTC, and the date-level as-of
+      read does not know it (`docs/DATA_CONTRACTS.md` §16). The first reader
+      adds a test in the style of `tests/test_point_in_time_clock.py` that
+      fails if it reads D before D's `observed_at`.
+      **Blocked:** no reader until HUMAN_TODO's Deribit data-terms
+      question is answered (ADR 0032).
+- [ ] **Unify the two POST loops** (`scripts/chain_snapshot.py`, urllib, and
+      `scripts/deribit_snapshot.py`, requests). Constraint: the chain
+      script's tests patch its module globals (`time.sleep`, `_post_once`),
+      so an extracted loop must keep those patch points or move the tests.
+- [ ] **Top-of-book sizes via `public/ticker`.** Not captured today and not
+      recoverable later. It is one call per instrument: a burst of 800 calls
+      drew 581 HTTP 429s, so a paced run costs about 4 minutes.
+
 ## Operational (2026-09-01)
 
 - [x] **One unparseable `iv` drops a whole symbol from the chain sweep**

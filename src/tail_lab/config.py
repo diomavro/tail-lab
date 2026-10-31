@@ -128,6 +128,17 @@ def get_memory_store(settings: Settings | None = None) -> HypothesisMemory:
     return HypothesisMemory(BlobStore(root, storage_options=storage_options))
 
 
+def get_quarantine_blobs(settings: Settings | None = None) -> BlobStore:
+    """The :class:`~tail_lab.lake.blob_store.BlobStore` the Deribit writers
+    keep their per-capture quarantine in (``ops/quarantine/``,
+    ``docs/DATA_CONTRACTS.md`` #16) -- on the same root and credentials as
+    ``get_lake_store``. Public so the route and the ``--local`` script share
+    it rather than reaching for the private resolver below."""
+    settings = settings or get_settings()
+    root, storage_options = _lake_root_and_storage_options(settings)
+    return BlobStore(root, storage_options=storage_options)
+
+
 def _lake_root_and_storage_options(
     settings: Settings,
 ) -> tuple[Path | str, dict[str, str] | None]:

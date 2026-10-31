@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # OnFailure handler for tail-lab-chain.service.
 #
-# Why this exists: the chain sweep is the one job that cannot be caught up
-# later (docs/adr/0020). While it ran on GitHub Actions a failure produced a
+# Why this exists: the chain sweep is one of the two jobs that cannot be caught
+# up later (docs/adr/0020). While it ran on GitHub Actions a failure produced a
 # red build and an email. Run from a local systemd timer instead, a failure
 # appends to a log nobody reads and exits non-zero into the void -- the sweep
 # degraded from "loud on failure" to "silent on failure", which for an

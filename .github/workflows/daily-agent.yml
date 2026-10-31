@@ -203,12 +203,25 @@ jobs:
 
             2. Check the forward collection is alive, BEFORE picking any work:
                  curl -s https://tail-lab.fly.dev/api/ingest/option-chain/status
-               This is the one dataset that cannot be backfilled — nobody sells a retroactive
+               This is one of the datasets that cannot be backfilled — nobody sells a retroactive
                option chain, so a session not captured is lost at any price (`docs/adr/0020`).
-               If `stale_days` is null (never collected) or larger than a long weekend, the
-               daily sweep is broken, and diagnosing it is the highest-value thing available
-               to you today — ahead of whatever is at the top of `AGENT_TODO.md`. Say so in
-               the PR. If it is fresh, note the last session and move on.
+               For the option-chain status, if `stale_days` is null (never collected) or larger
+               than a long weekend, the daily sweep is broken, and diagnosing it is the
+               highest-value thing available to you today — ahead of whatever is at the top of
+               `AGENT_TODO.md`. Say so in the PR.
+
+               Then check the Deribit books:
+                 curl -s https://tail-lab.fly.dev/api/ingest/deribit-options/status
+               The Deribit books are in the same class for this purpose: past sessions are
+               not free, only paid Tardis.dev data (`docs/adr/0032`). The response is per-book
+               JSON, `books.<btc|eth|usdc>.stale_days`.
+               The four conditions that mean the Deribit collection is broken (the books trade
+               around the clock) are in `docs/AGENT_MISSION.md`, under "Check the collection
+               before you pick anything" -- apply them exactly, and the reader guardrail beside
+               them. A broken Deribit collection is treated exactly like a broken option-chain
+               sweep: diagnose it first, and say so in the PR.
+
+               If both are fresh, note the last sessions and move on.
 
             2a. Read what open agent PRs already cover:
                   cat "$RUNNER_TEMP/open-prs.txt"

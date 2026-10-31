@@ -28,6 +28,7 @@ from __future__ import annotations
 
 import datetime as dt
 import hashlib
+import logging
 import time
 from abc import ABC, abstractmethod
 from collections import OrderedDict
@@ -113,6 +114,16 @@ class LakeStore(ABC):
         concludes it created a partition it did not. Implementations must read
         the same uncached source ``write_bronze`` itself branches on.
         """
+
+    @abstractmethod
+    def bronze_ingest_dates(self, dataset: str) -> list[dt.date]:
+        """Every bronze partition date of ``dataset``, sorted; ``[]`` when the
+        table does not exist. Uncached, like :meth:`bronze_partition_exists`.
+
+        Exists for callers that must notice a MISSING day: "is there an
+        earlier partition" and "how many partitions, first to last" are not
+        answerable through as-of resolution, which only ever names the latest
+        one."""
 
     @abstractmethod
     def read_bronze_as_of(self, dataset: str, as_of: dt.date) -> pd.DataFrame:
@@ -351,6 +362,9 @@ class DeltaLakeStore(LakeStore):
         below -- deliberately one expression so the two cannot drift."""
         table_uri = self._table_uri(self._bronze_table_key(dataset))
         return ingest_date.isoformat() in self._existing_bronze_ingest_date_strings(table_uri)
+
+    def bronze_ingest_dates(self, dataset: str) -> list[dt.date]:
+        return self._list_bronze_ingest_dates(self._table_uri(self._bronze_table_key(dataset)))
 
     def write_bronze(self, dataset: str, ingest_date: dt.date, df: pd.DataFrame) -> str:
         table_uri = self._table_uri(self._bronze_table_key(dataset))
@@ -607,3 +621,34 @@ class DeltaLakeStore(LakeStore):
                 _strip_scheme(self._storage_options["AWS_ENDPOINT_URL"]),
             ],
         )
+
+
+#: What :func:`earliest_in_partition_ms` survives: a lake read fault (DuckDB's
+#: own included), or no such partition or column.
+PARTITION_READ_ERRORS: tuple[type[Exception], ...] = (*LAKE_READ_ERRORS, LookupError, duckdb.Error)
+
+_PARTITION_LOGGER = logging.getLogger(__name__)
+
+
+def earliest_in_partition_ms(
+    store: LakeStore, dataset: str, ingest_date: dt.date, column: str, *, event: str
+) -> int | None:
+    """The earliest ``column`` timestamp in bronze partition ``ingest_date``,
+    as epoch milliseconds; ``None`` (logged as ``event``) if it cannot be read.
+
+    Through :meth:`LakeStore.bronze_relation_as_of`, whose resolution is
+    uncached -- not the as-of read cache, which could hand back a resolution
+    made before the partition landed. The caller must already know the
+    partition exists, so "as of ``ingest_date``" names it exactly. A failed
+    read is logged and answered ``None`` rather than raised: it is meant for
+    a caller that can carry on without the answer.
+    """
+    try:
+        relation = store.bronze_relation_as_of(dataset, ingest_date)
+        first = store.query(f"SELECT MIN({column}) AS first FROM {relation}")["first"].iloc[0]
+        return int(pd.Timestamp(first).value // 1_000_000)
+    except PARTITION_READ_ERRORS:
+        _PARTITION_LOGGER.exception(
+            "event=%s dataset=%s ingest_date=%s", event, dataset, ingest_date.isoformat()
+        )
+        return None

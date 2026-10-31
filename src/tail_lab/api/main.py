@@ -17,6 +17,7 @@ from fastapi import Depends, FastAPI, HTTPException, Query, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
+from tail_lab.api.deribit_routes import router as deribit_router
 from tail_lab.api.feedback_routes import router as feedback_router
 from tail_lab.api.ingest_routes import router as ingest_router
 from tail_lab.api.marks_routes import router as marks_router
@@ -76,6 +77,7 @@ app.include_router(putlab_memory_router)
 app.include_router(putlab_router)
 app.include_router(ingest_router)
 app.include_router(marks_router)
+app.include_router(deribit_router)
 
 
 @app.middleware("http")

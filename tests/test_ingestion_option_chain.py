@@ -1048,7 +1048,7 @@ def test_a_market_holiday_is_still_a_quiet_no_op(tmp_path: Path) -> None:
     or the wall clock: on a holiday (Labor Day 2026-09-07 served 2026-09-04
     all day) the reference did not trade either, so it agrees with Cboe and
     the re-run stays green. An alarm that fires every holiday is one people
-    learn to ignore, on the one job whose alarms must be believed."""
+    learn to ignore, on one of the two jobs whose alarms must be believed."""
     live = [f"SYM{i:02d}" for i in range(24)]
     store = DeltaLakeStore(tmp_path)
     friday = _fetcher(**{n: _payload(_put(95.0), symbol=n, day="2026-09-04") for n in live})

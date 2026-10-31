@@ -14,6 +14,12 @@ Decision 2's "Puts only" describes `option_chain_snapshot`, which keeps its
 contract; the one new refusal is a symbol whose signed deltas are more than a
 fifth call-signed, quarantined whole as misrouted (ADR 0031 §5).
 
+Amended by `docs/adr/0032`: Deribit's crypto option books are forward-collected
+too, under their own rules (three per-book datasets, a third write endpoint,
+JSON-blob quarantine). This ADR's decisions still govern the Cboe chain (its
+§6 "every other scheduled job" and Consequences' "the one red build" no
+longer hold; see 0032 Departures).
+
 ## Context
 
 `README.md` lists six core datasets. Five of them — OHLCV, the volatility
