@@ -9,12 +9,16 @@
 #
 # `../scripts/actions-budget.sh` reconstructs billed minutes from run data
 # using only the `repo` scope, applies GitHub's real rule (billed per job,
-# each job rounded UP to the whole minute), and exits non-zero above 80% of
-# the allowance. Public repos are free and are excluded from the billed
-# total -- as of 2026-09-23 tail-lab is public, which moved 2,037 min/month
-# off the quota; quizkit and tip_app are still private and still bill.
+# each job rounded UP to the whole minute), and exits 1 at or above 80% of the
+# allowance, or 2/3 when it reached no verdict -- and this wrapper also
+# fails on its own (FATAL below, an unwritable log, a timeout kill). The
+# alert cannot tell these apart, so it names both and says to re-run. Public
+# repos are free and are excluded from the billed total -- tail-lab has been
+# public since 2026-09-23, so its minutes no longer count; quizkit and
+# tip_app are still private and still bill.
 #
-# Exit code is the budget script's, so systemd's OnFailure= fires the alert.
+# Exit code is the budget script's when it runs (else this wrapper's own
+# failure), and any non-zero makes systemd's OnFailure= fire the alert.
 set -uo pipefail
 
 REPO="${TAIL_LAB_REPO:-/home/dio/Documents/apps/tail-lab}"

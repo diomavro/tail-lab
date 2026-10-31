@@ -97,3 +97,52 @@ def test_the_tiingo_context_has_its_own_marker_and_remedy(tmp_path: Path) -> Non
     assert "serves history on demand" in body
     assert "UNKNOWN" not in body
     assert FORBIDDEN not in body and PANIC not in body
+
+
+#: The budget unit fails both when the check measured >= 80% AND when it could
+#: not measure at all (2026-10-26: DNS down at resume), and this handler cannot
+#: tell which. These are the only places it states the reading, pinned word for
+#: word: a heuristic ("no sentence asserts 80%") was tried and leaked three
+#: rounds running. Rewording them is fine -- by editing these on purpose.
+BUDGET_HEADLINE = "tail-lab: Actions budget check FAILED -- over 80%, or could not measure"
+BUDGET_OPENING = (
+    "Either the check counted Actions minutes at or above 80% of the "
+    "monthly allowance, or it could not measure them at all"
+)
+BUDGET_TOAST = [
+    "GitHub Actions budget",
+    "Either the check counted Actions minutes at or above 80% of the allowance, "
+    "or it could not measure them. Re-run it to see which.",
+]
+
+
+def test_the_budget_marker_states_both_possibilities_and_no_reading(tmp_path: Path) -> None:
+    body = _run("budget", tmp_path)
+    headline, rest = body.split("\n", 1)
+    assert headline.startswith(BUDGET_HEADLINE + " ("), headline
+    assert " ".join(rest.split()).startswith(BUDGET_OPENING), rest
+    assert "running out" not in body
+    assert "re-run the check" in body
+
+
+def test_the_budget_toast_states_both_possibilities_and_no_reading(tmp_path: Path) -> None:
+    """The toast is what a human actually sees."""
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    sent = tmp_path / "toast.txt"
+    stub = bin_dir / "notify-send"
+    stub.write_text(f'#!/bin/sh\nprintf "%s\\n" "$@" > {sent}\n')
+    stub.chmod(0o755)
+    subprocess.run(
+        [str(SCRIPT), "budget"],
+        env={
+            "PATH": f"{bin_dir}:/usr/bin:/bin",
+            "HOME": str(tmp_path),
+            "TAIL_LAB_REPO": str(tmp_path),
+        },
+        check=False,
+        capture_output=True,
+        timeout=60,
+    )
+    # notify-send -u <urgency> <title> <body>
+    assert sent.read_text().splitlines()[2:] == BUDGET_TOAST

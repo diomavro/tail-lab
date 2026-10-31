@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# OnFailure handler for tail-lab-chain.service.
+# OnFailure handler for tail-lab's systemd units, via
+# `tail-lab-alert@<context>.service` (the context picks marker and text).
 #
 # Why this exists: the chain sweep is one of the two jobs that cannot be caught
 # up later (docs/adr/0020). While it ran on GitHub Actions a failure produced a
@@ -13,7 +14,8 @@
 # time when nobody is watching and a toast nobody sees is not an alert:
 #   1. a marker FILE that persists until acknowledged (the durable one),
 #   2. this script's stdout, which journald attributes to the unit,
-#   3. a desktop notification at critical urgency.
+#   3. a desktop notification (critical for the chain sweep, normal for the
+#      recoverable jobs).
 #
 # What each defence is for, all measured rather than assumed:
 #
@@ -92,17 +94,22 @@ case "$CONTEXT" in
     # endpoint needs a `user` scope this machine's token does not carry. This
     # context is the local substitute: `scripts/actions-budget.sh` in the
     # sibling workspace reconstructs billed minutes from run data with no
-    # extra scope, and exits non-zero above 80% of the allowance.
+    # extra scope, and exits non-zero above 80% of the allowance -- and ALSO
+    # when it could not measure at all (GitHub unreachable at resume, as on
+    # 2026-10-26; bad input; a killed run). This unit cannot tell which, and
+    # the log cannot be trusted to (an unwritable log or a killed run leaves
+    # an older run's verdict on top). So the text claims only what is always
+    # true and sends the reader to re-run the check, which prints its own.
     #
     # It exists because hitting the limit is what killed CI, deploys and the
     # daily agent for four days in September 2026, and nothing warned first.
     MARKER="$REPO/.actions-budget-FAILED"
     FALLBACK="$HOME/.actions-budget-FAILED"
-    HEADLINE="tail-lab: GitHub Actions minutes are running out ($WHEN)"
+    HEADLINE="tail-lab: Actions budget check FAILED -- over 80%, or could not measure ($WHEN)"
     REMEDY="../scripts/actions-budget.sh"
     URGENCY="normal"
     TOAST_TITLE="GitHub Actions budget"
-    TOAST_BODY="Billed Actions minutes are above 80% of the monthly allowance. CI, deploys and the daily agent all stop at 100%."
+    TOAST_BODY="Either the check counted Actions minutes at or above 80% of the allowance, or it could not measure them. Re-run it to see which."
     LOGS="$REPO/.actions-budget.log"
     ;;
   chain)
@@ -156,12 +163,20 @@ render() {
       echo "option-chain sweep. Do not run the chain sweep because of this."
       ;;
     budget)
-      echo "Billed Actions minutes are above 80% of the monthly allowance."
-      echo "At 100% every workflow in EVERY repo on this account stops --"
-      echo "CI, deploys, the daily agent and the chain sweep together. That"
-      echo "is what happened in September 2026 and nothing warned first."
-      echo "Public repos are free and do not count; quizkit and tip_app are"
-      echo "still private and still bill. Per-repo breakdown:"
+      echo "Either the check counted Actions minutes at or above 80% of the"
+      echo "monthly allowance, or it could not measure them at all (e.g."
+      echo "GitHub unreachable, as on 2026-10-26). This alert cannot tell"
+      echo "which, and the log below may be an older run's: re-run the check,"
+      echo "which prints its verdict for the CURRENT month, or why it has"
+      echo "none. If it IS over:"
+      echo
+      echo "At 100% every workflow in every PRIVATE repo on this account"
+      echo "stops (quizkit's CI, deploys and agents; tip_app's Wolt import)."
+      echo "That is what happened in September 2026 and nothing warned first."
+      echo "Public repos are free and keep running -- tail-lab, chain sweep"
+      echo "included."
+      echo
+      echo "Re-run (prints its verdict, or why it has none, and the breakdown):"
       ;;
     chain)
       echo "The option-chain sweep is unrecoverable if missed: no free source"
