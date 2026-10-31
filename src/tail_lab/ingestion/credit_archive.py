@@ -33,11 +33,11 @@ from pandera.errors import SchemaErrors
 
 from tail_lab.contracts.credit import (
     ARCHIVE_DATASET,
-    ARCHIVE_SERIES_ID,
     ARCHIVE_SHA256,
     ARCHIVE_URL,
     ARCHIVE_VINTAGE,
     DATASET,
+    HY_SERIES_ID,
     IGNORED_BRONZE_PARTITIONS,
     CreditSchema,
     resolve_credit_history,
@@ -101,7 +101,7 @@ def _parse_csv(content: bytes) -> tuple[pd.DataFrame, int]:
     present = ~values.isin(_BLANKS)
     frame = pd.DataFrame(
         {
-            "series_id": ARCHIVE_SERIES_ID,
+            "series_id": HY_SERIES_ID,
             "obs_date": pd.to_datetime(dates[present], errors="coerce"),
             "value": pd.to_numeric(values[present], errors="coerce"),
             "vintage_date": pd.Timestamp(ARCHIVE_VINTAGE),
@@ -135,7 +135,7 @@ def _live_hy(
             DATASET,
             today,
             columns=["obs_date", "value", "vintage_date"],
-            equals={"series_id": ARCHIVE_SERIES_ID},
+            equals={"series_id": HY_SERIES_ID},
             ignored=ignored,
         )
     except BronzeSnapshotMissing as exc:

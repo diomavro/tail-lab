@@ -22,6 +22,7 @@ from pydantic import BaseModel
 
 from tail_lab.contracts.credit import (
     ARCHIVE_DATASET,
+    HY_SERIES_ID,
     IGNORED_BRONZE_PARTITIONS,
     resolve_credit_history,
 )
@@ -37,11 +38,6 @@ from tail_lab.lake.store import BronzeSnapshotMissing, LakeStore
 _LOGGER = logging.getLogger(__name__)
 
 VIX_DATASET = "vix"
-
-#: The FRED series id read out of the shared ``credit`` bronze dataset for
-#: the widened regime classifier -- HY OAS only (`docs/DATA_CONTRACTS.md`
-#: #4); IG OAS lands in the same dataset but is not used here.
-HY_OAS_SERIES_ID = "BAMLH0A0HYM2"
 
 #: How long after its ``obs_date`` an HY OAS print can first be acted on. ICE
 #: computes day *t*'s spread after the close and FRED posts it the next
@@ -134,7 +130,7 @@ def _read_hy_history(
             dataset,
             as_of,
             columns=_HISTORY_COLUMNS,
-            equals={"series_id": HY_OAS_SERIES_ID},
+            equals={"series_id": HY_SERIES_ID},
             ignored=ignored,
         )
     except BronzeSnapshotMissing:
@@ -145,11 +141,11 @@ def _check_seam(series: pd.Series, archive_end: pd.Timestamp) -> None:
     after = series.index[series.index > archive_end]
     if len(after) == 0:
         raise CreditHistoryError(
-            f"{HY_OAS_SERIES_ID}: archive ends {archive_end.date()} but no live obs follow it"
+            f"{HY_SERIES_ID}: archive ends {archive_end.date()} but no live obs follow it"
         )
     if after.min() - archive_end > SEAM_MAX_GAP:
         raise CreditHistoryError(
-            f"{HY_OAS_SERIES_ID}: first live obs {after.min().date()} is more than "
+            f"{HY_SERIES_ID}: first live obs {after.min().date()} is more than "
             f"{SEAM_MAX_GAP.days} days after the archive's end {archive_end.date()}"
         )
 
@@ -181,7 +177,7 @@ def load_credit_oas(
     archive = _read_hy_history(store, ARCHIVE_DATASET, as_of, ignored)
     if live.empty and archive.empty:
         raise NoCreditHistory(
-            f"no credit history for {HY_OAS_SERIES_ID} known as of {as_of.isoformat()}"
+            f"no credit history for {HY_SERIES_ID} known as of {as_of.isoformat()}"
         )
     series = resolve_credit_history(live, archive)
     if not archive.empty:

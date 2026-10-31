@@ -10,6 +10,7 @@ from pathlib import Path
 import pandas as pd
 import pytest
 
+from tail_lab.contracts.credit import HY_SERIES_ID
 from tail_lab.contracts.regime import (
     CALM_MAX,
     CREDIT_CALM_MAX,
@@ -21,7 +22,6 @@ from tail_lab.contracts.regime import (
 )
 from tail_lab.lake.store import DeltaLakeStore
 from tail_lab.research.regimes.timeline import (
-    HY_OAS_SERIES_ID,
     CreditHistoryError,
     NoCreditHistory,
     compute_regime_timeline,
@@ -83,7 +83,7 @@ def _seed_credit(
     ingest_date: dt.date,
     rows: Sequence[tuple[dt.date, float, dt.date] | tuple[dt.date, float, dt.date, str]],
     *,
-    series_id: str = HY_OAS_SERIES_ID,
+    series_id: str = HY_SERIES_ID,
     dataset: str = "credit",
 ) -> None:
     """Write a ``credit`` bronze partition from ``(obs_date, value, vintage_date)``
@@ -183,7 +183,7 @@ def test_load_credit_oas_dataset_without_hy_oas_raises(tmp_path: Path) -> None:
     _seed_credit(
         store, ingest, [(dt.date(2026, 3, 2), 1.20, dt.date(2026, 3, 2))], series_id="BAMLC0A0CM"
     )
-    with pytest.raises(NoCreditHistory, match=HY_OAS_SERIES_ID):
+    with pytest.raises(NoCreditHistory, match=HY_SERIES_ID):
         load_credit_oas(store, as_of=ingest)
 
 
