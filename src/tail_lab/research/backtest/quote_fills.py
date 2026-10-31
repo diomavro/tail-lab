@@ -121,6 +121,7 @@ __all__ = [
     "OptionsDxQuoteSource",
     "QuoteSource",
     "index_nbytes",
+    "panel_snapshot_id",
     "with_panel_prehistory",
 ]
 
@@ -788,16 +789,27 @@ _spot_memo: dict[tuple[str, str], pd.Series] = {}
 _spot_lock = threading.Lock()
 
 
+def panel_snapshot_id(store: LakeStore, symbol: str, as_of: dt.date) -> str | None:
+    """The optionsDX panel snapshot :func:`with_panel_prehistory` reads for
+    ``symbol`` on ``as_of`` -- ``None`` for a name with no panel in the lake."""
+    symbol = symbol.lower()
+    if symbol not in OPTIONSDX_SYMBOLS:
+        return None
+    try:
+        return store.bronze_snapshot_id(f"{OPTIONSDX_DATASET}_{symbol}", as_of)
+    except LookupError:
+        return None
+
+
 def _panel_spot(store: LakeStore, symbol: str, as_of: dt.date) -> tuple[pd.Series, str] | None:
     """The panel's as-traded ``spot`` per session known as of ``as_of``, and
     the snapshot it came from; ``None`` when the lake holds no panel for
     ``symbol``. Aggregated in DuckDB, so the rows are never materialised, and
     memoised per snapshot."""
-    dataset = f"{OPTIONSDX_DATASET}_{symbol}"
-    try:
-        snapshot_id = store.bronze_snapshot_id(dataset, as_of)
-    except LookupError:
+    snapshot_id = panel_snapshot_id(store, symbol, as_of)
+    if snapshot_id is None:
         return None
+    dataset = f"{OPTIONSDX_DATASET}_{symbol}"
     key = (store.location, snapshot_id)
     with _spot_lock:
         spot = _spot_memo.get(key)
@@ -832,9 +844,10 @@ def with_panel_prehistory(
 
     Guard 2 again, from the other side: the panel is as-traded and OHLCV is
     split-adjusted, so the ratio is MEASURED over the first
-    :data:`SEAM_SESSIONS` OHLCV sessions, must be ~1 or ~a clean split factor,
-    and must hold on every one of them; anything else returns ``prices``
-    unchanged rather than a path with a step in it. A move of
+    :data:`SEAM_SESSIONS` OHLCV sessions, every one of which the panel must
+    also hold; it must be ~1 or ~a clean split factor, and must hold on each
+    of them. Anything else returns ``prices`` unchanged rather than a path
+    with a step in it. A move of
     :data:`SPLIT_JUMP` or more inside the earlier sessions is a split the seam
     cannot see, so only the sessions after it are kept.
 
@@ -843,25 +856,28 @@ def with_panel_prehistory(
     ``prices``' first.
     """
     symbol = symbol.lower()
-    if symbol not in OPTIONSDX_SYMBOLS or prices.empty:
-        return prices
-    found = _panel_spot(store, symbol, as_of)
+    found = _panel_spot(store, symbol, as_of) if not prices.empty else None
     if found is None:
         return prices
     spot, snapshot_id = found
+    if not (spot.index < prices.index[0]).any():
+        return prices
     seam = prices.iloc[:SEAM_SESSIONS]
     shared = spot.reindex(seam.index).dropna()
-    if shared.empty or not (spot.index < prices.index[0]).any():
-        return prices
     ratios = shared / seam.loc[shared.index]
     basis = float(ratios.median())
-    if not _basis_is_plausible(basis) or ((ratios / basis - 1.0).abs() > BASIS_TOLERANCE).any():
+    if (
+        len(shared) < len(seam)
+        or not _basis_is_plausible(basis)
+        or ((ratios / basis - 1.0).abs() > BASIS_TOLERANCE).any()
+    ):
         _LOGGER.warning(
-            "price_prehistory.refused symbol=%s snapshot=%s basis=%.6g spread=%.6g",
+            "price_prehistory.refused symbol=%s snapshot=%s shared=%d of %d basis=%.6g",
             symbol,
             snapshot_id,
+            len(shared),
+            len(seam),
             basis,
-            float(ratios.max() / ratios.min() - 1.0),
         )
         return prices
 

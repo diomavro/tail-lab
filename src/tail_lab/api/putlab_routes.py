@@ -88,6 +88,7 @@ from tail_lab.research.backtest.put_roll import (
     compute_put_backtest,
     load_asof_series,
 )
+from tail_lab.research.backtest.quote_fills import panel_snapshot_id
 from tail_lab.research.backtest.ranking import BENCHMARK, UniverseRanking, rank_universe
 from tail_lab.research.backtest.regime_verdict import RegimeVerdict, compute_regime_verdict
 from tail_lab.research.backtest.roll_schedule import RollSchedule, build_roll_schedule
@@ -332,6 +333,9 @@ def _log_run(
         # The dividend basis every model price used (None before the first
         # Tiingo ingest, when every q was an unknown 0).
         "dividend_snapshot": dividend_snapshot_id(store, as_of),
+        # The optionsDX panel the price path's prehistory is read from, for
+        # a name that has one (`quote_fills.with_panel_prehistory`).
+        "price_prehistory_snapshot": panel_snapshot_id(store, asset, as_of),
     }
     for field, ds in extra_snapshots:
         snaps[field] = _snapshot(store, ds, as_of)

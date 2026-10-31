@@ -50,8 +50,9 @@ a large one strictly in order.
       has no `tiingo_eod` snapshot yet (`dividend_snapshot: null` on
       `/api/putlab/backtest`), so a Tiingo splice would have changed nothing.
       `quote_fills.with_panel_prehistory`, called inside `load_asof_series`,
-      measures the panel/OHLCV basis over the first 20 shared sessions
-      (refused unless ~1 or a clean split factor, on every one of them),
+      measures the panel/OHLCV basis over OHLCV's first 20 sessions, every
+      one of which the panel must hold (refused unless ~1 or a clean split
+      factor, on every one of them),
       drops prehistory before any >= 1.4x one-session step (a split), and
       memoises each panel's daily spot per snapshot. What it changes today:
       the Marks price-series line, and every MODEL-priced roll (Workspace,
@@ -59,12 +60,14 @@ a large one strictly in order.
       2016-10 -- `years` above ~10 at today's as_of, up to the API's 20. No
       route runs a quote-priced roll yet (`scripts/pitch_evidence.py` reads
       the panel's spot itself), so "real-quote backtests" here means the
-      `PricingBasis(quotes=...)` path once one does. Not done: (1) a
-      result's `snapshot_ids`/run log still cite only `ohlcv_<sym>` when the
-      path was spliced -- the splice logs its own `price_prehistory.spliced`
-      line with the panel snapshot, but provenance per result should name it;
-      (2) once Tiingo is ingested, its split-adjusted `close` could reach
-      NVDA/TSLA's pre-2016 history and SPY's 1993+ (the panel starts 2010).
+      `PricingBasis(quotes=...)` path once one does. Provenance: the
+      ranking, metric screen and portfolio cite the panel snapshot beside
+      OHLCV (`put_roll.price_snapshot_ids`), and the run log carries
+      `price_prehistory_snapshot`. Not done: NVDA/TSLA are refused today
+      (their seam basis is ~40 and ~15, two splits compounded, not in
+      `SPLIT_FACTORS`), logging a warning each read; once Tiingo is ingested,
+      its split factors could carry them, and SPY back to 1993 (the panel
+      starts 2010).
 - [ ] **VIX/VIX3M as a regime escalation.** `vix_complex` already holds
       VIX3M from 2009; backwardation (VIX > VIX3M) is a sharper stress
       signal than the VIX level and needs no new data, unlike the "VIX

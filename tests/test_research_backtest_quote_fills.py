@@ -9,7 +9,7 @@ import pytest
 
 from tail_lab.contracts.ohlcv import dataset_id
 from tail_lab.lake.store import DeltaLakeStore
-from tail_lab.research.backtest.put_roll import load_asof_series
+from tail_lab.research.backtest.put_roll import load_asof_series, price_snapshot_ids
 from tail_lab.research.backtest.quote_fills import (
     MAX_SNAP_MONEYNESS_PP,
     SEAM_SESSIONS,
@@ -18,6 +18,7 @@ from tail_lab.research.backtest.quote_fills import (
     index_nbytes,
     with_panel_prehistory,
 )
+from tail_lab.research.backtest.ranking import snapshot_ids_for
 from tail_lab.research.quote_coverage import compute_quote_coverage
 
 SYMBOL = "SPY"
@@ -365,7 +366,8 @@ def test_the_panel_sessions_before_ohlcv_are_spliced_in_front_on_ohlcv_basis(
 @pytest.mark.parametrize(
     "seam_spot",
     [
-        # 1.5x: neither the same basis nor a clean split apart.
+        # 1.5x, flat through the seam: neither the same basis nor a clean
+        # split apart, and no step for the split guard to catch instead.
         [300.0] * 40,
         # Same basis on the first session, 2% off on one inside the seam.
         [200.0] * 5 + [204.0] + [200.0] * 34,
@@ -375,10 +377,70 @@ def test_a_seam_that_does_not_measure_one_clean_basis_leaves_ohlcv_alone(
     tmp_path: Path, seam_spot: list[float]
 ) -> None:
     store = DeltaLakeStore(tmp_path)
-    _write_panel(store, [190.0] * 30 + seam_spot)
+    _write_panel(store, [seam_spot[0]] * 30 + seam_spot)
     prices = _ohlcv()
 
     assert with_panel_prehistory(store, prices, symbol="spy", as_of=INGEST) is prices
+
+
+def test_a_seam_the_panel_does_not_fully_cover_leaves_ohlcv_alone(tmp_path: Path) -> None:
+    """One OHLCV session inside the seam has no panel row: the basis would
+    rest on 19 sessions, not the 20 a reader is told, so it is refused."""
+    store = DeltaLakeStore(tmp_path)
+    _write_panel(store, [200.0] * 70)
+    prices = _ohlcv()
+    prices.index = prices.index.insert(5, pd.Timestamp("2016-09-17")).delete(6)  # a Saturday
+    prices = prices.sort_index()
+
+    assert with_panel_prehistory(store, prices, symbol="spy", as_of=INGEST) is prices
+
+
+def test_a_split_after_the_seam_does_not_cost_the_prehistory(tmp_path: Path) -> None:
+    """NVDA's shape: a 4:1 split inside the OHLCV overlap, which split-adjusted
+    OHLCV already absorbs. Only steps up to the seam are read as splits."""
+    store = DeltaLakeStore(tmp_path)
+    _write_panel(store, [200.0] * 50 + [50.0] * 20)
+
+    spliced = with_panel_prehistory(store, _ohlcv(), symbol="spy", as_of=INGEST)
+
+    assert len(spliced) == 70
+
+
+@pytest.mark.parametrize(
+    ("prehistory", "first"),
+    [
+        # A reverse split (1:2, 100 -> 200): the guard looks both ways.
+        ([100.0] * 10 + [200.0] * 20, 10),
+        # Two splits: only the sessions after the LAST one share the seam's basis.
+        ([800.0] * 5 + [400.0] * 5 + [200.0] * 20, 10),
+    ],
+)
+def test_the_prehistory_starts_after_the_last_step_either_way(
+    tmp_path: Path, prehistory: list[float], first: int
+) -> None:
+    store = DeltaLakeStore(tmp_path)
+    _write_panel(store, prehistory + [200.0] * 40)
+
+    spliced = with_panel_prehistory(store, _ohlcv(), symbol="spy", as_of=INGEST)
+
+    assert spliced.index[0] == PANEL_DAYS[first]
+    assert spliced.iloc[: 30 - first].tolist() == pytest.approx([200.0] * (30 - first))
+
+
+def test_the_memo_never_serves_a_later_snapshot_to_an_earlier_as_of(tmp_path: Path) -> None:
+    """One store, two panel snapshots, the later one read first: the earlier
+    as_of must still see its own snapshot's prices."""
+    store = DeltaLakeStore(tmp_path)
+    _write_panel(store, [200.0] * 70)
+    _write_panel(store, [190.0] * 30 + [200.0] * 40, ingest=INGEST + dt.timedelta(days=1))
+
+    later = with_panel_prehistory(
+        store, _ohlcv(), symbol="spy", as_of=INGEST + dt.timedelta(days=1)
+    )
+    earlier = with_panel_prehistory(store, _ohlcv(), symbol="spy", as_of=INGEST)
+
+    assert later.iloc[0] == pytest.approx(190.0)
+    assert earlier.iloc[0] == pytest.approx(200.0)
 
 
 def test_a_disagreement_past_the_seam_window_does_not_refuse(tmp_path: Path) -> None:
@@ -462,3 +524,24 @@ def test_every_backtest_path_and_the_marks_span_read_the_spliced_prices(tmp_path
     assert prices.index[0] == PANEL_DAYS[0]
     assert vol.loc[OHLCV_DAYS[0]] == pytest.approx(0.0)
     assert coverage.price_span == (PANEL_DAYS[0].date(), OHLCV_DAYS[-1].date())
+
+
+def test_a_spliced_path_cites_the_panel_it_read(tmp_path: Path) -> None:
+    store = DeltaLakeStore(tmp_path)
+    _write_ohlcv(store)
+    _write_panel(store, [200.0] * 70)
+    store.write_bronze("vix", INGEST, pd.DataFrame({"date": OHLCV_DAYS, "close": 15.0}))
+    ohlcv = store.bronze_snapshot_id(dataset_id("spy"), INGEST)
+    panel = store.bronze_snapshot_id("optionsdx_quotes_spy", INGEST)
+
+    assert price_snapshot_ids(store, "SPY", INGEST) == [ohlcv, panel]
+    assert snapshot_ids_for(store, INGEST, ["spy"])[1:3] == [ohlcv, panel]
+
+
+def test_a_name_without_a_panel_cites_its_ohlcv_alone(tmp_path: Path) -> None:
+    store = DeltaLakeStore(tmp_path)
+    _write_ohlcv(store)
+
+    assert price_snapshot_ids(store, "spy", INGEST) == [
+        store.bronze_snapshot_id(dataset_id("spy"), INGEST)
+    ]

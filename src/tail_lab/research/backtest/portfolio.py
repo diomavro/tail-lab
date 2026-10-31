@@ -39,6 +39,7 @@ from tail_lab.research.backtest.put_roll import (
     PutRollCycle,
     annualized_return,
     load_asof_series,
+    price_snapshot_ids,
     run_put_roll,
 )
 from tail_lab.research.backtest.regime_verdict import regime_breakdown
@@ -228,9 +229,9 @@ def run_portfolio(
 
         per_leg_cum.append(_cum_curve(scaled))
 
-        snap = store.bronze_snapshot_id(f"ohlcv_{leg.asset.lower()}", as_of)
-        if snap not in snapshot_ids:
-            snapshot_ids.append(snap)
+        for snap in price_snapshot_ids(store, leg.asset, as_of):
+            if snap not in snapshot_ids:
+                snapshot_ids.append(snap)
 
         units.append(unit)
         leg_results.append(

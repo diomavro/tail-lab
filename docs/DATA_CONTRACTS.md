@@ -832,8 +832,9 @@ has **1,818 overlapping trading days**. (This line used to say "a rolling
 five-year Tiingo window, ~589 days"; the OHLCV source is Nasdaq, and Tiingo now
 feeds #14, not OHLCV.) **Since 2026-10-31 the roll's price path is no longer
 OHLCV alone:** `load_asof_series` splices this panel's own daily `spot` in front
-of OHLCV's first session, converted to OHLCV's basis by a ratio measured over the
-first 20 shared sessions (`quote_fills.with_panel_prehistory`), so SPY's path
+of OHLCV's first session, converted to OHLCV's basis by a ratio measured over
+OHLCV's first 20 sessions, every one of which the panel must hold
+(`quote_fills.with_panel_prehistory`), so SPY's path
 starts 2010-01 and QQQ's 2012-01. A seam that does not measure one clean basis
 leaves OHLCV alone.
 

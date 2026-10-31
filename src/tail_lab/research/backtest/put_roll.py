@@ -1218,7 +1218,8 @@ def load_asof_series(store: LakeStore, asset: str, as_of: dt.date) -> tuple[pd.S
     2010/2012, OHLCV only to 2016-10), its own daily spot is spliced in front,
     converted to OHLCV's basis: see ``quote_fills.with_panel_prehistory``.
     """
-    # Deferred for the cycle described at the TYPE_CHECKING import above.
+    # Deferred, here and in `price_snapshot_ids`, for the cycle described at
+    # the TYPE_CHECKING import above.
     from tail_lab.research.backtest.quote_fills import with_panel_prehistory
 
     try:
@@ -1229,6 +1230,18 @@ def load_asof_series(store: LakeStore, asset: str, as_of: dt.date) -> tuple[pd.S
         raise LookupError(f"no OHLCV for {asset} known as of {as_of.isoformat()}")
     prices = with_panel_prehistory(store, _close_series(bronze), symbol=asset, as_of=as_of)
     return prices, trailing_realized_vol(prices)
+
+
+def price_snapshot_ids(store: LakeStore, asset: str, as_of: dt.date) -> list[str]:
+    """Every bronze snapshot :func:`load_asof_series` reads for ``asset``:
+    its OHLCV, plus the optionsDX panel whenever one is consulted for
+    prehistory (cited whether or not the seam accepted it -- it was read).
+    Raises ``LookupError`` when no OHLCV snapshot is known, as the reader does."""
+    from tail_lab.research.backtest.quote_fills import panel_snapshot_id
+
+    panel = panel_snapshot_id(store, asset, as_of)
+    ohlcv = store.bronze_snapshot_id(dataset_id(asset), as_of)
+    return [ohlcv] if panel is None else [ohlcv, panel]
 
 
 def compute_put_backtest(
