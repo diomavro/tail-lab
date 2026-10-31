@@ -998,6 +998,7 @@ def test_an_unknown_capture_says_the_app_could_not_tell(
     err = capsys.readouterr().err
     assert "btc: the app could not say which run captured this day" in err
     assert "captured_read_failed" in err
+    assert "check ops/quarantine/deribit_options_btc/2026-10-30/" in err
     assert "landed attempt are unknown" not in err
 
 
@@ -1035,3 +1036,35 @@ def test_a_plain_catch_up_names_a_missing_previous_day_without_going_red(
     assert code == 0
     out = capsys.readouterr().out
     assert "::warning::btc: the day before 2026-10-30 was never captured" in out
+
+
+# ---- round 6, test strength -------------------------------------------------------------
+
+
+def test_a_5xx_whose_body_is_a_json_list_costs_only_that_book(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """``.get`` on a list raises AttributeError: had the marker check let it
+    escape, it would crash main and skip ETH and USDC."""
+    listy = requests.HTTPError(response=_response(502, [1, 2]))
+    assert not deribit_snapshot._deterministic_refusal(listy)
+    code, app = _run_post(monkeypatch, [_response(502, [1, 2]) for _ in range(4)])
+    assert code == 1
+    posted = [c for c, _ in app.posts]
+    assert posted.count("eth") == 1 and posted.count("usdc") == 1
+
+
+def test_a_refusal_s_detail_reaches_the_log(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    _run_post(monkeypatch, [_response(409, {"detail": f"{REFUSAL_MARKER}detail-sentinel"})])
+    assert "detail-sentinel" in capsys.readouterr().err
+
+
+def test_a_small_quarantine_is_a_green_warning(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    ok = _ok("BTC", quarantined=1, quarantine_share=0.005, quarantine_written=True)
+    code, _ = _run_post(monkeypatch, [ok])
+    assert code == 0
+    assert "::warning::btc: 1 rows quarantined" in capsys.readouterr().out

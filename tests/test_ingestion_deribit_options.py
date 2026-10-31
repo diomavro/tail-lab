@@ -191,11 +191,17 @@ def no_sleep(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr("tail_lab.ingestion.sources.time.sleep", lambda _s: None)
 
 
-def _scripted_get(monkeypatch: pytest.MonkeyPatch, responses: list[requests.Response]) -> list[str]:
+def _scripted_get(
+    monkeypatch: pytest.MonkeyPatch,
+    responses: list[requests.Response],
+    params: list[object] | None = None,
+) -> list[str]:
     calls: list[str] = []
 
-    def get(url: str, **_kwargs: object) -> requests.Response:
+    def get(url: str, **kwargs: object) -> requests.Response:
         calls.append(url.rsplit("/", 1)[-1])
+        if params is not None:
+            params.append(kwargs.get("params"))
         return responses.pop(0)
 
     monkeypatch.setattr(ingestion.requests, "get", get)
@@ -207,9 +213,11 @@ def _ok(result: object) -> requests.Response:
 
 
 def test_fetch_book_reads_the_book_then_the_instruments(monkeypatch: pytest.MonkeyPatch) -> None:
-    calls = _scripted_get(monkeypatch, [_ok([{"a": 1}]), _ok([{"b": 2}])])
+    params: list[object] = []
+    calls = _scripted_get(monkeypatch, [_ok([{"a": 1}]), _ok([{"b": 2}])], params)
     fetched = ingestion.fetch_book("BTC")
     assert calls == ["get_book_summary_by_currency", "get_instruments"]
+    assert params == [{"currency": "BTC", "kind": "option"}] * 2
     assert (fetched.book, fetched.instruments, fetched.attempts) == ([{"a": 1}], [{"b": 2}], 2)
     assert fetched.bytes > 0
 
@@ -249,6 +257,7 @@ def test_a_400_is_not_retried_and_keeps_deribits_reason(
         # An "error" member at all means failure under JSON-RPC 2.0, even an
         # empty one beside a result: never trust the result then.
         '{"jsonrpc": "2.0", "error": {}, "result": [1]}',
+        '{"jsonrpc": "2.0", "error": null, "result": [1]}',
         '{"jsonrpc": "2.0", "result": []}',
         '{"jsonrpc": "2.0"}',
     ],

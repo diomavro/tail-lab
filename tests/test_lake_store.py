@@ -334,3 +334,21 @@ def test_bronze_ingest_dates_lists_every_partition_sorted(tmp_path: Path) -> Non
         dt.date(2026, 10, 28),
         dt.date(2026, 10, 30),
     ]
+
+
+def test_earliest_in_partition_ms_reads_exactly_that_partition(tmp_path: Path) -> None:
+    """Partition D's own minimum -- not D - 1's smaller one (an as-of read
+    over history) nor D + 1's (a read of the newest partition)."""
+    from tail_lab.lake.store import earliest_in_partition_ms
+
+    store = DeltaLakeStore(tmp_path)
+    day = dt.date(2026, 10, 30)
+    for offset, first in (
+        (-1, "2026-10-29 09:00"),
+        (0, "2026-10-30 12:00"),
+        (1, "2026-10-31 08:30"),
+    ):
+        stamps = pd.to_datetime([first, "2026-10-31 23:00"])
+        store.write_bronze("ds", day + dt.timedelta(days=offset), pd.DataFrame({"t": stamps}))
+    expected = int(pd.Timestamp("2026-10-30 12:00").value // 1_000_000)
+    assert earliest_in_partition_ms(store, "ds", day, "t", event="test") == expected
