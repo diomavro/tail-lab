@@ -411,7 +411,8 @@ correct behavior, not a bug to work around.
 collected, `stale_days`, and `missing_symbols` — anyone in
 `DEFAULT_SNAPSHOT_SYMBOLS` absent from that partition, which `stale_days`
 alone cannot see (a sweep landing 23 of 24 chains is not stale). Public, and
-read by the daily agent before it picks any work.
+read by the daily agent before it picks any work. The call wing's freshness
+is in the same answer, under `calls` (below).
 
 ### The call wing (ADR 0031)
 
@@ -446,9 +447,11 @@ bounds), risk reversals, and a model-free variance strip that is no longer
 truncated to one wing (`docs/PRIOR_ART.md` §16, `AGENT_TODO.md` PG1). No
 consumer reads it yet.
 
-**No freshness route yet.** The status route above covers puts only. A
-calls-only failure is visible as a red `daily-chain-snapshot` run, whose
-annotation reads `calls only; puts landed`.
+**Freshness.** The status route above reports this wing under `calls`, with
+the same fields as the put wing at its top level, read from this dataset
+alone. A calls-only failure also shows as a red `daily-chain-snapshot` run,
+whose annotation reads `calls only; puts landed`. The local verifier
+(`scripts/chain_sweep_verify.sh`) still checks puts only.
 
 ### Deltas from the original plan (kept for the record)
 

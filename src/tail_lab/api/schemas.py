@@ -190,10 +190,11 @@ class OptionChainSnapshotResponse(BaseModel):
     symbols_misrouted: tuple[str, ...] = ()
 
 
-class OptionChainSnapshotStatus(BaseModel):
-    """Freshness of the forward collection. ``last_quote_date`` is ``None``
-    only before the very first sweep; after that, ``stale_days`` climbing
-    past a long weekend means sessions are being lost permanently.
+class OptionChainWingStatus(BaseModel):
+    """Freshness of one wing of the forward collection. ``last_quote_date``
+    is ``None`` only before that wing's very first sweep; after that,
+    ``stale_days`` climbing past a long weekend means sessions are being lost
+    permanently.
 
     ``missing_symbols`` names anyone in
     ``contracts.option_chain.DEFAULT_SNAPSHOT_SYMBOLS`` absent from the last
@@ -210,6 +211,16 @@ class OptionChainSnapshotStatus(BaseModel):
     symbols: int
     stale_days: int | None
     missing_symbols: tuple[str, ...] = ()
+
+
+class OptionChainSnapshotStatus(OptionChainWingStatus):
+    """The put wing's freshness at the top level -- what every existing reader
+    of this route already parses -- with the call wing beside it in ``calls``
+    (``docs/adr/0031``). The wings are separate datasets written by separate
+    POSTs, so one can land while the other is lost; before ``calls`` existed
+    a calls-only loss showed up only as a red ``daily-chain-snapshot`` run."""
+
+    calls: OptionChainWingStatus
 
 
 class SurfaceResponse(BaseModel):
