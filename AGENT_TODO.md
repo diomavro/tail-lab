@@ -3062,7 +3062,10 @@ ever go down.
       the 75 the ratchet still names it for. The actual `max-statements`
       worst offender today is `portfolio.py:run_portfolio` at 51 — lowering
       that ratchet **75 -> 51** needs no work on `run_put_roll` at all, just
-      a PR confirming the number and updating the comment. `max-args=13` is
+      a PR confirming the number and updating the comment. **Done (weekly
+      cleanup, 2026-10-18):** by then `run_put_roll` was back at 50 and the
+      worst; dropping its 11 `x = acc.x` read-backs took it to 39 and
+      `max-statements` **75 -> 42** (`scripts/order_ticket.main`). `max-args=13` is
       still genuinely pinned by `run_put_roll`'s own signature, unreduced:
       bundling the strategy-spec keywords (`moneyness_pct`, `tenor_weeks`,
       `lookback_years`, `rate`, `commission_per_contract`, `spread_scale`)

@@ -449,7 +449,7 @@ def annualized_sharpe(
 class _CycleAccumulation:
     """Mutable bookkeeping shared by ``_roll_model_cycles`` and
     ``_roll_market_cycles`` — one instance per ``run_put_roll`` call, built up
-    cycle by cycle and read back into local variables once the loop is done.
+    cycle by cycle and read by ``run_put_roll`` once the loop is done.
     Existing purely so the two roll loops can be functions of their own
     (``docs/adr/0023``'s max-complexity/max-statements ratchet: merging both
     loops into ``run_put_roll`` itself pushed it to complexity 21 and 135
@@ -869,19 +869,7 @@ def run_put_roll(
         )
 
     cycles = acc.cycles
-    spans = acc.spans
-    equity = acc.equity
-    total_payoff = acc.total_payoff
-    total_brokerage = acc.total_brokerage
-    wins = acc.wins
-    biggest_mult = acc.biggest_mult
-    worst_streak = acc.worst_streak
-    first_traded_idx = acc.first_traded_idx
-    last_expiry_idx = acc.last_expiry_idx
-    n_attempted = acc.n_attempted
-    n_cycles_skipped = acc.n_cycles_skipped
-
-    if not cycles or first_traded_idx is None:
+    if not cycles or acc.first_traded_idx is None:
         raise LookupError(
             f"not enough price history as of {as_of.isoformat()} to complete "
             f"one {tenor_weeks:g}-week roll for {asset}"
@@ -895,26 +883,26 @@ def run_put_roll(
     if include_curves:
         price_path = [
             PricePoint(date=dates[k], price=float(px[k]))
-            for k in range(first_traded_idx, last_expiry_idx + 1)
+            for k in range(acc.first_traded_idx, acc.last_expiry_idx + 1)
         ]
         mtm_curve = _mark_to_market_curve(
             cycles,
-            spans,
+            acc.spans,
             px=px,
             realized_vol=realized_vol,
             dates=dates,
             pricer=pricer,
             rate=rate,
             notional=notional,
-            first_traded_idx=first_traded_idx,
-            last_expiry_idx=last_expiry_idx,
+            first_traded_idx=acc.first_traded_idx,
+            last_expiry_idx=acc.last_expiry_idx,
             quotes=quotes,
         )
 
     total_premium = len(cycles) * notional
     # Net of brokerage everywhere: roi_on_premium == sum(net)/total_premium ==
     # (total_payoff - total_premium - total_brokerage)/total_premium.
-    net_pnl = total_payoff - total_premium - total_brokerage
+    net_pnl = acc.total_payoff - total_premium - acc.total_brokerage
     roi_on_premium = net_pnl / total_premium
     # Annualized Sharpe over the per-roll returns (net/notional). rolls_per_year
     # paces the annualization by how often the strategy actually rolled -- which
@@ -974,24 +962,24 @@ def run_put_roll(
         rate=rate,
         n_cycles=len(cycles),
         total_premium=total_premium,
-        total_payoff=total_payoff,
-        total_brokerage=total_brokerage,
+        total_payoff=acc.total_payoff,
+        total_brokerage=acc.total_brokerage,
         net_pnl=net_pnl,
         roi_on_premium=roi_on_premium,
         annualized_return=final_annualized,
-        hit_rate=wins / len(cycles),
-        biggest_payoff_mult=biggest_mult,
-        worst_bleed_streak=worst_streak,
+        hit_rate=acc.wins / len(cycles),
+        biggest_payoff_mult=acc.biggest_mult,
+        worst_bleed_streak=acc.worst_streak,
         sharpe_ratio=sharpe,
         annualized_so_far=annualized_so_far,
-        equity_curve=equity,
+        equity_curve=acc.equity,
         mtm_curve=mtm_curve,
         price_path=price_path,
         cycles=cycles,
         priced_from="market" if quotes is not None else "model",
         quote_coverage_pct=(min(1.0, traded_years / lookback_years) if lookback_years > 0 else 0.0),
-        fill_rate=(len(cycles) / n_attempted) if n_attempted > 0 else 0.0,
-        n_cycles_skipped=n_cycles_skipped,
+        fill_rate=(len(cycles) / acc.n_attempted) if acc.n_attempted > 0 else 0.0,
+        n_cycles_skipped=acc.n_cycles_skipped,
         traded_start=traded_start,
         traded_end=traded_end,
         q_source=None if quotes is not None else summarise_q_source(cycles),

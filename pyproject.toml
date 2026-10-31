@@ -106,7 +106,7 @@ max-complexity = 9 # quote_fills._fill, ingestion.option_chain.parse_cboe_chain,
 [tool.ruff.lint.pylint]
 max-args = 13 # put_roll.run_put_roll — keyword-only, which is why it is survivable
 max-positional-args = 8
-max-statements = 75 # put_roll.run_put_roll
+max-statements = 42 # scripts/order_ticket.main
 
 [tool.ruff.format]
 quote-style = "double"
