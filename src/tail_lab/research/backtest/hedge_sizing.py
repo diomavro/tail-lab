@@ -36,9 +36,11 @@ rather than gate on a partial leg set.
 **The drawdown bound** (:func:`drawdown_bound`) is risk-constrained Kelly
 (Busseti, Ryu & Boyd, arXiv 1603.06183): with ``lam = ln(beta) / ln(alpha)``,
 any mix with ``mean(r^-lam) <= 1`` over the monthly gross returns ``r`` keeps
-the chance that wealth ever falls below ``alpha`` of its start under ``beta``
--- if months are drawn independently from this history, which is the same
-one-history caveat ``w*`` carries. ``r`` is linear in ``w`` and ``r^-lam``
+the chance that MONTH-END wealth ever falls below ``alpha`` of its start
+under ``beta`` -- if months are drawn independently from this history (the
+partial first and last months included as if whole), the same one-history
+caveat ``w*`` carries. A fall and recovery inside one month, as in March
+2020, is not bounded: the blend is only observed at its rebalances. ``r`` is linear in ``w`` and ``r^-lam``
 convex, so the ratios that meet it form one interval. Against cash, the
 constraint shrinks a bet; against the INDEX it can do the opposite: the drop
 being bounded comes from the index, so the interval may start above 0 and
@@ -79,8 +81,8 @@ DECISIVE_MONTHS = 3
 #: Points on the served ``g(w)`` curve, 0 to 1 inclusive.
 CURVE_POINTS = 41
 
-#: The drawdown bound's default: wealth below 70% of its start (``alpha``)
-#: with probability at most 10% (``beta``).
+#: The drawdown bound's default: month-end wealth ever below 70% of its
+#: start (``alpha``) with probability at most 10% (``beta``).
 RCK_FLOOR = 0.7
 RCK_PROB = 0.1
 
@@ -169,8 +171,9 @@ BreakEvenStatus = Literal["found", "beyond_1", "none"]
 
 
 class DrawdownBound(BaseModel):
-    """The ratios that keep ``P(wealth < floor * start) <= probability``
-    (risk-constrained Kelly), and where the size held sits against them."""
+    """The ratios that keep ``P(month-end wealth ever < floor * start)``
+    under ``probability`` (risk-constrained Kelly), and where the size held
+    sits against them."""
 
     floor: float
     probability: float
@@ -261,9 +264,12 @@ def drawdown_bound(
     ``ln mean(r^-lam) <= 0``, and ``w`` (the full-Kelly ratio) clipped to it.
 
     The log-mean is taken through ``logsumexp``: at a strict bound a deep
-    month's ``r^-lam`` is past float range, and the log stays finite. It is quasi-convex in the ratio (the log of a
+    month's ``r^-lam`` is past float range, and an overflowed ``inf`` on both
+    golden-section probes would send the search the wrong way. It is quasi-convex in the ratio (the log of a
     convex function), so its minimum is found by golden section and each
     edge by a bracketed root."""
+    if not (0.0 < floor < 1.0 and 0.0 < probability < 1.0):
+        raise ValueError("floor and probability must each lie strictly between 0 and 1")
     lam = math.log(probability) / math.log(floor)
 
     def excess(x: float) -> float:

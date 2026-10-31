@@ -1202,8 +1202,13 @@ def test_hedge_overlay_carries_its_snapshot_and_logs_each_verdict(
         "w_star",
         "w_star_grid",
         "margins",
+        "rck_interval",
+        "w_rck",
+        "rck_meets",
     ):
         assert f" PPUT_full_{field}=" in line, field
+    # Sizing is withheld here, so there is no held size to judge.
+    assert "PPUT_full_rck_meets=withheld" in line
     # No tiingo_eod in this lake: the assumed fallback, labelled, and no size.
     assert "dividend_source=assumed" in line and "tiingo_snapshot=none" in line
     assert "PPUT_full_recommended=withheld" in line

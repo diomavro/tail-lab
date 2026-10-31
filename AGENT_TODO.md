@@ -306,7 +306,8 @@ a large one strictly in order.
       a second Book sizer.
       **Drawdown bound served 2026-10-31** (risk-constrained Kelly, arXiv
       1603.06183): every `SizingAnswer` carries `drawdown` -- the interval of
-      ratios keeping `P(wealth < 70% of start) <= 10%`, `w_rck` (`w*` clipped
+      ratios keeping P(month-end wealth ever < 70% of start) under 10%
+      (iid months; an intra-month fall is not bounded), `w_rck` (`w*` clipped
       to it) and whether the size held meets it. It does not change the
       recommendation. The reading it exists for: against the INDEX the bound
       can push the hedge UP, so half-Kelly -- the house's "conservative" size

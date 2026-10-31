@@ -416,7 +416,7 @@ def _pair(p: tuple[float, float], e: tuple[float, float], n_pairs: int = 30) -> 
 def test_drawdown_bound_lands_on_the_closed_form_interval() -> None:
     """At ``alpha = beta`` the exponent is 1 and ``mean(1/r) = 1`` is a
     quadratic. Program (1.5, 0.8) against an index (0.5, 2.0):
-    ``2w^2 - 5w/2 + 15/32 = 0`` -> ``w = 5/8 - sqrt(105)/24`` (the other
+    ``24w^2 - 30w + 5 = 0`` -> ``w = 5/8 - sqrt(105)/24`` (the other
     root is past 1), and the growth optimum ``w* = 7/12`` sits inside, so
     risk-constrained Kelly is full Kelly here."""
     seg = _pair((1.5, 0.8), (0.5, 2.0))
@@ -477,6 +477,51 @@ def test_the_default_bound_is_met_exactly_at_its_edge() -> None:
     assert bound.lo is not None
     r = bound.lo * seg.p + (1 - bound.lo) * seg.e
     assert float(np.mean(r**-bound.lam)) == pytest.approx(1.0, rel=1e-4)
+
+
+def test_an_interval_away_from_the_middle_is_found() -> None:
+    """One month, program 1.3 against index 0.6, at ``alpha = beta``:
+    ``1/r <= 1`` is ``r = 0.6 + 0.7 w >= 1``, so the interval is [4/7, 1] --
+    it excludes 0.5 and is met at the top end only, which a search that
+    skipped finding the minimum would miss."""
+    seg = Segments(
+        p=np.array([1.3]), e=np.array([0.6]), starts=(dt.date(2020, 1, 1),), years=1 / 12
+    )
+    bound = drawdown_bound(seg, w_star(seg), recommended=0.5, floor=0.5, probability=0.5)
+    assert bound.lo == pytest.approx(4 / 7, abs=1e-5)
+    assert bound.hi == 1.0
+    assert bound.recommended_meets is False
+    # Held a hair inside the edge it meets; 0.01 outside, it does not.
+    near = drawdown_bound(seg, 1.0, recommended=4 / 7 + 1e-4, floor=0.5, probability=0.5)
+    assert near.recommended_meets is True
+    off = drawdown_bound(seg, 1.0, recommended=4 / 7 - 0.01, floor=0.5, probability=0.5)
+    assert off.recommended_meets is False
+    # The edge is found only to W_TOL, so a size within it of the edge meets.
+    assert bound.lo is not None
+    edge = drawdown_bound(seg, 1.0, recommended=bound.lo - W_TOL / 2, floor=0.5, probability=0.5)
+    assert edge.recommended_meets is True
+
+
+def test_an_extreme_bound_searches_in_log_space() -> None:
+    """At a 99.99% floor ``lam`` runs to tens of thousands and every probe's
+    ``r^-lam`` overflows a naive mean; found by the review, the interval
+    below is what the log-space search returns, and the naive one reported
+    no mix at all."""
+    seg = Segments(
+        p=np.array([1.2787, 2.0843, 0.96, 1.0529]),
+        e=np.array([0.7202, 0.6618, 3.268, 0.4706]),
+        starts=tuple(dt.date(2020, m, 1) for m in range(1, 5)),
+        years=4 / 12,
+    )
+    bound = drawdown_bound(seg, w_star(seg), recommended=None, floor=0.9999, probability=0.01)
+    assert bound.lo is not None and bound.hi is not None
+    assert 0.0 < bound.lo < bound.hi < 1.0
+
+
+@pytest.mark.parametrize(("floor", "probability"), [(1.0, 0.1), (0.7, 0.0), (1.2, 0.1)])
+def test_a_bound_outside_the_unit_interval_is_refused(floor: float, probability: float) -> None:
+    with pytest.raises(ValueError, match="strictly between 0 and 1"):
+        drawdown_bound(_two_state(), 0.25, None, floor=floor, probability=probability)
 
 
 def test_a_strict_bound_still_finds_both_edges() -> None:
