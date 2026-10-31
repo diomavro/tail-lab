@@ -54,7 +54,8 @@ a large one strictly in order.
       one of which the panel must hold (refused unless ~1 or a clean split
       factor, on every one of them),
       drops prehistory before any >= 1.4x one-session step (a split) or
-      > 7-day hole between panel sessions (missing data), and
+      > 14-day hole between panel sessions (missing data; 7 days cut SPY's
+      2010 at the vendor's 2011-01-19..25 gap), and
       memoises each panel's daily spot per snapshot. What it changes today:
       the Marks price-series line, and every MODEL-priced roll (Workspace,
       ranking, sweep, metric screen, Bake-off) whose lookback reaches before
@@ -74,6 +75,9 @@ a large one strictly in order.
       `SPLIT_FACTORS`), logging a warning each read; once Tiingo is ingested,
       its split factors could carry them, and SPY back to 1993 (the panel
       starts 2010).
+      Also open: `assess_asset_quality` scans OHLCV only, so accuracy's
+      "clean across N bars" does not cover the panel-spot sessions a run
+      with `years` above ~10 now prices over.
 - [ ] **VIX/VIX3M as a regime escalation.** `vix_complex` already holds
       VIX3M from 2009; backwardation (VIX > VIX3M) is a sharper stress
       signal than the VIX level and needs no new data, unlike the "VIX

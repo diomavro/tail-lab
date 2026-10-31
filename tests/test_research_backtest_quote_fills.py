@@ -461,6 +461,42 @@ def test_a_hole_in_the_panel_starts_the_prehistory_after_it(tmp_path: Path) -> N
 
 
 @pytest.mark.parametrize(
+    ("hole_days", "joined"),
+    [
+        # SPY's real vendor hole (2011-01-18 -> 2011-01-26): joined across.
+        (8, True),
+        (14, True),
+        # Past two weeks it is missing data: the prehistory restarts after it.
+        (15, False),
+    ],
+)
+def test_a_short_vendor_hole_is_joined_and_a_long_one_cut(
+    tmp_path: Path, hole_days: int, joined: bool
+) -> None:
+    store = DeltaLakeStore(tmp_path)
+    natural = PANEL_DAYS[10] - PANEL_DAYS[9]  # a weekend: 3 days
+    days = (PANEL_DAYS[:10] - (pd.Timedelta(days=hole_days) - natural)).append(PANEL_DAYS[10:])
+    assert days[10] - days[9] == pd.Timedelta(days=hole_days)
+    _write_panel(store, [200.0] * 70, days=days)
+
+    spliced = with_panel_prehistory(store, _ohlcv(), symbol="spy", as_of=INGEST)
+
+    assert spliced.index[0] == (days[0] if joined else PANEL_DAYS[10])
+
+
+def test_a_hole_just_before_the_seam_costs_the_whole_prehistory(tmp_path: Path) -> None:
+    """The gap check covers the seam's own session: a month missing between
+    the last prehistory session and OHLCV's first leaves nothing to join."""
+    store = DeltaLakeStore(tmp_path)
+    days = (PANEL_DAYS[:30] - pd.Timedelta(days=60)).append(PANEL_DAYS[30:])
+    _write_panel(store, [200.0] * 70, days=days)
+
+    spliced = with_panel_prehistory(store, _ohlcv(), symbol="spy", as_of=INGEST)
+
+    assert spliced.index[0] == OHLCV_DAYS[0]
+
+
+@pytest.mark.parametrize(
     ("prehistory", "first"),
     [
         # A reverse split (1:2, 100 -> 200): the guard looks both ways.

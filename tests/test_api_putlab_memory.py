@@ -188,3 +188,22 @@ def test_a_record_cites_the_snapshot_its_prices_used_even_if_one_lands_mid_reque
     art = client.get("/api/putlab/memory", params=_RULE).json()
     assert art["outcomes"]
     assert all("LATER" not in o["last_run_id"] for o in art["outcomes"])
+
+
+def test_the_run_id_names_the_panel_a_spliced_path_read(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A re-record after a new optionsDX snapshot priced a different path, so
+    it is a different run."""
+    from tail_lab.api import putlab_memory_routes
+
+    monkeypatch.setattr(
+        putlab_memory_routes, "panel_snapshot_id", lambda *_: "optionsdx_quotes_spy@PANEL"
+    )
+    auth = {"Authorization": f"Bearer {TOKEN}"}
+    assert client.post("/api/putlab/memory/record", params=_RULE, headers=auth).status_code == 200
+    art = client.get("/api/putlab/memory", params=_RULE).json()
+    outcomes = art["outcomes"] or art["legacy"]["outcomes"]
+    assert outcomes and all(
+        o["last_run_id"].endswith("#optionsdx_quotes_spy@PANEL") for o in outcomes
+    )

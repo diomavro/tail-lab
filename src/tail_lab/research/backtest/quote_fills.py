@@ -782,10 +782,13 @@ SEAM_SESSIONS = 20
 SPLIT_JUMP = 1.4
 
 #: A hole between two panel sessions longer than this is missing data, not a
-#: market closure (the longest closure since 1990 was 9/11's four sessions):
-#: a roll across it would be valued against a price from the far side of the
-#: hole, so the prehistory starts after the last one.
-MAX_SESSION_GAP = pd.Timedelta(days=7)
+#: market closure: a roll across it would be valued against a price from the
+#: far side of the hole, so the prehistory starts after the last one. Two
+#: weeks, not one: the vendor's SPY file skips 2011-01-19..25 (five sessions,
+#: an 8-day step), and a 7-day cut there dropped all of 2010 -- the year this
+#: splice exists to add. A step of two weeks moves a monthly roll's mark by one
+#: stale fortnight; the cut is for multi-month holes, which it still catches.
+MAX_SESSION_GAP = pd.Timedelta(days=14)
 
 #: Each panel's daily spot is ~3,500 floats; the bound only stops a long-lived
 #: process collecting one per superseded snapshot.
