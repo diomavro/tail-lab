@@ -654,9 +654,13 @@ do.
       that serves Deribit-derived numbers needs written approval from
       Deribit first. The freshness check (counts and dates only) is not
       market data.
-- [ ] **Confirm `fly scale show` reports ONE machine.** The Deribit route's
+- [x] **Confirm `fly scale show` reports ONE machine.** The Deribit route's
       per-book lock only works within one process, so two machines could each
-      append the same day (ADR 0032, "Preconditions").
+      append the same day (ADR 0032, "Preconditions"). Done 2026-10-31: it
+      reported TWO (one stopped, but `auto_start_machines = true` could start
+      it under load); scaled with `flyctl scale count 1`. `fly deploy` keeps
+      the count, so do not add machines without first making that lock
+      cross-process.
 
 ## FRED credit spreads — found 2026-10-31
 
