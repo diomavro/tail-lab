@@ -43,7 +43,9 @@ DATASET = "credit"
 #: The one-off, immutable HY OAS history (docs/adr/0033): same schema, its own
 #: bronze dataset. A pinned Wayback capture of FRED's pre-window full history.
 ARCHIVE_DATASET = "credit_archive"
-ARCHIVE_SERIES_ID = "BAMLH0A0HYM2"
+#: HY OAS: the only series anything reads (IG is ingested, never consumed).
+HY_SERIES_ID = "BAMLH0A0HYM2"
+ARCHIVE_SERIES_ID = HY_SERIES_ID
 ARCHIVE_URL = (
     "https://web.archive.org/web/20251104204105id_/"
     "https://fred.stlouisfed.org/graph/fredgraph.csv?id=BAMLH0A0HYM2"

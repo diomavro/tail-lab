@@ -3,14 +3,15 @@
 
 Source: FRED's series/observations endpoint,
 ``https://api.stlouisfed.org/fred/series/observations`` -- same keyed
-source, same ``FRED_API_KEY`` setting, and the same ALFRED-vintage
-point-in-time hazard as ``ingestion/rates.py`` (`docs/DATA_CONTRACTS.md`
-#3): a credit-spread series can be revised after first publication, so
-pulling only the latest value is a look-ahead bug, not a simplification.
-The adapter therefore requests FRED's full realtime window rather than the
-single-vintage default -- which works only while a series has under 2,000
-vintages (FRED's cap); ``ingestion/rates.py`` pages vintages because the
-Treasury series have ~5,100.
+source, same ``FRED_API_KEY`` setting, and the same point-in-time hazard as
+``ingestion/rates.py`` (`docs/DATA_CONTRACTS.md` #3): a credit-spread series
+can be revised after first publication, so pulling only the latest value is
+a look-ahead bug, not a simplification. The adapter therefore requests
+FRED's full realtime window rather than the single-vintage default.
+Measured 2026-10-30: FRED's window now carries ONE vintage per observation,
+``vintage_date == obs_date``, so the vintage column cannot say when a print
+was known. Observations up to the archive's end come from ``credit_archive``
+instead (ADR 0009 exception 3; ADR 0033).
 
 Ingests HY OAS (``BAMLH0A0HYM2``) and IG OAS (``BAMLC0A0CM``).
 
@@ -41,7 +42,7 @@ from dataclasses import dataclass
 import pandas as pd
 from pandera.errors import SchemaErrors
 
-from tail_lab.contracts.credit import DATASET, DEFAULT_SERIES_IDS, CreditSchema
+from tail_lab.contracts.credit import DATASET, DEFAULT_SERIES_IDS, HY_SERIES_ID, CreditSchema
 from tail_lab.ingestion.json_payload import json_list, json_object
 from tail_lab.ingestion.rates import fred_getter
 from tail_lab.lake.store import LakeStore
@@ -50,6 +51,7 @@ from tail_lab.observability import log_event
 __all__ = [
     "DATASET",
     "QUARANTINE_DATASET",
+    "CreditIngestRefused",
     "IngestResult",
     "fetch_series_observations_raw",
     "ingest_credit",
@@ -71,6 +73,12 @@ _ALFRED_REALTIME_END = "9999-12-31"
 #: FRED's missing-value sentinel in the observations payload -- a holiday
 #: or not-yet-published print, not a zero.
 _MISSING_VALUE = "."
+
+
+class CreditIngestRefused(RuntimeError):
+    """HY OAS was requested but ended with zero valid rows (empty reply, all
+    quarantined, or malformed values). No bronze is written; the quarantine
+    rows, if any, are."""
 
 
 @dataclass(frozen=True)
@@ -214,14 +222,24 @@ def ingest_credit(
     combined = pd.concat(parsed, ignore_index=True) if parsed else _empty_frame()
     valid, quarantined = validate_and_quarantine(combined)
 
-    bronze_path = store.write_bronze(DATASET, ingest_date, valid)
-
     # Quarantined rows go through the store as an immutable bronze snapshot
     # under a sibling dataset name -- never a raw filesystem write (matches
     # rates.py/vix.py; the lake is the only thing allowed to touch storage).
+    # Written BEFORE the HY guard so a refused day still leaves its rejects.
     quarantine_path: str | None = None
     if not quarantined.empty:
         quarantine_path = store.write_bronze(QUARANTINE_DATASET, ingest_date, quarantined)
+
+    # HY guard: nothing reads IG, so an HY reply with no valid row is a FRED
+    # outage. Refuse (no bronze) so the run exits non-zero and the refresh
+    # alert fires, instead of writing an empty-looking day and exiting 0.
+    if HY_SERIES_ID in resolved and not (valid["series_id"] == HY_SERIES_ID).any():
+        raise CreditIngestRefused(
+            f"no valid {HY_SERIES_ID} rows on {ingest_date.isoformat()}: "
+            f"{len(quarantined)} row(s) quarantined; bronze not written"
+        )
+
+    bronze_path = store.write_bronze(DATASET, ingest_date, valid)
 
     result = IngestResult(
         bronze_path=bronze_path,
