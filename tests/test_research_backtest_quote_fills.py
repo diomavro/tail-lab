@@ -9,7 +9,12 @@ import pytest
 
 from tail_lab.contracts.ohlcv import dataset_id
 from tail_lab.lake.store import DeltaLakeStore
-from tail_lab.research.backtest.put_roll import load_asof_series, price_snapshot_ids
+from tail_lab.research.backtest.portfolio import PortfolioLeg, run_portfolio
+from tail_lab.research.backtest.put_roll import (
+    load_asof_series,
+    load_ohlcv_series,
+    price_snapshot_ids,
+)
 from tail_lab.research.backtest.quote_fills import (
     MAX_SNAP_MONEYNESS_PP,
     SEAM_SESSIONS,
@@ -309,6 +314,7 @@ def _write_panel(
     *,
     symbol: str = "spy",
     ingest: dt.date = INGEST,
+    days: pd.DatetimeIndex = PANEL_DAYS,
 ) -> None:
     """One put per session, its ``spot`` as given -- all the splice reads."""
     rows = [
@@ -319,7 +325,7 @@ def _write_panel(
             spot=float(s),
             strike=float(s) * 0.9,
         )
-        for day, s in zip(PANEL_DAYS, spot, strict=True)
+        for day, s in zip(days, spot, strict=True)
     ]
     store.write_bronze(f"optionsdx_quotes_{symbol}", ingest, pd.DataFrame(rows))
 
@@ -371,6 +377,8 @@ def test_the_panel_sessions_before_ohlcv_are_spliced_in_front_on_ohlcv_basis(
         [300.0] * 40,
         # Same basis on the first session, 2% off on one inside the seam.
         [200.0] * 5 + [204.0] + [200.0] * 34,
+        # ...and on the seam's LAST session, so the window cannot quietly shrink.
+        [200.0] * (SEAM_SESSIONS - 1) + [204.0] + [200.0] * (40 - SEAM_SESSIONS),
     ],
 )
 def test_a_seam_that_does_not_measure_one_clean_basis_leaves_ohlcv_alone(
@@ -406,11 +414,59 @@ def test_a_split_after_the_seam_does_not_cost_the_prehistory(tmp_path: Path) -> 
     assert len(spliced) == 70
 
 
+def test_ohlcv_shorter_than_the_seam_is_never_spliced_onto(tmp_path: Path) -> None:
+    store = DeltaLakeStore(tmp_path)
+    _write_panel(store, [200.0] * 70)
+    prices = _ohlcv().iloc[: SEAM_SESSIONS - 1]
+
+    assert with_panel_prehistory(store, prices, symbol="spy", as_of=INGEST) is prices
+
+
+def test_a_session_is_priced_at_the_median_spot_its_rows_quote(tmp_path: Path) -> None:
+    """The real panel has hundreds of rows a session. The prehistory's first
+    session quotes 0 (dropped), 190, 200 and 260: its price is 200."""
+    store = DeltaLakeStore(tmp_path)
+    _write_panel(store, [200.0] * 70)
+    first = PANEL_DAYS[0]
+    store.write_bronze(
+        "optionsdx_quotes_spy",
+        INGEST + dt.timedelta(days=1),
+        pd.DataFrame(
+            [
+                _row(quote_date=first, spot=s, strike=100.0 + i)
+                for i, s in enumerate([0.0, 190.0, 260.0])
+            ]
+            + [_row(quote_date=d, spot=200.0) for d in PANEL_DAYS]
+        ),
+    )
+
+    spliced = with_panel_prehistory(
+        store, _ohlcv(), symbol="spy", as_of=INGEST + dt.timedelta(days=1)
+    )
+
+    assert spliced.iloc[0] == pytest.approx(200.0)
+
+
+def test_a_hole_in_the_panel_starts_the_prehistory_after_it(tmp_path: Path) -> None:
+    """Ten sessions in 2010, nothing until 2016: a roll entered in 2010 must
+    not be valued against a 2016 price, so only the run touching the seam
+    is kept."""
+    store = DeltaLakeStore(tmp_path)
+    days = pd.bdate_range("2010-01-04", periods=10).append(PANEL_DAYS[10:])
+    _write_panel(store, [200.0] * 70, days=days)
+
+    spliced = with_panel_prehistory(store, _ohlcv(), symbol="spy", as_of=INGEST)
+
+    assert spliced.index[0] == PANEL_DAYS[10]
+
+
 @pytest.mark.parametrize(
     ("prehistory", "first"),
     [
         # A reverse split (1:2, 100 -> 200): the guard looks both ways.
         ([100.0] * 10 + [200.0] * 20, 10),
+        # A 3:2 split (300 -> 200) is caught too, not only whole-number ones.
+        ([300.0] * 10 + [200.0] * 20, 10),
         # Two splits: only the sessions after the LAST one share the seam's basis.
         ([800.0] * 5 + [400.0] * 5 + [200.0] * 20, 10),
     ],
@@ -536,6 +592,30 @@ def test_a_spliced_path_cites_the_panel_it_read(tmp_path: Path) -> None:
 
     assert price_snapshot_ids(store, "SPY", INGEST) == [ohlcv, panel]
     assert snapshot_ids_for(store, INGEST, ["spy"])[1:3] == [ohlcv, panel]
+
+
+def test_a_portfolio_cites_the_panel_its_legs_read(tmp_path: Path) -> None:
+    store = DeltaLakeStore(tmp_path)
+    _write_ohlcv(store)
+    _write_panel(store, [200.0] * 70)
+    store.write_bronze("vix", INGEST, pd.DataFrame({"date": PANEL_DAYS, "close": 15.0}))
+    leg = PortfolioLeg(asset="spy", moneyness_pct=5.0, tenor_weeks=1.0, weight=1.0)
+
+    result = run_portfolio(store, legs=[leg], as_of=INGEST, notional=1000.0, years=0.2)
+
+    assert store.bronze_snapshot_id("optionsdx_quotes_spy", INGEST) in result.snapshot_ids
+
+
+def test_the_ohlcv_reader_never_splices(tmp_path: Path) -> None:
+    """The Surface and the strike preview read through it, and must never
+    touch the panel (their own docstrings)."""
+    store = DeltaLakeStore(tmp_path)
+    _write_ohlcv(store)
+    _write_panel(store, [200.0] * 70)
+
+    prices, _ = load_ohlcv_series(store, "spy", INGEST)
+
+    assert prices.index[0] == OHLCV_DAYS[0]
 
 
 def test_a_name_without_a_panel_cites_its_ohlcv_alone(tmp_path: Path) -> None:

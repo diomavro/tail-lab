@@ -53,7 +53,8 @@ a large one strictly in order.
       measures the panel/OHLCV basis over OHLCV's first 20 sessions, every
       one of which the panel must hold (refused unless ~1 or a clean split
       factor, on every one of them),
-      drops prehistory before any >= 1.4x one-session step (a split), and
+      drops prehistory before any >= 1.4x one-session step (a split) or
+      > 7-day hole between panel sessions (missing data), and
       memoises each panel's daily spot per snapshot. What it changes today:
       the Marks price-series line, and every MODEL-priced roll (Workspace,
       ranking, sweep, metric screen, Bake-off) whose lookback reaches before
@@ -63,7 +64,12 @@ a large one strictly in order.
       `PricingBasis(quotes=...)` path once one does. Provenance: the
       ranking, metric screen and portfolio cite the panel snapshot beside
       OHLCV (`put_roll.price_snapshot_ids`), and the run log carries
-      `price_prehistory_snapshot`. Not done: NVDA/TSLA are refused today
+      `price_prehistory_snapshot`, and the memory `run_id` appends the
+      panel snapshot. The Surface and the strike preview keep reading OHLCV
+      alone (`put_roll.load_ohlcv_series`): both promise never to touch the
+      panel. Open question: should the Surface's realised tail index fit over
+      the deeper path (2010+ for SPY), which would include Aug 2011 and
+      Aug 2015? Not done: NVDA/TSLA are refused today
       (their seam basis is ~40 and ~15, two splits compounded, not in
       `SPLIT_FACTORS`), logging a warning each read; once Tiingo is ingested,
       its split factors could carry them, and SPY back to 1993 (the panel

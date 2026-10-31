@@ -111,6 +111,7 @@ from tail_lab.research.backtest.marks import _is_liquid as _is_liquid_with_open_
 
 __all__ = [
     "BASIS_TOLERANCE",
+    "MAX_SESSION_GAP",
     "MAX_SNAP_MONEYNESS_PP",
     "MAX_TENOR_GAP_FRAC",
     "SEAM_SESSIONS",
@@ -780,6 +781,12 @@ SEAM_SESSIONS = 20
 #: smallest split ratio in :data:`SPLIT_FACTORS` (and a 3:2).
 SPLIT_JUMP = 1.4
 
+#: A hole between two panel sessions longer than this is missing data, not a
+#: market closure (the longest closure since 1990 was 9/11's four sessions):
+#: a roll across it would be valued against a price from the far side of the
+#: hole, so the prehistory starts after the last one.
+MAX_SESSION_GAP = pd.Timedelta(days=7)
+
 #: Each panel's daily spot is ~3,500 floats; the bound only stops a long-lived
 #: process collecting one per superseded snapshot.
 _SPOT_MEMO_MAX = 8
@@ -847,9 +854,10 @@ def with_panel_prehistory(
     :data:`SEAM_SESSIONS` OHLCV sessions, every one of which the panel must
     also hold; it must be ~1 or ~a clean split factor, and must hold on each
     of them. Anything else returns ``prices`` unchanged rather than a path
-    with a step in it. A move of
-    :data:`SPLIT_JUMP` or more inside the earlier sessions is a split the seam
-    cannot see, so only the sessions after it are kept.
+    with a step in it. A move of :data:`SPLIT_JUMP` or more inside the earlier
+    sessions is a split the seam cannot see, and a hole longer than
+    :data:`MAX_SESSION_GAP` is missing data, so only the sessions after the
+    last of either are kept.
 
     Point-in-time: the panel snapshot is the one known on ``as_of`` and no
     session after ``as_of`` is read; every added session predates
@@ -867,7 +875,7 @@ def with_panel_prehistory(
     ratios = shared / seam.loc[shared.index]
     basis = float(ratios.median())
     if (
-        len(shared) < len(seam)
+        len(shared) < SEAM_SESSIONS
         or not _basis_is_plausible(basis)
         or ((ratios / basis - 1.0).abs() > BASIS_TOLERANCE).any()
     ):
@@ -883,10 +891,11 @@ def with_panel_prehistory(
 
     path = spot.loc[spot.index <= shared.index[0]]
     step = path / path.shift(1)
-    jumps = step.index[(step >= SPLIT_JUMP) | (step <= 1.0 / SPLIT_JUMP)]
+    gap = path.index.to_series().diff()
+    breaks = path.index[(step >= SPLIT_JUMP) | (step <= 1.0 / SPLIT_JUMP) | (gap > MAX_SESSION_GAP)]
     earlier = spot.loc[spot.index < prices.index[0]]
-    if len(jumps):
-        earlier = earlier.loc[earlier.index >= jumps[-1]]
+    if len(breaks):
+        earlier = earlier.loc[earlier.index >= breaks[-1]]
     if earlier.empty:
         return prices
     _LOGGER.info(

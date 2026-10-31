@@ -87,6 +87,7 @@ from tail_lab.research.backtest.put_roll import (
     annualized_return,
     compute_put_backtest,
     load_asof_series,
+    load_ohlcv_series,
 )
 from tail_lab.research.backtest.quote_fills import panel_snapshot_id
 from tail_lab.research.backtest.ranking import BENCHMARK, UniverseRanking, rank_universe
@@ -1119,7 +1120,7 @@ def putlab_surface(
             status_code=404, detail="no option chain known as of that date"
         ) from exc
     try:
-        prices: pd.Series | None = load_asof_series(store, asset, resolved)[0]
+        prices: pd.Series | None = load_ohlcv_series(store, asset, resolved)[0]
     except LookupError:
         prices = None
     # The name's own measured yield; without one, the old flat index-like
@@ -1194,7 +1195,7 @@ def putlab_strike_preview(
     if hit is not None and hit[0] > time.monotonic():
         return hit[1]
     try:
-        prices, realized_vol = load_asof_series(store, asset, resolved)
+        prices, realized_vol = load_ohlcv_series(store, asset, resolved)
     except LookupError as exc:
         raise HTTPException(status_code=404, detail=f"no price data for {asset}") from exc
     try:
