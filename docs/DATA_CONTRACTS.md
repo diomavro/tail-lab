@@ -221,13 +221,11 @@ cross-asset sensitivity metrics.
 (`BAMLC0A0CM`). Free, keyed; same `FRED_API_KEY` repo secret as #3.
 `ingestion/credit.py` + `make ingest-credit` (`SERIES=` override) ship the
 adapter, requesting FRED's ALFRED-style full vintage history exactly as
-`ingestion/rates.py` does. **Not yet run against prod** — no `credit`
-bronze partition exists yet. `research/regimes/timeline.py` now reads HY OAS
-(`load_credit_oas`) and escalates the VIX-only regime label with it
-(`compute_regime_timeline`) whenever a credit snapshot exists, falling back
-to the VIX-only label until then — so this dataset goes live for the
-cockpit's regime panel the moment the live run above happens, with no
-further code change.
+`ingestion/rates.py` does. First ingested 2026-09-23 (`HUMAN_TODO.md`).
+`research/regimes/timeline.py` reads HY OAS (`load_credit_oas`) and
+escalates the VIX-only regime label with it (`compute_regime_timeline`)
+whenever a credit snapshot exists, falling back to the VIX-only label
+otherwise.
 
 **Cadence.** Daily.
 
@@ -240,7 +238,11 @@ different research code and may diverge in validation constraints later
 **Bronze partition key.** `source_id=fred/series_id=<id>/obs_date=<YYYY-MM-DD>/`.
 
 **Point-in-time rule.** Same vintage requirement as #3 — FRED credit
-spread series are revised too.
+spread series are revised too. **But the vintage does not date the first
+print:** every `BAMLH0A0HYM2` row carries `vintage_date == obs_date`, while
+ICE's day-*t* spread is posted the next morning. The regime timeline
+therefore counts a print only from the session after its `obs_date`
+(`research/regimes/timeline.py:CREDIT_PUBLICATION_LAG`).
 
 ---
 

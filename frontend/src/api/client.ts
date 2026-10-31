@@ -1220,3 +1220,51 @@ export async function fetchModelPlan(params: ModelPlanParams, signal?: AbortSign
   }
   return (await resp.json()) as ModelPlanResponse
 }
+
+// ---- Marks (GET /api/putlab/marks) -- mirrors research/quote_coverage.QuoteCoverage.
+// Where the lake holds a usable put quote, by month x depth OOM x tenor band.
+
+export type MarksSource = 'optionsdx' | 'chain'
+
+/** (month index, oom bucket %, band index, usable sessions, traded sessions) */
+export type MarksCell = [number, number, number, number, number]
+
+export interface MarksSourceCoverage {
+  source: MarksSource
+  first: string
+  last: string
+  sessions: number
+  stored_depth_pct: number
+  months: string[]
+  month_sessions: number[]
+  cells: MarksCell[]
+}
+
+export interface MarksDepthRow {
+  oom: number
+  band: string
+  usable_sessions: number
+  traded_sessions: number
+  usable_by_regime: Record<RegimeLabel, number>
+}
+
+export interface MarksCoverage {
+  symbol: string
+  as_of: string
+  oom_step: number
+  bands: string[]
+  max_relative_spread: number
+  sources: MarksSourceCoverage[]
+  depth: MarksDepthRow[]
+  regime_sessions: Record<RegimeLabel, number>
+  price_span: [string, string] | null
+  symbols: string[]
+}
+
+export async function fetchMarks(symbol: string, signal?: AbortSignal): Promise<MarksCoverage> {
+  const resp = await fetch(`/api/putlab/marks?${new URLSearchParams({ symbol })}`, { signal })
+  if (!resp.ok) {
+    throw new ApiError(`GET /api/putlab/marks failed: ${resp.status}`, resp.status)
+  }
+  return (await resp.json()) as MarksCoverage
+}

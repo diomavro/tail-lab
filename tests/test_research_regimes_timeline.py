@@ -216,12 +216,29 @@ def test_compute_regime_timeline_credit_stress_escalates_a_calm_vix_day(tmp_path
         [(d.date(), 6.0, d.date()) for d in vix_dates],  # 6.0 is credit-"elevated"
     )
     combined = compute_regime_timeline(store, as_of=ingest)
-    assert set(combined) == {"elevated"}
+    # The first day has no credit print published before it; the rest do.
+    assert list(combined) == ["calm", "elevated", "elevated"]
     # And the reverse never happens: crisis-VIX cannot be talked down by calm credit.
     _seed_vix(store, dt.date(2026, 3, 6), [40.0])
     _seed_credit(store, dt.date(2026, 3, 6), [(dt.date(2026, 3, 6), 3.0, dt.date(2026, 3, 6))])
     still_crisis = compute_regime_timeline(store, as_of=dt.date(2026, 3, 6))
     assert still_crisis.iloc[-1] == "crisis"
+
+
+def test_compute_regime_timeline_credit_spike_escalates_only_the_next_session(
+    tmp_path: Path,
+) -> None:
+    """Day *t*'s HY OAS is published the morning of *t+1*, and the lake's
+    ``vintage_date`` says *t* anyway. A crisis-level print on Friday must
+    leave Friday as VIX alone labels it and escalate Monday, the first close
+    at which anyone had the number."""
+    store = DeltaLakeStore(tmp_path)
+    thu, fri, mon = dt.date(2026, 3, 5), dt.date(2026, 3, 6), dt.date(2026, 3, 9)
+    vix_dates = _seed_vix(store, mon, [12.0, 12.0, 12.0])
+    assert list(vix_dates.date) == [thu, fri, mon]
+    _seed_credit(store, mon, [(thu, 3.0, thu), (fri, 9.0, fri)])  # 9.0 is credit-"crisis"
+    combined = compute_regime_timeline(store, as_of=mon)
+    assert list(combined) == ["calm", "calm", "crisis"]
 
 
 def test_compute_regime_timeline_credit_before_its_own_history_defaults_calm(

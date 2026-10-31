@@ -29,6 +29,9 @@ export const RAIL: Record<TabId, readonly RailSection[]> = {
   // whichever Cboe program sits nearest the strike and tenor
   // (accuracy.select_reference), so those two drive numbers on this tab.
   regime: ['strike', 'tenor'],
+  // Marks picks its own name: its list is every name with a quote, not the
+  // screened universe.
+  marks: [],
   glossary: [],
   // Reads nothing from the controls: its figures are a committed study.
   pitch: [],

@@ -18,6 +18,50 @@ a large one strictly in order.
 
 ## Next increments
 
+- [ ] **The credit half of the regime label is not point-in-time** (found
+      2026-10-30 while answering "is the regime computed only with data we'd
+      have had?"). Two faults, measured against the lake:
+      (a) every `BAMLH0A0HYM2` row has `vintage_date == obs_date`, but an
+      OAS print for day *t* is published the next morning -- so
+      `compute_regime_timeline`'s ffill escalates day *t* on a number nobody
+      had at *t*'s close. Lag credit by one session before aligning.
+      (b) HY OAS starts **2023-10-30** (FRED's three-year ICE window), so the
+      label is VIX-only for 2010-2023 and VIX+credit after: the definition
+      changes mid-sample, and the window slides, so the same past day can
+      relabel as `as_of` moves. Candidate: Moody's `BAA10Y` (FRED, 1986+, not
+      ICE-licensed) as the credit input, thresholds re-documented against its
+      own history. *Success*: a test where a credit spike printed on *t*
+      only escalates *t+1*, and one regime definition across the whole
+      optionsDX span.
+      **(a) done 2026-10-30**: `timeline.CREDIT_PUBLICATION_LAG` re-dates
+      each HY OAS label one calendar day before the ffill, so day *t*'s
+      print first counts on the next VIX session (Friday's on Monday);
+      pinned by `test_compute_regime_timeline_credit_spike_escalates_only_the_next_session`.
+      It does not read `vintage_date`: if FRED's vintages ever start dating
+      the real publication, take the later of the two. **(b) is still open.**
+- [ ] **Unlock 2010-2016 for real-quote backtests.** Marks shows optionsDX
+      SPY/QQQ quotes from 2010/2012, but `ohlcv_*` starts 2016-10 (Nasdaq's
+      ~10-year window), so six years of quotes -- including Aug 2011 and
+      Aug 2015 -- never reach a roll. `tiingo_eod` already carries ~33 years
+      of `adjClose`; extend the price path from it (or the panel's own
+      as-traded `spot`, minding the split basis in `contracts/optionsdx.py`).
+      *Success*: the Marks price-series line starts at or before 2010 for SPY.
+- [ ] **VIX/VIX3M as a regime escalation.** `vix_complex` already holds
+      VIX3M from 2009; backwardation (VIX > VIX3M) is a sharper stress
+      signal than the VIX level and needs no new data, unlike the "VIX
+      futures term-structure ingestion" item (still `[~]`: no live bronze). Same shape as credit: documented thresholds, hysteresis,
+      most-severe-wins.
+- [ ] **Re-ingest optionsDX wider than 0.60-1.02 moneyness / 120 days**,
+      disk permitting (the raw 7z archives are local in
+      `data/vendor/optionsdx/`). Marks hatches everything past 40% out
+      before 2026 and no LEAP-tenor put exists before the forward sweep. Pair
+      with "Chunked bronze write, so SPX can be ingested at all" (Operational).
+- [ ] **Marks follow-ups** (`research/quote_coverage.py`): add the call wing
+      once `option_chain_call_snapshot` has partitions (ADR 0031); if two
+      sources ever cover the same month, merge them -- today `summarise_source`
+      and the view assume they never overlap (true: optionsDX ends 2023-12,
+      the sweep began 2026-08).
+
 - [x] **The strike × tenor grid scrolls a phone page sideways on real data**
       (found 2026-10-11 while screenshotting the Workspace against a two-name
       scratch lake). At 390px, `SweepGrid`'s `.pl-sweep-cell` buttons whose
@@ -2469,6 +2513,35 @@ with the evidence — never the implementation.
       `model_copy`. Left as follow-ups rather than one large PR across six
       endpoints and their frontend surfaces.
 
+## Design-review advisories not yet acted on (logged 2026-10-30)
+
+Advisory notes from the PASS reviews of #171, #172, #175 and #177, which
+automerge landed before anyone read them. None is a bug today.
+
+- [ ] **Marks (#175):** `quote_coverage.summarise_source` takes `sessions`
+      that its one caller derives from `presence` -- derive it inside; the
+      module docstring calls its bar "the same bar a quote must clear to mark
+      a position", but it is `quote_fills._is_liquid`'s (marks' minus open
+      interest); `api/marks_routes.py` checks `COVERAGE_SYMBOLS` and then
+      `compute_quote_coverage` checks it again -- map the `ValueError` to 422
+      instead; `MarksView.tsx`'s `FALLBACK_SYMBOLS` hand-copies the symbol
+      list; a rail asset outside coverage shows "failed: 422", not the
+      friendly 404 message.
+- [ ] **Pitch evidence (#172):** `scripts/pitch_evidence.py` patches
+      `marks.MAX_RELATIVE_SPREAD` with `unittest.mock`, which works only
+      because of where that constant is read (the same patch would do
+      nothing on `quote_fills`) -- give the liquidity predicate a
+      `max_relative_spread` argument. Its `max_drawdown` is the third copy
+      (`portfolio._max_drawdown`, `model_plan._max_drawdown`).
+- [ ] **Chain sweep script (#171):** `scripts/chain_snapshot.py`'s `_LABEL`
+      duplicates the `right -> wing` mapping on `Wing`; `Outcome.UNSETTLED`
+      changes one printed line only; `_run_local` and `main` both end in
+      `_finish(...)` but each drives its own per-wing loop -- one driver over
+      a `wing -> Outcome` callable would serve both. Weekly-cleanup material.
+- [ ] **Image smoke check (#177, needs a human: touches `.github/`):** no CI
+      step runs `LOAD delta` offline as the image's runtime user, so the
+      prod-only Marks 503 can come back if the `USER` line moves.
+
 ## Design-review advisories not yet acted on (found 2026-09-07)
 
 Two non-blocking findings from PR #86's round-2 review (the Nasdaq
@@ -2996,7 +3069,10 @@ ever go down.
       the 75 the ratchet still names it for. The actual `max-statements`
       worst offender today is `portfolio.py:run_portfolio` at 51 — lowering
       that ratchet **75 -> 51** needs no work on `run_put_roll` at all, just
-      a PR confirming the number and updating the comment. `max-args=13` is
+      a PR confirming the number and updating the comment. **Done (weekly
+      cleanup, 2026-10-18):** by then `run_put_roll` was back at 50 and the
+      worst; dropping its 11 `x = acc.x` read-backs took it to 39 and
+      `max-statements` **75 -> 42** (`scripts/order_ticket.main`). `max-args=13` is
       still genuinely pinned by `run_put_roll`'s own signature, unreduced:
       bundling the strategy-spec keywords (`moneyness_pct`, `tenor_weeks`,
       `lookback_years`, `rate`, `commission_per_contract`, `spread_scale`)

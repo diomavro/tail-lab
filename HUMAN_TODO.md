@@ -178,6 +178,14 @@ acts on, removes, or reorders anything in this file.**
       constraint. Two jobs: the 2023 vendor-disagreement check against
       optionsDX SPY, and the Black-Scholes pricing residual over 2024-2025.
       Contract, adapter and guarantees: `docs/DATA_CONTRACTS.md` #13.
+- [ ] **Buy optionsDX 2024-01 .. 2026-08 for SPY and QQQ (then NVDA, TSLA)**
+      (2026-10-30, from the Marks tab). Every name has a quote hole from the
+      archive's end (2023-12-29) to the forward sweep's start (2026-08-26),
+      and it holds the Aug 2024 vol spike and the Apr 2025 tariff crash --
+      crisis-regime quotes, the scarcest kind (SPY has 1.3 crisis-years of
+      usable 16%-OOM quotes in total). The Kaggle corpus below covers SPY
+      2024-25 but is cross-check-only by licence, so it cannot fill this.
+      Drop the files in `data/vendor/optionsdx/` and run the existing ingest.
 - [ ] **Download and ingest it, ONE YEAR AT A TIME.** Dataset
       `shankerabhigyan/s-and-p500-options-spy-implied-volatility-2019-24`,
       twelve files `spy_options_data_14.json` .. `_25.json`, 0.35-1.06 GB
