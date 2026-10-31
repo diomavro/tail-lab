@@ -39,13 +39,26 @@ a large one strictly in order.
       pinned by `test_compute_regime_timeline_credit_spike_escalates_only_the_next_session`.
       It does not read `vintage_date`: if FRED's vintages ever start dating
       the real publication, take the later of the two. **(b) is still open.**
-- [ ] **Unlock 2010-2016 for real-quote backtests.** Marks shows optionsDX
+- [x] **Unlock 2010-2016 for real-quote backtests.** Marks shows optionsDX
       SPY/QQQ quotes from 2010/2012, but `ohlcv_*` starts 2016-10 (Nasdaq's
       ~10-year window), so six years of quotes -- including Aug 2011 and
       Aug 2015 -- never reach a roll. `tiingo_eod` already carries ~33 years
       of `adjClose`; extend the price path from it (or the panel's own
       as-traded `spot`, minding the split basis in `contracts/optionsdx.py`).
       *Success*: the Marks price-series line starts at or before 2010 for SPY.
+      **Done 2026-10-31** from the panel's own `spot`, not Tiingo: production
+      has no `tiingo_eod` snapshot yet (`dividend_snapshot: null` on
+      `/api/putlab/backtest`), so a Tiingo splice would have changed nothing.
+      `quote_fills.with_panel_prehistory`, called inside `load_asof_series`,
+      measures the panel/OHLCV basis over the first 20 shared sessions
+      (refused unless ~1 or a clean split factor, on every one of them),
+      drops prehistory before any >= 1.4x one-session step (a split), and
+      memoises each panel's daily spot per snapshot. Not done: (1) a
+      result's `snapshot_ids`/run log still cite only `ohlcv_<sym>` when the
+      path was spliced -- the splice logs its own `price_prehistory.spliced`
+      line with the panel snapshot, but provenance per result should name it;
+      (2) once Tiingo is ingested, its split-adjusted `close` could reach
+      NVDA/TSLA's pre-2016 history and SPY's 1993+ (the panel starts 2010).
 - [ ] **VIX/VIX3M as a regime escalation.** `vix_complex` already holds
       VIX3M from 2009; backwardation (VIX > VIX3M) is a sharper stress
       signal than the VIX level and needs no new data, unlike the "VIX

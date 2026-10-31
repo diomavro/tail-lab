@@ -47,7 +47,10 @@ check is what makes that a finding rather than an assumption.
 OHLCV is Nasdaq's ~10-year split-adjusted history (``ohlcv_spy`` 2016-10-10
 onward, measured 2026-10-10), and this panel ends 2023-12, so a roll backtest
 that needs both has 1,818 overlapping trading days. Any consumer joining the
-two must report the span it actually traded.
+two must report the span it actually traded. (The roll's price path now
+carries this panel's own ``spot`` in front of OHLCV's first session --
+``research/backtest/quote_fills.with_panel_prehistory`` -- so for the rolls
+themselves the panel, not OHLCV, sets where history starts.)
 
 **Two joins that are silently wrong.** The panel's ``spot`` is as-traded; the
 OHLCV ``close`` is split-adjusted. Measured 2026-09-09, panel/ohlcv median:

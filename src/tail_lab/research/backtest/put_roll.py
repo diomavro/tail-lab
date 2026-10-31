@@ -1213,14 +1213,21 @@ def load_asof_series(store: LakeStore, asset: str, as_of: dt.date) -> tuple[pd.S
     This is the single chokepoint every backtest path reads through —
     ``put_roll``, ``portfolio``, ``ranking``, ``metric_screen`` and the API
     routes — so the price basis is decided here, once, for all of them.
+
+    Where the optionsDX panel reaches back before OHLCV does (SPY and QQQ to
+    2010/2012, OHLCV only to 2016-10), its own daily spot is spliced in front,
+    converted to OHLCV's basis: see ``quote_fills.with_panel_prehistory``.
     """
+    # Deferred for the cycle described at the TYPE_CHECKING import above.
+    from tail_lab.research.backtest.quote_fills import with_panel_prehistory
+
     try:
         bronze = store.read_bronze_as_of(dataset_id(asset), as_of)
     except LookupError as exc:
         raise LookupError(f"no OHLCV for {asset} known as of {as_of.isoformat()}") from exc
     if bronze.empty:
         raise LookupError(f"no OHLCV for {asset} known as of {as_of.isoformat()}")
-    prices = _close_series(bronze)
+    prices = with_panel_prehistory(store, _close_series(bronze), symbol=asset, as_of=as_of)
     return prices, trailing_realized_vol(prices)
 
 
