@@ -5,9 +5,13 @@ eligibility, the ignore list, the scan shape and the cache are what matter."""
 from __future__ import annotations
 
 import datetime as dt
+from dataclasses import dataclass
 from pathlib import Path
 
 import pandas as pd
+import pyarrow as pa
+import pyarrow.compute
+import pyarrow.dataset
 import pytest
 from deltalake import DeltaTable
 
@@ -60,35 +64,47 @@ def test_eligibility_is_on_or_before_as_of_and_minus_the_ignored(tmp_path: Path)
     assert _values(read(DS, D2, columns=COLS, equals=HY, ignored=other)) == {D1: 1.0, D2: 2.0}
 
 
-def test_scan_is_one_projected_filtered_in_list_scan(tmp_path: Path, monkeypatch) -> None:
+@dataclass
+class _Seen:
+    calls: int = 0
+    partitions: object = None
+    columns: object = None
+    filter: object = None
+
+
+def test_scan_is_one_projected_filtered_in_list_scan(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """WHY: the point is ONE scan with the filter and projection pushed into
     Parquet (about 1.5 s for 28 partitions, not 28 reads). Filtering after
     ``to_pandas`` would pull the IG rows and every column over the wire."""
     store = _store(tmp_path)
     _seed(store, {D1: 1.0, D2: 2.0, D3: 3.0})
-    seen: dict[str, object] = {"calls": 0}
+    seen = _Seen()
     original = DeltaTable.to_pyarrow_dataset
 
     class _Proxy:
-        def __init__(self, inner) -> None:
+        def __init__(self, inner: pyarrow.dataset.Dataset) -> None:
             self._inner = inner
 
-        def to_table(self, *, columns=None, filter=None):
-            seen["columns"], seen["filter"] = columns, filter
+        def to_table(
+            self, *, columns: list[str], filter: pyarrow.compute.Expression | None
+        ) -> pa.Table:
+            seen.columns, seen.filter = columns, filter
             return self._inner.to_table(columns=columns, filter=filter)
 
-    def spy(self, partitions=None, **kw):
-        seen["calls"] = int(seen["calls"]) + 1  # type: ignore[call-overload]
-        seen["partitions"] = partitions
-        return _Proxy(original(self, partitions=partitions, **kw))
+    def spy(self: DeltaTable, partitions: list[tuple[str, str, list[str]]] | None = None) -> _Proxy:
+        seen.calls += 1
+        seen.partitions = partitions
+        return _Proxy(original(self, partitions=partitions))
 
     monkeypatch.setattr(DeltaTable, "to_pyarrow_dataset", spy)
     out = store.read_bronze_history_as_of(DS, D3, columns=COLS, equals=HY)
-    assert seen["calls"] == 1
-    assert seen["partitions"] == [("ingest_date", "in", ["2026-03-01", "2026-03-02", "2026-03-03"])]
-    assert seen["filter"] is not None
-    assert "series_id" in str(seen["filter"])
-    assert list(seen["columns"]) == [*COLS, "ingest_date"]  # type: ignore[call-overload]
+    assert seen.calls == 1
+    assert seen.partitions == [("ingest_date", "in", ["2026-03-01", "2026-03-02", "2026-03-03"])]
+    assert seen.filter is not None
+    assert "series_id" in str(seen.filter)
+    assert seen.columns == [*COLS, "ingest_date"]
     assert list(out.columns) == [*COLS, "ingest_date"]
     assert len(out) == 3  # HY rows only, one per partition
     assert all(isinstance(d, dt.date) for d in out["ingest_date"])
@@ -105,7 +121,9 @@ def test_unknown_column_is_a_keyerror_not_an_arrow_error(tmp_path: Path) -> None
         store.read_bronze_history_as_of(DS, D1, columns=COLS, equals={"nope": "x"})
 
 
-def test_cache_follows_the_eligible_date_set(tmp_path: Path, monkeypatch) -> None:
+def test_cache_follows_the_eligible_date_set(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """WHY: the cache is keyed on the eligible partitions, so a later partition,
     a BACK-DATED one, or a changed ignore list is seen at once, while an
     unchanged set is not re-scanned. Keyed on ``as_of`` or the newest date, a
@@ -118,9 +136,11 @@ def test_cache_follows_the_eligible_date_set(tmp_path: Path, monkeypatch) -> Non
     scans = [0]
     original = DeltaTable.to_pyarrow_dataset
 
-    def counting(self, *a, **kw):
+    def counting(
+        self: DeltaTable, partitions: list[tuple[str, str, list[str]]] | None = None
+    ) -> pyarrow.dataset.Dataset:
         scans[0] += 1
-        return original(self, *a, **kw)
+        return original(self, partitions=partitions)
 
     monkeypatch.setattr(DeltaTable, "to_pyarrow_dataset", counting)
     read(DS, D3, columns=COLS, equals=HY)

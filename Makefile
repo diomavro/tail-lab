@@ -237,9 +237,10 @@ pitch-evidence-current:
 ingest-credit:
 	env -u PYTHONPATH $(VENV)/bin/python -c "from tail_lab.ingestion.credit import ingest_credit; from tail_lab.config import get_lake_store, get_settings; from tail_lab.observability import configure_logging; configure_logging(); s = [x.upper() for x in '$(SERIES)'.split(',')] if '$(SERIES)' else None; r = ingest_credit(get_lake_store(), s, api_key=get_settings().fred_api_key); print(f'committed {r.valid_rows} rows for {len(r.series_ids)} series -> {r.bronze_path} ({r.quarantined_rows} quarantined)')"
 
-# One-off and human-run, against the production lake, after Dio confirms the
-# ICE licence (docs/adr/0033). Idempotent: a later run is a no-op, and it
-# refuses (non-zero exit) on any failed check. Not in CI, not scheduled.
+# One-off and human-run, against the production lake (docs/adr/0033). A re-run
+# on a later day is a no-op; a re-run on the SAME day raises same_day_partition
+# (a silent no-op would look like success). It refuses (non-zero exit) on any
+# failed check. Not in CI, not scheduled.
 ingest-credit-archive:
 	env -u PYTHONPATH $(VENV)/bin/python -c "from tail_lab.ingestion.credit_archive import ingest_credit_archive; from tail_lab.config import get_lake_store; from tail_lab.observability import configure_logging; configure_logging(); r = ingest_credit_archive(get_lake_store()); print('already ingested; nothing written' if r.skipped else f'committed {r.rows} rows ({r.dropped_blank} blanks dropped) -> {r.bronze_path}')"
 

@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import datetime as dt
+from collections.abc import Mapping, Sequence
 from pathlib import Path
 
 import pandas as pd
@@ -80,7 +81,7 @@ def _seed_vix(store: DeltaLakeStore, ingest_date: dt.date, closes: list[float]) 
 def _seed_credit(
     store: DeltaLakeStore,
     ingest_date: dt.date,
-    rows: list[tuple[dt.date, float, dt.date] | tuple[dt.date, float, dt.date, str]],
+    rows: Sequence[tuple[dt.date, float, dt.date] | tuple[dt.date, float, dt.date, str]],
     *,
     series_id: str = HY_OAS_SERIES_ID,
     dataset: str = "credit",
@@ -290,7 +291,7 @@ def test_history_survives_a_bad_newest_partition(tmp_path: Path) -> None:
     _seed_credit(store, A2, _rows((_day(1), 9.0)))
     _seed_credit(store, AS_OF, [(_day(1), 1.2, _day(1))], series_id="BAMLC0A0CM")
     oas = load_credit_oas(store, as_of=AS_OF)
-    assert list(oas.index.date) == [_day(0), _day(1)]
+    assert [pd.Timestamp(d).date() for d in oas.index] == [_day(0), _day(1)]
     assert list(oas) == [9.0, 9.0]
     vix_dates = pd.bdate_range(_day(0), periods=4)
     store.write_bronze("vix", AS_OF, pd.DataFrame({"date": vix_dates, "close": [12.0] * 4}))
@@ -330,13 +331,21 @@ def test_a_store_bug_propagates_through_compute_regime_timeline(tmp_path: Path) 
     """WHY (20): KeyError IS a LookupError, so an ``except LookupError`` at the
     loader or the timeline would turn a broken store into silent VIX-only
     labels (precedent: test_api_putlab's hedge-overlay store-bug test)."""
-    store = _fresh(tmp_path)
+
+    class _Broken(DeltaLakeStore):
+        def read_bronze_history_as_of(
+            self,
+            dataset: str,
+            as_of: dt.date,
+            *,
+            columns: Sequence[str],
+            equals: Mapping[str, str],
+            ignored: frozenset[tuple[str, dt.date]] = frozenset(),
+        ) -> pd.DataFrame:
+            raise KeyError("store bug")
+
+    store = _Broken(tmp_path)
     _seed_vix(store, AS_OF, [12.0, 12.0])
-
-    def broken(*args: object, **kwargs: object) -> pd.DataFrame:
-        raise KeyError("store bug")
-
-    store.read_bronze_history_as_of = broken  # type: ignore[method-assign]
     with pytest.raises(KeyError, match="store bug"):
         compute_regime_timeline(store, as_of=AS_OF)
 
@@ -416,7 +425,7 @@ def test_a_stale_tail_or_source_hole_falls_back_to_vix(
     _seed_credit(store, dt.date(2025, 2, 1), _rows((fri, 9.0), (wed, 9.0)))
     with caplog.at_level("WARNING", logger="tail_lab.research.regimes.timeline"):
         out = compute_regime_timeline(store, as_of=dt.date(2025, 2, 1))
-    by_day = {d.date(): label for d, label in out.items()}
+    by_day = dict(zip((ts.date() for ts in pd.DatetimeIndex(out.index)), out, strict=True))
     assert by_day[dt.date(2025, 1, 2)] == "calm"  # before the first print: no opinion
     assert by_day[dt.date(2025, 1, 3)] == "calm"  # print published Sat 01-04
     assert by_day[dt.date(2025, 1, 6)] == "crisis"
@@ -427,6 +436,7 @@ def test_a_stale_tail_or_source_hole_falls_back_to_vix(
     warnings = [r.getMessage() for r in caplog.records if "regime.credit_stale" in r.getMessage()]
     assert len(warnings) == 1
     assert "dates=2" in warnings[0]
+    assert "staleness_days=19" in warnings[0]  # Wed 01-22 vs the 01-03 obs
 
 
 def test_dates_before_the_first_print_log_nothing(

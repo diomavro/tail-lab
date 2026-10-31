@@ -112,11 +112,18 @@ def _parse_csv(content: bytes) -> tuple[pd.DataFrame, int]:
 
 def _validate(frame: pd.DataFrame) -> pd.DataFrame:
     try:
-        return CreditSchema.validate(frame, lazy=True)
+        valid = CreditSchema.validate(frame, lazy=True)
     except SchemaErrors as err:
         raise CreditArchiveRefused(
             "invalid_rows", f"{len(err.failure_cases)} failure(s); nothing written"
         ) from err
+    # A capture cannot hold an observation dated after its own capture day.
+    late = int((valid["obs_date"] > pd.Timestamp(ARCHIVE_VINTAGE)).sum())
+    if late:
+        raise CreditArchiveRefused(
+            "invalid_rows", f"{late} obs dated after the capture date {ARCHIVE_VINTAGE}"
+        )
+    return valid
 
 
 def _live_hy(

@@ -6,6 +6,7 @@ from __future__ import annotations
 import datetime as dt
 import hashlib
 import inspect
+from collections.abc import Callable
 from pathlib import Path
 
 import pandas as pd
@@ -14,11 +15,13 @@ import requests
 
 from tail_lab.contracts.credit import (
     ARCHIVE_DATASET,
+    ARCHIVE_SHA256,
     ARCHIVE_URL,
     ARCHIVE_VINTAGE,
     HY_SERIES_ID,
 )
 from tail_lab.ingestion.credit_archive import (
+    ArchiveIngestResult,
     CreditArchiveRefused,
     ingest_credit_archive,
 )
@@ -38,14 +41,18 @@ def _csv(rows: list[tuple[str, str]]) -> bytes:
 
 
 def _archive_rows(
-    n_shared: int = 300, *, shift: float = 0.0, blanks: int = 0
+    n_shared: int = 300,
+    *,
+    shift: float = 0.0,
+    blanks: int = 0,
+    values: list[float] = LIVE_VALUES,
 ) -> list[tuple[str, str]]:
     rows = [(d.strftime("%Y-%m-%d"), f"{v:.4f}") for d, v in zip(OLDER, OLD_VALUES, strict=True)]
     for i in range(blanks):
         rows[i] = (rows[i][0], "")
     start = len(LIVE_DATES) - n_shared
     for i in range(start, len(LIVE_DATES)):
-        value = LIVE_VALUES[i] + (shift if i == start else 0.0)
+        value = values[i] + (shift if i == start else 0.0)
         rows.append((LIVE_DATES[i].strftime("%Y-%m-%d"), f"{value:.4f}"))
     return rows
 
@@ -74,7 +81,8 @@ class _Get:
     """A recording stand-in for ``requests.get``."""
 
     def __init__(self, content: bytes, status: int = 200) -> None:
-        self.content, self.status, self.urls = content, status, []
+        self.content, self.status = content, status
+        self.urls: list[str] = []
 
     def __call__(self, url: str, **_: object) -> requests.Response:
         self.urls.append(url)
@@ -85,16 +93,34 @@ class _Get:
         return resp
 
 
-def _run(store: DeltaLakeStore, content: bytes, **kw: object):
-    get = kw.pop("get", None) or _Get(content)
-    kw.setdefault("today", T1)
-    kw.setdefault("_expected_sha256", hashlib.sha256(content).hexdigest())
-    return ingest_credit_archive(store, get=get, **kw)  # type: ignore[arg-type]
+def _run(
+    store: DeltaLakeStore,
+    content: bytes,
+    *,
+    get: Callable[..., requests.Response] | None = None,
+    today: dt.date = T1,
+    ignored: frozenset[tuple[str, dt.date]] = frozenset(),
+    _expected_sha256: str | None = None,
+) -> ArchiveIngestResult:
+    return ingest_credit_archive(
+        store,
+        get=get or _Get(content),
+        today=today,
+        ignored=ignored,
+        _expected_sha256=_expected_sha256 or hashlib.sha256(content).hexdigest(),
+    )
 
 
-def _reason(content: bytes, store: DeltaLakeStore, **kw: object) -> str:
+def _reason(
+    content: bytes,
+    store: DeltaLakeStore,
+    *,
+    get: Callable[..., requests.Response] | None = None,
+    ignored: frozenset[tuple[str, dt.date]] = frozenset(),
+    _expected_sha256: str | None = None,
+) -> str:
     with pytest.raises(CreditArchiveRefused) as caught:
-        _run(store, content, **kw)
+        _run(store, content, get=get, ignored=ignored, _expected_sha256=_expected_sha256)
     return caught.value.reason
 
 
@@ -134,8 +160,9 @@ def test_same_day_partition_is_refused_before_anything_else(tmp_path: Path) -> N
 
 def test_hash_mismatch_is_refused(tmp_path: Path) -> None:
     """WHY (test 10): only the pinned bytes are accepted; a changed capture is
-    a reviewed code change, never a warning. And the public signature offers
-    no way to pass a URL or a hash."""
+    a reviewed code change, never a warning. The signature offers no URL
+    parameter, and the only hash parameter is the private test seam
+    ``_expected_sha256`` (underscore-prefixed, not part of the API)."""
     store = _store(tmp_path)
     _seed_live(store)
     content = _csv(_archive_rows())
@@ -279,3 +306,52 @@ def test_a_later_run_is_a_noop_until_the_partition_is_ignored(tmp_path: Path) ->
     replaced = _run(store, content, today=T2, ignored=ignored)
     assert replaced.skipped is False
     assert store.bronze_ingest_dates(ARCHIVE_DATASET) == [T1, T2]
+
+
+def test_the_pinned_constants_are_the_reviewed_literals() -> None:
+    """WHY: a typo in either would otherwise fail only on the live run, hours
+    after merge, against the production lake."""
+    assert ARCHIVE_SHA256 == "d8506703bd3464bfdad7c56d3b4383ddb542c6897df5cceea7ae6331b0b43b49"
+    assert ARCHIVE_URL == (
+        "https://web.archive.org/web/20251104204105id_/"
+        "https://fred.stlouisfed.org/graph/fredgraph.csv?id=BAMLH0A0HYM2"
+    )
+
+
+def test_a_diff_of_exactly_the_tolerance_passes(tmp_path: Path) -> None:
+    """WHY: the bound is "more than 0.005 refuses". 0.005 - 0.0 is exactly the
+    float 0.005, so ``>=`` instead of ``>`` would refuse here and nowhere else."""
+    values = [0.0, *LIVE_VALUES[1:]]
+    store = _store(tmp_path)
+    _seed_live(store, values=values)
+    content = _csv(_archive_rows(300, shift=0.005, values=values))
+    assert _run(store, content).skipped is False
+
+
+def test_a_dot_is_a_blank_cell(tmp_path: Path) -> None:
+    """FRED's "." sentinel means no print, the same as an empty cell."""
+    store = _store(tmp_path)
+    _seed_live(store)
+    rows = _archive_rows(blanks=1)
+    rows[1] = (rows[1][0], ".")
+    result = _run(store, _csv(rows))
+    assert result.dropped_blank == 2
+    assert len(store.read_bronze_as_of(ARCHIVE_DATASET, T1)) == len(OLDER) - 2 + 300
+
+
+@pytest.mark.parametrize(
+    ("obs", "expected"), [("2025-11-05", "invalid_rows"), ("2025-11-04", None)]
+)
+def test_an_obs_after_the_capture_date_is_invalid(
+    tmp_path: Path, obs: str, expected: str | None
+) -> None:
+    """WHY: a capture taken on 2025-11-04 cannot hold a later observation, so
+    one means the file is not the capture it claims to be. The capture day
+    itself is allowed."""
+    store = _store(tmp_path)
+    _seed_live(store)
+    content = _csv([*_archive_rows(), (obs, "4.0")])
+    if expected is None:
+        assert _run(store, content).skipped is False
+    else:
+        assert _reason(content, store) == expected

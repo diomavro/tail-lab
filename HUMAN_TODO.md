@@ -5,7 +5,7 @@ a human can action. It is separate from `AGENT_TODO.md` (`docs/adr/0002`).
 **The agent appends items here when it hits a real-world blocker; it never
 acts on, removes, or reorders anything in this file.**
 
-- [x] **Done 2026-09-23 (Dio): `FRED_API_KEY` is in `.env`.** `credit`
+- [x] **Done 2026-09-22 (Dio): `FRED_API_KEY` is in `.env`.** `credit`
       ingested immediately — 1,569 rows, both OAS series, 2023-09-25 to
       2026-09-21 — and `research/regimes/timeline.py` now escalates regime
       labels on credit stress instead of running VIX-only, which is what

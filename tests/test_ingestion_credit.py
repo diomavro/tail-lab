@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import datetime as dt
+from pathlib import Path
 from typing import Any
 
 import pandas as pd
@@ -160,7 +161,9 @@ def test_ingest_all_valid_writes_no_quarantine_partition(tmp_path: Any) -> None:
     ],
     ids=["all-invalid", "malformed", "empty"],
 )
-def test_hy_guard_refuses_a_day_with_no_valid_hy(tmp_path: Any, hy_payload: dict[str, Any]) -> None:
+def test_hy_guard_refuses_a_day_with_no_valid_hy(
+    tmp_path: Path, hy_payload: dict[str, object]
+) -> None:
     """WHY: nothing reads IG, so an HY reply with zero valid rows IS a FRED
     outage; writing an empty-looking day exits 0 and nobody sees it. The
     refusal makes ``make ingest-credit`` exit non-zero and fire the alert --
@@ -183,7 +186,7 @@ def test_hy_guard_refuses_a_day_with_no_valid_hy(tmp_path: Any, hy_payload: dict
         assert store.bronze_ingest_dates("credit__quarantine") == []
 
 
-def test_an_empty_ig_reply_does_not_block_hy(tmp_path: Any) -> None:
+def test_an_empty_ig_reply_does_not_block_hy(tmp_path: Path) -> None:
     """WHY: only HY is read (docs/adr/0033); guarding IG would let an IG-only
     outage stop the HY history that the regime depends on."""
     store = DeltaLakeStore(tmp_path)
@@ -197,7 +200,7 @@ def test_an_empty_ig_reply_does_not_block_hy(tmp_path: Any) -> None:
     assert store.bronze_ingest_dates("credit") == [day]
 
 
-def test_ig_only_request_is_never_guarded(tmp_path: Any) -> None:
+def test_ig_only_request_is_never_guarded(tmp_path: Path) -> None:
     """The guard is about HY being requested: an IG-only run is unchanged."""
     store = DeltaLakeStore(tmp_path)
     day = dt.date(2026, 1, 6)

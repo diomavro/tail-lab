@@ -21,10 +21,11 @@ a large one strictly in order.
 - [ ] **Credit follow-ups from ADR 0033** (found 2026-10-31, none urgent):
       (1) `daily-verdict-sweep.yml` stays green when the API answers 5xx, so a
       `CreditHistoryError` seam breach would not turn it red (no `.github/`
-      edit here: ADR 0022). (2) `accuracy.py` (around :584),
-      `quote_coverage.py` (around :274) and `putlab_routes.py` (around :645)
-      use `except (LookupError, KeyError)`, which swallows a store `KeyError`
-      as a `LookupError`; they still pass `CreditHistoryError` through.
+      edit here: ADR 0022). (2) `accuracy.py:579` and `putlab_routes.py:645` use
+      `except (LookupError, KeyError)`, while `accuracy.py:584` and
+      `quote_coverage.py:275` use a plain `except LookupError` (a `KeyError`
+      is a `LookupError`); all swallow a store `KeyError` around the regime
+      timeline, and all still pass `CreditHistoryError` through.
       (3) `archive_end` is fixed at 2025-11-03 by the data; protection against
       a wrong-but-valid FRED day after it relies on `IGNORED_BRONZE_PARTITIONS`
       (the accepted residual risk in ADR 0033).

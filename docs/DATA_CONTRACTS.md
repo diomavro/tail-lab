@@ -199,7 +199,7 @@ are basis-point-level and enter the margin only through the cash drag's
 | `source_id` | `str` | `"fred"` |
 | `ingested_at` | `datetime` (UTC) | non-null |
 
-**Bronze partition key.** One Delta table per dataset (`credit`, `credit_archive`), partitioned by `ingest_date`.
+**Bronze partition key.** One Delta table, `rates`, partitioned by `ingest_date`.
 
 **Point-in-time rule.** FRED series can be **revised after first
 publication**. The adapter must request FRED's vintage history (rates:
@@ -220,8 +220,8 @@ cross-asset sensitivity metrics.
 **Source.** FRED (`fred.stlouisfed.org`) — HY OAS (`BAMLH0A0HYM2`), IG OAS
 (`BAMLC0A0CM`). Free, keyed; same `FRED_API_KEY` repo secret as #3.
 `ingestion/credit.py` + `make ingest-credit` (`SERIES=` override) ship the
-adapter, requesting FRED's full realtime window exactly as
-`ingestion/rates.py` does. First ingested 2026-09-22 (`HUMAN_TODO.md`).
+adapter, requesting FRED's full realtime window like
+`ingestion/rates.py`, without paging vintages. First ingested 2026-09-22 (`HUMAN_TODO.md`).
 Since April 2026 FRED serves a sliding 3-year window with **one vintage per
 observation, `vintage_date == obs_date`**, and ALFRED history is purged.
 `research/regimes/timeline.py` reads HY OAS (`load_credit_oas`) and
