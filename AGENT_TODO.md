@@ -2606,12 +2606,18 @@ datasets (marked **Blocked**); the collection-side items are not blocked.
       here serves history on demand" is a uniqueness claim ADR 0032 made
       false).
 - [ ] **Doc accuracy, agent-doable part:** the same "not for free" correction
-      in unguarded files: `docs/DATA_CONTRACTS.md` §6,
-      `scripts/chain_snapshot.py:129`, `src/tail_lab/ingestion/option_chain.py:15`,
-      `tests/test_scripts_chain_snapshot_retry.py:4`,
-      `tests/test_scripts_chain_sweep_verify.py:3`, `docs/PRIOR_ART.md:721`,
-      `Makefile:147-149`, `scripts/local_chain_sweep.sh:5-7`,
-      `scripts/chain_sweep_alert.sh:167` and `scripts/chain_sweep_verify.sh:112`.
+      in unguarded files.
+      - "Nobody sells" (should be "no free source sells"):
+        `docs/DATA_CONTRACTS.md` §6, `scripts/chain_snapshot.py:129`,
+        `src/tail_lab/ingestion/option_chain.py:112` and `:264`,
+        `tests/test_scripts_chain_snapshot_retry.py:4`,
+        `tests/test_scripts_chain_sweep_verify.py:4`,
+        `tests/test_ingestion_option_chain.py:252` and `:1367`,
+        `scripts/chain_sweep_verify.sh:112`.
+      - "Gone permanently / unrecoverable / permanently blank" (should be
+        "cannot be recovered for free"): `src/tail_lab/contracts/option_chain.py:13`,
+        `scripts/local_chain_sweep.sh:5-7`, `scripts/chain_sweep_alert.sh:167`,
+        `scripts/chain_sweep_verify.sh:162`.
 - [ ] **Deribit trade history as a backfill dataset.** `history.deribit.com`
       serves trades from 2016-11-29, keyless; unlike the book snapshots it is
       recoverable later, so it can wait for a reader.
