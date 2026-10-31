@@ -268,6 +268,13 @@ def _leg_name(key: LegTag | AssumedYieldTag) -> str:
     return key.leg if isinstance(key, LegTag) else f"q{key.dividend_yield}"
 
 
+def _rck_interval(sizing: SizingAnswer) -> str:
+    """The drawdown bound's interval as ``lo-hi``, or ``none`` when no mix
+    meets it."""
+    lo, hi = sizing.drawdown.lo, sizing.drawdown.hi
+    return "none" if lo is None or hi is None else f"{lo:.6f}-{hi:.6f}"
+
+
 def _sizing_fields(sizing: SizingAnswer) -> list[tuple[str, object]]:
     """The size the Book serves for one program and window, as log fields."""
     return [
@@ -281,6 +288,14 @@ def _sizing_fields(sizing: SizingAnswer) -> list[tuple[str, object]]:
         ("g0", sizing.g0),
         ("g_star", sizing.g_star),
         ("margins", ",".join(f"{k}:{v:.6f}" for k, v in sizing.margin_by_leg.items())),
+        ("rck_interval", _rck_interval(sizing)),
+        ("w_rck", "none" if sizing.drawdown.w_rck is None else sizing.drawdown.w_rck),
+        (
+            "rck_meets",
+            "withheld"
+            if sizing.drawdown.recommended_meets is None
+            else sizing.drawdown.recommended_meets,
+        ),
     ]
 
 

@@ -1202,8 +1202,13 @@ def test_hedge_overlay_carries_its_snapshot_and_logs_each_verdict(
         "w_star",
         "w_star_grid",
         "margins",
+        "rck_interval",
+        "w_rck",
+        "rck_meets",
     ):
         assert f" PPUT_full_{field}=" in line, field
+    # Sizing is withheld here, so there is no held size to judge.
+    assert "PPUT_full_rck_meets=withheld" in line
     # No tiingo_eod in this lake: the assumed fallback, labelled, and no size.
     assert "dividend_source=assumed" in line and "tiingo_snapshot=none" in line
     assert "PPUT_full_recommended=withheld" in line
@@ -2187,3 +2192,27 @@ def test_the_run_log_cites_the_panel_a_price_path_was_read_from(
     ]
     assert "price_prehistory_snapshot" not in without
     assert "price_prehistory_snapshot=optionsdx_quotes_spy@" in with_panel
+
+
+def test_the_sizing_log_carries_the_drawdown_bound_values() -> None:
+    """The Book's run line must let a reader rebuild the bound: the interval
+    in order, the clipped ratio (not w*), and the held size's reading."""
+    from tail_lab.api.putlab_routes import _sizing_fields
+    from tail_lab.research.backtest.hedge_sizing import size
+    from tests.test_research_backtest_hedge_sizing import _inputs, _pair
+
+    held = size(_inputs(_pair((1.2, 0.9), (0.85, 1.05))))
+    fields = dict(_sizing_fields(held))
+    bound = held.drawdown
+    assert bound.lo is not None and bound.hi is not None and bound.w_rck is not None
+    assert fields["rck_interval"] == f"{bound.lo:.6f}-{bound.hi:.6f}"
+    assert bound.lo < bound.hi
+    assert fields["w_rck"] == bound.w_rck != held.w_star  # clipped down to hi
+    # The 0.5 held (the cap) sits below lo here: the reading is "fails".
+    assert held.recommended_ratio == 0.5 < bound.lo
+    assert fields["rck_meets"] is bound.recommended_meets is False
+
+    unattainable = size(_inputs(_pair((0.6, 1.0), (0.5, 2.0))))
+    fields = dict(_sizing_fields(unattainable))
+    assert (fields["rck_interval"], fields["w_rck"]) == ("none", "none")
+    assert fields["rck_meets"] is False

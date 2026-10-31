@@ -23,10 +23,13 @@ import pytest
 from tail_lab.research.backtest.hedge_overlay import WEIGHTS, blend_nav
 from tail_lab.research.backtest.hedge_sizing import (
     MIN_MARGIN,
+    RCK_FLOOR,
+    RCK_PROB,
     W_TOL,
     Segments,
     SizingInputs,
     _recommend,
+    drawdown_bound,
     golden_max,
     naive_kelly,
     segments,
@@ -402,3 +405,201 @@ def test_a_move_between_the_tolerance_and_a_percent_point_is_decisive() -> None:
         assert 10 * W_TOL < abs(d.delta) < 1e-2
         # The two moves are equal in size, so which months rank first is noise.
         assert min(abs(d.w_star_without - x) for x in (without_up, without_down)) < 1e-5
+
+
+def _pair(p: tuple[float, float], e: tuple[float, float], n_pairs: int = 30) -> Segments:
+    """Program and index alternating two monthly gross returns each."""
+    index = _monthly(2 * n_pairs + 1)
+    return segments(_levels(index, list(p) * n_pairs), _levels(index, list(e) * n_pairs))
+
+
+def test_drawdown_bound_lands_on_the_closed_form_interval() -> None:
+    """At ``alpha = beta`` the exponent is 1 and ``mean(1/r) = 1`` is a
+    quadratic. Program (1.5, 0.8) against an index (0.5, 2.0):
+    ``24w^2 - 30w + 5 = 0`` -> ``w = 5/8 - sqrt(105)/24`` (the other
+    root is past 1), and the growth optimum ``w* = 7/12`` sits inside, so
+    risk-constrained Kelly is full Kelly here."""
+    seg = _pair((1.5, 0.8), (0.5, 2.0))
+    w = w_star(seg)
+    assert w == pytest.approx(7 / 12, abs=1e-5)
+    bound = drawdown_bound(seg, w, recommended=w / 2, floor=0.5, probability=0.5)
+    assert bound.lam == pytest.approx(1.0)
+    assert bound.lo == pytest.approx(5 / 8 - math.sqrt(105) / 24, abs=1e-5)
+    assert bound.hi == 1.0
+    assert bound.w_rck == pytest.approx(w)
+    # Half-Kelly (0.29) is still above lo (0.198): it is certified.
+    assert bound.recommended_meets is True
+    # A program that gives back more in the rally month closes the top too:
+    # (1.5, 0.5) gives w = 1/2 -+ sqrt(3)/6, with w* = 5/12 between them.
+    seg = _pair((1.5, 0.5), (0.5, 2.0))
+    bound = drawdown_bound(seg, w_star(seg), recommended=0.9, floor=0.5, probability=0.5)
+    assert bound.lo == pytest.approx(0.5 - math.sqrt(3) / 6, abs=1e-5)
+    assert bound.hi == pytest.approx(0.5 + math.sqrt(3) / 6, abs=1e-5)
+    assert bound.w_rck == pytest.approx(5 / 12, abs=1e-5)
+    assert bound.recommended_meets is False  # 0.9 is past the top edge
+
+
+def test_the_bound_can_ask_for_more_hedge_than_full_kelly() -> None:
+    """Against the index, not cash, the drop being bounded is the index's:
+    here no hedge is not certified and the smallest certified ratio
+    sits ABOVE ``w*``, so the answer is pushed up to it, and half-Kelly -- the
+    house's conservative size -- is the one that fails."""
+    seg = _pair((1.2, 0.7), (0.5, 2.0))
+    w = w_star(seg)
+    bound = drawdown_bound(seg, w, recommended=w / 2, floor=0.5, probability=0.25)
+    assert bound.lam == pytest.approx(2.0)
+    assert bound.lo is not None and bound.hi is not None
+    assert w < bound.lo < bound.hi
+    assert bound.w_rck == bound.lo
+    # The edge is where the bound is exactly met: mean(r^-2) = 1.
+    r = bound.lo * seg.p + (1 - bound.lo) * seg.e
+    assert float(np.mean(r**-2.0)) == pytest.approx(1.0, abs=1e-5)
+    assert bound.recommended_meets is False
+
+
+def test_no_mix_meeting_the_bound_is_said_rather_than_clipped() -> None:
+    """A program that loses in the crash month too cannot cut the drop: the
+    bound is unattainable and every field that would name a ratio is None."""
+    seg = _pair((0.6, 1.0), (0.5, 2.0))
+    bound = drawdown_bound(seg, w_star(seg), recommended=0.1, floor=0.5, probability=0.25)
+    assert (bound.lo, bound.hi, bound.w_rck) == (None, None, None)
+    # The inputs are still served, so a reader can see what was asked.
+    assert (bound.floor, bound.probability) == (0.5, 0.25)
+    assert bound.lam == pytest.approx(2.0)
+    assert bound.recommended_meets is False
+    withheld = drawdown_bound(seg, w_star(seg), recommended=None, floor=0.5, probability=0.25)
+    assert withheld.recommended_meets is None
+
+
+def test_the_default_bound_is_met_exactly_at_its_edge() -> None:
+    """The default (70% floor, 10%) is ``lam ~ 6.46``."""
+    seg = _pair((3.0, 0.98), (0.4, 1.2), n_pairs=5)
+    bound = drawdown_bound(seg, w_star(seg), recommended=None)
+    assert bound.floor == RCK_FLOOR and bound.probability == RCK_PROB
+    assert bound.lam == pytest.approx(math.log(0.1) / math.log(0.7))
+    assert bound.lo is not None
+    r = bound.lo * seg.p + (1 - bound.lo) * seg.e
+    assert float(np.mean(r**-bound.lam)) == pytest.approx(1.0, rel=1e-4)
+
+
+def test_an_interval_away_from_the_middle_is_found() -> None:
+    """One month, program 1.3 against index 0.6, at ``alpha = beta``:
+    ``1/r <= 1`` is ``r = 0.6 + 0.7 w >= 1``, so the interval is [4/7, 1] --
+    it excludes 0.5 and is met at the top end only, which a search that
+    skipped finding the minimum would miss."""
+    seg = Segments(
+        p=np.array([1.3]), e=np.array([0.6]), starts=(dt.date(2020, 1, 1),), years=1 / 12
+    )
+    bound = drawdown_bound(seg, w_star(seg), recommended=0.5, floor=0.5, probability=0.5)
+    assert bound.lo == pytest.approx(4 / 7, abs=1e-5)
+    assert bound.hi == 1.0
+    assert bound.recommended_meets is False
+    # Held a hair inside the edge it meets; 0.01 outside, it does not.
+    near = drawdown_bound(seg, 1.0, recommended=4 / 7 + 1e-4, floor=0.5, probability=0.5)
+    assert near.recommended_meets is True
+    off = drawdown_bound(seg, 1.0, recommended=4 / 7 - 0.01, floor=0.5, probability=0.5)
+    assert off.recommended_meets is False
+
+    # The edge is found only to W_TOL, so a size within it of the edge meets.
+    assert bound.lo is not None
+    edge = drawdown_bound(seg, 1.0, recommended=bound.lo - 0.75 * W_TOL, floor=0.5, probability=0.5)
+    assert edge.recommended_meets is True
+    just_off = drawdown_bound(
+        seg, 1.0, recommended=bound.lo - 1.25 * W_TOL, floor=0.5, probability=0.5
+    )
+    assert just_off.recommended_meets is False
+
+
+def test_an_extreme_bound_searches_in_log_space() -> None:
+    """At a 99.99% floor ``lam`` runs to tens of thousands and every probe's
+    ``r^-lam`` overflows a naive mean; found by the review, the interval
+    below is what the log-space search returns, and the naive one reported
+    no mix at all."""
+    seg = Segments(
+        p=np.array([1.2787, 2.0843, 0.96, 1.0529]),
+        e=np.array([0.7202, 0.6618, 3.268, 0.4706]),
+        starts=tuple(dt.date(2020, m, 1) for m in range(1, 5)),
+        years=4 / 12,
+    )
+    bound = drawdown_bound(seg, w_star(seg), recommended=None, floor=0.9999, probability=0.01)
+    assert bound.lo == pytest.approx(0.9091, abs=1e-3)
+    assert bound.hi == pytest.approx(0.9827, abs=1e-3)
+
+
+def test_the_bound_shrinks_a_hedge_that_overshoots_it() -> None:
+    """The cap side: the program dominates (``w* = 1``), but past ``hi`` the
+    month it loses (0.9, while the index gains 1.05) costs the bound, so
+    ``w_rck`` is clipped DOWN to ``hi``. And the upper edge carries the same
+    W_TOL tolerance as the lower."""
+    seg = _pair((1.2, 0.9), (0.85, 1.05))
+    bound = drawdown_bound(seg, w_star(seg), recommended=None)
+    assert bound.lo is not None and bound.hi is not None
+    assert w_star(seg) == pytest.approx(1.0)
+    assert bound.hi < 1.0
+    assert bound.w_rck == bound.hi
+    inside = drawdown_bound(seg, 1.0, recommended=bound.hi + 0.75 * W_TOL)
+    outside = drawdown_bound(seg, 1.0, recommended=bound.hi + 1.25 * W_TOL)
+    assert (inside.recommended_meets, outside.recommended_meets) == (True, False)
+
+
+def test_an_edge_a_hair_past_zero_is_not_rounded_to_it() -> None:
+    """``mean(1/e) = 1.0005`` for an index alternating 0.8 and 1.3316: no
+    hedge is NOT certified, by a hair, so ``lo`` sits just above 0 and a size
+    of 0 fails -- and with the program equal to the index, nothing can be."""
+    seg = _pair((1.2, 0.9), (0.8, 1.3316))
+    bound = drawdown_bound(seg, w_star(seg), recommended=0.0, floor=0.5, probability=0.5)
+    assert bound.lo is not None
+    assert 10 * W_TOL < bound.lo < 0.01
+    r = bound.lo * seg.p + (1 - bound.lo) * seg.e
+    assert float(np.mean(1 / r)) == pytest.approx(1.0, abs=1e-6)
+    assert bound.recommended_meets is False
+    same = _pair((0.8, 1.3316), (0.8, 1.3316))
+    flat = drawdown_bound(same, 0.0, recommended=0.0, floor=0.5, probability=0.5)
+    assert (flat.lo, flat.hi) == (None, None)
+
+
+@pytest.mark.parametrize(
+    ("floor", "probability"), [(1.0, 0.1), (0.0, 0.1), (0.7, 0.0), (0.7, 1.0), (1.2, 0.1)]
+)
+def test_a_bound_outside_the_unit_interval_is_refused(floor: float, probability: float) -> None:
+    with pytest.raises(ValueError, match="strictly between 0 and 1"):
+        drawdown_bound(_two_state(), 0.25, None, floor=floor, probability=probability)
+
+
+def test_a_strict_bound_still_finds_both_edges() -> None:
+    """At a 99% floor held 99% of the time ``lam ~ 458``. The edges must be
+    found exactly,
+    which here is about where each month's return reaches 1 (the other
+    month's gain lets each edge sit a hair past that point)."""
+    seg = _pair((3.0, 0.98), (0.1, 1.2))
+    bound = drawdown_bound(seg, w_star(seg), recommended=None, floor=0.99, probability=0.01)
+    assert bound.lo is not None and bound.hi is not None
+    # r1 = 0.1 + 2.9 w = 1 at w = 0.3103...; r2 = 1.2 - 0.22 w = 1 at 0.909...
+    # Each edge sits a hair outside those points (values from an exact
+    # log-space bisection at 1e-9).
+    assert bound.lo == pytest.approx(0.309824, abs=1e-5)
+    assert bound.hi == pytest.approx(0.915962, abs=1e-5)
+
+
+def test_size_judges_the_size_it_holds_not_full_kelly() -> None:
+    """The program dominates, so w* = 1 meets the default bound while the
+    0.5 held (the cap) sits below ``lo``: the reading is of the 0.5."""
+    seg = _pair((1.1, 0.95), (0.85, 1.02))
+    answer = size(_inputs(seg))
+    assert answer.recommended_ratio == 0.5 and answer.at_cap
+    assert answer.drawdown.lo is not None and answer.drawdown.lo > 0.5
+    assert answer.drawdown.recommended_meets is False
+    assert answer.drawdown.w_rck == pytest.approx(1.0)
+
+
+def test_size_serves_the_bound_for_the_size_it_recommends() -> None:
+    answer = size(_inputs(_pair((1.2, 0.7), (0.5, 2.0))))
+    assert answer.drawdown.floor == RCK_FLOOR
+    expected = drawdown_bound(
+        _pair((1.2, 0.7), (0.5, 2.0)), answer.w_star, answer.recommended_ratio
+    )
+    assert answer.drawdown == expected
+    # Withheld sizing has no held ratio to judge, but the interval is served.
+    withheld = size(_inputs(_pair((1.2, 0.7), (0.5, 2.0)), withheld="no T-bills"))
+    assert withheld.drawdown.recommended_meets is None
+    assert withheld.drawdown.lo == expected.lo
