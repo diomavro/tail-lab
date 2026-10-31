@@ -786,8 +786,10 @@ SPLIT_JUMP = 1.4
 #: far side of the hole, so the prehistory starts after the last one. Two
 #: weeks, not one: the vendor's SPY file skips 2011-01-19..25 (five sessions,
 #: an 8-day step), and a 7-day cut there dropped all of 2010 -- the year this
-#: splice exists to add. A step of two weeks moves a monthly roll's mark by one
-#: stale fortnight; the cut is for multi-month holes, which it still catches.
+#: splice exists to add. The cost is real but bounded: a roll crossing a kept
+#: hole is marked up to two weeks LATE, on its far side (a listed expiry inside
+#: it settles on the first session after). No hole between 8 and 30 days
+#: exists in any ingested name today (scanned 2026-10-31); a longer one is cut.
 MAX_SESSION_GAP = pd.Timedelta(days=14)
 
 #: Each panel's daily spot is ~3,500 floats; the bound only stops a long-lived
