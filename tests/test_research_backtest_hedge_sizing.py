@@ -427,7 +427,7 @@ def test_drawdown_bound_lands_on_the_closed_form_interval() -> None:
     assert bound.lo == pytest.approx(5 / 8 - math.sqrt(105) / 24, abs=1e-5)
     assert bound.hi == 1.0
     assert bound.w_rck == pytest.approx(w)
-    # Half-Kelly (0.29) is still above the floor (0.198): it meets the bound.
+    # Half-Kelly (0.29) is still above lo (0.198): it is certified.
     assert bound.recommended_meets is True
     # A program that gives back more in the rally month closes the top too:
     # (1.5, 0.5) gives w = 1/2 -+ sqrt(3)/6, with w* = 5/12 between them.
@@ -441,7 +441,7 @@ def test_drawdown_bound_lands_on_the_closed_form_interval() -> None:
 
 def test_the_bound_can_ask_for_more_hedge_than_full_kelly() -> None:
     """Against the index, not cash, the drop being bounded is the index's:
-    here no hedge breaches the bound and the smallest ratio that meets it
+    here no hedge is not certified and the smallest certified ratio
     sits ABOVE ``w*``, so the answer is pushed up to it, and half-Kelly -- the
     house's conservative size -- is the one that fails."""
     seg = _pair((1.2, 0.7), (0.5, 2.0))
@@ -463,6 +463,9 @@ def test_no_mix_meeting_the_bound_is_said_rather_than_clipped() -> None:
     seg = _pair((0.6, 1.0), (0.5, 2.0))
     bound = drawdown_bound(seg, w_star(seg), recommended=0.1, floor=0.5, probability=0.25)
     assert (bound.lo, bound.hi, bound.w_rck) == (None, None, None)
+    # The inputs are still served, so a reader can see what was asked.
+    assert (bound.floor, bound.probability) == (0.5, 0.25)
+    assert bound.lam == pytest.approx(2.0)
     assert bound.recommended_meets is False
     withheld = drawdown_bound(seg, w_star(seg), recommended=None, floor=0.5, probability=0.25)
     assert withheld.recommended_meets is None
@@ -499,10 +502,10 @@ def test_an_interval_away_from_the_middle_is_found() -> None:
 
     # The edge is found only to W_TOL, so a size within it of the edge meets.
     assert bound.lo is not None
-    edge = drawdown_bound(seg, 1.0, recommended=bound.lo - W_TOL / 2, floor=0.5, probability=0.5)
+    edge = drawdown_bound(seg, 1.0, recommended=bound.lo - 0.75 * W_TOL, floor=0.5, probability=0.5)
     assert edge.recommended_meets is True
     just_off = drawdown_bound(
-        seg, 1.0, recommended=bound.lo - 2 * W_TOL, floor=0.5, probability=0.5
+        seg, 1.0, recommended=bound.lo - 1.25 * W_TOL, floor=0.5, probability=0.5
     )
     assert just_off.recommended_meets is False
 
@@ -534,9 +537,25 @@ def test_the_bound_shrinks_a_hedge_that_overshoots_it() -> None:
     assert w_star(seg) == pytest.approx(1.0)
     assert bound.hi < 1.0
     assert bound.w_rck == bound.hi
-    inside = drawdown_bound(seg, 1.0, recommended=bound.hi + W_TOL / 2)
-    outside = drawdown_bound(seg, 1.0, recommended=bound.hi + 2 * W_TOL)
+    inside = drawdown_bound(seg, 1.0, recommended=bound.hi + 0.75 * W_TOL)
+    outside = drawdown_bound(seg, 1.0, recommended=bound.hi + 1.25 * W_TOL)
     assert (inside.recommended_meets, outside.recommended_meets) == (True, False)
+
+
+def test_an_edge_a_hair_past_zero_is_not_rounded_to_it() -> None:
+    """``mean(1/e) = 1.0005`` for an index alternating 0.8 and 1.3316: no
+    hedge is NOT certified, by a hair, so ``lo`` sits just above 0 and a size
+    of 0 fails -- and with the program equal to the index, nothing can be."""
+    seg = _pair((1.2, 0.9), (0.8, 1.3316))
+    bound = drawdown_bound(seg, w_star(seg), recommended=0.0, floor=0.5, probability=0.5)
+    assert bound.lo is not None
+    assert 10 * W_TOL < bound.lo < 0.01
+    r = bound.lo * seg.p + (1 - bound.lo) * seg.e
+    assert float(np.mean(1 / r)) == pytest.approx(1.0, abs=1e-6)
+    assert bound.recommended_meets is False
+    same = _pair((0.8, 1.3316), (0.8, 1.3316))
+    flat = drawdown_bound(same, 0.0, recommended=0.0, floor=0.5, probability=0.5)
+    assert (flat.lo, flat.hi) == (None, None)
 
 
 @pytest.mark.parametrize(
@@ -564,7 +583,7 @@ def test_a_strict_bound_still_finds_both_edges() -> None:
 
 def test_size_judges_the_size_it_holds_not_full_kelly() -> None:
     """The program dominates, so w* = 1 meets the default bound while the
-    0.5 held (the cap) sits below its floor: the reading is of the 0.5."""
+    0.5 held (the cap) sits below ``lo``: the reading is of the 0.5."""
     seg = _pair((1.1, 0.95), (0.85, 1.02))
     answer = size(_inputs(seg))
     assert answer.recommended_ratio == 0.5 and answer.at_cap
