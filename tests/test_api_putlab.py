@@ -786,6 +786,44 @@ def test_regimes_endpoint(client: TestClient) -> None:
     assert sum(body["day_counts"].values()) == sum(s["n_days"] for s in body["segments"])
 
 
+def _seed_hy(store: DeltaLakeStore, dataset: str, day: dt.date, obs: list[dt.date]) -> None:
+    frame = pd.DataFrame(
+        {
+            "series_id": "BAMLH0A0HYM2",
+            "obs_date": pd.to_datetime(obs),
+            "value": 4.0,
+            "vintage_date": pd.to_datetime(obs),
+        }
+    )
+    store.write_bronze(dataset, day, frame)
+
+
+@pytest.mark.parametrize(
+    ("first_live_obs", "status"),
+    [(dt.date(2025, 11, 4), 200), (dt.date(2025, 11, 20), 500)],
+    ids=["healthy-seam", "17-day-gap"],
+)
+def test_regimes_seam_breach_is_a_500_not_a_silent_vix_fallback(
+    client: TestClient, first_live_obs: dt.date, status: int
+) -> None:
+    """A broken archive/live seam is a data fault: it must surface as a 500, not
+    as a 404 (a LookupError) or as quietly VIX-only labels. The healthy seam is
+    the positive control."""
+    store = app.dependency_overrides[putlab_get_lake_store]()
+    day = dt.date(2026, 1, 5)
+    _seed_hy(store, "credit_archive", day, [dt.date(2025, 10, 31), dt.date(2025, 11, 3)])
+    _seed_hy(store, "credit", day, [first_live_obs, first_live_obs + dt.timedelta(days=1)])
+    resp = TestClient(app, raise_server_exceptions=False).get("/api/putlab/regimes")
+    assert resp.status_code == status
+
+
+def test_regimes_archive_without_live_hy_is_a_500(client: TestClient) -> None:
+    store = app.dependency_overrides[putlab_get_lake_store]()
+    _seed_hy(store, "credit_archive", dt.date(2026, 1, 5), [dt.date(2025, 11, 3)])
+    resp = TestClient(app, raise_server_exceptions=False).get("/api/putlab/regimes")
+    assert resp.status_code == 500
+
+
 def test_data_quality_endpoint(client: TestClient) -> None:
     resp = client.get("/api/putlab/data-quality", params={"asset": "spy"})
     assert resp.status_code == 200
