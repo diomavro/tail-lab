@@ -496,10 +496,15 @@ def test_an_interval_away_from_the_middle_is_found() -> None:
     assert near.recommended_meets is True
     off = drawdown_bound(seg, 1.0, recommended=4 / 7 - 0.01, floor=0.5, probability=0.5)
     assert off.recommended_meets is False
+
     # The edge is found only to W_TOL, so a size within it of the edge meets.
     assert bound.lo is not None
     edge = drawdown_bound(seg, 1.0, recommended=bound.lo - W_TOL / 2, floor=0.5, probability=0.5)
     assert edge.recommended_meets is True
+    just_off = drawdown_bound(
+        seg, 1.0, recommended=bound.lo - 2 * W_TOL, floor=0.5, probability=0.5
+    )
+    assert just_off.recommended_meets is False
 
 
 def test_an_extreme_bound_searches_in_log_space() -> None:
@@ -519,10 +524,10 @@ def test_an_extreme_bound_searches_in_log_space() -> None:
 
 
 def test_the_bound_shrinks_a_hedge_that_overshoots_it() -> None:
-    """The case against cash, here against a rallying index: the program
-    dominates (``w* = 1``), but past ``hi`` the crash month's give-back
-    breaches the bound, so ``w_rck`` is clipped DOWN to ``hi``. And the
-    upper edge carries the same W_TOL tolerance as the lower."""
+    """The cap side: the program dominates (``w* = 1``), but past ``hi`` the
+    month it loses (0.9, while the index gains 1.05) costs the bound, so
+    ``w_rck`` is clipped DOWN to ``hi``. And the upper edge carries the same
+    W_TOL tolerance as the lower."""
     seg = _pair((1.2, 0.9), (0.85, 1.05))
     bound = drawdown_bound(seg, w_star(seg), recommended=None)
     assert bound.lo is not None and bound.hi is not None

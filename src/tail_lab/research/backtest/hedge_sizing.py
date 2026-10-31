@@ -172,19 +172,21 @@ BreakEvenStatus = Literal["found", "beyond_1", "none"]
 
 
 class DrawdownBound(BaseModel):
-    """The ratios that keep ``P(month-end wealth ever < floor * start)``
-    under ``probability`` (risk-constrained Kelly), and where the size held
-    sits against them."""
+    """The ratios risk-constrained Kelly CERTIFIES keep ``P(month-end wealth
+    ever < floor * start)`` under ``probability``, and where the size held
+    sits against them. The condition is sufficient, not necessary (a
+    Chernoff-style bound): a ratio just outside the interval may still meet
+    the probability, so "not met" reads "not certified", never "exceeded"."""
 
     floor: float
     probability: float
     lam: float
-    #: The interval of ratios meeting the bound; ``None`` when no mix does.
+    #: The interval of ratios the condition certifies; ``None`` when none.
     lo: float | None
     hi: float | None
     #: The growth-optimal ratio inside the interval: ``w*`` clipped to it.
     w_rck: float | None
-    #: Whether the recommended ratio meets the bound (``None`` if withheld).
+    #: Whether the recommended ratio is certified (``None`` if withheld).
     recommended_meets: bool | None
 
 

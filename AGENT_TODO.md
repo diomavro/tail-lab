@@ -306,9 +306,12 @@ a large one strictly in order.
       a second Book sizer.
       **Drawdown bound served 2026-10-31** (risk-constrained Kelly, arXiv
       1603.06183): every `SizingAnswer` carries `drawdown` -- the interval of
-      ratios keeping P(month-end wealth ever < 70% of start) under 10%
-      (iid months; an intra-month fall is not bounded), `w_rck` (`w*` clipped
-      to it) and whether the size held meets it. It does not change the
+      ratios its sufficient condition CERTIFIES keep P(month-end wealth ever
+      < 70% of start) under 10% (iid months; an intra-month fall is not
+      bounded), `w_rck` (`w*` clipped to it) and whether the size held is
+      certified. The bound is conservative: "fails" means "not certified",
+      and `lo` is not the smallest ratio that meets the probability (a
+      Monte Carlo in review found ratios below `lo` that do). It does not change the
       recommendation. The reading it exists for: against the INDEX the bound
       can push the hedge UP, so half-Kelly -- the house's "conservative" size
       -- can be the one that fails it (pinned in the tests). Still OPEN:
@@ -318,7 +321,8 @@ a large one strictly in order.
       numbers in; (2) run it on the real Cboe programs and record in
       `docs/DISCOVERIES.md` which windows' half-Kelly fails the bound;
       (3) decide in an ADR 0027 amendment whether a size that fails the bound
-      should be raised to `lo`, withheld, or only flagged.
+      should be raised to `lo`, withheld, or only flagged -- knowing `lo`
+      over-hedges by however conservative the bound is on that window.
       `docs/PRIOR_ART.md` §14. `premium_budget_per_leg` is a hardcoded $1,000.
       `docs/END_STATE.md` §4 Q8 objects that `l* = (mu-r)/sigma^2` cannot
       transfer because a put's variance is mostly upside — and Riskfolio-Lib's
