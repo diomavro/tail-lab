@@ -38,7 +38,7 @@ a vendor's marketing page — the difference has already mattered twice
 | Source | What it gives | Status | Verified | Detail |
 |---|---|---|---|---|
 | **Cboe strategy indices** `cdn-api.cboe.com/api/global/us_indices/daily_prices/{T}_History.csv` (moved from `cdn.cboe.com`, which froze 2026-09-23) | Real OPRA-transaction-priced put/collar/putwrite program NAVs. `PPUT` 1986→, `PPUT3M` (Tail Risk) 2004→, `VXTH` 2006→, `LTV` 2006→, `CLLZ` 1986→, `SPX` 1975→ | ✅ **Ingested** — 74,367 rows, dataset #7 | 2026-08-21 | §9.1 |
-| **FRED / ALFRED** | Rates, credit, vintages (`realtime_start/end`; note 2026-10-31: since April 2026 the ICE credit series are a 3-year window and their ALFRED history is purged, ADR 0033) | ✅ Live, free key held | 2026-08-19 | §2 |
+| **FRED / ALFRED** | Rates, credit, vintages (`realtime_start/end`; note 2026-10-31: since April 2026 the ICE credit series are a 3-year window and their ALFRED history is purged, ADR 0034) | ✅ Live, free key held | 2026-08-19 | §2 |
 | **Cboe VX futures archive** | Per-contract VIX futures settlement, 2004→ | ✅ Live, keyless | 2026-08-19 | §2 |
 | **Nasdaq earnings calendar** `api.nasdaq.com/api/calendar/earnings` | Historical earnings dates + EPS surprise, 2010→ | ✅ Live, keyless (browser UA required) | 2026-08-19 | §2 |
 | **Nasdaq historical** `api.nasdaq.com/api/quote/{SYM}/historical` | Daily OHLCV, **~2,513 rows (~10 yr) hard cap**, split-adjusted only. **Primary for dataset #1** | ✅ **Wired** — keyless, browser UA + JSON Accept; `assetclass` must be `etf` or `stocks` (400s on the wrong one) | 2026-08-21 | contracts #1 |

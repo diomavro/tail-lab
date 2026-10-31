@@ -1,5 +1,5 @@
 """``DeltaLakeStore.read_bronze_history_as_of``: every eligible partition of one
-dataset in a single projected, filtered scan (docs/adr/0033). Point-in-time
+dataset in a single projected, filtered scan (docs/adr/0034). Point-in-time
 eligibility, the ignore list, the scan shape and the cache are what matter."""
 
 from __future__ import annotations

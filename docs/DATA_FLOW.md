@@ -152,7 +152,7 @@ account, no API key, no money — the constitution's free-data-first rule.
 | **Cboe** delayed quote chain (daily sweep) | `option_chain_snapshot`, `option_chain_call_snapshot` (ADR 0020/0031) | daily | ✅ | none — unrecoverable | `daily-chain-snapshot.yml` / `make ingest-option-chain` |
 | **Deribit** public API — `get_book_summary_by_currency` + `get_instruments` | `deribit_options_btc`, `deribit_options_eth`, `deribit_options_usdc` (ADR 0032, `docs/DATA_CONTRACTS.md` #16) | daily | ✅ | none — past sessions are sold (Tardis.dev), not served | `daily-deribit-snapshot.yml` / `make ingest-deribit` |
 | **FRED** — sliding 3-year window | `credit` (HY + IG OAS) | daily | 🔑 `FRED_API_KEY` | `credit_archive` for 1996 → 2025-11-03 | `make ingest-credit` |
-| **Wayback** — pinned capture of FRED's full HY OAS history (ICE data, internal use) | `credit_archive` (ADR 0033) | one-off | ✅ keyless; human-run once after merge (licence confirmed by Dio 2026-10-31 (internal use only; values never served publicly)) | none newer exists | `make ingest-credit-archive` |
+| **Wayback** — pinned capture of FRED's full HY OAS history (ICE data, internal use) | `credit_archive` (ADR 0034) | one-off | ✅ keyless; human-run once after merge (licence confirmed by Dio 2026-10-31 (internal use only; values never served publicly)) | none newer exists | `make ingest-credit-archive` |
 | **Tiingo** daily prices | `tiingo_eod` — as-traded close, dividends, splits, whole universe, 1993→ | weekly (Sat) | 🔑 `TIINGO_API_KEY` | none | `make ingest-tiingo-eod` (`scripts/weekly_tiingo_refresh.sh`) |
 | **Local vendor file** — lambdaclass `data-v1` | `option_quotes` (42,131 real SPY quotes, 2008→2025) | one-shot | ✅ (manual download) | none | `make ingest-option-quotes` |
 | **Static catalogue** | screening universe, options-cadence fallback | n/a | ✅ | n/a | none — it is code |
@@ -181,7 +181,7 @@ further code change.
 ### 3.2 `credit` + `credit_archive` — the union read, live since 2026-09-22
 
 Same shape as §3.1, one dataset later. `research/regimes/timeline.py:load_credit_oas`
-assembles the HY OAS history (`docs/adr/0033`):
+assembles the HY OAS history (`docs/adr/0034`):
 
 - **Union read.** FRED serves a sliding 3-year window, and each daily `credit`
   partition holds one. The loader reads EVERY partition `<= as_of` (not the

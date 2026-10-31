@@ -164,7 +164,7 @@ def load_credit_oas(
 
     Reads EVERY ``credit`` partition ingested on or before ``as_of`` (each is
     FRED's sliding window, so the newest alone loses history) plus the one-off
-    ``credit_archive`` (`docs/adr/0033`), minus ``ignored`` -- keyed
+    ``credit_archive`` (`docs/adr/0034`), minus ``ignored`` -- keyed
     ``(dataset, ingest_date)`` and defaulting to
     ``contracts.credit.IGNORED_BRONZE_PARTITIONS``. The archive is
     authoritative for ``obs_date <= archive_end`` (its own maximum), live after
@@ -202,7 +202,11 @@ def _align_credit(
     is NaN where no print was ever available and positive where a print went
     stale, so callers can tell a source hole from the start of history.
     """
-    published = (credit_labels.index + CREDIT_PUBLICATION_LAG).to_numpy().astype("datetime64[D]")
+    published = (
+        (pd.DatetimeIndex(credit_labels.index) + CREDIT_PUBLICATION_LAG)
+        .to_numpy()
+        .astype("datetime64[D]")
+    )
     days = vix_index.to_numpy().astype("datetime64[D]")
     pos = np.searchsorted(published, days, side="right") - 1
     has_print = pos >= 0

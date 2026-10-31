@@ -41,7 +41,7 @@ DEFAULT_SERIES_IDS: tuple[str, ...] = (
 #: The single bronze dataset the whole family lands in.
 DATASET = "credit"
 
-#: The one-off, immutable HY OAS history (docs/adr/0033): same schema, its own
+#: The one-off, immutable HY OAS history (docs/adr/0034): same schema, its own
 #: bronze dataset. A pinned Wayback capture of FRED's pre-window full history.
 ARCHIVE_DATASET = "credit_archive"
 #: HY OAS: the only series anything reads (IG is ingested, never consumed).
@@ -60,7 +60,7 @@ ARCHIVE_VINTAGE = dt.date(2025, 11, 4)
 #: ``(dataset, ingest_date)`` so it covers ``credit`` and ``credit_archive``.
 #: Recovering a bad partition is one reviewed PR adding it here; the lake is
 #: never edited. Never ignore the archive partition without a replacement:
-#: history would shrink back to the live union (docs/adr/0033).
+#: history would shrink back to the live union (docs/adr/0034).
 IGNORED_BRONZE_PARTITIONS: frozenset[tuple[str, dt.date]] = frozenset()
 
 

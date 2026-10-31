@@ -1,5 +1,5 @@
 """One-off HY OAS history ingest from a pinned Wayback capture
-(`docs/adr/0033`, `docs/DATA_CONTRACTS.md` #4).
+(`docs/adr/0034`, `docs/DATA_CONTRACTS.md` #4).
 
 FRED cut ``BAMLH0A0HYM2`` to a sliding 3-year window in April 2026, so the
 live ``credit`` dataset cannot reach 2008, 2011, 2016 or 2020. The last

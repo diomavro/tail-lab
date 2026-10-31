@@ -671,7 +671,7 @@ do.
       reach 2008 or 2020. Production has been collecting live `credit`
       partitions daily since 2026-09-22 (a sliding window), so it holds data
       from 2023-09. Decide:
-      1. use the archived copy: option 1 is implemented in `docs/adr/0033`
+      1. use the archived copy: option 1 is implemented in `docs/adr/0034`
          (a pinned Wayback capture of FRED's full history, 1996 to 2025-11-03,
          read as `credit_archive`). Licence confirmed by Dio 2026-10-31
          (internal use only; values never served publicly). **This item stays

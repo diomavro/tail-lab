@@ -605,7 +605,7 @@ def putlab_regimes(
     """The market-regime history for the cockpit panel — the current regime
     plus run-length-encoded calm/elevated/crisis bands. VIX-based, escalated
     by credit-spread stress wherever HY OAS history is available (the union
-    of `credit` partitions plus `credit_archive`, ADR 0033)
+    of `credit` partitions plus `credit_archive`, ADR 0034)
     (`research/regimes/timeline.py:compute_regime_timeline`)."""
     try:
         return compute_regime_view(store, as_of=_resolve_as_of(as_of))

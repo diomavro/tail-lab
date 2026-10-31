@@ -1,4 +1,4 @@
-# 33. HY OAS history: a pinned archive up to its end, the live union after it
+# 34. HY OAS history: a pinned archive up to its end, the live union after it
 
 Date: 2026-10-31
 

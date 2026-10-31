@@ -30,7 +30,7 @@ help:
 	@echo "  ingest-rates Live FRED rates fetch -> bronze (SERIES=... ; needs FRED_API_KEY; network; not run in CI)"
 	@echo "  ingest-tiingo-eod Live Tiingo EOD + dividends + splits for the universe -> bronze (needs TIINGO_API_KEY; ~95 min, throttled; runs scripts/weekly_tiingo_refresh.sh; not run in CI)"
 	@echo "  ingest-credit Live FRED credit-spread fetch -> bronze (SERIES=... ; needs FRED_API_KEY; network; not run in CI)"
-	@echo "  ingest-credit-archive ONE-OFF pinned Wayback HY OAS history (1996-2025) -> bronze credit_archive (ICE data, licence confirmed by Dio 2026-10-31 (internal use only; values never served publicly); run once after merge; network; not run in CI; docs/adr/0033)"
+	@echo "  ingest-credit-archive ONE-OFF pinned Wayback HY OAS history (1996-2025) -> bronze credit_archive (ICE data, licence confirmed by Dio 2026-10-31 (internal use only; values never served publicly); run once after merge; network; not run in CI; docs/adr/0034)"
 	@echo "  ingest-event-calendar Live FOMC + earnings calendar fetch -> ONE bronze snapshot (keyless; network; not run in CI)"
 	@echo "  ingest-sp500-constituents  Live point-in-time S&P 500 membership fetch -> bronze (network; not run in CI)"
 	@echo "  ingest-mpd   Live Minneapolis Fed MPD fetch -> bronze, whole market family (network; not run in CI)"
@@ -237,7 +237,7 @@ pitch-evidence-current:
 ingest-credit:
 	env -u PYTHONPATH $(VENV)/bin/python -c "from tail_lab.ingestion.credit import ingest_credit; from tail_lab.config import get_lake_store, get_settings; from tail_lab.observability import configure_logging; configure_logging(); s = [x.upper() for x in '$(SERIES)'.split(',')] if '$(SERIES)' else None; r = ingest_credit(get_lake_store(), s, api_key=get_settings().fred_api_key); print(f'committed {r.valid_rows} rows for {len(r.series_ids)} series -> {r.bronze_path} ({r.quarantined_rows} quarantined)')"
 
-# One-off and human-run, against the production lake (docs/adr/0033). A re-run
+# One-off and human-run, against the production lake (docs/adr/0034). A re-run
 # on a later day is a no-op; a re-run on the SAME day raises same_day_partition
 # (a silent no-op would look like success). It refuses (non-zero exit) on any
 # failed check. Not in CI, not scheduled.

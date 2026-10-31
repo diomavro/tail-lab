@@ -231,7 +231,7 @@ falling back to the VIX-only label only when neither `credit` nor
 run in which HY ends with zero valid rows (`CreditIngestRefused`), so the
 refresh alert fires.
 
-**How the history is assembled (ADR 0033).**
+**How the history is assembled (ADR 0034).**
 
 - **Union read.** `load_credit_oas` reads EVERY `credit` partition
   `ingest_date <= as_of`, not just the newest: each is a sliding window, and
@@ -251,7 +251,7 @@ refresh alert fires.
   reviewed PR; the lake is never edited. **Never ignore the archive
   partition without a replacement**: history would shrink back to the live
   union (2023-09).
-- **Residual risk (accepted, ADR 0033).** A wrong-but-valid FRED partition is
+- **Residual risk (accepted, ADR 0034).** A wrong-but-valid FRED partition is
   not detected; it rewrites every post-`archive_end` observation it carries,
   and only observations a later good partition also carries are healed.
 

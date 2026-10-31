@@ -259,7 +259,7 @@ def test_compute_regime_timeline_credit_before_its_own_history_defaults_calm(
     assert list(combined) == ["calm", "calm", "calm"]
 
 
-# ---- the union read, the archive/live split and the seam (docs/adr/0033) ----
+# ---- the union read, the archive/live split and the seam (docs/adr/0034) ----
 
 END = dt.date(2000, 1, 4)  # a synthetic archive_end
 A1, A2 = dt.date(2026, 10, 1), dt.date(2026, 10, 2)

@@ -35,7 +35,7 @@ path merges without its point-in-time field or adversarial test.
 **Three stated exceptions.** The first two (2026-10-10) are in the Book's
 conservative index leg and reach it only through its cash drag
 `y/8 x (equity - T-bill)`; see `docs/adr/0027`'s amendment. The third
-(ADR 0033) is in the regime label: HY OAS observations up to 2025-11-03 use
+(ADR 0034) is in the regime label: HY OAS observations up to 2025-11-03 use
 values as revised by 2025-11-04. The only measured bound is 553 of 553
 identical values over 2023-09 -> 2025-11; revisions before 2023-09 are
 unmeasured.
@@ -50,7 +50,7 @@ unmeasured.
    CAGR differs by +0.023bp/yr from setting those months' `y` to 0 and by
    -0.006bp/yr from setting it to 3%.
 3. The regime's HY OAS history up to 2025-11-03 comes from the one-off
-   `credit_archive` dataset (a Wayback capture taken 2025-11-04, ADR 0033), so
+   `credit_archive` dataset (a Wayback capture taken 2025-11-04, ADR 0034), so
    those observations carry revisions published by that date. ALFRED was purged
    when FRED cut the series to a 3-year window, so no earlier vintage exists to
    compare. The archive agrees with the live series on all 553 shared

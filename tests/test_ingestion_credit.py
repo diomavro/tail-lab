@@ -187,7 +187,7 @@ def test_hy_guard_refuses_a_day_with_no_valid_hy(
 
 
 def test_an_empty_ig_reply_does_not_block_hy(tmp_path: Path) -> None:
-    """WHY: only HY is read (docs/adr/0033); guarding IG would let an IG-only
+    """WHY: only HY is read (docs/adr/0034); guarding IG would let an IG-only
     outage stop the HY history that the regime depends on."""
     store = DeltaLakeStore(tmp_path)
     day = dt.date(2026, 1, 6)

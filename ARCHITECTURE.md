@@ -114,7 +114,7 @@ src/tail_lab/
 │   │                         # → HUMAN_TODO.md until the key exists).
 │   ├── credit.py             # HY/IG OAS (FRED, same key).
 │   ├── credit_archive.py     # One-off pinned Wayback HY OAS history
-│   │                         # (1996-2025) -> bronze credit_archive (ADR 0033).
+│   │                         # (1996-2025) -> bronze credit_archive (ADR 0034).
 │   ├── underlying_ohlcv.py   # Broad-universe daily OHLCV.
 │   ├── event_calendar.py     # Scheduled events (FOMC/CPI/earnings) +
 │   │                         # manual unscheduled table.

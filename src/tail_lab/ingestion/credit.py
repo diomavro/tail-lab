@@ -11,7 +11,7 @@ FRED's full realtime window rather than the single-vintage default.
 Measured 2026-10-30: FRED's window now carries ONE vintage per observation,
 ``vintage_date == obs_date``, so the vintage column cannot say when a print
 was known. Observations up to the archive's end come from ``credit_archive``
-instead (ADR 0009 exception 3; ADR 0033).
+instead (ADR 0009 exception 3; ADR 0034).
 
 Ingests HY OAS (``BAMLH0A0HYM2``) and IG OAS (``BAMLC0A0CM``).
 

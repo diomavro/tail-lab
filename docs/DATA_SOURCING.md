@@ -51,7 +51,7 @@ already free and confirmed healthy — with two free *upgrades* found (§2).
   (browser UA + `Accept: application/json` required) — verified for 2010,
   2020, and upcoming dates; gives historical earnings *dates* + EPS
   surprise. Unofficial: pace requests and cache.
-- **FRED/ALFRED: fine.** *(Note 2026-10-31: since April 2026 FRED serves the ICE series as a 3-year window and the ALFRED history is purged; see ADR 0033.)* Vintage (`realtime_start/end`) API works on the
+- **FRED/ALFRED: fine.** *(Note 2026-10-31: since April 2026 FRED serves the ICE series as a 3-year window and the ALFRED history is purged; see ADR 0034.)* Vintage (`realtime_start/end`) API works on the
   free key; 120 req/min limit is irrelevant at our volume. Caveat: ICE
   BofA OAS series carry a redistribution restriction — internal use fine,
   don't republish raw values.

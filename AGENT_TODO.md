@@ -18,7 +18,7 @@ a large one strictly in order.
 
 ## Next increments
 
-- [ ] **Credit follow-ups from ADR 0033** (found 2026-10-31, none urgent):
+- [ ] **Credit follow-ups from ADR 0034** (found 2026-10-31, none urgent):
       (1) `daily-verdict-sweep.yml` stays green when the API answers 5xx, so a
       `CreditHistoryError` seam breach would not turn it red (no `.github/`
       edit here: ADR 0022). (2) `accuracy.py:579` and `putlab_routes.py:647` use
@@ -28,7 +28,7 @@ a large one strictly in order.
       timeline, and all still pass `CreditHistoryError` through.
       (3) `archive_end` is fixed at 2025-11-03 by the data; protection against
       a wrong-but-valid FRED day after it relies on `IGNORED_BRONZE_PARTITIONS`
-      (the accepted residual risk in ADR 0033).
+      (the accepted residual risk in ADR 0034).
 
 - [ ] **The credit half of the regime label is not point-in-time** (found
       2026-10-30 while answering "is the regime computed only with data we'd
@@ -51,7 +51,7 @@ a large one strictly in order.
       pinned by `test_compute_regime_timeline_credit_spike_escalates_only_the_next_session`.
       It does not read `vintage_date`: if FRED's vintages ever start dating
       the real publication, take the later of the two. **(b): code done
-      (ADR 0033); archive ingest: licence confirmed by Dio 2026-10-31 (internal use only; values never served publicly); only the one-off `make ingest-credit-archive` run after merge is pending.**
+      (ADR 0034); archive ingest: licence confirmed by Dio 2026-10-31 (internal use only; values never served publicly); only the one-off `make ingest-credit-archive` run after merge is pending.**
 - [x] **Unlock 2010-2016 for real-quote backtests.** Marks shows optionsDX
       SPY/QQQ quotes from 2010/2012, but `ohlcv_*` starts 2016-10 (Nasdaq's
       ~10-year window), so six years of quotes -- including Aug 2011 and

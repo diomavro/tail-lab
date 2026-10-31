@@ -1,4 +1,4 @@
-"""The one-off HY OAS archive ingest (docs/adr/0033). Every fixture is
+"""The one-off HY OAS archive ingest (docs/adr/0034). Every fixture is
 synthetic: the repo is public and the real ICE series is licence-limited."""
 
 from __future__ import annotations
