@@ -11,7 +11,7 @@ VENV := .venv
 PY := env -u PYTHONPATH $(VENV)/bin/python
 PIP := env -u PYTHONPATH $(VENV)/bin/pip
 
-.PHONY: setup lint format typecheck import-lint test check cov-floors ingest-vix ingest-vix-complex ingest-ohlcv ingest-cboe-strategy ingest-rates ingest-tiingo-eod ingest-credit ingest-event-calendar ingest-option-quotes residual skew tail-alpha api frontend clean ingest-mpd ingest-options-expiry ingest-sp500-constituents ingest-vix-futures ingest-kaggle-spy kaggle-spy-vs-optionsdx delta-strike-gap pitch-evidence pitch-evidence-current
+.PHONY: setup lint format typecheck import-lint test check cov-floors ingest-vix ingest-vix-complex ingest-ohlcv ingest-cboe-strategy ingest-rates ingest-tiingo-eod ingest-credit ingest-event-calendar ingest-option-quotes residual skew tail-alpha api frontend clean ingest-mpd ingest-options-expiry ingest-sp500-constituents ingest-vix-futures ingest-kaggle-spy kaggle-spy-vs-optionsdx delta-strike-gap vrp pitch-evidence pitch-evidence-current
 
 help:
 	@echo "Targets:"
@@ -40,6 +40,7 @@ help:
 	@echo "  ingest-kaggle-spy  Hand-downloaded Kaggle SPY year -> data/vendor parquet (YEAR=2023; OFFLINE cross-check, never served)"
 	@echo "  kaggle-spy-vs-optionsdx  2023 vendor-disagreement report, Kaggle vs optionsDX (read-only; skips if either is absent)"
 	@echo "  delta-strike-gap  Model (realised-vol) vs market (implied-vol) delta strikes from the optionsDX corpus (SYMBOLS='spy qqq' by default; read-only, offline; docs/adr/0029)"
+	@echo "  vrp          Implied minus subsequently realised vol per name and year, optionsDX x OHLCV (read-only; VRP_SYMBOLS='spy qqq nvda tsla', VRP_MONEYNESS=1.0, VRP_DAYS=30)"
 	@echo "  pitch-evidence-current  Fail unless HEAD contains origin/main and pitch_evidence.json names its src/ tree and script blob (run before merge)"
 	@echo "  pitch-evidence  Real-quote put study -> frontend/src/content/pitch_evidence.json, the Pitch tab's figures (reads the lake; AS_OF=YYYY-MM-DD)"
 	@echo "  api          Run FastAPI on :8000 with auto-reload"
@@ -193,6 +194,15 @@ kaggle-spy-vs-optionsdx:
 # panel cannot reach. Prints only; skips if the corpus is absent. docs/adr/0029.
 delta-strike-gap:
 	env -u PYTHONPATH $(VENV)/bin/python scripts/delta_strike_gap.py $(SYMBOLS)
+
+# Read-only: the volatility risk premium (docs/END_STATE.md §4 Q6) -- each
+# quote date's put IV against the vol its life then realised. Needs the
+# optionsDX panel and the name's OHLCV in the lake; skips a name missing either.
+VRP_SYMBOLS ?= spy qqq nvda tsla
+VRP_MONEYNESS ?= 1.0
+VRP_DAYS ?= 30
+vrp:
+	env -u PYTHONPATH $(VENV)/bin/python scripts/vrp.py $(VRP_SYMBOLS) --moneyness $(VRP_MONEYNESS) --days $(VRP_DAYS)
 
 # Reads the lake (the optionsDX panels, VIX, rates, Cboe indices) as of AS_OF and
 # rewrites the Pitch tab's aggregate figures. Never writes to the lake; commit
