@@ -6,6 +6,7 @@
 import type { Page, Route } from '@playwright/test'
 import { BOOK_PLAN, BOOK_PLAN_BILLS_REFUSED } from './book-plan'
 import { HEDGE_OVERLAY } from './hedge-overlay'
+import { MARKS } from './marks'
 import { MODEL_PLAN } from './model-plan'
 import * as fx from './putlab'
 
@@ -79,6 +80,8 @@ export async function mockPutLabApi(page: Page, opts: MockOptions = {}): Promise
           ...fx.strikePreview(Number(url.searchParams.get('target_delta') ?? 0.1)),
           asset: url.searchParams.get('asset') ?? 'spy',
         })
+      case '/api/putlab/marks':
+        return json(route, { ...MARKS, symbol: url.searchParams.get('symbol') ?? 'spy' })
       case '/api/putlab/regimes':
         return json(route, fx.REGIMES)
       case '/api/vix/stretch':

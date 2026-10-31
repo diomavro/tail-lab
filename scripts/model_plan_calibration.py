@@ -98,7 +98,11 @@ def main() -> int:
                 spot=s, strike=k, t_years=t, r=DEFAULT_RATE, sigma=sigma + gap, q=0.019
             )
             rows.append((m, sigma * 100, mid, gapped, base * MEDIAN_PRICE_RATIO[m]))
-    frame = pd.DataFrame(rows, columns=["m", "vix", "mid", "gap", "ratio"])
+    _print_report(pd.DataFrame(rows, columns=["m", "vix", "mid", "gap", "ratio"]))
+    return 0
+
+
+def _print_report(frame: pd.DataFrame) -> None:
     for m in MEASURED_VOL_GAP:
         sub = frame[frame["m"] == m]
         print(f"{m:g}% OTM, {len(sub)} rolls -- median plan premium / market mid")
@@ -108,7 +112,6 @@ def main() -> int:
                 f"  {name:20s} n={len(r):3d}  vol gap {np.median(r['gap'] / r['mid']):.2f}x"
                 f"   median price ratio {np.median(r['ratio'] / r['mid']):.2f}x"
             )
-    return 0
 
 
 if __name__ == "__main__":

@@ -1504,3 +1504,45 @@
 @media (max-width: 640px) {
   .pl-pitch-scrollhint { display: block; }
 }
+
+/* ---- Marks: where the lake holds a quote ---------------------------------- */
+.pl-marks-controls { display: flex; flex-wrap: wrap; gap: var(--space-3); align-items: flex-end; margin-bottom: 20px; }
+.pl-marks-field { display: flex; flex-direction: column; gap: 4px; border: 0; padding: 0; margin: 0; }
+.pl-marks-field select {
+  font: inherit;
+  padding: 5px 8px;
+  border: 1px solid var(--rule);
+  border-radius: var(--radius-md);
+  background: var(--paper);
+  color: var(--ink);
+}
+.pl-marks-legend { display: flex; flex-wrap: wrap; gap: 6px 14px; font-size: 11.5px; color: var(--ink-70); margin-bottom: 8px; }
+.pl-marks-legend i { display: inline-block; width: 10px; height: 10px; margin-right: 4px; vertical-align: -1px; border-radius: 2px; }
+.pl-marks-legend .pl-marks-blank { background: var(--paper-2); box-shadow: inset 0 0 0 1px var(--rule); }
+.pl-marks-legend .pl-marks-hatch {
+  background: repeating-linear-gradient(45deg, var(--ink-25) 0 1.5px, var(--paper) 1.5px 4px);
+}
+.pl-marks-wrap { position: relative; }
+.pl-marks-grid { display: block; width: 100%; min-width: 720px; height: auto; }
+.pl-marks-axis { font-size: 9px; fill: var(--ink-70); font-variant-numeric: tabular-nums; }
+.pl-marks-row { cursor: pointer; }
+.pl-marks-row.is-focus .pl-marks-axis { fill: var(--ink); font-weight: 600; }
+.pl-marks-focus { stroke: var(--ink); stroke-width: 1.2; pointer-events: none; }
+.pl-marks-price line { stroke: var(--ink-70); stroke-width: 2; }
+.pl-marks-price text { font-size: 9px; fill: var(--ink-70); }
+.pl-marks-tip {
+  position: absolute;
+  pointer-events: none;
+  background: var(--paper);
+  color: var(--ink);
+  border: 1px solid var(--rule);
+  border-radius: var(--radius-md);
+  padding: 6px 8px;
+  font-size: 12px;
+  white-space: nowrap;
+  box-shadow: 0 2px 8px color-mix(in srgb, var(--ink) 12%, transparent);
+  z-index: 2;
+}
+.pl-marks-row:focus { outline: none; }
+.pl-marks-rowring { stroke: none; pointer-events: none; }
+.pl-marks-row:focus-visible .pl-marks-rowring { stroke: var(--cyan); stroke-width: 2; }

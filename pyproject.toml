@@ -101,12 +101,12 @@ ignore = [
 "tests/**" = ["ARG001", "ARG002", "ARG005"]
 
 [tool.ruff.lint.mccabe]
-max-complexity = 9 # quote_fills._fill, ingestion.option_chain.parse_cboe_chain, paretan.call_price, implied_alpha.fit_implied_alpha
+max-complexity = 8 # a 12-way tie, e.g. dividend_yield._on_session, hill.stable_k, contribution_plan.run_book_plan, ingest_routes.ingest_option_chain_snapshot
 
 [tool.ruff.lint.pylint]
 max-args = 13 # put_roll.run_put_roll — keyword-only, which is why it is survivable
 max-positional-args = 8
-max-statements = 75 # put_roll.run_put_roll
+max-statements = 42 # scripts/order_ticket.main
 
 [tool.ruff.format]
 quote-style = "double"

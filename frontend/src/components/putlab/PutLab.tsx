@@ -46,6 +46,7 @@ import {
 import { BakeOffView } from './views/BakeOffView'
 import { GlossaryView } from './views/GlossaryView'
 import { PortfolioView } from './views/PortfolioView'
+import { MarksView } from './views/MarksView'
 import { RegimeView } from './views/RegimeView'
 import { OverlayView } from './views/OverlayView'
 import { SurfaceView } from './views/SurfaceView'
@@ -100,6 +101,7 @@ export type TabId =
   | 'book'
   | 'bakeoff'
   | 'regime'
+  | 'marks'
   | 'surface'
   | 'glossary'
   | 'pitch'
@@ -633,6 +635,7 @@ export function PutLab() {
             {tab === 'book' && <OverlayView narrow={narrow} />}
             {tab === 'bakeoff' && <BakeOffView controls={controls} />}
             {tab === 'regime' && <RegimeView regimes={regimes} vix={vix} accuracy={accuracy} />}
+            {tab === 'marks' && <MarksView asset={controls.asset} regimes={regimes} />}
             {tab === 'surface' && <SurfaceView surface={surface} controls={controls} narrow={narrow} />}
             {tab === 'glossary' && <GlossaryView />}
             {tab === 'pitch' && (

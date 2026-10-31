@@ -57,6 +57,7 @@ from tail_lab.contracts.option_chain import (
     IncompleteSweepError,
     Right,
     SessionInProgress,
+    Wing,
     plan_session_write,
 )
 from tail_lab.ingestion.json_payload import json_list, json_object, to_float
@@ -206,6 +207,14 @@ def _greek(value: object, iv: float) -> float | None:
         return None
 
 
+def _in_wing(wing: Wing, *, right: str, tenor_days: int, moneyness: float) -> bool:
+    return (
+        right == wing.right
+        and 0 <= tenor_days <= MAX_TENOR_DAYS
+        and wing.moneyness_min <= moneyness <= wing.moneyness_max
+    )
+
+
 def parse_cboe_chain(payload: Mapping[str, object], right: Right = "P") -> tuple[pd.DataFrame, int]:
     """Turn one symbol's Cboe payload into one wing's slice -- puts by
     default, calls with ``right="C"`` (``docs/adr/0031``).
@@ -247,12 +256,10 @@ def parse_cboe_chain(payload: Mapping[str, object], right: Right = "P") -> tuple
             unparsed += 1
             continue
         _root, expiration, contract_right, strike = parsed
-        if contract_right != right:
-            continue
         tenor_days = (expiration - quote_date.date()).days
-        if not 0 <= tenor_days <= MAX_TENOR_DAYS:
-            continue
-        if not wing.moneyness_min <= strike / spot_price <= wing.moneyness_max:
+        if not _in_wing(
+            wing, right=contract_right, tenor_days=tenor_days, moneyness=strike / spot_price
+        ):
             continue
         try:
             iv = to_float(contract.get("iv") or 0.0, "iv")

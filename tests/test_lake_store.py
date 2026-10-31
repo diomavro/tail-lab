@@ -301,3 +301,21 @@ def test_a_filtered_frame_does_not_leak_its_index_into_the_schema(tmp_path: Path
     read_back = store.read_bronze_as_of("ohlcv_test", as_of=dt.date(2026, 1, 2))
     assert "__index_level_0__" not in read_back.columns
     assert len(read_back) == 2
+
+
+def test_bronze_relation_as_of_is_one_snapshot_or_every_partition_up_to_it(tmp_path: Path) -> None:
+    store = DeltaLakeStore(tmp_path)
+    store.write_bronze(DATASET, dt.date(2026, 1, 2), _frame(["2026-01-02"], [15.0]))
+    store.write_bronze(DATASET, dt.date(2026, 1, 5), _frame(["2026-01-05"], [16.0]))
+    store.write_bronze(DATASET, dt.date(2026, 1, 9), _frame(["2026-01-09"], [17.0]))
+
+    def closes(history: bool) -> list[float]:
+        rel = store.bronze_relation_as_of(DATASET, dt.date(2026, 1, 6), history=history)
+        return sorted(store.query(f"SELECT close FROM {rel}")["close"].tolist())
+
+    # The snapshot read_bronze_as_of would resolve -- and, with history, every
+    # partition on or before as_of. The 01-09 partition is never in either.
+    assert closes(history=False) == [16.0]
+    assert closes(history=True) == [15.0, 16.0]
+    with pytest.raises(LookupError):
+        store.bronze_relation_as_of(DATASET, dt.date(2025, 12, 31))
