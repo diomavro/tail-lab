@@ -668,9 +668,15 @@ do.
       Since April 2026, FRED keeps a rolling 3-year window; the API's first
       observation is 2023-10-31. The credit regime (`contracts/regime.py`)
       is built on this series, so any backfill from FRED can no longer
-      reach 2008 or 2020. Production has no credit data yet. Decide:
-      1. find another source for the full history (ICE directly, or an
-         archived copy, if its licence allows); or
+      reach 2008 or 2020. Production has been collecting live `credit`
+      partitions daily since 2026-09-22 (a sliding window), so it holds data
+      from 2023-09. Decide:
+      1. use the archived copy: option 1 is implemented in `docs/adr/0033`
+         (a pinned Wayback capture of FRED's full history, 1996 to 2025-11-03,
+         read as `credit_archive`). Licence confirmed by Dio 2026-10-31
+         (internal use only; values never served publicly). **This item stays
+         open until you run `make ingest-credit-archive` once against the
+         production lake, after the merge**; or
       2. accept a 3-year credit regime and say so where the regime is shown.
 
       **Licence:** ICE's notes on FRED restrict the data to **internal use**

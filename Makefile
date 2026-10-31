@@ -30,7 +30,7 @@ help:
 	@echo "  ingest-rates Live FRED rates fetch -> bronze (SERIES=... ; needs FRED_API_KEY; network; not run in CI)"
 	@echo "  ingest-tiingo-eod Live Tiingo EOD + dividends + splits for the universe -> bronze (needs TIINGO_API_KEY; ~95 min, throttled; runs scripts/weekly_tiingo_refresh.sh; not run in CI)"
 	@echo "  ingest-credit Live FRED credit-spread fetch -> bronze (SERIES=... ; needs FRED_API_KEY; network; not run in CI)"
-	@echo "  ingest-credit-archive ONE-OFF pinned Wayback HY OAS history (1996-2025) -> bronze credit_archive (ICE data: confirm the licence first; network; not run in CI; docs/adr/0033)"
+	@echo "  ingest-credit-archive ONE-OFF pinned Wayback HY OAS history (1996-2025) -> bronze credit_archive (ICE data, licence confirmed by Dio 2026-10-31 (internal use only; values never served publicly); run once after merge; network; not run in CI; docs/adr/0033)"
 	@echo "  ingest-event-calendar Live FOMC + earnings calendar fetch -> ONE bronze snapshot (keyless; network; not run in CI)"
 	@echo "  ingest-sp500-constituents  Live point-in-time S&P 500 membership fetch -> bronze (network; not run in CI)"
 	@echo "  ingest-mpd   Live Minneapolis Fed MPD fetch -> bronze, whole market family (network; not run in CI)"

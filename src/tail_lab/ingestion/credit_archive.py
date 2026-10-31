@@ -13,7 +13,7 @@ Ingesting any other snapshot means changing the constants -- a reviewed code
 change. The data is ICE's: it is never committed and never served (only the
 regime labels derived from it are).
 
-Human-run (``make ingest-credit-archive``) after confirming the licence; not
+Human-run once after merge (``make ingest-credit-archive``; licence confirmed by Dio 2026-10-31 (internal use only; values never served publicly)); not
 in CI, not scheduled.
 """
 

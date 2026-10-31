@@ -32,9 +32,10 @@ flowchart LR
         LOCAL["Local vendor file<br/>real option quotes<br/>(licence-limited)"]
         STATIC["Static catalogue<br/>in contracts/"]
         DERIBIT["Deribit public API<br/>crypto option books<br/>(collected, read by nothing yet)"]
+        WAYBACK["Wayback capture<br/>HY OAS history 1996-2025<br/>(one-off, ICE licence)"]
     end
     subgraph L["② Lake — immutable, partitioned by ingest_date"]
-        BRONZE["bronze/<br/>vix · ohlcv_* · cboe_strategy<br/>options_expiry_* · credit · option_quotes"]
+        BRONZE["bronze/<br/>vix · ohlcv_* · cboe_strategy<br/>options_expiry_* · credit · credit_archive<br/>option_quotes"]
         SG["silver / gold<br/>derived, rebuildable"]
     end
     subgraph R["③ Research — pure, point-in-time"]
@@ -50,7 +51,8 @@ flowchart LR
     CBOE --> BRONZE
     NDQ --> BRONZE
     CHAIN --> BRONZE
-    FRED -.optional, not yet ingested in prod.-> BRONZE
+    FRED -.daily.-> BRONZE
+    WAYBACK -.one-off, human-run.-> BRONZE
     LOCAL -.optional.-> BRONZE
     DERIBIT -.forward-collected, no reader.-> BRONZE
     STATIC --> ROUTES
@@ -91,7 +93,7 @@ Screen tab's deeper "is the screen any good?" question moved to its own
 | **Book** | How much of the book should carry the hedge? (Rodman's Paradox: does any mix out-grow both 0% and 100% hedged?) | `/api/putlab/hedge-overlay` (lump sum: one read per as-of date; 404 with no Cboe snapshot) and `/api/putlab/book-plan` (monthly contributions, `docs/adr/0027` §3: IRR per arm, rolling starts, comparators) and `/api/putlab/book-plan/model` (the opt-in model source: $X/month on S&P 500 puts priced by Black-Scholes at the VIX plus the measured skew gap) | `cboe_strategy` (`SPX` + `PPUT`, `PPUT3M`, `VXTH`, and the other Cboe indices as comparators); `tiingo_eod` (SPY only: the S&P 500 leg is SPY's measured total return, fee-adjusted — `research/backtest/index_leg.py`, one builder for the lump sum and the plan; SPX price fills at most 14 trailing days); `rates` (`DGS3MO`: the T-bill comparator, and the conservative leg's cash drag — point-in-time from 2005-06-28, latest vintage before it, `docs/adr/0027` amendment); `vix` (model source only). "How much to hold" (`OverlayWindow.sizing`, `research/backtest/hedge_sizing.py`) is computed from the same blend |
 | **Bake-off** | Which screen actually picks winners? | `/api/putlab/metric-screen` (on the tab's button — one backtest per screened name, up to 70; a run on parameters already computed that day is served from the server's in-process memo (a deploy or restart empties it), and the Workspace line's fixed parameters are pre-computed daily when `TAIL_LAB_WARM_RANKING` is on) | `ohlcv_*` (+ `ohlcv_spy` as benchmark), `vix`, `tiingo_eod` (q) |
 | **Surface** | How fat a tail is the option market pricing, against the name's own history? | `/api/putlab/surface` (one chain session; the anchor is the rail's strike, the expiry its tenor) | `option_chain_snapshot`, `ohlcv_<asset>`, `tiingo_eod` (q) |
-| **Regime** | What market are we in? | `/api/putlab/regimes`, `/api/vix/stretch`, `/accuracy` (the per-regime residual) | `vix`, `cboe_strategy`, `credit` (widening, §3.2 — falls back to VIX-only until ingested) |
+| **Regime** | What market are we in? | `/api/putlab/regimes`, `/api/vix/stretch`, `/accuracy` (the per-regime residual) | `vix`, `cboe_strategy`, `credit` + `credit_archive` (widening, §3.2) |
 | **Marks** | For this name, how deep out of the money, at which tenor and in which years and regimes does the lake hold a usable put quote? | `/api/putlab/marks` (aggregated inside DuckDB via `LakeStore.bronze_relation_as_of`; memoised per name and day for 6 h — a cold SPY read is ~13 s) | `optionsdx_quotes_<sym>` (spy, qqq, nvda, tsla; stored only to 40% out and 120 days), `option_chain_snapshot` (every partition up to as-of, to 60% out), `ohlcv_<sym>` (the price-series span), `vix` + `credit` (the regime each session is filed under) |
 | **Pitch** | Is there a genuine edge in buying puts, on real quotes? (`docs/adr/0021` 2026-10-27 amendment) | none — a committed study: `frontend/src/content/pitch_evidence.json`, written offline by `make pitch-evidence` (`scripts/pitch_evidence.py`, which records the snapshot ids and its own commit), plus a hand-dated `LIVE` block in `content/pitch.ts` read from `/regime-verdict`, `/backtest`, `/roll-schedule/marked` and `/hedge-overlay` | `optionsdx_quotes_spy`, `optionsdx_quotes_qqq`, `option_quotes` (2008-09), `vix`, `rates`, `cboe_strategy` — read at build time, not by the server. Stale until someone reruns the script and commits the JSON; the `LIVE` readings are stale from the day after their date |
 | **Glossary** | — (renders `content/concepts.ts`, no network) | none | none |
@@ -149,7 +151,8 @@ account, no API key, no money — the constitution's free-data-first rule.
 | **Cboe** delayed quote chain | `options_expiry_<symbol>` | daily | ✅ | Yahoo (cookie+crumb) | `make ingest-options-expiry SYMBOL=…` |
 | **Cboe** delayed quote chain (daily sweep) | `option_chain_snapshot`, `option_chain_call_snapshot` (ADR 0020/0031) | daily | ✅ | none — unrecoverable | `daily-chain-snapshot.yml` / `make ingest-option-chain` |
 | **Deribit** public API — `get_book_summary_by_currency` + `get_instruments` | `deribit_options_btc`, `deribit_options_eth`, `deribit_options_usdc` (ADR 0032, `docs/DATA_CONTRACTS.md` #16) | daily | ✅ | none — past sessions are sold (Tardis.dev), not served | `daily-deribit-snapshot.yml` / `make ingest-deribit` |
-| **FRED** — ALFRED vintage history | `credit` (HY + IG OAS) | daily | 🔑 `FRED_API_KEY` | none | `make ingest-credit` |
+| **FRED** — sliding 3-year window | `credit` (HY + IG OAS) | daily | 🔑 `FRED_API_KEY` | `credit_archive` for 1996 → 2025-11-03 | `make ingest-credit` |
+| **Wayback** — pinned capture of FRED's full HY OAS history (ICE data, internal use) | `credit_archive` (ADR 0033) | one-off | ✅ keyless; human-run once after merge (licence confirmed by Dio 2026-10-31 (internal use only; values never served publicly)) | none newer exists | `make ingest-credit-archive` |
 | **Tiingo** daily prices | `tiingo_eod` — as-traded close, dividends, splits, whole universe, 1993→ | weekly (Sat) | 🔑 `TIINGO_API_KEY` | none | `make ingest-tiingo-eod` (`scripts/weekly_tiingo_refresh.sh`) |
 | **Local vendor file** — lambdaclass `data-v1` | `option_quotes` (42,131 real SPY quotes, 2008→2025) | one-shot | ✅ (manual download) | none | `make ingest-option-quotes` |
 | **Static catalogue** | screening universe, options-cadence fallback | n/a | ✅ | n/a | none — it is code |
@@ -175,28 +178,29 @@ The moment a symbol has a snapshot, its cadence label switches from
 `"Weeklies/Monthlies (assumed)"` to `"Weeklies/Monthlies (live)"` with no
 further code change.
 
-### 3.2 `credit` — widening wired 2026-09-03, still waiting on its first ingest
+### 3.2 `credit` + `credit_archive` — the union read, live since 2026-09-22
 
-Same shape as §3.1, one dataset later. `ingestion/credit.py` and
-`contracts/credit.py` existed and were tested, but nothing read the result —
-`research/regimes/timeline.py` labelled market regime from VIX alone despite
-`docs/END_STATE.md` §1.3 specifying "volatility complex + credit spreads +
-rates". Fixed on the code side: `research/regimes/timeline.py:load_credit_oas`
-reads the `credit` bronze partition as-of-date, resolves FRED's ALFRED
-vintage history to the value known at that time, classifies it with
-`contracts/regime.classify_credit_series` (same hysteresis engine as VIX,
-different thresholds), and `compute_regime_timeline` takes the more severe of
-the VIX and credit labels for each day (`contracts/regime.combine_regime_labels`)
-— credit stress can only escalate the regime shown, never talk a crisis-VIX
-day down.
+Same shape as §3.1, one dataset later. `research/regimes/timeline.py:load_credit_oas`
+assembles the HY OAS history (`docs/adr/0033`):
 
-**Still true today:** no `credit` partition exists in production bronze —
-running the ingest target is a human action (`AGENT_MISSION.md`'s "data
-changes" rule), not one the daily agent takes. Until Dio runs it,
-`compute_regime_timeline` falls back to the VIX-only label exactly as it
-always has, so production behavior is unchanged for now. The moment a credit
-snapshot exists, every regime read becomes credit-aware with no further code
-change.
+- **Union read.** FRED serves a sliding 3-year window, and each daily `credit`
+  partition holds one. The loader reads EVERY partition `<= as_of` (not the
+  newest alone), the newest partition winning per observation.
+- **Archive split.** `credit_archive`, a one-off pinned Wayback capture, is
+  authoritative for `obs_date <= archive_end` (its own maximum, 2025-11-03);
+  live serves only after it.
+- **Classification.** `contracts/regime.classify_credit_series` (same
+  hysteresis engine as VIX, different thresholds), then
+  `compute_regime_timeline` takes the more severe of the VIX and credit labels
+  (`contracts/regime.combine_regime_labels`) — credit stress can only escalate
+  the regime shown, never talk a crisis-VIX day down.
+- **Alignment.** A print counts from its publication date for 10 business
+  days; after that VIX decides and a warning is logged.
+
+Live `credit` partitions have been written every weekday since 2026-09-22
+(`tail-lab-refresh.timer` → `make ingest-credit`). The archive is not ingested
+until Dio runs `make ingest-credit-archive` once after merge (licence confirmed by Dio 2026-10-31 (internal use only; values never served publicly)); until
+then the history starts at 2023-09, as the union of the live partitions.
 
 **Sources do not depend on each other.** Every arrow in §1 runs source →
 lake; there is no source that must be fetched before another. What *is*
@@ -210,7 +214,7 @@ flowchart TB
     STRAT[("cboe_strategy")]
     OHLCV[("ohlcv_*")]
     EXP[("options_expiry_*<br/>⚠ not yet ingested in prod")]
-    CREDIT[("credit<br/>⚠ not yet ingested in prod")]
+    CREDIT[("credit + credit_archive")]
     QUOTES[("option_quotes<br/>optional")]
 
     VIX --> REGIME["regimes/timeline<br/>vix_stretch"]
@@ -252,7 +256,7 @@ free source here has already degraded at least once: Yahoo went from "works" to
 | **Cboe strategy indices** | the residual, the benchmark table in the accuracy panel | everything else; the panel drops two blocks and says so | nothing yet |
 | **OHLCV (Nasdaq + Yahoo both)** | **everything** — no price path, no backtest, no ranking | the Regime tab | the backtest 404s loudly |
 | **Cboe chains + Yahoo** | nothing yet — no production partition exists to lose (§3.1) | everything, including the cadence panel (fallback to the static catalogue) | n/a |
-| **FRED credit** | nothing yet — no production partition exists to lose (§3.2) | everything, including the Regime tab (fallback to the VIX-only label) | n/a |
+| **FRED credit** | credit stale more than 10 business days: those dates fall back to VIX-only labels. A seam gap, or no live HY after the archive's end: a 500 (`CreditHistoryError`) on the regime-bearing routes | everything else; the regime stays VIX-labelled | the `event=regime.credit_stale` warning; an HY run with no valid rows is refused (non-zero exit), which fires the refresh alert |
 | **Tiingo `tiingo_eod`** | nothing breaks: every price keeps the last yields with their age — a measured yield (including a scaled `short_history` one) is labelled **carried**, then `stale` after 21 days; a real zero (`non_payer`, `suspended`) keeps its own label however old; a symbol never fetched (or withheld for a bad row) prices at q = 0 labelled `unknown`. Before the first ingest every roll is `unknown` — the old q = 0 prices | everything; the Surface falls back to its old assumed 1.9% yield, labelled; the Book falls back to SPX plus an assumed 1.9% yield, labelled, and **withholds every recommended size** ("sizing needs measured dividends"). A feed more than 14 days behind the Cboe calendar is not extended, so Book windows show as clipped | `tail-lab-alert@tiingo` on a failed weekly run; every result's `q_source` / `dividend_snapshot` |
 | **Deribit** | nothing — no reader outside the write and status routes touches the three datasets yet | everything | `GET /api/ingest/deribit-options/status` (`stale_days` per book); the daily agent reads it. A missed session is lost unless it is bought from Tardis.dev |
 | **`option_quotes`** (licence-limited) | `make skew` and `make pitch-evidence` (its 2008–09 section; the read raises before anything is written, so the committed Pitch keeps serving the last `pitch_evidence.json`) | **everything** — by construction | raises `LookupError` |
