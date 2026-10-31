@@ -1,12 +1,14 @@
 from __future__ import annotations
 
 import datetime as dt
+from pathlib import Path
 from typing import Any
 
 import pandas as pd
 import pytest
 
 from tail_lab.ingestion.credit import (
+    CreditIngestRefused,
     ingest_credit,
     parse_fred_observations,
     validate_and_quarantine,
@@ -148,6 +150,62 @@ def test_ingest_all_valid_writes_no_quarantine_partition(tmp_path: Any) -> None:
     assert result.quarantine_path is None
     with pytest.raises(LookupError):
         store.read_bronze_as_of("credit__quarantine", ingest_date)
+
+
+@pytest.mark.parametrize(
+    "hy_payload",
+    [
+        _fred_payload(("2026-01-02", "60.0", "2026-01-02")),  # above the 50% ceiling
+        _fred_payload(("2026-01-02", "oops", "2026-01-02")),  # malformed value
+        {"observations": []},  # an empty reply
+    ],
+    ids=["all-invalid", "malformed", "empty"],
+)
+def test_hy_guard_refuses_a_day_with_no_valid_hy(
+    tmp_path: Path, hy_payload: dict[str, object]
+) -> None:
+    """WHY: nothing reads IG, so an HY reply with zero valid rows IS a FRED
+    outage; writing an empty-looking day exits 0 and nobody sees it. The
+    refusal makes ``make ingest-credit`` exit non-zero and fire the alert --
+    but the rejected rows are still kept for inspection."""
+    store = DeltaLakeStore(tmp_path)
+    day = dt.date(2026, 1, 6)
+    raw = {
+        "BAMLH0A0HYM2": hy_payload,
+        "BAMLC0A0CM": _fred_payload(("2026-01-02", "1.20", "2026-01-02")),
+    }
+    with pytest.raises(CreditIngestRefused):
+        ingest_credit(store, ["BAMLH0A0HYM2", "BAMLC0A0CM"], ingest_date=day, raw=raw)
+    assert store.bronze_ingest_dates("credit") == []  # no bronze, not even the IG row
+    rejected = len(parse_fred_observations("BAMLH0A0HYM2", hy_payload))
+    if rejected:
+        quarantined = store.read_bronze_as_of("credit__quarantine", day)
+        assert len(quarantined) == rejected
+        assert set(quarantined["series_id"]) == {"BAMLH0A0HYM2"}
+    else:
+        assert store.bronze_ingest_dates("credit__quarantine") == []
+
+
+def test_an_empty_ig_reply_does_not_block_hy(tmp_path: Path) -> None:
+    """WHY: only HY is read (docs/adr/0034); guarding IG would let an IG-only
+    outage stop the HY history that the regime depends on."""
+    store = DeltaLakeStore(tmp_path)
+    day = dt.date(2026, 1, 6)
+    raw = {
+        "BAMLH0A0HYM2": _fred_payload(("2026-01-02", "3.51", "2026-01-02")),
+        "BAMLC0A0CM": {"observations": []},
+    }
+    result = ingest_credit(store, ["BAMLH0A0HYM2", "BAMLC0A0CM"], ingest_date=day, raw=raw)
+    assert result.valid_rows == 1
+    assert store.bronze_ingest_dates("credit") == [day]
+
+
+def test_ig_only_request_is_never_guarded(tmp_path: Path) -> None:
+    """The guard is about HY being requested: an IG-only run is unchanged."""
+    store = DeltaLakeStore(tmp_path)
+    day = dt.date(2026, 1, 6)
+    result = ingest_credit(store, ["BAMLC0A0CM"], ingest_date=day, raw={"BAMLC0A0CM": {}})
+    assert result.valid_rows == 0
 
 
 def test_ingest_uppercases_requested_series_ids(tmp_path: Any) -> None:

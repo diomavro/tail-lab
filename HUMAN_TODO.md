@@ -5,7 +5,7 @@ a human can action. It is separate from `AGENT_TODO.md` (`docs/adr/0002`).
 **The agent appends items here when it hits a real-world blocker; it never
 acts on, removes, or reorders anything in this file.**
 
-- [x] **Done 2026-09-23 (Dio): `FRED_API_KEY` is in `.env`.** `credit`
+- [x] **Done 2026-09-22 (Dio): `FRED_API_KEY` is in `.env`.** `credit`
       ingested immediately — 1,569 rows, both OAS series, 2023-09-25 to
       2026-09-21 — and `research/regimes/timeline.py` now escalates regime
       labels on credit stress instead of running VIX-only, which is what
@@ -668,9 +668,15 @@ do.
       Since April 2026, FRED keeps a rolling 3-year window; the API's first
       observation is 2023-10-31. The credit regime (`contracts/regime.py`)
       is built on this series, so any backfill from FRED can no longer
-      reach 2008 or 2020. Production has no credit data yet. Decide:
-      1. find another source for the full history (ICE directly, or an
-         archived copy, if its licence allows); or
+      reach 2008 or 2020. Production has been collecting live `credit`
+      partitions daily since 2026-09-22 (a sliding window), so it holds data
+      from 2023-09. Decide:
+      1. use the archived copy: option 1 is implemented in `docs/adr/0034`
+         (a pinned Wayback capture of FRED's full history, 1996 to 2025-11-03,
+         read as `credit_archive`). Licence confirmed by Dio 2026-10-31
+         (internal use only; values never served publicly). **This item stays
+         open until you run `make ingest-credit-archive` once against the
+         production lake, after the merge**; or
       2. accept a 3-year credit regime and say so where the regime is shown.
 
       **Licence:** ICE's notes on FRED restrict the data to **internal use**

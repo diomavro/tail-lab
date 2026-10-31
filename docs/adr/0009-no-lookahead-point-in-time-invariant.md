@@ -32,9 +32,13 @@ Backtest results mean what they claim to mean, at the cost of real
 discipline: no read may bypass `asof.py`, and no new dataset or backtest
 path merges without its point-in-time field or adversarial test.
 
-**Two stated exceptions** (2026-10-10), both in the Book's conservative index
-leg and both reaching it only through its cash drag `y/8 x (equity - T-bill)`.
-See `docs/adr/0027`'s amendment.
+**Three stated exceptions.** The first two (2026-10-10) are in the Book's
+conservative index leg and reach it only through its cash drag
+`y/8 x (equity - T-bill)`; see `docs/adr/0027`'s amendment. The third
+(ADR 0034) is in the regime label: HY OAS observations up to 2025-11-03 use
+values as revised by 2025-11-04. The only measured bound is 553 of 553
+identical values over 2023-09 -> 2025-11; revisions before 2023-09 are
+unmeasured.
 
 1. It reads `DGS3MO` at its *latest* vintage for dates before its first ALFRED
    vintage (2005-06-28), where no point-in-time value exists; bounded below
@@ -45,3 +49,10 @@ See `docs/adr/0027`'s amendment.
    measured on the real lake (2026-10-10): the conservative leg's full-history
    CAGR differs by +0.023bp/yr from setting those months' `y` to 0 and by
    -0.006bp/yr from setting it to 3%.
+3. The regime's HY OAS history up to 2025-11-03 comes from the one-off
+   `credit_archive` dataset (a Wayback capture taken 2025-11-04, ADR 0034), so
+   those observations carry revisions published by that date. ALFRED was purged
+   when FRED cut the series to a 3-year window, so no earlier vintage exists to
+   compare. The archive agrees with the live series on all 553 shared
+   observations (2023-09-25 -> 2025-11-03); anything before 2023-09 is
+   unmeasured. Labels, not spread values, are what reach the cockpit.

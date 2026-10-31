@@ -18,6 +18,18 @@ a large one strictly in order.
 
 ## Next increments
 
+- [ ] **Credit follow-ups from ADR 0034** (found 2026-10-31, none urgent):
+      (1) `daily-verdict-sweep.yml` stays green when the API answers 5xx, so a
+      `CreditHistoryError` seam breach would not turn it red (no `.github/`
+      edit here: ADR 0022). (2) `accuracy.py:579` and `putlab_routes.py:647` use
+      `except (LookupError, KeyError)`, while `accuracy.py:584` and
+      `quote_coverage.py:275` use a plain `except LookupError` (a `KeyError`
+      is a `LookupError`); all swallow a store `KeyError` around the regime
+      timeline, and all still pass `CreditHistoryError` through.
+      (3) `archive_end` is fixed at 2025-11-03 by the data; protection against
+      a wrong-but-valid FRED day after it relies on `IGNORED_BRONZE_PARTITIONS`
+      (the accepted residual risk in ADR 0034).
+
 - [ ] **The credit half of the regime label is not point-in-time** (found
       2026-10-30 while answering "is the regime computed only with data we'd
       have had?"). Two faults, measured against the lake:
@@ -38,7 +50,8 @@ a large one strictly in order.
       print first counts on the next VIX session (Friday's on Monday);
       pinned by `test_compute_regime_timeline_credit_spike_escalates_only_the_next_session`.
       It does not read `vintage_date`: if FRED's vintages ever start dating
-      the real publication, take the later of the two. **(b) is still open.**
+      the real publication, take the later of the two. **(b): code done
+      (ADR 0034); archive ingest: licence confirmed by Dio 2026-10-31 (internal use only; values never served publicly); only the one-off `make ingest-credit-archive` run after merge is pending.**
 - [x] **Unlock 2010-2016 for real-quote backtests.** Marks shows optionsDX
       SPY/QQQ quotes from 2010/2012, but `ohlcv_*` starts 2016-10 (Nasdaq's
       ~10-year window), so six years of quotes -- including Aug 2011 and
@@ -994,7 +1007,7 @@ a large one strictly in order.
       are equally close in shape and equally separate). Ingests HY OAS
       (`BAMLH0A0HYM2`) and IG OAS (`BAMLC0A0CM`); schema floor is 0.0 (an
       OAS is non-negative by construction, unlike a Treasury yield) with a
-      50.0 ceiling (well above the 2008 HY OAS peak of ~19.9%) to catch
+      50.0 ceiling (well above the 2008 HY OAS peak, above 20%) to catch
       unit errors. **Not yet run against prod** (no live key in this
       workflow) and **no `research/` consumer wired yet** — same
       ship-the-adapter-first precedent `rates.py` followed. The next step
@@ -1006,8 +1019,8 @@ a large one strictly in order.
       gold mart" item below. **Done 2026-09-03**: `contracts/regime.py` gained
       a second, independent threshold set for HY OAS (calm < 5.0%, elevated
       5.0-8.0%, crisis >= 8.0%, documented against the series' own history —
-      2016 oil selloff / 2018 Q4 in the high-single-digits, 2020 COVID ~10.9%,
-      2008 peak ~19.9%) sharing the existing VIX hysteresis engine (refactored
+      2016 oil selloff / 2018 Q4 in the high-single-digits, 2020 COVID near 11%,
+      2008 peak above 20%) sharing the existing VIX hysteresis engine (refactored
       to take thresholds as parameters, so the two classifiers are one engine,
       not two copies), plus `combine_regime_labels` (most-severe-wins — credit
       stress can only escalate the VIX view, never talk it down).

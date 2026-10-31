@@ -199,7 +199,7 @@ are basis-point-level and enter the margin only through the cash drag's
 | `source_id` | `str` | `"fred"` |
 | `ingested_at` | `datetime` (UTC) | non-null |
 
-**Bronze partition key.** `source_id=fred/series_id=<id>/obs_date=<YYYY-MM-DD>/`.
+**Bronze partition key.** One Delta table, `rates`, partitioned by `ingest_date`.
 
 **Point-in-time rule.** FRED series can be **revised after first
 publication**. The adapter must request FRED's vintage history (rates:
@@ -220,22 +220,66 @@ cross-asset sensitivity metrics.
 **Source.** FRED (`fred.stlouisfed.org`) — HY OAS (`BAMLH0A0HYM2`), IG OAS
 (`BAMLC0A0CM`). Free, keyed; same `FRED_API_KEY` repo secret as #3.
 `ingestion/credit.py` + `make ingest-credit` (`SERIES=` override) ship the
-adapter, requesting FRED's ALFRED-style full vintage history exactly as
-`ingestion/rates.py` does. First ingested 2026-09-23 (`HUMAN_TODO.md`).
+adapter, requesting FRED's full realtime window like
+`ingestion/rates.py`, without paging vintages. First ingested 2026-09-22 (`HUMAN_TODO.md`).
+Since April 2026 FRED serves a sliding 3-year window with **one vintage per
+observation, `vintage_date == obs_date`**, and ALFRED history is purged.
 `research/regimes/timeline.py` reads HY OAS (`load_credit_oas`) and
-escalates the VIX-only regime label with it (`compute_regime_timeline`)
-whenever a credit snapshot exists, falling back to the VIX-only label
-otherwise.
+escalates the VIX-only regime label with it (`compute_regime_timeline`),
+falling back to the VIX-only label only when neither `credit` nor
+`credit_archive` holds HY (`NoCreditHistory`). `ingest_credit` refuses a
+run in which HY ends with zero valid rows (`CreditIngestRefused`), so the
+refresh alert fires.
+
+**How the history is assembled (ADR 0034).**
+
+- **Union read.** `load_credit_oas` reads EVERY `credit` partition
+  `ingest_date <= as_of`, not just the newest: each is a sliding window, and
+  the newest alone loses about a day per run. Per observation the **newest
+  `ingest_date` wins**, and `vintage_date` breaks ties only within one
+  partition.
+- **Archive/live split.** `credit_archive` (below) is authoritative for
+  `obs_date <= archive_end`, its own maximum read from the data; live serves
+  only after it. A live partition therefore cannot rewrite 1996 -> 2025-11.
+- **Seam.** If an archive exists but the first live observation after
+  `archive_end` is missing or more than 7 days later, `CreditHistoryError` is
+  raised (a 500 on the regime-bearing routes, not a fallback).
+- **`IGNORED_BRONZE_PARTITIONS`** (`contracts/credit.py`), keyed
+  `(dataset, ingest_date)`, drops a bad partition of `credit` or
+  `credit_archive` from every read, the archive overlap gate and the
+  archive's "already ingested" check. Recovering a bad partition is one
+  reviewed PR; the lake is never edited. **Never ignore the archive
+  partition without a replacement**: history would shrink back to the live
+  union (2023-09).
+- **Residual risk (accepted, ADR 0034).** A wrong-but-valid FRED partition is
+  not detected; it rewrites every post-`archive_end` observation it carries,
+  and only observations a later good partition also carries are healed.
+
+**`credit_archive`.** A one-off bronze dataset, same schema, from a pinned
+Wayback capture of FRED's full history (taken 2025-11-04; URL and decoded
+sha256 in `contracts/credit.py`, every row stamped `vintage_date =
+2025-11-04`). `make ingest-credit-archive` (`ingestion/credit_archive.py`) is
+human-run once after merge (licence confirmed by Dio 2026-10-31 (internal use only; values never served publicly)); it is not in CI and not
+scheduled. It refuses (`CreditArchiveRefused`) a same-day partition, a hash
+mismatch, any invalid row, and a failed overlap check against live HY (at
+least 250 shared observations, none differing by more than 0.005).
+**Licence:** the data is ICE's, internal use only. It is never committed and
+never served; only regime labels derived from it are.
+
+**Exception 3 to ADR 0009.** Labels for observations up to 2025-11-03 use
+values as revised by 2025-11-04. The only measured bound is 553 of 553
+identical values over 2023-09 -> 2025-11; revisions before 2023-09 are
+unmeasured.
 
 **Cadence.** Daily.
 
-**Schema — `CreditRow`:** identical shape to `RatesRow` (`series_id`,
-`obs_date`, `value`, `vintage_date`, `source_id`, `ingested_at`) — kept as
+**Schema — `CreditRow`:** `series_id`, `obs_date`, `value`, `vintage_date`
+(strict; `contracts/credit.py`). Same long shape as `RatesRow` — kept as
 a separate contract from rates because the two datasets are consumed by
 different research code and may diverge in validation constraints later
 (e.g. OAS is non-negative by construction; a Treasury yield is not).
 
-**Bronze partition key.** `source_id=fred/series_id=<id>/obs_date=<YYYY-MM-DD>/`.
+**Bronze partition key.** One Delta table per dataset (`credit`, `credit_archive`), partitioned by `ingest_date`.
 
 **Point-in-time rule.** Same vintage requirement as #3 — FRED credit
 spread series are revised too. **But the vintage does not date the first

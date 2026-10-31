@@ -29,15 +29,18 @@ from __future__ import annotations
 import datetime as dt
 import hashlib
 import logging
+import operator
 import time
 from abc import ABC, abstractmethod
 from collections import OrderedDict
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
+from functools import reduce
 from pathlib import Path
 
 import duckdb
 import pandas as pd
 import pyarrow as pa
+import pyarrow.compute as pc
 from deltalake import DeltaTable, write_deltalake
 from deltalake.exceptions import DeltaError, TableNotFoundError
 
@@ -47,6 +50,8 @@ Layer = str  # "bronze" | "silver" | "gold"
 #: The bronze partition column. Not a data column of any dataset — added on
 #: write, stripped on read — so callers never see it in a returned frame.
 _INGEST_DATE_COL = "ingest_date"
+
+_LOGGER = logging.getLogger(__name__)
 
 
 #: What a bronze write can raise, measured 2026-09-26 against deltalake 1.6 /
@@ -66,6 +71,13 @@ LAKE_WRITE_ERRORS: tuple[type[Exception], ...] = (DeltaError, pa.ArrowException,
 #: ``DeltaError``, an unreadable log directory ``OSError``. A missing dataset
 #: or column is not a fault but an absence (``LookupError``/``KeyError``).
 LAKE_READ_ERRORS: tuple[type[Exception], ...] = LAKE_WRITE_ERRORS
+
+
+class BronzeSnapshotMissing(LookupError):
+    """No bronze partition is eligible: the dataset has none, none on or before
+    ``as_of``, or (history read) every eligible one is ignored. A ``LookupError``
+    so every existing ``except LookupError`` still catches it; callers that must
+    tell this absence from a store fault catch exactly this class."""
 
 
 class LakeStore(ABC):
@@ -130,6 +142,28 @@ class LakeStore(ABC):
         """Read the bronze snapshot known as of ``as_of``: the most recent
         snapshot ingested on or before that date. Raises ``LookupError`` if
         no snapshot exists on or before ``as_of``."""
+
+    @abstractmethod
+    def read_bronze_history_as_of(
+        self,
+        dataset: str,
+        as_of: dt.date,
+        *,
+        columns: Sequence[str],
+        equals: Mapping[str, str],
+        ignored: frozenset[tuple[str, dt.date]] = frozenset(),
+    ) -> pd.DataFrame:
+        """EVERY bronze partition of ``dataset`` ingested on or before ``as_of``
+        (minus ``ignored``, keyed ``(dataset, ingest_date)``), in one scan.
+
+        Returns ``columns`` plus ``ingest_date`` (a ``date``), restricted to
+        rows where each ``equals`` column holds its value. For datasets whose
+        partitions are overlapping windows rather than whole snapshots (the
+        FRED credit family), where the newest partition alone loses history.
+        Point-in-time like :meth:`read_bronze_as_of`. Raises
+        :class:`BronzeSnapshotMissing` when no partition is eligible and
+        ``KeyError`` for an unknown column. Row order is unspecified.
+        """
 
     @abstractmethod
     def read_bronze_column_as_of(self, dataset: str, as_of: dt.date, column: str) -> pd.Series:
@@ -275,6 +309,11 @@ class DeltaLakeStore(LakeStore):
         self._frame_cache: OrderedDict[tuple[str, str], pd.DataFrame] = OrderedDict()
         self._snapshot_id_cache: dict[tuple[str, str], str] = {}
         self._resolve_cache: dict[tuple[str, str], tuple[float, dt.date]] = {}
+        self._ingest_dates_cache: dict[tuple[str, str], tuple[float, list[dt.date]]] = {}
+        self._history_cache: OrderedDict[
+            tuple[str, tuple[dt.date, ...], tuple[str, ...], tuple[tuple[str, str], ...]],
+            pd.DataFrame,
+        ] = OrderedDict()
 
     @property
     def root(self) -> Path | str:
@@ -338,10 +377,10 @@ class DeltaLakeStore(LakeStore):
     def _resolve_bronze_snapshot(self, table_uri: str, dataset: str, as_of: dt.date) -> dt.date:
         dates = self._list_bronze_ingest_dates(table_uri)
         if not dates:
-            raise LookupError(f"no bronze data for dataset {dataset!r}")
+            raise BronzeSnapshotMissing(f"no bronze data for dataset {dataset!r}")
         eligible = [d for d in dates if d <= as_of]
         if not eligible:
-            raise LookupError(
+            raise BronzeSnapshotMissing(
                 f"no bronze snapshot for dataset {dataset!r} on or before {as_of.isoformat()}"
             )
         return max(eligible)
@@ -432,6 +471,89 @@ class DeltaLakeStore(LakeStore):
         # multi-million-row quote panels must use read_bronze_column_as_of --
         # for those this copy is hundreds of MB, not a rounding error.
         return self._cached_partition(dataset, as_of)[1].copy()
+
+    #: Max distinct history reads kept in memory (each ~1 MB for the credit family).
+    _HISTORY_CACHE_MAX = 4
+
+    def _cached_ingest_dates(self, dataset: str, as_of: dt.date) -> list[dt.date]:
+        """Partition dates ``<= as_of``, memoised per ``(dataset, as_of)`` for
+        ``_RESOLVE_TTL_S`` -- the same key and window as :meth:`_resolve_cached`,
+        so a read at day1, a write on day2 and a read at day2 resolve day2 afresh
+        (a new key). The uncached listing costs about 0.8 s on S3."""
+        key = (dataset, as_of.isoformat())
+        hit = self._ingest_dates_cache.get(key)
+        if hit is not None and hit[0] > time.monotonic():
+            return list(hit[1])
+        dates = [d for d in self.bronze_ingest_dates(dataset) if d <= as_of]
+        self._ingest_dates_cache[key] = (time.monotonic() + self._RESOLVE_TTL_S, dates)
+        return list(dates)
+
+    def _scan_history(
+        self,
+        dataset: str,
+        dates: list[dt.date],
+        columns: Sequence[str],
+        equals: Mapping[str, str],
+    ) -> pd.DataFrame:
+        table = DeltaTable(
+            self._table_uri(self._bronze_table_key(dataset)),
+            storage_options=self._storage_options,
+        )
+        # Checked first: pyarrow would raise ArrowInvalid, the contract is KeyError.
+        available = set(table.schema().to_arrow().names)
+        missing = [c for c in [*columns, *equals] if c not in available]
+        if missing:
+            raise KeyError(f"dataset {dataset!r} has no column(s) {missing!r}")
+        started = time.monotonic()
+        scan = table.to_pyarrow_dataset(
+            partitions=[(_INGEST_DATE_COL, "in", [d.isoformat() for d in dates])]
+        )
+        predicates = [pc.field(name) == value for name, value in equals.items()]
+        arrow = scan.to_table(
+            columns=[*columns, _INGEST_DATE_COL],
+            filter=reduce(operator.and_, predicates) if predicates else None,
+        )
+        frame: pd.DataFrame = arrow.to_pandas()
+        # Stored as its ISO string partition value.
+        frame[_INGEST_DATE_COL] = pd.to_datetime(frame[_INGEST_DATE_COL]).dt.date
+        _LOGGER.info(
+            "event=lake.bronze_history_read dataset=%s rows=%d partitions=%d scan_seconds=%.2f",
+            dataset,
+            len(frame),
+            len(dates),
+            time.monotonic() - started,
+        )
+        return frame
+
+    def read_bronze_history_as_of(
+        self,
+        dataset: str,
+        as_of: dt.date,
+        *,
+        columns: Sequence[str],
+        equals: Mapping[str, str],
+        ignored: frozenset[tuple[str, dt.date]] = frozenset(),
+    ) -> pd.DataFrame:
+        dates = [
+            d for d in self._cached_ingest_dates(dataset, as_of) if (dataset, d) not in ignored
+        ]
+        if not dates:
+            raise BronzeSnapshotMissing(
+                f"no eligible bronze partition for dataset {dataset!r} "
+                f"on or before {as_of.isoformat()}"
+            )
+        # Keyed on the eligible date SET (not as_of): a new, back-dated or newly
+        # ignored partition changes the key. The only staleness is the date
+        # list's TTL. Never seeds _frame_cache; every read returns a copy.
+        key = (dataset, tuple(dates), tuple(columns), tuple(sorted(equals.items())))
+        cached = self._history_cache.get(key)
+        if cached is None:
+            cached = self._scan_history(dataset, dates, columns, equals)
+            self._history_cache[key] = cached
+            while len(self._history_cache) > self._HISTORY_CACHE_MAX:
+                self._history_cache.popitem(last=False)
+        self._history_cache.move_to_end(key)
+        return cached.copy()
 
     def read_bronze_column_as_of(self, dataset: str, as_of: dt.date, column: str) -> pd.Series:
         """Projected read of a single column. Thin wrapper over

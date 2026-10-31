@@ -5,7 +5,8 @@ by credit spreads when they are available (`docs/END_STATE.md` §1.3 --
 ``label_vix_series``/``label_credit_series`` are pure (a level series in,
 regime labels out); ``compute_regime_timeline`` reads the bronze snapshots
 known on or before ``as_of`` and labels every VIX date, escalated by credit
-stress where a credit snapshot exists (`combine_regime_labels`). The memory
+stress where HY OAS history exists, the union of the credit partitions
+plus the archive (`combine_regime_labels`). The memory
 layer (phase 2) maps each backtest cycle's entry date onto this timeline to
 key its verdict by regime.
 """
@@ -13,10 +14,18 @@ key its verdict by regime.
 from __future__ import annotations
 
 import datetime as dt
+import logging
 
+import numpy as np
 import pandas as pd
 from pydantic import BaseModel
 
+from tail_lab.contracts.credit import (
+    ARCHIVE_DATASET,
+    HY_SERIES_ID,
+    IGNORED_BRONZE_PARTITIONS,
+    resolve_credit_history,
+)
 from tail_lab.contracts.credit import DATASET as CREDIT_DATASET
 from tail_lab.contracts.regime import (
     RegimeLabel,
@@ -24,14 +33,11 @@ from tail_lab.contracts.regime import (
     classify_vix_series,
     combine_regime_labels,
 )
-from tail_lab.lake.store import LakeStore
+from tail_lab.lake.store import BronzeSnapshotMissing, LakeStore
+
+_LOGGER = logging.getLogger(__name__)
 
 VIX_DATASET = "vix"
-
-#: The FRED series id read out of the shared ``credit`` bronze dataset for
-#: the widened regime classifier -- HY OAS only (`docs/DATA_CONTRACTS.md`
-#: #4); IG OAS lands in the same dataset but is not used here.
-HY_OAS_SERIES_ID = "BAMLH0A0HYM2"
 
 #: How long after its ``obs_date`` an HY OAS print can first be acted on. ICE
 #: computes day *t*'s spread after the close and FRED posts it the next
@@ -87,67 +93,167 @@ def load_vix_close(store: LakeStore, *, as_of: dt.date) -> pd.Series:
     )
 
 
-def load_credit_oas(store: LakeStore, *, as_of: dt.date) -> pd.Series:
-    """Date-indexed HY OAS series known as of ``as_of``, one point-in-time
-    value per ``obs_date``.
+class NoCreditHistory(LookupError):
+    """Neither ``credit`` nor ``credit_archive`` holds any HY OAS as of the
+    date. The one case in which the regime falls back to VIX alone."""
 
-    Reads the bronze credit snapshot known on or before ``as_of``
-    (:meth:`LakeStore.read_bronze_as_of` enforces no-look-ahead), then
-    resolves FRED's ALFRED vintage history to the value actually known at
-    that time: for each ``obs_date``, keeps the row with the latest
-    ``vintage_date`` (`docs/DATA_CONTRACTS.md` #4). No further filtering is
-    needed -- every ``vintage_date`` in the resolved partition was already
-    published on or before that partition's own ``ingest_date``, which is
-    itself <= ``as_of``, so "latest vintage in the partition" already means
-    "latest vintage known as of the query date". Raises ``LookupError`` if no
-    credit snapshot, or no HY OAS row within it, exists as of that date.
-    """
+
+class CreditHistoryError(RuntimeError):
+    """HY history exists but its archive/live seam is broken: the first live
+    obs after the archive's end is missing or more than
+    :data:`SEAM_MAX_GAP` late. Deliberately NOT a ``LookupError`` -- that would
+    become a 404 or a silent VIX-only fallback, hiding a data fault; it
+    surfaces as a 500 plus the error log."""
+
+
+#: The widest gap tolerated between the archive's end and the first live obs.
+#: Above the largest observed gap between consecutive HY obs (4 days).
+SEAM_MAX_GAP = pd.Timedelta(days=7)
+
+#: A print counts for this many business days after its publication date.
+CREDIT_MAX_STALE_BUSINESS_DAYS = 10
+
+_HISTORY_COLUMNS = ["obs_date", "value", "vintage_date"]
+
+
+def _read_hy_history(
+    store: LakeStore,
+    dataset: str,
+    as_of: dt.date,
+    ignored: frozenset[tuple[str, dt.date]],
+) -> pd.DataFrame:
+    """Every eligible HY row of ``dataset``; an empty frame when the dataset
+    has no eligible partition. Only that absence is swallowed -- any other
+    store error (``KeyError`` included) propagates."""
     try:
-        bronze = store.read_bronze_as_of(CREDIT_DATASET, as_of)
-    except LookupError as exc:
-        raise LookupError(f"no credit snapshot known as of {as_of.isoformat()}") from exc
+        return store.read_bronze_history_as_of(
+            dataset,
+            as_of,
+            columns=_HISTORY_COLUMNS,
+            equals={"series_id": HY_SERIES_ID},
+            ignored=ignored,
+        )
+    except BronzeSnapshotMissing:
+        return pd.DataFrame(columns=[*_HISTORY_COLUMNS, "ingest_date"])
 
-    hy = bronze.loc[bronze["series_id"] == HY_OAS_SERIES_ID]
-    if hy.empty:
-        raise LookupError(f"no {HY_OAS_SERIES_ID} known as of {as_of.isoformat()}")
 
-    latest_vintage = hy.sort_values("vintage_date").drop_duplicates(subset="obs_date", keep="last")
-    ordered = latest_vintage.sort_values("obs_date")
-    return pd.Series(
-        ordered["value"].to_numpy(dtype=float),
-        index=pd.DatetimeIndex(ordered["obs_date"]),
-        name="hy_oas",
+def _check_seam(series: pd.Series, archive_end: pd.Timestamp) -> None:
+    after = series.index[series.index > archive_end]
+    if len(after) == 0:
+        raise CreditHistoryError(
+            f"{HY_SERIES_ID}: archive ends {archive_end.date()} but no live obs follow it"
+        )
+    if after.min() - archive_end > SEAM_MAX_GAP:
+        raise CreditHistoryError(
+            f"{HY_SERIES_ID}: first live obs {after.min().date()} is more than "
+            f"{SEAM_MAX_GAP.days} days after the archive's end {archive_end.date()}"
+        )
+
+
+def load_credit_oas(
+    store: LakeStore,
+    *,
+    as_of: dt.date,
+    ignored: frozenset[tuple[str, dt.date]] = IGNORED_BRONZE_PARTITIONS,
+) -> pd.Series:
+    """Date-indexed HY OAS series known as of ``as_of``, one value per ``obs_date``.
+
+    Reads EVERY ``credit`` partition ingested on or before ``as_of`` (each is
+    FRED's sliding window, so the newest alone loses history) plus the one-off
+    ``credit_archive`` (`docs/adr/0034`), minus ``ignored`` -- keyed
+    ``(dataset, ingest_date)`` and defaulting to
+    ``contracts.credit.IGNORED_BRONZE_PARTITIONS``. The archive is
+    authoritative for ``obs_date <= archive_end`` (its own maximum), live after
+    it; within each, the newest partition wins
+    (:func:`contracts.credit.resolve_credit_history`). An ``as_of`` before the
+    archive's ingest date sees no archive, and live serves every obs.
+
+    Raises :class:`NoCreditHistory` (a ``LookupError``) when neither dataset
+    holds HY, and :class:`CreditHistoryError` when an archive exists but no
+    live obs follows its end within :data:`SEAM_MAX_GAP`. Any other store error
+    propagates.
+    """
+    live = _read_hy_history(store, CREDIT_DATASET, as_of, ignored)
+    archive = _read_hy_history(store, ARCHIVE_DATASET, as_of, ignored)
+    if live.empty and archive.empty:
+        raise NoCreditHistory(
+            f"no credit history for {HY_SERIES_ID} known as of {as_of.isoformat()}"
+        )
+    series = resolve_credit_history(live, archive)
+    if not archive.empty:
+        _check_seam(series, pd.Timestamp(archive["obs_date"].max()))
+    return series
+
+
+def _align_credit(
+    credit_labels: pd.Series, vix_index: pd.DatetimeIndex
+) -> tuple[pd.Series, pd.Series]:
+    """Each VIX date's credit label, and its staleness in calendar days.
+
+    A print counts from its publication date ``p = obs_date +``
+    :data:`CREDIT_PUBLICATION_LAG`: the latest print with ``p <= d`` applies
+    only while ``np.busday_count(p, d)`` is within
+    :data:`CREDIT_MAX_STALE_BUSINESS_DAYS`. A date with no print yet, or only a
+    stale one, gets ``"calm"`` (no opinion: VIX decides). The staleness series
+    is NaN where no print was ever available and positive where a print went
+    stale, so callers can tell a source hole from the start of history.
+    """
+    published = (
+        (pd.DatetimeIndex(credit_labels.index) + CREDIT_PUBLICATION_LAG)
+        .to_numpy()
+        .astype("datetime64[D]")
+    )
+    days = vix_index.to_numpy().astype("datetime64[D]")
+    pos = np.searchsorted(published, days, side="right") - 1
+    has_print = pos >= 0
+    safe = np.where(has_print, pos, 0)
+    busy = np.busday_count(published[safe], days)
+    live = has_print & (busy <= CREDIT_MAX_STALE_BUSINESS_DAYS)
+    labels = np.where(live, credit_labels.to_numpy()[safe], "calm")
+    obs = credit_labels.index.to_numpy().astype("datetime64[D]")
+    stale_days = np.where(
+        has_print & ~live, (days - obs[safe]).astype("timedelta64[D]").astype(float), np.nan
+    )
+    return (
+        pd.Series(labels, index=vix_index),
+        pd.Series(stale_days, index=vix_index),
     )
 
 
 def compute_regime_timeline(store: LakeStore, *, as_of: dt.date) -> pd.Series:
     """Date-indexed regime labels from the VIX snapshot known as of
-    ``as_of``, escalated by credit-spread stress wherever a credit snapshot
-    is also available (`combine_regime_labels`: credit can only make a day
+    ``as_of``, escalated by credit-spread stress wherever HY OAS history (the union of
+    the credit partitions plus the archive) is available (`combine_regime_labels`: credit can only make a day
     look more severe, never less).
 
-    Reads only bronze known on or before ``as_of``
-    (:meth:`LakeStore.read_bronze_as_of` enforces no-look-ahead), and a
-    credit print only counts from the session after its ``obs_date``
-    (:data:`CREDIT_PUBLICATION_LAG`). Falls back to the VIX-only label
-    whenever no credit snapshot exists (same graceful-fallback precedent
-    `research/cadence.py` follows for the options-expiry dataset). Raises
-    ``LookupError`` if no VIX snapshot exists as of that date -- VIX is the
-    mandatory half, credit is an optional escalation.
+    Reads only bronze known on or before ``as_of`` (no look-ahead), and a
+    credit print only counts from its publication date
+    (:data:`CREDIT_PUBLICATION_LAG`) for
+    :data:`CREDIT_MAX_STALE_BUSINESS_DAYS` business days; after that credit has
+    no opinion, VIX decides, and one ``event=regime.credit_stale`` warning is
+    logged per call. Falls back to the VIX-only label when
+    :class:`NoCreditHistory` (neither ``credit`` nor ``credit_archive`` holds
+    HY; same graceful-fallback precedent `research/cadence.py` follows for the
+    options-expiry dataset). Only that exception is caught: a broken
+    archive/live seam raises :class:`CreditHistoryError`, and a store ``KeyError``
+    propagates. Raises ``LookupError`` if no VIX snapshot exists as of that
+    date -- VIX is the mandatory half, credit is an optional escalation.
     """
     vix_labels = label_vix_series(load_vix_close(store, as_of=as_of))
     try:
         credit = load_credit_oas(store, as_of=as_of)
-    except LookupError:
+    except NoCreditHistory:
         return vix_labels
 
-    credit_labels = label_credit_series(credit)
-    # Re-date each label to when it was published, then ffill: a VIX date's
-    # credit opinion is the last HY OAS print dated strictly before it. A VIX
-    # date with no earlier print has no opinion yet; treat that as "calm"
-    # (the least severe) so combination stays total.
-    credit_labels.index = credit_labels.index + CREDIT_PUBLICATION_LAG
-    aligned = credit_labels.reindex(vix_labels.index, method="ffill").fillna("calm")
+    aligned, stale_days = _align_credit(
+        label_credit_series(credit), pd.DatetimeIndex(vix_labels.index)
+    )
+    if stale_days.notna().any():
+        _LOGGER.warning(
+            "event=regime.credit_stale staleness_days=%d dates=%d",
+            int(stale_days.max()),
+            int(stale_days.notna().sum()),
+        )
 
     # combine_regime_labels is variadic but only two labels are passed today
     # (VIX, credit); docs/END_STATE.md §1.3 names rates as the third planned
