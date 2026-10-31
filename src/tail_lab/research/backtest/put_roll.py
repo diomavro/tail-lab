@@ -1200,28 +1200,64 @@ def _close_series(bronze: pd.DataFrame) -> pd.Series:
     )
 
 
-def load_asof_series(store: LakeStore, asset: str, as_of: dt.date) -> tuple[pd.Series, pd.Series]:
-    """Point-in-time ``(prices, realized_vol_proxy)`` for ``asset`` as of ``as_of``.
+def load_ohlcv_series(store: LakeStore, asset: str, as_of: dt.date) -> tuple[pd.Series, pd.Series]:
+    """Point-in-time ``(prices, realized_vol_proxy)`` from bronze OHLCV alone.
 
-    Reads only the bronze OHLCV snapshot known on or before ``as_of`` (one
-    lake read), returning the **raw closing-price** path (see
-    :func:`_close_series` for why raw rather than adjusted) and its
-    trailing-realized-vol IV proxy. Factored out so a parameter sweep can read
-    the path once and roll many strategies over it, rather than re-reading per
-    cell. Raises ``LookupError`` if no snapshot exists as of that date.
-
-    This is the single chokepoint every backtest path reads through —
-    ``put_roll``, ``portfolio``, ``ranking``, ``metric_screen`` and the API
-    routes — so the price basis is decided here, once, for all of them.
+    Reads only the OHLCV snapshot known on or before ``as_of`` (one lake
+    read), returning the **raw closing-price** path (see :func:`_close_series`
+    for why raw rather than adjusted) and its trailing-realized-vol IV proxy.
+    Raises ``LookupError`` if no snapshot exists as of that date. Rolls read
+    :func:`load_asof_series` instead; this is for the routes that must never
+    touch the optionsDX panel (the Surface, the strike preview).
     """
+    prices = _ohlcv_prices(store, asset, as_of)
+    return prices, trailing_realized_vol(prices)
+
+
+def _ohlcv_prices(store: LakeStore, asset: str, as_of: dt.date) -> pd.Series:
     try:
         bronze = store.read_bronze_as_of(dataset_id(asset), as_of)
     except LookupError as exc:
         raise LookupError(f"no OHLCV for {asset} known as of {as_of.isoformat()}") from exc
     if bronze.empty:
         raise LookupError(f"no OHLCV for {asset} known as of {as_of.isoformat()}")
-    prices = _close_series(bronze)
+    return _close_series(bronze)
+
+
+def load_asof_series(store: LakeStore, asset: str, as_of: dt.date) -> tuple[pd.Series, pd.Series]:
+    """Point-in-time ``(prices, realized_vol_proxy)`` for ``asset`` as of ``as_of``:
+    :func:`load_ohlcv_series`, with the optionsDX panel's own daily spot
+    spliced in front wherever it reaches back further (SPY and QQQ to
+    2010/2012, OHLCV only to 2016-10), converted to OHLCV's basis -- see
+    ``quote_fills.with_panel_prehistory``. Factored out so a parameter sweep
+    can read the path once and roll many strategies over it, rather than
+    re-reading per cell. Raises ``LookupError`` if no OHLCV snapshot exists.
+
+    This is the single chokepoint every backtest path reads through —
+    ``put_roll``, ``portfolio``, ``ranking``, ``metric_screen`` and the API
+    routes — so the price basis is decided here, once, for all of them.
+    :func:`price_snapshot_ids` names every snapshot it read.
+    """
+    # Deferred, here and in `price_snapshot_ids`, for the cycle described at
+    # the TYPE_CHECKING import above.
+    from tail_lab.research.backtest.quote_fills import with_panel_prehistory
+
+    prices = with_panel_prehistory(
+        store, _ohlcv_prices(store, asset, as_of), symbol=asset, as_of=as_of
+    )
     return prices, trailing_realized_vol(prices)
+
+
+def price_snapshot_ids(store: LakeStore, asset: str, as_of: dt.date) -> list[str]:
+    """Every bronze snapshot :func:`load_asof_series` reads for ``asset``:
+    its OHLCV, plus the optionsDX panel whenever one is consulted for
+    prehistory (cited whether or not the seam accepted it -- it was read).
+    Raises ``LookupError`` when no OHLCV snapshot is known, as the reader does."""
+    from tail_lab.research.backtest.quote_fills import panel_snapshot_id
+
+    panel = panel_snapshot_id(store, asset, as_of)
+    ohlcv = store.bronze_snapshot_id(dataset_id(asset), as_of)
+    return [ohlcv] if panel is None else [ohlcv, panel]
 
 
 def compute_put_backtest(

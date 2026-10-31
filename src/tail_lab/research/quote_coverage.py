@@ -35,7 +35,6 @@ from typing import Literal, cast
 import pandas as pd
 from pydantic import BaseModel
 
-from tail_lab.contracts.ohlcv import dataset_id as ohlcv_dataset_id
 from tail_lab.contracts.option_chain import DATASET as CHAIN_DATASET
 from tail_lab.contracts.option_chain import DEFAULT_SNAPSHOT_SYMBOLS
 from tail_lab.contracts.optionsdx import DATASET as OPTIONSDX_DATASET
@@ -43,6 +42,7 @@ from tail_lab.contracts.optionsdx import SYMBOLS as OPTIONSDX_SYMBOLS
 from tail_lab.contracts.regime import REGIME_LABELS
 from tail_lab.lake.store import LakeStore
 from tail_lab.research.backtest.marks import MAX_RELATIVE_SPREAD
+from tail_lab.research.backtest.put_roll import load_asof_series
 from tail_lab.research.regimes.timeline import compute_regime_timeline
 
 Source = Literal["optionsdx", "chain"]
@@ -102,7 +102,8 @@ class QuoteCoverage(BaseModel):
     depth: list[DepthRow]
     #: Quote sessions per regime, both sources pooled.
     regime_sessions: dict[str, int]
-    #: First/last OHLCV close: a roll backtest needs a price AND a quote.
+    #: First/last session of the price path a roll reads (OHLCV, plus any
+    #: optionsDX prehistory): a roll backtest needs a price AND a quote.
     price_span: tuple[dt.date, dt.date] | None
     symbols: list[str]
 
@@ -238,14 +239,13 @@ def _read_source(
 
 
 def _price_span(store: LakeStore, symbol: str, as_of: dt.date) -> tuple[dt.date, dt.date] | None:
+    """The span of the price path a roll actually reads -- OHLCV with any
+    panel prehistory spliced in front (``load_asof_series``)."""
     try:
-        dates = store.read_bronze_column_as_of(ohlcv_dataset_id(symbol), as_of, "trade_date")
-    except (LookupError, KeyError):
+        prices, _ = load_asof_series(store, symbol, as_of)
+    except LookupError:
         return None
-    if dates.empty:
-        return None
-    stamps = pd.to_datetime(dates)
-    return stamps.min().date(), stamps.max().date()
+    return prices.index[0].date(), prices.index[-1].date()
 
 
 def compute_quote_coverage(store: LakeStore, *, symbol: str, as_of: dt.date) -> QuoteCoverage:

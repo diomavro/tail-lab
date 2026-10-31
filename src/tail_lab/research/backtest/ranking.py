@@ -34,12 +34,12 @@ import pandas as pd
 from pydantic import BaseModel, Field
 
 from tail_lab.contracts.hypothesis import Verdict
-from tail_lab.contracts.ohlcv import dataset_id
 from tail_lab.contracts.options_calendar import cadence_for
 from tail_lab.lake.store import LakeStore
 from tail_lab.research.backtest.put_roll import (
     PricingBasis,
     load_asof_series,
+    price_snapshot_ids,
     run_put_roll,
 )
 from tail_lab.research.backtest.regime_verdict import regime_breakdown
@@ -394,7 +394,8 @@ def snapshot_ids_for(store: LakeStore, as_of: dt.date, symbols: Iterable[str]) -
 
     Mirrors `portfolio.py`'s `snapshot_ids`: VIX first (every regime verdict
     depends on it, whether or not any name was scored), then each scored
-    name's own OHLCV snapshot, deduplicated, then the dividend snapshot every
+    name's own price snapshots (OHLCV, and the optionsDX panel where one
+    is consulted for prehistory), deduplicated, then the dividend snapshot every
     name was priced with (absent before the first Tiingo ingest, when every q
     was an unknown 0). Shared by the ranking and the metric bake-off; both
     pass the SPY benchmark among ``symbols`` so it is cited even when SPY
@@ -402,9 +403,9 @@ def snapshot_ids_for(store: LakeStore, as_of: dt.date, symbols: Iterable[str]) -
     """
     snapshot_ids = [store.bronze_snapshot_id(VIX_DATASET, as_of)]
     for symbol in symbols:
-        snap = store.bronze_snapshot_id(dataset_id(symbol), as_of)
-        if snap not in snapshot_ids:
-            snapshot_ids.append(snap)
+        for snap in price_snapshot_ids(store, symbol, as_of):
+            if snap not in snapshot_ids:
+                snapshot_ids.append(snap)
     dividend_snapshot = dividend_snapshot_id(store, as_of)
     if dividend_snapshot is not None:
         snapshot_ids.append(dividend_snapshot)

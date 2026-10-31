@@ -4,6 +4,7 @@ through the real HTTP path with a seeded in-memory-ish Delta store."""
 from __future__ import annotations
 
 import datetime as dt
+import logging
 import threading
 import time
 from collections.abc import Callable, Iterator
@@ -2134,3 +2135,23 @@ def test_a_delta_no_strike_can_reach_is_refused_not_a_server_error(
     )
     assert resp.status_code == 422, resp.text
     assert "no strike has put delta" in resp.json()["detail"]
+
+
+def test_the_run_log_cites_the_panel_a_price_path_was_read_from(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    from tail_lab.api.putlab_routes import _log_run
+    from tests.test_research_backtest_quote_fills import INGEST, _write_ohlcv, _write_panel
+
+    store = DeltaLakeStore(tmp_path)
+    _write_ohlcv(store)
+    caplog.set_level(logging.INFO)
+    _log_run(store, "putlab.probe", asset="spy", as_of=INGEST, params={}, outputs={})
+    _write_panel(store, [200.0] * 70)
+    _log_run(store, "putlab.probe", asset="spy", as_of=INGEST, params={}, outputs={})
+
+    without, with_panel = [
+        r.getMessage() for r in caplog.records if "putlab.probe" in r.getMessage()
+    ]
+    assert "price_prehistory_snapshot" not in without
+    assert "price_prehistory_snapshot=optionsdx_quotes_spy@" in with_panel
