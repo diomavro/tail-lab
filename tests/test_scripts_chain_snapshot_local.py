@@ -22,10 +22,13 @@ from __future__ import annotations
 import dataclasses
 import datetime as dt
 import importlib.util
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
+import pyarrow as pa
 import pytest
+from deltalake.exceptions import DeltaError
 
 _SPEC = importlib.util.spec_from_file_location(
     "chain_snapshot_local", Path(__file__).resolve().parents[1] / "scripts" / "chain_snapshot.py"
@@ -42,6 +45,29 @@ def _no_market_reference(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(chain_snapshot, "latest_market_session", lambda: None)
 
 
+@pytest.fixture(autouse=True)
+def _no_cboe(monkeypatch: pytest.MonkeyPatch) -> None:
+    """``_run_local`` fetches every chain once (``fetch_chains``) before either
+    wing's ingest. The ingest is stubbed in every test here, the fetch is not
+    -- without this, these tests would reach the real Cboe CDN."""
+    monkeypatch.setattr("tail_lab.ingestion.option_chain.fetch_chains", lambda _s, *_a: {})
+
+
+def test_the_local_tests_never_reach_cboe(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Guard for the fixture above: if ``_run_local`` ever fetches by another
+    route, the raw fetch raises here instead of going to the network."""
+
+    def no_network(*_a: object, **_k: object) -> dict[str, object]:
+        raise AssertionError("a --local test reached Cboe")
+
+    monkeypatch.setattr("tail_lab.ingestion.option_chain.fetch_chain_raw", no_network)
+    monkeypatch.setattr("tail_lab.config.get_lake_store", lambda: object())
+    monkeypatch.setattr(
+        "tail_lab.ingestion.option_chain.ingest_option_chain", lambda _s, _y, **_kw: _Result()
+    )
+    assert chain_snapshot.main(["--local", "--symbols", "spy"]) == 0
+
+
 class _Result:
     """Enough of ``IngestResult`` for the local path to report on.
 
@@ -54,6 +80,7 @@ class _Result:
     symbols_ok = ("spy", "qqq")
     symbols_failed: tuple[str, ...] = ()
     symbols_off_session: tuple[str, ...] = ()
+    symbols_misrouted: tuple[str, ...] = ()
     committed = True
     quote_date = dt.date(2026, 9, 18)
     bronze_path = "s3://tail-lab-lake/bronze/option_chain_snapshot/ingest_date=2026-09-18"
@@ -85,6 +112,7 @@ def test_the_stub_still_matches_the_real_ingest_result() -> None:
         "symbols_ok",
         "symbols_failed",
         "symbols_off_session",
+        "symbols_misrouted",
         "committed",
         "quote_date",
         "bronze_path",
@@ -96,16 +124,15 @@ def test_the_stub_still_matches_the_real_ingest_result() -> None:
 def test_local_does_not_also_run_the_post_paths_sweep(monkeypatch: pytest.MonkeyPatch) -> None:
     """The regression itself: one fetch per chain, not two."""
     swept = 0
-    ingested = 0
+    ingested: list[str] = []
 
-    def fake_sweep(symbols: Any, **_kw: Any) -> list[dict[str, Any]]:
+    def fake_sweep(symbols: object, **_kw: object) -> tuple[list[dict[str, object]], ...]:
         nonlocal swept
         swept += 1
-        return [{"underlying": "SPY"}] * 20_000
+        return ([{"underlying": "SPY"}] * 20_000,) * 2
 
-    def fake_ingest(_store: Any, _symbols: Any, **_kw: Any) -> _Result:
-        nonlocal ingested
-        ingested += 1
+    def fake_ingest(_store: object, _symbols: object, **kw: object) -> _Result:
+        ingested.append(kw["right"])
         return _Result()
 
     monkeypatch.setattr(chain_snapshot, "sweep_to_records", fake_sweep)
@@ -113,7 +140,7 @@ def test_local_does_not_also_run_the_post_paths_sweep(monkeypatch: pytest.Monkey
     monkeypatch.setattr("tail_lab.ingestion.option_chain.ingest_option_chain", fake_ingest)
 
     assert chain_snapshot.main(["--local", "--symbols", "spy,qqq"]) == 0
-    assert ingested == 1
+    assert ingested == ["P", "C"], "one ingest per wing, over one fetch"
     assert swept == 0, "--local must not run the --post path's sweep as well"
 
 
@@ -174,6 +201,27 @@ def test_local_reports_a_no_op_rather_than_claiming_rows(
     assert "committed 19525 rows" not in out
 
 
+def test_local_names_a_misrouted_symbol_for_its_cause(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Same rule as the ``--post`` report: a symbol quarantined for the other
+    wing's delta signs had quotes, so it is not "no quotes"."""
+
+    class _Misrouted(_Result):
+        symbols_failed = ("KRE", "XLE")
+        symbols_misrouted = ("XLE",)
+
+    monkeypatch.setattr("tail_lab.config.get_lake_store", lambda: object())
+    monkeypatch.setattr(
+        "tail_lab.ingestion.option_chain.ingest_option_chain",
+        lambda _s, _y, **_kw: _Misrouted(),
+    )
+    assert chain_snapshot.main(["--local", "--symbols", "spy"]) == 0
+    out = capsys.readouterr().out
+    assert "::warning::puts: no quotes landed for KRE\n" in out
+    assert "::warning::puts: XLE carried the other wing's delta signs; quarantined whole" in out
+
+
 def test_local_hands_the_market_witness_to_the_adapter(monkeypatch: pytest.MonkeyPatch) -> None:
     """The systemd stand-in runs THIS path. If it stops forwarding the
     witness, a frozen Cboe feed goes back to no-opping green on the local
@@ -221,3 +269,168 @@ def test_local_passes_the_clock_so_the_mid_session_guard_is_live(
 
     assert chain_snapshot.main(["--local", "--symbols", "spy"]) == 0
     assert isinstance(seen.get("now"), dt.datetime) and seen["now"].tzinfo is not None
+
+
+# ---- both wings (docs/adr/0031) ----------------------------------------------
+
+
+class _ShortSweep(_Result):
+    valid_rows = 3
+
+
+def _local(
+    monkeypatch: pytest.MonkeyPatch, put: Callable[[], _Result], call: Callable[[], _Result]
+) -> list[dict[str, object]]:
+    """Stub the lake and the ingest per right; return each ingest's kwargs."""
+    seen: list[dict[str, object]] = []
+
+    def ingest(_store: object, _symbols: object, **kw: object) -> _Result:
+        seen.append(kw)
+        return (put if kw["right"] == "P" else call)()
+
+    monkeypatch.setattr("tail_lab.config.get_lake_store", lambda: object())
+    monkeypatch.setattr("tail_lab.ingestion.option_chain.ingest_option_chain", ingest)
+    return seen
+
+
+def _local_raise(exc: Exception) -> Callable[[], _Result]:
+    def behaviour() -> _Result:
+        raise exc
+
+    return behaviour
+
+
+def _run_local() -> int:
+    rc: int = chain_snapshot.main(["--local", "--symbols", "spy,qqq"])
+    return rc
+
+
+def test_local_fetches_once_and_hands_the_same_payloads_to_both_wings(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fetched: list[list[str]] = []
+    payloads = {"spy": {"data": {}}}
+
+    def fetch_chains(symbols: list[str], *_a: object) -> dict[str, object]:
+        fetched.append(list(symbols))
+        return payloads
+
+    monkeypatch.setattr("tail_lab.ingestion.option_chain.fetch_chains", fetch_chains)
+    seen = _local(monkeypatch, _Result, _Result)
+    assert _run_local() == 0
+    assert fetched == [["spy", "qqq"]]
+    assert [kw["right"] for kw in seen] == ["P", "C"]
+    assert all(kw["payloads"] is payloads for kw in seen)
+    assert seen[0]["now"] is seen[1]["now"]
+
+
+def test_local_unsettled_puts_skip_the_calls_and_say_so(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    from tail_lab.contracts.option_chain import SessionInProgress
+
+    seen = _local(monkeypatch, _local_raise(SessionInProgress("still trading")), _Result)
+    assert _run_local() == 0
+    assert [kw["right"] for kw in seen] == ["P"]
+    assert "calls: not attempted -- the session is still trading" in capsys.readouterr().out
+
+
+def test_local_refused_puts_still_land_the_calls(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    from tail_lab.contracts.option_chain import IncompleteSweepError
+
+    seen = _local(monkeypatch, _local_raise(IncompleteSweepError("15 of 24")), _Result)
+    assert _run_local() == 1
+    assert [kw["right"] for kw in seen] == ["P", "C"]
+    captured = capsys.readouterr()
+    assert "calls: swept" in captured.out
+    assert "puts failed; calls landed" in captured.err
+    assert "puts landed" not in captured.err.replace("puts failed; calls landed", "")
+
+
+def test_local_neither_wing_landing_never_says_the_puts_landed(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    from tail_lab.contracts.option_chain import IncompleteSweepError
+
+    refused = _local_raise(IncompleteSweepError("15 of 24"))
+    _local(monkeypatch, refused, refused)
+    assert _run_local() == 1
+    err = capsys.readouterr().err
+    assert "neither wing landed" in err
+    assert "puts landed" not in err
+
+
+_LAKE_FAILURES = [
+    OSError("disk full"),
+    DeltaError("schema mismatch"),
+    pa.ArrowInvalid("bad"),
+]
+
+
+@pytest.mark.parametrize("lake_error", _LAKE_FAILURES, ids=["os", "delta", "arrow"])
+def test_local_a_put_lake_write_failure_still_lands_the_calls(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], lake_error: Exception
+) -> None:
+    """``LAKE_WRITE_ERRORS`` used to escape ``_run_local`` as a traceback,
+    which would now also skip the call ingest. One member of each family:
+    the 2026-09-23 SchemaMismatchError is a DeltaError, not an OSError."""
+    seen = _local(monkeypatch, _local_raise(lake_error), _Result)
+    assert _run_local() == 1
+    assert [kw["right"] for kw in seen] == ["P", "C"]
+    assert "::error::puts:" in capsys.readouterr().err
+
+
+@pytest.mark.parametrize(
+    "failure",
+    ["refused", "lake", "floor", "unsettled"],
+)
+def test_local_a_call_failure_is_red_and_says_the_puts_landed(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], failure: str
+) -> None:
+    from tail_lab.contracts.option_chain import IncompleteSweepError, SessionInProgress
+
+    call: Callable[[], _Result] = {
+        "refused": _local_raise(IncompleteSweepError("15 of 24")),
+        "lake": _local_raise(OSError("disk full")),
+        "floor": _ShortSweep,
+        "unsettled": _local_raise(SessionInProgress("still trading")),
+    }[failure]
+    _local(monkeypatch, _Result, call)
+    assert _run_local() == 1
+    assert "calls only; puts landed" in capsys.readouterr().err
+
+
+def test_local_a_lake_read_failure_is_not_reported_as_a_write(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """The partition-exists probe READS the lake before anything is written,
+    and ``LAKE_READ_ERRORS`` is the same tuple ``_ingest_wing`` catches. A
+    resume-time DNS failure (2026-09-22/23) lands there: saying "the lake
+    write failed" would send the operator hunting for a partial partition in
+    immutable bronze when nothing was even attempted. Real ingest, real
+    payload; only the store is fake."""
+    import json
+
+    payload = json.loads(
+        (Path(__file__).parent / "fixtures" / "cboe_chain_calls_sample.json").read_text()
+    )
+
+    class _DnsDownStore:
+        def bronze_partition_exists(self, _dataset: str, _day: dt.date) -> bool:
+            raise OSError("Temporary failure in name resolution")
+
+        def write_bronze(self, *_a: object, **_k: object) -> str:
+            raise AssertionError("nothing may be written when the probe failed")
+
+    monkeypatch.setattr(
+        "tail_lab.ingestion.option_chain.fetch_chains",
+        lambda symbols, *_a: {s: payload for s in symbols},
+    )
+    monkeypatch.setattr("tail_lab.config.get_lake_store", _DnsDownStore)
+    assert chain_snapshot.main(["--local", "--symbols", "spy"]) == 1
+    err = capsys.readouterr().err
+    assert "::error::puts: the lake read or write failed: OSError(" in err
+    assert "::error::calls: the lake read or write failed: OSError(" in err
+    assert "lake write failed" not in err

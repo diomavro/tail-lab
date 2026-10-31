@@ -14,7 +14,13 @@ export const TABS: { id: TabId; label: string }[] = [
   { id: 'book', label: 'Book' },
   { id: 'bakeoff', label: 'Bake-off' },
   { id: 'regime', label: 'Regime' },
+  // Before any result is believed: which strikes, tenors and years the lake
+  // holds a real quote for (docs/adr/0021's "Marks").
+  { id: 'marks', label: 'Marks' },
   { id: 'surface', label: 'Surface' },
+  // The verdict on whether any of the above is a strategy (docs/adr/0021,
+  // 2026-10-27 amendment): a reading page, so it sits with the Glossary.
+  { id: 'pitch', label: 'Pitch' },
   { id: 'glossary', label: 'Glossary' },
 ]
 

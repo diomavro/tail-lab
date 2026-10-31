@@ -130,6 +130,22 @@ def cboe_chain_sample() -> dict[str, Any]:
 
 
 @pytest.fixture
+def cboe_chain_calls_sample() -> dict[str, object]:
+    """Real Cboe SPY contracts from the 2026-10-26 session (spot 765.37), chosen
+    to straddle every call-wing filter (docs/adr/0031): in-band calls from
+    ITM (0.85) to 1.31 x spot; one just below the 0.80 floor (610); one past
+    the 180-day tenor cap (2027-04-30); a 0DTE call Cboe zero-filled (iv 0,
+    delta 1.0); and two puts. Three contracts are EDITED copies, because SPY
+    lists nothing there: strikes 1913 / 1914 (2.4994 / 2.5008 x spot, either
+    side of the 2.50 cap) and an ITM 660 call carrying iv 0 with delta 0.85
+    (the live session had iv-zero ITM calls with real-looking deltas, but none
+    below 0.9). The put-only ``cboe_chain_sample`` holds no in-band call at
+    all, so call tests against it would pass vacuously."""
+    raw: dict[str, object] = json.loads((FIXTURES_DIR / "cboe_chain_calls_sample.json").read_text())
+    return raw
+
+
+@pytest.fixture
 def vix_futures_h2020_sample() -> str:
     """Real Cboe VX_2020-03-18.csv rows: the Mar-2020 (H) contract's listing
     window (including a genuine no-trade day, OHLC all zero-filled) plus its

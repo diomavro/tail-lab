@@ -1,5 +1,7 @@
-"""Pandera schema for the **forward-collected** daily put-wing snapshot
-(``docs/DATA_CONTRACTS.md`` #6).
+"""Pandera schemas for the **forward-collected** daily option-chain snapshot
+(``docs/DATA_CONTRACTS.md`` #6): the put wing (``option_chain_snapshot``) and,
+since ``docs/adr/0031``, the call wing in its own dataset
+(``option_chain_call_snapshot``).
 
 This module is a LEAF: it must never import anything else from ``tail_lab``
 (enforced by the import-linter layers contract in ``pyproject.toml``).
@@ -13,10 +15,12 @@ is to have started five years ago. That asymmetry is why this adapter is
 scheduled rather than run on demand, and why the workflow that drives it
 treats a skipped day as a failure instead of a no-op.
 
-**Schema-compatible with the historical slice on purpose.** The first nine
-columns are exactly ``contracts/option_quotes.OptionQuoteSchema``, so the
-vendor's back-history (SPY monthly rolls, 1990-2023) and this forward
-collection union on their shared columns without a translation layer. The
+**The PUT dataset is schema-compatible with the historical slice on
+purpose.** The first nine columns are exactly
+``contracts/option_quotes.OptionQuoteSchema``, so the vendor's back-history
+(SPY monthly rolls, 1990-2023) and ``option_chain_snapshot`` union on their
+shared columns without a translation layer. The call dataset shares the
+columns but must never be unioned with either (see :data:`CALL_DATASET`). The
 long-run intent is one continuous quote history with a seam, not two
 datasets that need reconciling every time someone asks a question.
 
@@ -37,7 +41,7 @@ import datetime as dt
 import math
 from collections.abc import Callable, Collection, Iterable, Sequence
 from dataclasses import dataclass
-from typing import ClassVar
+from typing import ClassVar, Literal, NamedTuple
 from zoneinfo import ZoneInfo
 
 import pandas as pd
@@ -49,6 +53,16 @@ from pandera.typing import Series
 #: the hand-verified vendor back-history with a different provenance and a
 #: different licence. Same shape, different source, so: different dataset.
 DATASET = "option_chain_snapshot"
+QUARANTINE_DATASET = f"{DATASET}__quarantine"
+
+#: The CALL wing's bronze name (``docs/adr/0031``). A separate dataset, not a
+#: ``right`` column on the one above: every reader of ``option_chain_snapshot``
+#: assumes each row is a put, and the key below has no ``right`` in it. **Never
+#: union it** with ``option_chain_snapshot``, ``option_quotes`` or
+#: ``optionsdx``: they share the key ``(underlying, quote_date, expiration,
+#: strike)``, so a concat would silently mix calls into a put history.
+CALL_DATASET = "option_chain_call_snapshot"
+CALL_QUARANTINE_DATASET = f"{CALL_DATASET}__quarantine"
 
 #: Bounds on a listed strike, in dollars. Loose on purpose: these catch unit
 #: errors and garbled rows, not unusual-but-real strikes.
@@ -71,6 +85,14 @@ MONEYNESS_MAX = 1.05
 #: form around that, and cuts the LEAPS tail that would otherwise be most of
 #: the rows and none of the answers.
 MAX_TENOR_DAYS = 180
+
+#: Moneyness band retained for CALLS (``docs/adr/0031``): log-symmetric with
+#: the put floor (2.50 = 1 / 0.40), reaching a little way through the money on
+#: the other side. Wide on purpose: at sigma ~0.9 (MSTR, COIN, SMCI, TSLA) a
+#: 25-delta call at 90 days sits near K = 1.50 S and a 10-delta at 30 days
+#: near 1.44 S, both outside a 1.30 cap -- and an uncaptured session is gone.
+CALL_MONEYNESS_MIN = 0.80
+CALL_MONEYNESS_MAX = 2.50
 
 
 class OptionChainSnapshotSchema(pa.DataFrameModel):
@@ -100,6 +122,141 @@ class OptionChainSnapshotSchema(pa.DataFrameModel):
         unique: ClassVar[list[str]] = ["underlying", "quote_date", "expiration", "strike"]
 
 
+class OptionCallChainSnapshotSchema(OptionChainSnapshotSchema):
+    """One delayed end-of-day CALL quote (``docs/adr/0031``).
+
+    The put contract with one change: a call's delta is in ``[0, 1]``. A
+    subclass rather than a copy, so a later tightening of the put contract
+    reaches the calls too. Same key and no ``right`` column -- which is why
+    the two datasets must never be unioned (see :data:`CALL_DATASET`).
+    """
+
+    delta: Series[float] = pa.Field(nullable=True, ge=0.0, le=1.0)
+
+
+Right = Literal["P", "C"]
+
+
+class WingSplit(NamedTuple):
+    """What :meth:`Wing.split` decided, so neither writer re-derives it."""
+
+    valid: pd.DataFrame
+    quarantined: pd.DataFrame
+    #: Symbols quarantined whole for carrying the other wing's deltas.
+    misrouted: tuple[str, ...]
+    #: How many rows those symbols had, all of them in ``quarantined``.
+    misrouted_rows: int
+
+    def describe_misrouted(self, wing: Wing) -> str:
+        """The one warning both writers log when :attr:`misrouted` is set."""
+        return (
+            f"dataset={wing.dataset} symbols={','.join(self.misrouted)} "
+            f"rows={self.misrouted_rows} -- more than {MAX_WRONG_SIGN_SHARE:.0%} of each "
+            "one's signed deltas carry the other wing's sign; quarantined whole"
+        )
+
+
+@dataclass(frozen=True)
+class Wing:
+    """Everything that differs between collecting puts and collecting calls,
+    so each writer maps a right to its dataset, quarantine, contract and band
+    in ONE lookup rather than at every site that names a dataset."""
+
+    right: Right
+    dataset: str
+    quarantine_dataset: str
+    schema: type[OptionChainSnapshotSchema]
+    moneyness_min: float
+    moneyness_max: float
+
+    def wrong_sign_share(self, frame: pd.DataFrame) -> float:
+        """Share of the rows with a non-null, non-zero delta whose sign is the
+        OTHER wing's -- 0.0 when no row has one. Null and zero deltas are
+        neutral: they cannot say which wing a row belongs to.
+
+        The contracts alone cannot keep a body out of the wrong dataset: there
+        is no ``right`` column, and a row whose greeks Cboe zero-filled has a
+        null delta (or a delta of exactly 0), which both wings accept.
+        Measured 2026-10-26: 221 SPY calls (172 null-delta, 49 delta == 0; 169
+        of them inside the put band) would pass the PUT contract that way and
+        be committed as puts, immutably. A correctly routed live body has none
+        of these (0 of 16,665 puts and 0 of 21,942 calls with a non-null,
+        non-zero delta); a misrouted one has all of them.
+        """
+        delta = pd.to_numeric(frame["delta"], errors="coerce")
+        signed = delta[delta.notna() & (delta != 0.0)]
+        if signed.empty:
+            return 0.0
+        wrong = signed > 0.0 if self.right == "P" else signed < 0.0
+        return float(wrong.mean())
+
+    def _misrouted(self, frame: pd.DataFrame, names: pd.Series[str]) -> tuple[str, ...]:
+        """The ``names`` whose :meth:`wrong_sign_share` is past
+        :data:`MAX_WRONG_SIGN_SHARE`, sorted."""
+        return tuple(
+            sorted(
+                str(name)
+                for name, rows in frame.groupby(names, sort=False)
+                if self.wrong_sign_share(rows) > MAX_WRONG_SIGN_SHARE
+            )
+        )
+
+    def split(self, frame: pd.DataFrame) -> WingSplit:
+        """``(valid, quarantined, misrouted, misrouted_rows)``: every row of a
+        symbol whose :meth:`wrong_sign_share` is past
+        :data:`MAX_WRONG_SIGN_SHARE` is quarantined -- its null-delta rows
+        too, which the contract alone would keep -- and the rest is split
+        against this wing's contract (:func:`split_valid_and_quarantined`).
+
+        Per symbol, not per body, and run by BOTH writers: refusing a body
+        whole would let one symbol's misrouting cost a session on the
+        ``--post`` path that ``--local`` keeps. A body that is the other
+        wing's, or both wings concatenated, still lands nothing: every symbol
+        in it trips, and the symbol floor refuses the rest. A few wrong-sign
+        rows below :data:`MAX_WRONG_SIGN_SHARE` are not misrouting: the
+        contract quarantines just those rows, as it always has.
+        """
+        names = frame["underlying"].astype(str).str.upper()
+        misrouted = self._misrouted(frame, names)
+        if not misrouted:
+            valid, quarantined = split_valid_and_quarantined(frame, self.schema)
+            return WingSplit(valid, quarantined, (), 0)
+        bad = names.isin(misrouted)
+        valid, quarantined = split_valid_and_quarantined(frame.loc[~bad], self.schema)
+        return WingSplit(valid, pd.concat([frame.loc[bad], quarantined]), misrouted, int(bad.sum()))
+
+
+#: Above this :meth:`Wing.wrong_sign_share`, ONE SYMBOL's rows are taken for
+#: (partly) the other wing's and quarantined whole, rather than split into
+#: quarantine plus a committed null-delta remainder of the other wing. A
+#: correct live symbol measures 0. A writer that concatenated both wings
+#: scores every symbol at least 0.29 (measured on the 2026-10-26 bodies: SLV
+#: on the call route, 382 puts against 917 calls; XLE on the put route 0.40),
+#: so a fifth still refuses that body whole, with margin. Not 0.5, which let
+#: such a body through. Not 0.01 either: a misrouted symbol counts against
+#: the floor, so at 1% a sign glitch on 2 of FXI's 176 puts cost all of FXI,
+#: and the same on three chains refused a put session that the contract
+#: alone (without the misrouting guard) commits with just the bad rows
+#: quarantined. Below a fifth, the contract quarantines only
+#: the wrong-sign rows, whatever the chain's size.
+MAX_WRONG_SIGN_SHARE = 0.2
+
+
+WINGS: dict[Right, Wing] = {
+    "P": Wing(
+        "P", DATASET, QUARANTINE_DATASET, OptionChainSnapshotSchema, MONEYNESS_MIN, MONEYNESS_MAX
+    ),
+    "C": Wing(
+        "C",
+        CALL_DATASET,
+        CALL_QUARANTINE_DATASET,
+        OptionCallChainSnapshotSchema,
+        CALL_MONEYNESS_MIN,
+        CALL_MONEYNESS_MAX,
+    ),
+}
+
+
 #: The names forward-collected every day. A deliberate subset of the 70-name
 #: screening universe, for two reasons that happen to agree.
 #:
@@ -111,14 +268,17 @@ class OptionChainSnapshotSchema(pa.DataFrameModel):
 #:
 #: The second is mechanical. Bronze is immutable and re-ingesting an
 #: ``ingest_date`` is a no-op (``lake/store.py``), so a day's sweep has to
-#: land as ONE write — which makes it one HTTP body, sized to be parsed on a
-#: small Fly machine without an OOM. SPY alone slices to ~3.6k rows.
+#: land as ONE write per dataset — which makes it one HTTP body per wing,
+#: sized to be parsed on a small Fly machine without an OOM. SPY alone slices
+#: to ~3.6k rows.
 #:
 #: Chosen for options liquidity first, then to span the thesis: the
 #: benchmarks, the credit/rates/commodity hedges, and the high-beta single
 #: names where a sensitivity screen should actually bite.
 #:
-#: Measured 2026-08-26: these 24 slice to 20,882 rows / 4.68 MB / 25.5s.
+#: Measured 2026-08-26: these 24 slice to 20,882 PUT rows / 4.68 MB / 25.5s.
+#: The call wing (``docs/adr/0031``) is about 1.35x the put rows again: on
+#: 2026-10-26, 17,330 puts (3.9 MB body) against 23,376 calls (5.2 MB).
 #: Widening toward the full 70 is queued (``AGENT_TODO.md``) and affordable
 #: — the additions are thin chains, and SPY+QQQ+GLD are already a third of
 #: the payload. The constraint that bites first is POST body size, not fetch
@@ -151,14 +311,19 @@ DEFAULT_SNAPSHOT_SYMBOLS: tuple[str, ...] = (
 )
 
 
-def split_valid_and_quarantined(df: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame]:
-    """Split ``df`` into ``(valid, quarantined)`` against this contract.
+def split_valid_and_quarantined(
+    df: pd.DataFrame, schema: type[OptionChainSnapshotSchema]
+) -> tuple[pd.DataFrame, pd.DataFrame]:
+    """Split ``df`` into ``(valid, quarantined)`` against ``schema``, which has
+    no default: validating calls against the put contract would quarantine
+    every one of them on its delta sign.
 
     Lives here, next to the schema, rather than in the adapter as its
-    siblings do -- because this dataset has **two** writers. The adapter
-    writes it on the local path, and ``api/ingest_routes`` writes it on the
-    scheduled path (``docs/adr/0020`` splits the sweep at its credential
-    seam). They must agree on what a bad row costs, and the first time they
+    siblings do -- because this dataset has **two** writers: the adapter on
+    the local path, and ``api/ingest_routes`` on the scheduled path
+    (``docs/adr/0020`` splits the sweep at its credential seam). Both reach
+    it only through :meth:`Wing.split`, the seam that keeps them in step.
+    They must agree on what a bad row costs, and the first time they
     did not, they disagreed expensively: the endpoint rejected an entire
     22,006-quote sweep because a few dozen far-OTM strikes had no resting
     offer overnight. For a dataset whose whole premise is "capture it today
@@ -168,12 +333,12 @@ def split_valid_and_quarantined(df: pd.DataFrame) -> tuple[pd.DataFrame, pd.Data
     so the caller can persist them for inspection.
     """
     try:
-        return OptionChainSnapshotSchema.validate(df, lazy=True), df.iloc[0:0]
+        return schema.validate(df, lazy=True), df.iloc[0:0]
     except SchemaErrors as err:
         bad_index = pd.Index(err.failure_cases["index"].dropna().unique())
         quarantined = df.loc[df.index.isin(bad_index)]
         kept = df.loc[~df.index.isin(bad_index)]
-        return OptionChainSnapshotSchema.validate(kept, lazy=True), quarantined
+        return schema.validate(kept, lazy=True), quarantined
 
 
 #: Fraction of the REQUESTED symbols that must return quotes before a sweep is
@@ -318,6 +483,7 @@ def require_enough_symbols(
     min_fraction: float,
     session: dt.date,
     missing: Sequence[str] = (),
+    misrouted: Collection[str] = (),
 ) -> None:
     """Refuse to define a session from too few chains. See ``MIN_SYMBOL_FRACTION``.
 
@@ -355,14 +521,31 @@ def require_enough_symbols(
     required = max(1, math.ceil(requested * min_fraction))
     if responded >= required:
         return
+    unquoted = [s for s in missing if s not in misrouted]
+    # A misrouted symbol HAD quotes, of the other wing's sign (Wing.split): a
+    # re-run sends the same body, so it is named apart from the re-run advice.
+    wrong_wing = (
+        f" Misrouted, not missing: {', '.join(sorted(misrouted))} -- more than "
+        f"{MAX_WRONG_SIGN_SHARE:.0%} of their signed deltas carry the other wing's sign, "
+        "which a re-run repeats; check which wing the writer sent where."
+        if misrouted
+        else ""
+    )
+    # The re-run advice is for recoverable losses only: when every shortfall
+    # is misrouted, a re-run repeats it and the names are not dead.
+    rerun = (
+        ""
+        if misrouted and not unquoted
+        else f" Missing: {', '.join(unquoted) or '(unknown)'}. "
+        "Re-run before the next US open -- and if the same names fail every day they are "
+        "delisted or dead, and belong out of DEFAULT_SNAPSHOT_SYMBOLS rather than "
+        "blocking every future session."
+    )
     raise IncompleteSweepError(
         f"only {responded} of {requested} chains returned usable quotes for session "
         f"{session.isoformat()} (need {required}); refusing to create the partition, "
-        "because bronze is immutable and a partial session can never be completed. "
-        f"Missing: {', '.join(missing) if missing else '(unknown)'}. Re-run before the "
-        "next US open -- and if the same names fail every day they are delisted or "
-        "dead, and belong out of DEFAULT_SNAPSHOT_SYMBOLS rather than blocking every "
-        "future session."
+        "because bronze is immutable and a partial session can never be completed."
+        f"{rerun}{wrong_wing}"
     )
 
 
@@ -460,8 +643,7 @@ class SessionPlan:
 
 
 def plan_session_write(
-    valid: pd.DataFrame,
-    quarantined: pd.DataFrame,
+    split: WingSplit,
     *,
     requested: Sequence[str],
     fetched_ok: Sequence[str],
@@ -474,7 +656,10 @@ def plan_session_write(
 ) -> SessionPlan:
     """Name the session, split off-session rows, and refuse unsafe writes.
 
-    ``fetched_ok`` are the symbols whose chains fetched and parsed;
+    ``split`` is what :meth:`Wing.split` decided for this wing's rows; its
+    ``misrouted`` symbols still count against the floor, and only change how
+    a refusal names them. ``fetched_ok`` are the symbols whose chains fetched
+    and parsed;
     ``fetch_failed`` those that did not. ``market_session`` is the newest
     COMPLETED US equity session according to a source independent of Cboe
     (``None`` when that source could not be read -- the check is then
@@ -487,6 +672,7 @@ def plan_session_write(
     # a clock fallback, which the in-progress guard below must not mistake for
     # a session Cboe is serving -- a total outage would then read as "still
     # trading" and skip green (adversarial review, 2026-09-25).
+    valid, quarantined = split.valid, split.quarantined
     have_quotes = not valid.empty
     session = session_from_quotes(valid) if have_quotes else dt.date.today()
     valid, quarantined, off_session, newest_off = quarantine_off_session_rows(
@@ -593,6 +779,7 @@ def plan_session_write(
             min_symbol_fraction,
             session,
             missing=sorted(failed),
+            misrouted=split.misrouted,
         )
     return SessionPlan(
         valid=valid,

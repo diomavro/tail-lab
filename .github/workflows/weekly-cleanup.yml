@@ -31,7 +31,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 60
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
 
@@ -111,10 +111,13 @@ jobs:
                single most valuable thing you can do is refactor one of those functions and
                **lower the corresponding number in the same PR**. That is the loop closing:
                the limit only ever goes down, and you are what pushes it.
+
             2. Duplication in `research/` and `api/`. Note that one adapter per dataset in
                `ingestion/` is a deliberate, sanctioned near-duplicate — leave it alone.
+
             3. Dead code: exported names nothing imports, parameters nothing passes, branches
                nothing reaches, an interface with one implementation and no second one coming.
+
             4. Divergence between `ARCHITECTURE.md` and the real tree. You may not edit
                ARCHITECTURE.md (constitution), but you CAN move the code to match what it says,
                and that is usually the better direction anyway.

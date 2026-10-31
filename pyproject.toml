@@ -106,7 +106,7 @@ max-complexity = 8 # a 12-way tie, e.g. dividend_yield._on_session, hill.stable_
 [tool.ruff.lint.pylint]
 max-args = 13 # put_roll.run_put_roll — keyword-only, which is why it is survivable
 max-positional-args = 8
-max-statements = 75 # put_roll.run_put_roll
+max-statements = 42 # scripts/order_ticket.main
 
 [tool.ruff.format]
 quote-style = "double"

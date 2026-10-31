@@ -57,7 +57,7 @@ test('the Surface refetches at the strike set on its rail', async ({ page }) => 
   await asked
 })
 
-for (const name of ['Portfolio', 'Book', 'Glossary']) {
+for (const name of ['Portfolio', 'Book', 'Pitch', 'Glossary']) {
   test(`${name} reads no shared control and gives main the full width`, async ({ page }) => {
     await page.goto('/')
     await page.getByRole('tab', { name }).click()
@@ -82,7 +82,7 @@ test('the dateline names a single position only on tabs that read one', async ({
   await page.goto('/')
   const dateline = page.locator('.pl-dateline')
   await expect(dateline).toContainText('$512.40')
-  for (const name of ['Bake-off', 'Portfolio', 'Regime', 'Glossary']) {
+  for (const name of ['Bake-off', 'Portfolio', 'Regime', 'Pitch', 'Glossary']) {
     await page.getByRole('tab', { name }).click()
     await expect(dateline, name).not.toContainText('$512.40')
     await expect(dateline, name).not.toContainText('Name')
@@ -274,11 +274,17 @@ test.describe('on a phone-width page', () => {
 
   test('no tab scrolls the page sideways', async ({ page }) => {
     // Measured once each tab's reads have landed: right after the click the
-    // panel is a loading line, which never overflows.
+    // panel is a loading line, which never overflows. networkidle alone does
+    // not wait for that -- it was reached on page load -- so a lazy tab is
+    // also waited for by its own content.
+    const rendered: Record<string, () => Promise<void>> = {
+      Pitch: () => expect(page.getByRole('heading', { level: 2, name: 'No demonstrable edge.' })).toBeVisible(),
+    }
     await page.goto('/')
-    for (const name of ['Workspace', 'Portfolio', 'Book', 'Bake-off', 'Regime', 'Surface', 'Glossary']) {
+    for (const name of ['Workspace', 'Portfolio', 'Book', 'Bake-off', 'Regime', 'Surface', 'Pitch', 'Glossary']) {
       await page.getByRole('tab', { name }).click()
       await page.waitForLoadState('networkidle')
+      await rendered[name]?.()
       const overflow = await page.evaluate(
         () => document.documentElement.scrollWidth - document.documentElement.clientWidth,
       )

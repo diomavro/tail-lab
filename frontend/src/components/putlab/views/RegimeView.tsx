@@ -1,12 +1,12 @@
 import type {
   AccuracyResponse,
-  RegimeLabel,
   RegimeTimelineView,
   VixStretchResponse,
 } from '../../../api/client'
 import { ConceptInfo } from '../ConceptInfo'
 import { fmtFixed } from '../format'
 import type { ResourceState } from '../PutLab'
+import { REGIME_FILL, REGIME_ORDER } from '../regimeColors'
 
 /* "What regime are we in?"
  *
@@ -18,13 +18,6 @@ import type { ResourceState } from '../PutLab'
  * stylesheet still carried a `.vix-panel .tile` rule with nothing rendering into
  * it; the numbers had quietly gone missing from the view they belong to.
  */
-
-const REGIME_ORDER: RegimeLabel[] = ['calm', 'elevated', 'crisis']
-const REGIME_FILL: Record<RegimeLabel, string> = {
-  calm: 'var(--ink-25)',
-  elevated: 'var(--warn-fill)',
-  crisis: 'var(--mag)',
-}
 
 const signedPct = (x: number) => `${x >= 0 ? '+' : '−'}${Math.abs(x * 100).toFixed(2)}%`
 

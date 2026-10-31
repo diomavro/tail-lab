@@ -11,7 +11,7 @@ VENV := .venv
 PY := env -u PYTHONPATH $(VENV)/bin/python
 PIP := env -u PYTHONPATH $(VENV)/bin/pip
 
-.PHONY: setup lint format typecheck import-lint test check cov-floors ingest-vix ingest-vix-complex ingest-ohlcv ingest-cboe-strategy ingest-rates ingest-tiingo-eod ingest-credit ingest-event-calendar ingest-option-quotes residual skew tail-alpha api frontend clean ingest-mpd ingest-options-expiry ingest-sp500-constituents ingest-vix-futures ingest-kaggle-spy kaggle-spy-vs-optionsdx delta-strike-gap
+.PHONY: setup lint format typecheck import-lint test check cov-floors ingest-vix ingest-vix-complex ingest-ohlcv ingest-cboe-strategy ingest-rates ingest-tiingo-eod ingest-credit ingest-event-calendar ingest-option-quotes residual skew tail-alpha api frontend clean ingest-mpd ingest-options-expiry ingest-sp500-constituents ingest-vix-futures ingest-kaggle-spy kaggle-spy-vs-optionsdx delta-strike-gap pitch-evidence pitch-evidence-current
 
 help:
 	@echo "Targets:"
@@ -34,12 +34,14 @@ help:
 	@echo "  ingest-sp500-constituents  Live point-in-time S&P 500 membership fetch -> bronze (network; not run in CI)"
 	@echo "  ingest-mpd   Live Minneapolis Fed MPD fetch -> bronze, whole market family (network; not run in CI)"
 	@echo "  ingest-vix-futures  Live VX futures term structure fetch -> bronze (keyless; network; not run in CI)"
-	@echo "  ingest-option-chain  TODAY's put wing from Cboe -> bronze (CHAIN_SYMBOLS=... ; network; UNRECOVERABLE if skipped)"
+	@echo "  ingest-option-chain  TODAY's put + call wings from Cboe -> bronze (CHAIN_SYMBOLS=... ; network; UNRECOVERABLE if skipped)"
 	@echo "  greeks-check Score our greeks vs the exchange's own (read-only; needs a chain snapshot)"
 	@echo "  ingest-optionsdx  Hand-downloaded optionsDX chains -> bronze (OPTIONSDX_SYMBOL=vix; local corpus, no network)"
 	@echo "  ingest-kaggle-spy  Hand-downloaded Kaggle SPY year -> data/vendor parquet (YEAR=2023; OFFLINE cross-check, never served)"
 	@echo "  kaggle-spy-vs-optionsdx  2023 vendor-disagreement report, Kaggle vs optionsDX (read-only; skips if either is absent)"
 	@echo "  delta-strike-gap  Model (realised-vol) vs market (implied-vol) delta strikes from the optionsDX corpus (SYMBOLS='spy qqq' by default; read-only, offline; docs/adr/0029)"
+	@echo "  pitch-evidence-current  Fail unless HEAD contains origin/main and pitch_evidence.json names its src/ tree and script blob (run before merge)"
+	@echo "  pitch-evidence  Real-quote put study -> frontend/src/content/pitch_evidence.json, the Pitch tab's figures (reads the lake; AS_OF=YYYY-MM-DD)"
 	@echo "  api          Run FastAPI on :8000 with auto-reload"
 	@echo "  frontend     Run the Vite dev server"
 	@echo "  clean        Remove caches and build artifacts"
@@ -140,7 +142,8 @@ ingest-rates:
 ingest-tiingo-eod:
 	TAIL_LAB_REPO=$(CURDIR) ./scripts/weekly_tiingo_refresh.sh; status=$$?; tail -n 20 .tiingo-refresh.log; exit $$status
 
-# Forward-collects TODAY's put wing from Cboe's public CDN. Unlike every other
+# Forward-collects TODAY's put and call wings (docs/adr/0031) from Cboe's public
+# CDN, one fetch per chain. Unlike every other
 # ingest-* target this one cannot be caught up later: no free source serves a
 # retroactive chain, so a day not swept is a day lost (docs/adr/0020). The
 # scheduled workflow runs the --post half; this is the human/local path.
@@ -190,6 +193,28 @@ kaggle-spy-vs-optionsdx:
 # panel cannot reach. Prints only; skips if the corpus is absent. docs/adr/0029.
 delta-strike-gap:
 	env -u PYTHONPATH $(VENV)/bin/python scripts/delta_strike_gap.py $(SYMBOLS)
+
+# Reads the lake (the optionsDX panels, VIX, rates, Cboe indices) as of AS_OF and
+# rewrites the Pitch tab's aggregate figures. Never writes to the lake; commit
+# the JSON it produces. docs/adr/0021 (2026-10-27 amendment).
+pitch-evidence:
+	env -u PYTHONPATH PYTHONPATH=$(CURDIR)/src $(VENV)/bin/python scripts/pitch_evidence.py $(if $(AS_OF),--as-of $(AS_OF))
+
+# Run before merging a change to the Pitch, after `git fetch`: fails unless
+# HEAD contains origin/main (a squash merge then keeps HEAD's src/ tree) and
+# pitch_evidence.json names HEAD's src/ tree and scripts/pitch_evidence.py
+# blob, so the hashes the page prints name code main will have. Reads the
+# JSON with grep, not Python, so a missing .venv cannot pass for staleness.
+# Not a CI gate: a later src/ change on main is expected to make it fail.
+PITCH_JSON := frontend/src/content/pitch_evidence.json
+pitch-evidence-current:
+	@git merge-base --is-ancestor origin/main HEAD \
+		|| { echo "HEAD does not contain origin/main: git fetch, rebase, then make pitch-evidence AS_OF=..."; exit 1; }
+	@grep -q "\"src\": \"$$(git rev-parse HEAD:src)\"" $(PITCH_JSON) \
+		&& grep -q "\"script\": \"$$(git rev-parse HEAD:scripts/pitch_evidence.py)\"" $(PITCH_JSON) \
+		|| { echo "pitch_evidence.json is stale: src/ or scripts/pitch_evidence.py changed since it was generated; run make pitch-evidence AS_OF=..."; exit 1; }
+	@test -z "$$(git status --porcelain -- src scripts/pitch_evidence.py)" || { echo "src/ or scripts/pitch_evidence.py has uncommitted changes"; exit 1; }
+	@echo "pitch_evidence.json names HEAD's src/ tree and scripts/pitch_evidence.py blob, and HEAD contains origin/main"
 
 ingest-credit:
 	env -u PYTHONPATH $(VENV)/bin/python -c "from tail_lab.ingestion.credit import ingest_credit; from tail_lab.config import get_lake_store, get_settings; from tail_lab.observability import configure_logging; configure_logging(); s = [x.upper() for x in '$(SERIES)'.split(',')] if '$(SERIES)' else None; r = ingest_credit(get_lake_store(), s, api_key=get_settings().fred_api_key); print(f'committed {r.valid_rows} rows for {len(r.series_ids)} series -> {r.bronze_path} ({r.quarantined_rows} quarantined)')"

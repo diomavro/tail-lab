@@ -185,6 +185,19 @@ class LakeStore(ABC):
     def query(self, sql: str) -> pd.DataFrame:
         """Run a read-only SQL query (DuckDB) over the lake's Delta tables."""
 
+    @abstractmethod
+    def bronze_relation_as_of(self, dataset: str, as_of: dt.date, *, history: bool = False) -> str:
+        """A parenthesised DuckDB relation over bronze known as of ``as_of``,
+        for :meth:`query` to aggregate without materialising the rows.
+
+        Default: the one snapshot :meth:`read_bronze_as_of` would resolve.
+        ``history=True``: every partition ingested on or before ``as_of`` --
+        for forward-collected datasets where each partition is one session
+        (``option_chain_snapshot``). Both stay point-in-time: no row from a
+        partition ingested after ``as_of`` is in the relation. Raises
+        ``LookupError`` like :meth:`read_bronze_as_of`.
+        """
+
 
 def _strip_scheme(endpoint_url: str) -> str:
     """DuckDB's S3 secret ``ENDPOINT`` (and ``pyarrow.fs.S3FileSystem``'s
@@ -549,6 +562,16 @@ class DeltaLakeStore(LakeStore):
         if table is None:
             raise LookupError(f"no {layer} data for dataset {dataset!r}")
         return table.to_pandas()
+
+    def bronze_relation_as_of(self, dataset: str, as_of: dt.date, *, history: bool = False) -> str:
+        table_uri = self._table_uri(self._bronze_table_key(dataset))
+        snapshot = self._resolve_bronze_snapshot(table_uri, dataset, as_of)
+        op = "<=" if history else "="
+        uri = table_uri.replace("'", "''")
+        return (
+            f"(SELECT * FROM delta_scan('{uri}') "
+            f"WHERE CAST({_INGEST_DATE_COL} AS DATE) {op} DATE '{snapshot.isoformat()}')"
+        )
 
     def query(self, sql: str) -> pd.DataFrame:
         con = duckdb.connect(database=":memory:")

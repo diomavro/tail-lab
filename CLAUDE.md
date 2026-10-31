@@ -100,7 +100,7 @@ them.
   `cdn-api.cboe.com/api/global/delayed_quotes/options/SPY.json`'s `last-modified`
   before blaming the code.
 - **Surfaces are named after desk functions** (`docs/adr/0021`): Screen, Tape,
-  Bake-off, Prior Art, Carry Budget, Regime. Code layers keep their plumbing
+  Bake-off, Prior Art, Carry Budget, Regime, Pitch. Code layers keep their plumbing
   names; anything a human reads takes a desk word or argues for a new one in an
   ADR. "Leaderboard", "dashboard" and "panel" are not desk words.
 - **A strike is picked by moneyness OR by delta, and only two surfaces offer delta**

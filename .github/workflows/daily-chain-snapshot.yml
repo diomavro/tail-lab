@@ -1,7 +1,8 @@
 name: Daily option-chain snapshot
 
-# Forward-collects the put wing across the tradable set and commits it to
-# bronze (docs/adr/0020, docs/DATA_CONTRACTS.md #6).
+# Forward-collects both wings across the tradable set and commits each to its
+# own bronze dataset: puts, and calls since docs/adr/0031 (docs/adr/0020,
+# docs/DATA_CONTRACTS.md #6).
 #
 # THIS IS THE ONE WORKFLOW WHOSE MISSED RUNS CANNOT BE REPAIRED. Every other
 # source here serves history on demand — a skipped FRED or Yahoo pull is a
@@ -13,8 +14,8 @@ name: Daily option-chain snapshot
 # anything else (.github/workflows/daily-agent.yml).
 #
 # Least-privilege, and split at its natural seam exactly like the verdict
-# sweep: the credential-free half (fetch Cboe's public CDN, slice to the put
-# wing) runs here; the live app holds the object-storage keys and does the
+# sweep: the credential-free half (fetch Cboe's public CDN, slice to the two
+# wings) runs here; the live app holds the object-storage keys and does the
 # write. CI therefore needs ONE bearer token and no data credentials.
 
 on:
@@ -49,7 +50,7 @@ jobs:
   snapshot:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
         with:

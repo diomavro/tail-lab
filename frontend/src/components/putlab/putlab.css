@@ -486,6 +486,8 @@
 .pl-table .dimmer { color: var(--ink-45); }
 .pl-table .bold { font-weight: 600; }
 .pl-table .nowrap { white-space: nowrap; }
+/* An ISO date in prose: Chromium breaks after its hyphens ("2020-02-" / "21"). */
+.pl-date { white-space: nowrap; }
 .pl-scroll { overflow-x: auto; }
 .pl-scroll-y { max-height: 460px; overflow-y: auto; }
 /* Eleven columns of figures: a step down from the shared table size. */
@@ -1451,3 +1453,96 @@
    9.5:1 dark), not the table default --ink-45 (2.6:1 on light paper). Row
    headers (.pl-explain-rowhead, above) read in full --ink on top of this. */
 .pl-explain .pl-table th { white-space: normal; color: var(--ink-70); }
+
+/* ---------------------------------------------------------------- pitch --- */
+/* A reading page: one measure wide, tables scroll inside .pl-scroll. */
+.pl-pitch { max-width: 980px; }
+.pl-pitch h3 { font-size: 19px; margin-bottom: var(--space-2); }
+.pl-pitch .pl-note { margin: var(--space-2) 0; }
+.pl-pitch .pl-table { margin: var(--space-2) 0; }
+.pl-pitch-list { font-size: 14px; line-height: 1.55; max-width: 80ch; padding-left: 1.3em; }
+.pl-pitch-list li { margin-bottom: var(--space-2); }
+.pl-pitch code {
+  display: inline;
+  font-size: 12.5px;
+  line-height: inherit;
+  padding: 0 3px;
+  color: var(--ink);
+  background: var(--paper-2);
+  overflow-wrap: anywhere;
+}
+.pl-pitch-short { display: none; }
+@media (max-width: 640px) {
+  .pl-pitch-long { display: none; }
+  .pl-pitch-short { display: inline; white-space: nowrap; }
+}
+/* A lake snapshot id is long and unbroken: let it wrap. On a phone the data
+   table stacks, one dataset per block with each cell labelled, so "What it
+   is" and "Known gaps" are read without scrolling sideways past the id. */
+.pl-pitch .pl-pitch-id { overflow-wrap: anywhere; max-width: 14em; font-size: 12px; }
+@media (max-width: 640px) {
+  .pl-pitch-stack thead { display: none; }
+  .pl-pitch-stack, .pl-pitch-stack tbody, .pl-pitch-stack tr, .pl-pitch-stack td { display: block; }
+  .pl-pitch-stack tr { padding: var(--space-2) 0; border-bottom: 1px solid var(--rule); }
+  .pl-pitch-stack td { white-space: normal; padding: 2px 0; max-width: none; border: 0; }
+  /* Outranks the 14em cap above, so a stacked id wraps at the row's width
+     and its snapshot date stays whole. */
+  .pl-pitch .pl-pitch-stack .pl-pitch-id { max-width: none; }
+  .pl-pitch-stack td::before { display: block; font-size: 11px; color: var(--ink-70); text-transform: uppercase; letter-spacing: 0.04em; }
+  .pl-pitch-stack td:nth-child(1)::before { content: 'Dataset (lake snapshot)'; }
+  .pl-pitch-stack td:nth-child(2)::before { content: 'Span'; }
+  .pl-pitch-stack td:nth-child(3)::before { content: 'What it is'; }
+  .pl-pitch-stack td:nth-child(4)::before { content: 'Known gaps'; }
+  /* The schedule stacks the same way, so "A decision?" is not off-screen. */
+  .pl-pitch-sched td:nth-child(1)::before { content: 'What runs'; }
+  .pl-pitch-sched td:nth-child(2)::before { content: 'When'; }
+  .pl-pitch-sched td:nth-child(3)::before { content: 'What it produces'; }
+  .pl-pitch-sched td:nth-child(4)::before { content: 'A decision?'; }
+}
+/* On a phone the wide study tables scroll inside .pl-scroll; say so. */
+.pl-pitch-scrollhint { display: none; margin: 0; font-size: 12px; color: var(--ink-70); }
+@media (max-width: 640px) {
+  .pl-pitch-scrollhint { display: block; }
+}
+
+/* ---- Marks: where the lake holds a quote ---------------------------------- */
+.pl-marks-controls { display: flex; flex-wrap: wrap; gap: var(--space-3); align-items: flex-end; margin-bottom: 20px; }
+.pl-marks-field { display: flex; flex-direction: column; gap: 4px; border: 0; padding: 0; margin: 0; }
+.pl-marks-field select {
+  font: inherit;
+  padding: 5px 8px;
+  border: 1px solid var(--rule);
+  border-radius: var(--radius-md);
+  background: var(--paper);
+  color: var(--ink);
+}
+.pl-marks-legend { display: flex; flex-wrap: wrap; gap: 6px 14px; font-size: 11.5px; color: var(--ink-70); margin-bottom: 8px; }
+.pl-marks-legend i { display: inline-block; width: 10px; height: 10px; margin-right: 4px; vertical-align: -1px; border-radius: 2px; }
+.pl-marks-legend .pl-marks-blank { background: var(--paper-2); box-shadow: inset 0 0 0 1px var(--rule); }
+.pl-marks-legend .pl-marks-hatch {
+  background: repeating-linear-gradient(45deg, var(--ink-25) 0 1.5px, var(--paper) 1.5px 4px);
+}
+.pl-marks-wrap { position: relative; }
+.pl-marks-grid { display: block; width: 100%; min-width: 720px; height: auto; }
+.pl-marks-axis { font-size: 9px; fill: var(--ink-70); font-variant-numeric: tabular-nums; }
+.pl-marks-row { cursor: pointer; }
+.pl-marks-row.is-focus .pl-marks-axis { fill: var(--ink); font-weight: 600; }
+.pl-marks-focus { stroke: var(--ink); stroke-width: 1.2; pointer-events: none; }
+.pl-marks-price line { stroke: var(--ink-70); stroke-width: 2; }
+.pl-marks-price text { font-size: 9px; fill: var(--ink-70); }
+.pl-marks-tip {
+  position: absolute;
+  pointer-events: none;
+  background: var(--paper);
+  color: var(--ink);
+  border: 1px solid var(--rule);
+  border-radius: var(--radius-md);
+  padding: 6px 8px;
+  font-size: 12px;
+  white-space: nowrap;
+  box-shadow: 0 2px 8px color-mix(in srgb, var(--ink) 12%, transparent);
+  z-index: 2;
+}
+.pl-marks-row:focus { outline: none; }
+.pl-marks-rowring { stroke: none; pointer-events: none; }
+.pl-marks-row:focus-visible .pl-marks-rowring { stroke: var(--cyan); stroke-width: 2; }

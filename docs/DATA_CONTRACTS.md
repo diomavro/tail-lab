@@ -221,13 +221,11 @@ cross-asset sensitivity metrics.
 (`BAMLC0A0CM`). Free, keyed; same `FRED_API_KEY` repo secret as #3.
 `ingestion/credit.py` + `make ingest-credit` (`SERIES=` override) ship the
 adapter, requesting FRED's ALFRED-style full vintage history exactly as
-`ingestion/rates.py` does. **Not yet run against prod** — no `credit`
-bronze partition exists yet. `research/regimes/timeline.py` now reads HY OAS
-(`load_credit_oas`) and escalates the VIX-only regime label with it
-(`compute_regime_timeline`) whenever a credit snapshot exists, falling back
-to the VIX-only label until then — so this dataset goes live for the
-cockpit's regime panel the moment the live run above happens, with no
-further code change.
+`ingestion/rates.py` does. First ingested 2026-09-23 (`HUMAN_TODO.md`).
+`research/regimes/timeline.py` reads HY OAS (`load_credit_oas`) and
+escalates the VIX-only regime label with it (`compute_regime_timeline`)
+whenever a credit snapshot exists, falling back to the VIX-only label
+otherwise.
 
 **Cadence.** Daily.
 
@@ -240,7 +238,11 @@ different research code and may diverge in validation constraints later
 **Bronze partition key.** `source_id=fred/series_id=<id>/obs_date=<YYYY-MM-DD>/`.
 
 **Point-in-time rule.** Same vintage requirement as #3 — FRED credit
-spread series are revised too.
+spread series are revised too. **But the vintage does not date the first
+print:** every `BAMLH0A0HYM2` row carries `vintage_date == obs_date`, while
+ICE's day-*t* spread is posted the next morning. The regime timeline
+therefore counts a print only from the session after its `obs_date`
+(`research/regimes/timeline.py:CREDIT_PUBLICATION_LAG`).
 
 ---
 
@@ -351,11 +353,12 @@ regimes (`.github/workflows/daily-chain-snapshot.yml`). An empty sweep exits
 non-zero and turns the workflow red: this is the one scheduled job here that
 may not legitimately do nothing.
 
-**The slice.** Puts only, strikes within 0.40-1.05 of spot, tenors 0-180
-days. SPY's full document is 5.9 MB / 13,288 contracts; the slice is ~3,600
-rows. Bands match §"real historical option quotes" deliberately, so the
-vendor back-history and this forward collection union on their shared columns
-with no translation layer.
+**The slice.** Puts (this dataset); calls go to
+`option_chain_call_snapshot`, `docs/adr/0031`. Strikes within 0.40-1.05 of
+spot, tenors 0-180 days. SPY's full document is 5.9 MB / 13,288 contracts;
+the slice is ~3,600 rows. Bands match §"real historical option quotes"
+deliberately, so the vendor back-history and this forward collection union on
+their shared columns with no translation layer.
 
 **Schema — `OptionChainSnapshotSchema`** (`contracts/option_chain.py`). The
 first nine columns are exactly `OptionQuoteSchema`:
@@ -410,6 +413,43 @@ collected, `stale_days`, and `missing_symbols` — anyone in
 alone cannot see (a sweep landing 23 of 24 chains is not stale). Public, and
 read by the daily agent before it picks any work.
 
+### The call wing (ADR 0031)
+
+**Status: collected from the first session after `docs/adr/0031` is
+deployed.** Every earlier session is put-only for good.
+
+Dataset `option_chain_call_snapshot` (quarantine
+`option_chain_call_snapshot__quarantine`), sliced from the SAME Cboe fetch as
+the puts. Calls with strikes within **0.80-2.50** of spot, tenors 0-180 days,
+the same 24 symbols. Schema `OptionCallChainSnapshotSchema` is the table above
+with one change: `delta` is **0 to 1** when present. Same key, same one
+partition per session, same zero-fill rule, same session plan and floor. It
+is written by `POST /api/ingest/option-chain-calls` or by the `--local` sweep.
+Both writers quarantine every row of a symbol when more than a fifth of its
+rows with a non-null, non-zero delta carry the other wing's sign (`Wing.split`,
+`MAX_WRONG_SIGN_SHARE`): a null delta passes both contracts, so the
+contracts alone cannot keep the wings apart.
+
+**Never union it** with `option_chain_snapshot`, `option_quotes` or
+`optionsdx`. They share the key `(underlying, quote_date, expiration,
+strike)` and none has a `right` column, so a concat silently files calls as
+puts.
+
+**A null call delta is usually the zero-fill rule, not a parse fault.**
+Measured on the 2026-10-26 session: 1,096 of 23,376 in-band calls carried
+`iv = 0` (HYG 97 of 370, SPY 172, GLD 54). Most were ITM, some with
+real-looking deltas. The rule above nulls their delta and theo anyway.
+
+**What it is for:** an approximate parity-implied forward / `q` per expiry
+(approximate, because every name is American-style, so parity is a pair of
+bounds), risk reversals, and a model-free variance strip that is no longer
+truncated to one wing (`docs/PRIOR_ART.md` §16, `AGENT_TODO.md` PG1). No
+consumer reads it yet.
+
+**No freshness route yet.** The status route above covers puts only. A
+calls-only failure is visible as a red `daily-chain-snapshot` run, whose
+annotation reads `calls only; puts landed`.
+
 ### Deltas from the original plan (kept for the record)
 
 The plan in this section before 2026-08-26 specified Yahoo/`yfinance` as the
@@ -420,6 +460,11 @@ and the call wing doubles storage to answer nothing currently asked — the
 dispersion question in `docs/END_STATE.md` §4 Q7 is the one that would need
 it, and it can widen the slice when it lands), and the `option_quotes`-
 compatible column set so the two quote datasets concatenate.
+
+*2026-10-27:* the "answers nothing currently asked" premise above is
+superseded by `docs/adr/0031`. PG1 / `docs/PRIOR_ART.md` §16 now need the call
+wing. It is collected as a separate dataset rather than through the rejected
+`option_type` column.
 
 ---
 
@@ -521,8 +566,9 @@ different vendor since (`docs/DISCOVERIES.md` #2).
 
 **Optional by construction.** This dataset is licence-limited (cleared for
 private research use only, `HUMAN_TODO.md`) and its upstream has vanished once
-already. **Nothing in `research/` or `api/` may require it.** The one consumer,
-`research/skew.py`, is a hand-run measurement that is allowed to fail with
+already. **Nothing in `research/` or `api/` may require it.** Its two consumers,
+`research/skew.py` and `scripts/pitch_evidence.py` (the Pitch's 2008-09 crisis
+section), are hand-run measurements that are allowed to fail with
 `LookupError` when the snapshot is absent — unlike the accuracy panel, which
 must never go silent.
 

@@ -237,12 +237,16 @@ client, `src/api/client.ts`, hand-mirrors `api/schemas.py`; there is no separate
 response shapes).
 
 The app is the **Put Lab workspace** and nothing else. `PutLab.tsx` owns the
-shared controls, the active tab, the sheet, and every cached read; the seven tabs
+shared controls, the active tab, the sheet, and every cached read; the eight tabs
 are thin views under `components/putlab/views/` (the Workspace's ranking strip
 sorts by fragility or by best return, `docs/adr/0028` 2026-10-11 amendment). `ParamRail` is the *only*
 control surface for the shared controls — do not add a second one (`docs/adr/
 0017`). It renders only the sections the open tab reads (`rail.ts`, `docs/adr/
-0028`); a tab that reads none has no rail. Panels live flat in `components/putlab/` and take data as props; the
+0028`); a tab that reads none has no rail. One tab is not an API read: the
+**Pitch** renders a committed study, `src/content/pitch_evidence.json`, written
+offline by `make pitch-evidence` from the lake, so its figures are bundled at
+build time and change only when that file is regenerated and committed
+(`docs/DATA_FLOW.md` §2). Panels live flat in `components/putlab/` and take data as props; the
 views compose them.
 
 Reads go through `useCachedResource` in `PutLab.tsx`: per-resource,

@@ -56,7 +56,7 @@ rail.ts` (`RAIL`), with the reason for each row beside it:
 | Bake-off | strike, tenor, years |
 | Surface | universe, strike (the anchor), tenor (picks the expiry) |
 | Regime | strike, tenor (pick the program the residuals replicate) |
-| Portfolio, Book, Glossary | none |
+| Portfolio, Book, Glossary, Pitch | none |
 
 There is still **one** `PutLabControls` state and one rail component. Nothing
 is duplicated into a view, so a Recommendations click still opens the Workspace

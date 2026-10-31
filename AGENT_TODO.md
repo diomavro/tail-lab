@@ -18,6 +18,50 @@ a large one strictly in order.
 
 ## Next increments
 
+- [ ] **The credit half of the regime label is not point-in-time** (found
+      2026-10-30 while answering "is the regime computed only with data we'd
+      have had?"). Two faults, measured against the lake:
+      (a) every `BAMLH0A0HYM2` row has `vintage_date == obs_date`, but an
+      OAS print for day *t* is published the next morning -- so
+      `compute_regime_timeline`'s ffill escalates day *t* on a number nobody
+      had at *t*'s close. Lag credit by one session before aligning.
+      (b) HY OAS starts **2023-10-30** (FRED's three-year ICE window), so the
+      label is VIX-only for 2010-2023 and VIX+credit after: the definition
+      changes mid-sample, and the window slides, so the same past day can
+      relabel as `as_of` moves. Candidate: Moody's `BAA10Y` (FRED, 1986+, not
+      ICE-licensed) as the credit input, thresholds re-documented against its
+      own history. *Success*: a test where a credit spike printed on *t*
+      only escalates *t+1*, and one regime definition across the whole
+      optionsDX span.
+      **(a) done 2026-10-30**: `timeline.CREDIT_PUBLICATION_LAG` re-dates
+      each HY OAS label one calendar day before the ffill, so day *t*'s
+      print first counts on the next VIX session (Friday's on Monday);
+      pinned by `test_compute_regime_timeline_credit_spike_escalates_only_the_next_session`.
+      It does not read `vintage_date`: if FRED's vintages ever start dating
+      the real publication, take the later of the two. **(b) is still open.**
+- [ ] **Unlock 2010-2016 for real-quote backtests.** Marks shows optionsDX
+      SPY/QQQ quotes from 2010/2012, but `ohlcv_*` starts 2016-10 (Nasdaq's
+      ~10-year window), so six years of quotes -- including Aug 2011 and
+      Aug 2015 -- never reach a roll. `tiingo_eod` already carries ~33 years
+      of `adjClose`; extend the price path from it (or the panel's own
+      as-traded `spot`, minding the split basis in `contracts/optionsdx.py`).
+      *Success*: the Marks price-series line starts at or before 2010 for SPY.
+- [ ] **VIX/VIX3M as a regime escalation.** `vix_complex` already holds
+      VIX3M from 2009; backwardation (VIX > VIX3M) is a sharper stress
+      signal than the VIX level and needs no new data, unlike the "VIX
+      futures term-structure ingestion" item (still `[~]`: no live bronze). Same shape as credit: documented thresholds, hysteresis,
+      most-severe-wins.
+- [ ] **Re-ingest optionsDX wider than 0.60-1.02 moneyness / 120 days**,
+      disk permitting (the raw 7z archives are local in
+      `data/vendor/optionsdx/`). Marks hatches everything past 40% out
+      before 2026 and no LEAP-tenor put exists before the forward sweep. Pair
+      with "Chunked bronze write, so SPX can be ingested at all" (Operational).
+- [ ] **Marks follow-ups** (`research/quote_coverage.py`): add the call wing
+      once `option_chain_call_snapshot` has partitions (ADR 0031); if two
+      sources ever cover the same month, merge them -- today `summarise_source`
+      and the view assume they never overlap (true: optionsDX ends 2023-12,
+      the sweep began 2026-08).
+
 - [x] **The strike × tenor grid scrolls a phone page sideways on real data**
       (found 2026-10-11 while screenshotting the Workspace against a two-name
       scratch lake). At 390px, `SweepGrid`'s `.pl-sweep-cell` buttons whose
@@ -1564,6 +1608,7 @@ read-only report; copy its shape (a script, not an inline `python -c`).
 |---|---|---|
 | `optionsdx_quotes_spy` | 2010-01-04 → 2023-12-29, 3,276,579 rows | per-symbol tables (`optionsdx_quotes_qqq` from 2012-01-03, `…_nvda` and `…_tsla` from 2016-01-04, `…_vix` from 2010; no SPX); **one** `ingest_date` partition (2026-09-03) holds the whole panel; columns `underlying, quote_date, expiration, strike, bid, ask, volume, spot, iv, delta, vega, theta` — **no `open_interest`** (so `marks.MIN_OPEN_INTEREST` cannot apply — see P2's hygiene predicate); `spot` is **as-traded**, not split-adjusted (NVDA differs from OHLCV by exactly 10); a blank `P_IV` means the vendor's solver failed and the rest of that row's greeks are garbage (`CLAUDE.md`) |
 | `option_chain_snapshot` | 2026-08-26 → today, forward daily, 24 symbols | put wing only (moneyness 0.40–1.05, tenor ≤ 180 d); has bid/ask/OI/iv/delta; Cboe zero-fills greeks it cannot compute and the adapter maps those to null; one partition per session |
+| `option_chain_call_snapshot` | first session after `docs/adr/0031` deploys → today, forward daily, 24 symbols | call wing (moneyness 0.80–2.50, tenor ≤ 180 d), same columns, `delta` in [0, 1]; same zero-fill rule; **never union it with the put datasets** (shared key, no `right` column) |
 | `mpd` | 2006-01-12 → 2026-08-26, 71,520 rows (all markets) | Minneapolis Fed risk-neutral densities; the S&P markets `sp6m` / `sp12m` run **2007-01-12** → (`contracts/mpd.py`); columns `market, obs_date, maturity_months, mu, sd, skew, kurt, p10, p50, p90, prob_large_decline, prob_large_increase`; in the local daily refresh since 2026-09-21 |
 | `ohlcv_<sym>` | rolling ~5 years (Tiingo/Nasdaq) | **useless for the realised leg**: `docs/DISCOVERIES.md` §12 — no name has a measurable Karamata region on it |
 
@@ -2403,7 +2448,9 @@ with the evidence — never the implementation.
       **Prerequisite nobody has measured (`docs/PRIOR_ART.md` §16):** the Cboe
       sweep is PUT-WING ONLY, so a naive variance strip is truncated by
       construction and a per-name model-free IV is biased LOW by an unknown
-      amount. `m-g-h/R.MFIV` (MIT, R) implements Jiang & Tian (2007)'s
+      amount. *2026-10-27:* calls are collected from the first `docs/adr/0031`
+      session on (`option_chain_call_snapshot`); the truncation holds for every
+      earlier session. `m-g-h/R.MFIV` (MIT, R) implements Jiang & Tian (2007)'s
       truncation/discretisation correction alongside a decomposed CBOE white
       paper; the implied leg has to be model-free or the flat-vol error this
       item exists to escape is simply reimported. Needs an
@@ -2465,6 +2512,35 @@ with the evidence — never the implementation.
       `PortfolioResult`'s precedent) and stamp `code_sha` on at the route via
       `model_copy`. Left as follow-ups rather than one large PR across six
       endpoints and their frontend surfaces.
+
+## Design-review advisories not yet acted on (logged 2026-10-30)
+
+Advisory notes from the PASS reviews of #171, #172, #175 and #177, which
+automerge landed before anyone read them. None is a bug today.
+
+- [ ] **Marks (#175):** `quote_coverage.summarise_source` takes `sessions`
+      that its one caller derives from `presence` -- derive it inside; the
+      module docstring calls its bar "the same bar a quote must clear to mark
+      a position", but it is `quote_fills._is_liquid`'s (marks' minus open
+      interest); `api/marks_routes.py` checks `COVERAGE_SYMBOLS` and then
+      `compute_quote_coverage` checks it again -- map the `ValueError` to 422
+      instead; `MarksView.tsx`'s `FALLBACK_SYMBOLS` hand-copies the symbol
+      list; a rail asset outside coverage shows "failed: 422", not the
+      friendly 404 message.
+- [ ] **Pitch evidence (#172):** `scripts/pitch_evidence.py` patches
+      `marks.MAX_RELATIVE_SPREAD` with `unittest.mock`, which works only
+      because of where that constant is read (the same patch would do
+      nothing on `quote_fills`) -- give the liquidity predicate a
+      `max_relative_spread` argument. Its `max_drawdown` is the third copy
+      (`portfolio._max_drawdown`, `model_plan._max_drawdown`).
+- [ ] **Chain sweep script (#171):** `scripts/chain_snapshot.py`'s `_LABEL`
+      duplicates the `right -> wing` mapping on `Wing`; `Outcome.UNSETTLED`
+      changes one printed line only; `_run_local` and `main` both end in
+      `_finish(...)` but each drives its own per-wing loop -- one driver over
+      a `wing -> Outcome` callable would serve both. Weekly-cleanup material.
+- [ ] **Image smoke check (#177, needs a human: touches `.github/`):** no CI
+      step runs `LOAD delta` offline as the image's runtime user, so the
+      prod-only Marks 503 can come back if the `USER` line moves.
 
 ## Design-review advisories not yet acted on (found 2026-09-07)
 
@@ -2824,6 +2900,28 @@ the number to move.
       union of (a) today's top-K legs and (b) a stable core, or widen toward
       the full 70. Measured cost of the current 24 is 4.68 MB / 25s, and the 46
       additions are mostly thin chains (`docs/adr/0020`).
+      *2026-10-27:* each added symbol now costs both wings (calls ~1.35x the
+      put rows, `docs/adr/0031`). Check any widening against the `memory.peak`
+      margin ADR 0031's body-size gate measured, not the put body alone.
+- [ ] **Parity-implied forward / `q` from the call wing, against
+      `tiingo_eod`** (`docs/adr/0031`). Near-ATM put-call pairs per expiry from
+      `option_chain_snapshot` + `option_chain_call_snapshot` (join on the key,
+      by dataset, never a union). **American caveat:** every name is
+      American-style, so parity gives bounds, not an equality; the
+      early-exercise premium peaks around ex-dividend dates and for ITM puts.
+      Use short-tenor near-ATM strikes, or a de-Americanised (binomial) fit.
+      Do not promise a fix of the FXI / HYG / TLT `q` weakness.
+- [ ] **Risk-reversal regime signal** from the two wings (25-delta call
+      minus put IV per name and tenor), tested as a regime input beside VIX
+      and credit (`docs/adr/0031`).
+- [ ] **Call-wing health: verify, alert and the daily agent.**
+      `chain_sweep_verify.sh` and `GET /api/ingest/option-chain/status` cover
+      puts only, so a calls-only loss is visible only as a red
+      `daily-chain-snapshot` run. `chain_sweep_alert.sh` fires its "option
+      chain was NOT captured" toast on any non-zero `--local` exit, which is
+      false about the puts when only the calls failed; it must quote the
+      script's `calls only; puts landed` line. Then extend the daily agent's
+      health check (`docs/AGENT_MISSION.md`, guarded) to the call dataset.
 - [ ] **The screen optimises toward untradeable contracts, and this is the
       deep one.** All 3 collected legs came back `illiquid` — KRE bid 0.00 / OI
       0, XLE bid 0.01 ask 0.20 (a 190%-of-mid spread), XLF bid 0.00. That is
@@ -2964,7 +3062,10 @@ ever go down.
       the 75 the ratchet still names it for. The actual `max-statements`
       worst offender today is `portfolio.py:run_portfolio` at 51 — lowering
       that ratchet **75 -> 51** needs no work on `run_put_roll` at all, just
-      a PR confirming the number and updating the comment. `max-args=13` is
+      a PR confirming the number and updating the comment. **Done (weekly
+      cleanup, 2026-10-18):** by then `run_put_roll` was back at 50 and the
+      worst; dropping its 11 `x = acc.x` read-backs took it to 39 and
+      `max-statements` **75 -> 42** (`scripts/order_ticket.main`). `max-args=13` is
       still genuinely pinned by `run_put_roll`'s own signature, unreduced:
       bundling the strategy-spec keywords (`moneyness_pct`, `tenor_weeks`,
       `lookback_years`, `rate`, `commission_per_contract`, `spread_scale`)
@@ -3187,7 +3288,9 @@ serve; `docs/adr/0021` is why the risk-shaped one comes first.
       the headwind every S1 roll fights and the platform has never once
       measured it. Needs only what is already ingested (OHLCV realized vol
       + the vol complex; per-name IV arrives with `docs/adr/0020`'s
-      collection). Then the payoff: a **VRP-adjusted sensitivity metric** —
+      collection). *2026-10-27:* the implied leg can use both wings from
+      `option_chain_call_snapshot`'s first session (`docs/adr/0031`); earlier
+      sessions are put-only. Then the payoff: a **VRP-adjusted sensitivity metric** —
       rank by sensitivity *per unit of premium paid over realized* rather
       than by raw sensitivity. That is the precise form of the README's
       "cheapness-adjusted variants", and it is a new column in the Screen,

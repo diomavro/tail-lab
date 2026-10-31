@@ -43,7 +43,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 90
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
 
@@ -122,12 +122,46 @@ jobs:
         run: echo "START=$(date +%s)" >> "$GITHUB_ENV"
 
       - name: Run the platform agent
+        id: agent
         # Three or more drafts waiting for Dio means stop adding more.
         if: steps.open.outputs.drafts < 3
         timeout-minutes: 80
         uses: anthropics/claude-code-action@cab360f6565aa35a51d6ce9e43f1f4287c0a32ea # v1
         env:
           GH_TOKEN: ${{ github.token }}
+          # The action stops reading at the FIRST `result` message
+          # (base-action/src/run-claude-sdk.ts: "break"). A background task
+          # lets the model end its turn early to wait, which emits that
+          # result: the job then reports success with the work unfinished and
+          # nothing pushed. In the pinned CLI 2.1.289 a main-agent Agent call
+          # runs in the background BY DEFAULT: its launch rule is async
+          # unless the call passes run_in_background: false (only one
+          # built-in agent type is exempt, not adversarial-reviewer), and the
+          # tool's own description invites leaving it async. Whether step 6b's
+          # three parallel reviewers stay async is the model's choice from run
+          # to run: 10-13 (job 38415724619, #164's 567816b, the same 6b loop,
+          # CLI 2.1.289 and action cab360f) ran two full rounds and opened #166.
+          # That is why the fix is the variable below, not a prompt line, and
+          # why the record step's async flag is the check that confirms it on
+          # the first run after merge.
+          # The timing says async work ended the later runs: the CLI waits up to 2.0 s
+          # ("exit-handoff agent flush timeout") when work is still live at
+          # exit, and the gap from the result line to "Log saved" is 0.26 s
+          # and 0.19 s on 10-12 and 10-13 (#166 was opened on 10-13) but
+          # 2.00-2.07 s on all 13 runs from 10-14 to 10-26 -- live work at
+          # exit every time, so not a quiet "nothing proposed". Only 10-25's
+          # "Cleaning up orphan processes" also killed a shell (a running
+          # `npm exec playwright test` and its dev server); in-process
+          # subagents leave no orphan. Bash commands that outlive their
+          # timeout are backgrounded too. The variable below makes the CLI
+          # treat background tasks as disabled, which turns off all of these
+          # (`backgroundTasksDisabled` feeds the async decision); an
+          # over-long command is then KILLED at its timeout, so the default
+          # is raised past CI's pytest step (125 s and 135 s on 10-13 and
+          # 10-25) and the maximum fits step 6's full suite.
+          CLAUDE_CODE_DISABLE_BACKGROUND_TASKS: "1"
+          BASH_DEFAULT_TIMEOUT_MS: "300000"
+          BASH_MAX_TIMEOUT_MS: "1800000"
           # The ONE new secret this agent gets, alongside the OAuth token
           # above — read-only feedback pull + resolving issues it fixes.
           # Deliberately NOT FRED/AWS/deploy creds (least privilege).
@@ -166,6 +200,7 @@ jobs:
                    so it drops out of the open list. If an issue needs a human decision or a
                    constitution change, leave it open (do NOT resolve it) and say why in the PR
                    body or as a note — resolving is a claim that it's actually fixed.
+
             2. Check the forward collection is alive, BEFORE picking any work:
                  curl -s https://tail-lab.fly.dev/api/ingest/option-chain/status
                This is the one dataset that cannot be backfilled — nobody sells a retroactive
@@ -174,6 +209,7 @@ jobs:
                daily sweep is broken, and diagnosing it is the highest-value thing available
                to you today — ahead of whatever is at the top of `AGENT_TODO.md`. Say so in
                the PR. If it is fresh, note the last session and move on.
+
             2a. Read what open agent PRs already cover:
                   cat "$RUNNER_TEMP/open-prs.txt"
                 Each entry shows a PR's title, draft flag, files, and its `Feedback-issues:` and
@@ -184,6 +220,7 @@ jobs:
                 claimed fixed by a PR Dio merged: check on main that it really is fixed; if so,
                 resolve it with the step-1 call instead of fixing it again, and if not, treat it
                 as open.
+
             2b. If `$SCRATCH_RUN` is set, skip this step (verification runs must not act on
                 real advisories). Otherwise, pick up the design reviewer's unaddressed findings:
                   gh pr list --state merged --limit 6 --json number,headRefName \
@@ -200,6 +237,7 @@ jobs:
                 it and say so; otherwise add it to `AGENT_TODO.md` so it stops being
                 invisible. Ignoring one silently is the failure mode this step exists to
                 end. A finding already fixed needs nothing — check before you act.
+
             3. Read `docs/AGENT_MISSION.md`, `README.md`, `ARCHITECTURE.md`, `docs/STANDARDS.md`,
                `docs/END_STATE.md` and `AGENT_TODO.md`. `END_STATE.md` §4 is where the
                documented research questions live — step 4 asks you to point at one, so you
@@ -207,24 +245,28 @@ jobs:
                (`docs/AGENT_MISSION.md` §"The exception: work that expires"): work whose cost
                rises the longer it waits, or whose window closes, outranks work with a bigger
                payoff today. Forward data collection is the clear case.
+
             4. Choose the SINGLE highest-value item — an open `issue` from step 1 that fits this
                run, or otherwise the top of `AGENT_TODO.md` — that (a) advances a documented
                research question or measurably sharpens the put-buying cockpit, AND (b) needs NO
                account, API key, or paid service. If an item needs a real-world credential, skip it
                (that is the human's queue). If nothing clears the value bar today, STOP and open
-               nothing — proposing nothing is a valid, expected outcome.
+               nothing — proposing nothing is a valid, expected outcome. Either way, end with the
+               decision note in step 8.
+
             5. Implement exactly that ONE item — minimal, faithful, extending the proven
                walking-skeleton patterns (do NOT invent new architecture). If it adds or
                renames anything a human reads — a view, a tile, a column header, a
                `research/` module — name it from the CLOSED desk vocabulary in
                `docs/adr/0021`: Screen, Tape, Marks, Book, Blotter, Carry, Surface, Regime,
-               Prior Art, Bake-off. "Leaderboard", "dashboard", "panel" and "tool" are not
+               Prior Art, Bake-off, Pitch. "Leaderboard", "dashboard", "panel" and "tool" are not
                desk words and describe nothing. Needing a word that is not on the list is
                fine, but it is an ADR to propose, not a name to invent in a PR. Add tests that pin
                behavior against a known/independent value per `docs/STANDARDS.md`. Respect the
                module dependency rule (import-linter enforces it). Check the item off in
                `AGENT_TODO.md` (or resolve the feedback issue per step 1). If you discover a
                real-world/account blocker, append it to `HUMAN_TODO.md` and stop that thread.
+
             6. VALIDATE before proposing — run exactly what CI runs, and do not open a red PR:
                  ruff check src tests
                  ruff format --check src tests
@@ -234,11 +276,18 @@ jobs:
                  coverage report --include="src/tail_lab/research/*,src/tail_lab/transforms/*" --fail-under=90
                and, only if you touched the frontend:
                  cd frontend && npm run typecheck && npm run build
+               Pass an explicit Bash timeout (up to 1800000 ms) for the pytest run and e2e:
+               the default is 300000 ms, and a command past its timeout is killed, not
+               backgrounded. Do not start a dev server or `make api` at all; `npm run e2e`
+               starts its own.
                If any of these fail, fix it or reduce the change until they pass. Never open a red PR.
+
             6b. REVIEW LOOP — `docs/AGENT_MISSION.md` §Workflow steps 3a and 3b, exactly: commit
                locally (do not push), run the three `adversarial-reviewer` subagents in parallel,
                re-check and fix, at most two rounds, inside the `$START` time budget. It decides
-               whether step 7's PR is a draft.
+               whether step 7's PR is a draft. Wait for every reviewer's result before you end
+               your turn: ending it while one runs ends the whole job with nothing pushed.
+
             7. Push and open ONE pull request, in that order and only now:
                  git push -u origin HEAD && gh pr create --assignee diomavro --body-file "$RUNNER_TEMP/pr-body.md" ...
                (if `gh pr create` fails, `git push origin --delete <branch>`). The branch is named
@@ -268,3 +317,267 @@ jobs:
                quietly widen everything else (`docs/adr/0022`, `docs/adr/0030`).
                Do NOT edit those — if a change needs one, describe it in the PR body / propose an
                ADR for a human.
+
+            8. DECISION NOTE — your final message, every run, whatever happened. The next workflow
+               step publishes it in this run's summary, and this repo is PUBLIC: never quote a token
+               or any secret, and refer to feedback ONLY by its id and kind -- never quote,
+               describe or paraphrase what it says. At most ten lines:
+                 Outcome: PR #<n> | draft PR #<n> | nothing proposed | stopped early
+                 Item: <the AGENT_TODO.md heading or feedback id you chose, or "none">
+                 Considered: <the items you looked at and passed over, one reason each; for a
+                   feedback item the reason is ONLY one of needs-credential | guarded-path |
+                   below-value-bar | already-done | covered-by-open-pr, never free text>
+                 Stopped at: <the step number above> because <reason>
+                 Review: <rounds run and each round's verdicts, or "not reached">
+               Do not end your turn to wait for anything: there is no later turn.
+
+      # What the run chose and why it stopped, readable on the run page. The
+      # action hides Claude's output because this repo is PUBLIC and the
+      # agent reads private feedback. Tool INPUTS can carry that feedback too
+      # (a grep pattern, a jq filter copied from it), so this prints only:
+      # the result stats, the agent's own decision note (prompt step 8,
+      # written to be public), each main-agent tool call as its name plus its
+      # file_path argument ONLY if it is plain path characters (else
+      # "(other)": a path is model-chosen text, and a hyphenated one can
+      # still spell words), a
+      # Bash command's program and subcommand ONLY when both are on the fixed
+      # allowlists in the script (anything else prints as "(other)"), or a
+      # subagent type through the same path filter -- no command text, no search pattern -- any
+      # background task (including an Agent call launched async by default),
+      # and the local git state, whose branch and file names pass the same
+      # path filter. Unpushed commit subjects are printed as written: the
+      # one remaining free-text channel besides the note. Known secrets are redacted
+      # and backticks neutralised everywhere. A diagnostics step must never
+      # turn the run red.
+      - name: Record the run's decision
+        if: always()
+        continue-on-error: true
+        env:
+          AGENT_OUTCOME: ${{ steps.agent.outcome }}
+          DRAFTS: ${{ steps.open.outputs.drafts }}
+          EXEC_FILE: ${{ steps.agent.outputs.execution_file }}
+          # Same expression as the agent step: a no_feedback run never sees it.
+          REDACT_1: ${{ !inputs.no_feedback && secrets.TAIL_LAB_FEEDBACK_TOKEN || '' }}
+          REDACT_2: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          REDACT_3: ${{ github.token }}
+          REDACT_4: ${{ steps.agent.outputs.github_token }}
+        run: |
+          f="${EXEC_FILE:-$RUNNER_TEMP/claude-execution-output.json}"
+          python3 -I - "$f" >> "$GITHUB_STEP_SUMMARY" <<'PY'
+          import json, os, re, subprocess, sys
+
+          secrets = [v for k, v in os.environ.items() if k.startswith("REDACT_") and len(v) >= 8]
+
+          def clean(text: str, limit: int) -> str:
+              for s in secrets:
+                  text = text.replace(s, "***")
+              text = text.replace("`", "'")
+              return text if len(text) <= limit else text[:limit] + " [...]"
+
+          # Only these names are ever printed for a Bash call. The model chooses
+          # the command, so a free word could be prose copied from feedback.
+          PROGRAMS = {"git", "gh", "make", "npm", "npx", "python", "python3", "pytest", "ruff",
+                      "mypy", "lint-imports", "curl", "cat", "ls", "head", "tail", "sed", "grep",
+                      "rg", "find", "jq", "wc", "echo", "mkdir", "rm", "cp", "mv", "diff", "sort"}
+          SUBCOMMANDS = {"check", "test", "lint", "typecheck", "import-lint", "cov-floors",
+                         "format", "setup", "run", "e2e", "build", "ci", "install", "status",
+                         "diff", "add", "commit", "push", "checkout", "switch", "log", "fetch",
+                         "rebase", "branch", "show", "stash", "restore", "pr", "issue", "api",
+                         "create", "edit", "view", "list", "pytest", "ruff", "mypy", "playwright"}
+
+          def program(command: str) -> str:
+              """'cd frontend && npm run e2e' -> 'npm run e2e'; prose -> '(other)'."""
+              words = command.split()
+              i = 0
+              while i < len(words):
+                  w = words[i]
+                  if w == "cd":
+                      i += 2
+                  elif w in ("&&", "env") or "=" in w:
+                      i += 1
+                  elif w == "-u":  # env -u NAME
+                      i += 2
+                  else:
+                      break
+              name = words[i].rsplit("/", 1)[-1] if i < len(words) else ""
+              if name not in PROGRAMS:
+                  return "(other)"
+              subs = []
+              for w in words[i + 1:i + 3]:
+                  if w == "-m":  # python -m pytest
+                      continue
+                  if w not in SUBCOMMANDS:
+                      break
+                  subs.append(w)
+              return " ".join([name, *subs])
+
+          SAFE = re.compile(r"[A-Za-z0-9_./-]+")
+          TRACK = re.compile(r"\[(ahead \d+|behind \d+|ahead \d+, behind \d+|gone)\]|\(no branch\)")
+
+          def safe(text: str) -> str:
+              """A model-chosen path or ref, printed only if it is plain path characters."""
+              return text if SAFE.fullmatch(text) and len(text) <= 140 else "(other)"
+
+          # NOT a security boundary. The agent step already held every REDACT_*
+          # token (GH_TOKEN, the OAuth token, the feedback token, the app token:
+          # the action passes its whole env to the CLI), and it can still steer
+          # this step through GITHUB_PATH/GITHUB_ENV, and git through .git/config
+          # and .gitattributes (a filter.*.clean runs on `git status` and can read
+          # this process's environ). Stripping REDACT_* and fsmonitor is only
+          # belt-and-braces. Rule: never pass this step a secret the agent step
+          # does not already hold.
+          GIT_ENV = {k: v for k, v in os.environ.items() if not k.startswith("REDACT_")}
+
+          def git(*args: str) -> str:
+              try:
+                  out = subprocess.run(["git", "-c", "core.fsmonitor=false", *args], env=GIT_ENV,
+                                       capture_output=True, text=True, timeout=30)
+              except (OSError, subprocess.TimeoutExpired) as exc:
+                  return f"(git failed: {type(exc).__name__})"
+              return out.stdout if out.returncode == 0 else ""
+
+          def print_git_state() -> None:
+              branch = git("rev-parse", "--abbrev-ref", "HEAD").strip()
+              print(f"\n**Local git state after the run:** branch '{clean(safe(branch), 140)}'")
+              print("```")
+              # 'XY path' (or '## branch...upstream' for the header); the path is
+              # model-chosen, so it goes through the same filter as the branch.
+              status = []
+              for line in git("status", "-sb", "--porcelain=v1").splitlines()[:30]:
+                  if line.startswith("## "):
+                      refs, _, track = line[3:].partition(" ")
+                      track = track if TRACK.fullmatch(track) else ("(other)" if track else "")
+                      refs = "...".join(safe(r) for r in refs.split("..."))
+                      status.append(" ".join(filter(None, ["##", refs, track])))
+                  else:
+                      paths = [safe(x) for x in line[3:].split(" -> ")]
+                      status.append(f"{line[:2]} {' -> '.join(paths)}")
+              print(clean("\n".join(status), 4000))
+              unpushed = git("log", "--oneline", "@{u}..HEAD")
+              if git("rev-parse", "--abbrev-ref", "@{u}").strip():
+                  print("-- commits not pushed to the upstream:")
+                  print(clean("\n".join(unpushed.splitlines()[:20]), 3000) or "(none: all pushed)")
+              else:
+                  # An upstream that is configured but no longer resolves means the
+                  # remote branch was deleted after a push (step 7's failure path).
+                  local = git("log", "--oneline", "origin/main..HEAD")
+                  if not git("rev-parse", "--verify", "-q", "origin/main").strip():
+                      print("-- no upstream, and origin/main does not resolve: unpushed commits unknown")
+                  elif not local.strip():
+                      print("-- no local commits beyond origin/main (nothing to push)")
+                  elif git("config", "--get", f"branch.{branch}.merge").strip():
+                      print("-- pushed, then the remote branch was deleted (gh pr create likely"
+                            " failed). Commits not on origin/main:")
+                  else:
+                      print("-- no upstream: this branch was never pushed. Commits not on origin/main:")
+                  if local.strip():
+                      print(clean("\n".join(local.splitlines()[:20]), 3000))
+              print("```")
+
+          def report() -> None:
+              print("### Agent decision")
+              try:
+                  with open(sys.argv[1], encoding="utf-8") as fh:
+                      messages = json.load(fh)
+              except (OSError, ValueError) as exc:
+                  print(f"No readable execution file ({type(exc).__name__}): the agent step timed "
+                        "out or crashed before the action wrote it. No result, decision note or tool "
+                        "trail is available; the local git state below is still accurate.")
+                  return
+              if not isinstance(messages, list):
+                  print("Execution file is not a message list.")
+                  return
+              msgs = [m for m in messages if isinstance(m, dict)]
+
+              results = [m for m in msgs if m.get("type") == "result"]
+              res = results[-1] if results else {}
+              print(f"- result: '{clean(str(res.get('subtype', 'none')), 40)}', "
+                    f"is_error={res.get('is_error')}, turns={res.get('num_turns')}, "
+                    f"cost=${res.get('total_cost_usd')}, "
+                    f"minutes={round((res.get('duration_ms') or 0) / 60000, 1)}")
+
+              tools = {}  # tool_use id -> (tool name, index of its line in the trail or None)
+              trail, sub_calls, background = [], 0, []
+              for m in msgs:
+                  msg = m.get("message")
+                  content = msg.get("content") if isinstance(msg, dict) else None
+                  blocks = [b for b in content if isinstance(b, dict)] if isinstance(content, list) else []
+                  who = "subagent" if m.get("parent_tool_use_id") else "main agent"
+                  if m.get("type") == "user":
+                      # Background is decided ONLY from the structured result, never
+                      # from the input flag: with CLAUDE_CODE_DISABLE_BACKGROUND_TASKS
+                      # the CLI drops run_in_background from both schemas, so a model
+                      # may still send it untyped (a string "false" was observed) and
+                      # the call runs synchronously anyway. Bash sets
+                      # tool_use_result.backgroundTaskId for explicit and timed-out
+                      # commands alike; an Agent/Task call that went async says
+                      # isAsync/async_launched. The result text is never read: the
+                      # CLI puts the command's stdout ahead of its marker.
+                      tur = m.get("tool_use_result")
+                      tur = tur if isinstance(tur, dict) else {}
+                      for b in blocks:
+                          if b.get("type") != "tool_result":
+                              continue
+                          name, line = tools.get(b.get("tool_use_id"), ("", None))
+                          if name == "Bash" and tur.get("backgroundTaskId"):
+                              background.append(f"{who}: a command moved to the background")
+                          elif name in ("Agent", "Task") and (
+                                  tur.get("isAsync") is True or tur.get("status") == "async_launched"):
+                              background.append(f"{who}: {name} launched async")
+                          else:
+                              continue
+                          if line is not None:
+                              trail[line] = trail[line].replace(f" {name} ", f" {name} [background] ", 1)
+                          break
+                      continue
+                  if m.get("type") != "assistant":
+                      continue
+                  for block in blocks:
+                      if block.get("type") != "tool_use":
+                          continue
+                      name = str(block.get("name"))
+                      inp = block.get("input") if isinstance(block.get("input"), dict) else {}
+                      if m.get("parent_tool_use_id"):
+                          tools[block.get("id")] = (name, None)
+                          sub_calls += 1
+                          continue
+                      tools[block.get("id")] = (name, len(trail))
+                      if name == "Bash":
+                          detail = program(str(inp.get("command", "")))
+                      elif name in ("Agent", "Task"):
+                          detail = safe(str(inp.get("subagent_type", "")))
+                      else:
+                          path = str(inp.get("file_path") or "")
+                          detail = safe(path) if path else ""
+                      # The input flag is context only; [background] above is the fact.
+                      asked = " (asked run_in_background)" if inp.get("run_in_background") is True else ""
+                      detail = " ".join(detail.split())  # one line per call
+                      trail.append(f"{len(trail) + 1:3d} {name} {clean(detail, 140)}{asked}")
+              print(f"- main-agent tool calls: {len(trail)}; subagent tool calls: {sub_calls}")
+              if background:
+                  print(f"- **background tasks: {len(background)}** ({clean('; '.join(background[:10]), 600)})"
+                        " -- the action stops at the first result, so work still running then"
+                        " was abandoned")
+
+              note = res.get("result")
+              print("\n**Decision note (the agent's final message):**\n")
+              if isinstance(note, str) and note.strip():
+                  print("```\n" + clean(note.strip(), 3000) + "\n```")
+              else:
+                  print("_none -- the run ended without a final message_")
+
+              print("\n<details><summary>Main-agent tool calls (name and file path, Bash program"
+                    " name, subagent type)</summary>\n")
+              print("```\n" + "\n".join(trail[-200:]) + "\n```\n</details>")
+
+          if os.environ.get("AGENT_OUTCOME") == "skipped":
+              drafts = os.environ.get("DRAFTS", "")
+              print("### Agent decision")
+              if drafts.isdigit() and int(drafts) >= 3:
+                  print(f"Not run: {drafts} open agent drafts waiting for Dio (limit 3).")
+              else:
+                  print(f"Not run: an earlier step failed (open_drafts='{safe(drafts)}').")
+          else:
+              report()
+              print_git_state()
+          PY

@@ -1,4 +1,5 @@
-import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import { Component, Suspense, lazy, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import type { ReactNode } from 'react'
 import {
   ApiError,
   fetchAccuracy,
@@ -45,6 +46,7 @@ import {
 import { BakeOffView } from './views/BakeOffView'
 import { GlossaryView } from './views/GlossaryView'
 import { PortfolioView } from './views/PortfolioView'
+import { MarksView } from './views/MarksView'
 import { RegimeView } from './views/RegimeView'
 import { OverlayView } from './views/OverlayView'
 import { SurfaceView } from './views/SurfaceView'
@@ -70,14 +72,39 @@ import { WorkspaceView } from './views/WorkspaceView'
  * pixels on a laptop.
  */
 
+/** The Pitch carries its whole study (content/pitch_evidence.json) in its
+ *  chunk, so only a visitor who opens the tab downloads it. */
+const PitchView = lazy(() => import('./views/PitchView').then((m) => ({ default: m.PitchView })))
+
+/** A chunk that fails to load (a deploy replaced its hashed file while the
+ *  page was open, or the network dropped) throws out of Suspense; without a
+ *  boundary React unmounts the whole app. This keeps every other tab. */
+class ChunkBoundary extends Component<{ children: ReactNode }, { failed: boolean }> {
+  state = { failed: false }
+  static getDerivedStateFromError() {
+    return { failed: true }
+  }
+  render() {
+    return this.state.failed ? (
+      <p className="pl-note" role="alert">
+        The Pitch could not load. Reload the page.
+      </p>
+    ) : (
+      this.props.children
+    )
+  }
+}
+
 export type TabId =
   | 'workspace'
   | 'portfolio'
   | 'book'
   | 'bakeoff'
   | 'regime'
+  | 'marks'
   | 'surface'
   | 'glossary'
+  | 'pitch'
 
 /** Tabs whose results come from the trailing-RV Black-Scholes backtester --
  *  the only ones the global "model-priced on trailing RV" notes describe. */
@@ -608,8 +635,16 @@ export function PutLab() {
             {tab === 'book' && <OverlayView narrow={narrow} />}
             {tab === 'bakeoff' && <BakeOffView controls={controls} />}
             {tab === 'regime' && <RegimeView regimes={regimes} vix={vix} accuracy={accuracy} />}
+            {tab === 'marks' && <MarksView asset={controls.asset} regimes={regimes} />}
             {tab === 'surface' && <SurfaceView surface={surface} controls={controls} narrow={narrow} />}
             {tab === 'glossary' && <GlossaryView />}
+            {tab === 'pitch' && (
+              <ChunkBoundary>
+                <Suspense fallback={<p className="pl-note">Loading the Pitch…</p>}>
+                  <PitchView />
+                </Suspense>
+              </ChunkBoundary>
+            )}
           </main>
         </div>
 

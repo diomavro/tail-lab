@@ -12,7 +12,7 @@ test.beforeEach(async ({ page }) => {
   await mockPutLabApi(page)
 })
 
-test('opens on Workspace with all seven views reachable', async ({ page }) => {
+test('opens on Workspace with all nine views reachable', async ({ page }) => {
   await page.goto('/')
 
   const tabs = page.getByRole('tab')
@@ -22,7 +22,9 @@ test('opens on Workspace with all seven views reachable', async ({ page }) => {
     'Book',
     'Bake-off',
     'Regime',
+    'Marks',
     'Surface',
+    'Pitch',
     'Glossary',
   ])
   await expect(page.getByRole('tab', { name: 'Workspace' })).toHaveAttribute('aria-selected', 'true')

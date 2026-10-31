@@ -33,6 +33,15 @@ VIX_DATASET = "vix"
 #: #4); IG OAS lands in the same dataset but is not used here.
 HY_OAS_SERIES_ID = "BAMLH0A0HYM2"
 
+#: How long after its ``obs_date`` an HY OAS print can first be acted on. ICE
+#: computes day *t*'s spread after the close and FRED posts it the next
+#: morning, yet every ``BAMLH0A0HYM2`` row in the lake carries
+#: ``vintage_date == obs_date`` (measured 2026-10-30) -- so the vintage column cannot be trusted to
+#: say when a print was known. One calendar day moves day *t*'s print onto the
+#: first VIX session after *t* (Friday's print onto Monday), the earliest
+#: close at which anyone had it.
+CREDIT_PUBLICATION_LAG = pd.Timedelta(days=1)
+
 
 def label_vix_series(vix_close: pd.Series) -> pd.Series:
     """Regime label for each VIX close, preserving the input index.
@@ -118,15 +127,13 @@ def compute_regime_timeline(store: LakeStore, *, as_of: dt.date) -> pd.Series:
     look more severe, never less).
 
     Reads only bronze known on or before ``as_of``
-    (:meth:`LakeStore.read_bronze_as_of` enforces no-look-ahead). Falls back
-    to the VIX-only label whenever no credit snapshot exists yet -- as of
-    this writing, no environment has ever run `make ingest-credit`, so this
-    is the live behaviour everywhere today, and becomes credit-aware with no
-    further code change the moment a credit partition exists (same
-    graceful-fallback precedent `research/cadence.py` follows for the
-    options-expiry dataset). Raises ``LookupError`` if no VIX snapshot exists
-    as of that date -- VIX is the mandatory half, credit is an optional
-    escalation.
+    (:meth:`LakeStore.read_bronze_as_of` enforces no-look-ahead), and a
+    credit print only counts from the session after its ``obs_date``
+    (:data:`CREDIT_PUBLICATION_LAG`). Falls back to the VIX-only label
+    whenever no credit snapshot exists (same graceful-fallback precedent
+    `research/cadence.py` follows for the options-expiry dataset). Raises
+    ``LookupError`` if no VIX snapshot exists as of that date -- VIX is the
+    mandatory half, credit is an optional escalation.
     """
     vix_labels = label_vix_series(load_vix_close(store, as_of=as_of))
     try:
@@ -135,11 +142,11 @@ def compute_regime_timeline(store: LakeStore, *, as_of: dt.date) -> pd.Series:
         return vix_labels
 
     credit_labels = label_credit_series(credit)
-    # ffill: a VIX date's credit opinion is whatever HY OAS last printed on or
-    # before it -- still causal, since only values dated <= that VIX date
-    # (already <= as_of, per load_credit_oas) are ever used. A VIX date
-    # earlier than the first known credit print has no opinion yet; treat
-    # that as "calm" (the least severe) so combination stays total.
+    # Re-date each label to when it was published, then ffill: a VIX date's
+    # credit opinion is the last HY OAS print dated strictly before it. A VIX
+    # date with no earlier print has no opinion yet; treat that as "calm"
+    # (the least severe) so combination stays total.
+    credit_labels.index = credit_labels.index + CREDIT_PUBLICATION_LAG
     aligned = credit_labels.reindex(vix_labels.index, method="ffill").fillna("calm")
 
     # combine_regime_labels is variadic but only two labels are passed today
