@@ -102,7 +102,8 @@ class VrpSummary(BaseModel):
     as_of: dt.date
     #: Distinct quote dates on or before ``as_of`` in the input; each yields
     #: at most one observation. The difference from ``n_observations`` is the
-    #: dates refused (no put within tolerance, or a window not yet closed).
+    #: dates refused (no put within tolerance, a window not yet closed, or
+    #: one closing fewer than ``MIN_RETURNS`` returns).
     n_quote_dates: int
     n_observations: int
     start: dt.date

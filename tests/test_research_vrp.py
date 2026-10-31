@@ -248,6 +248,21 @@ def test_refused_dates_are_counted() -> None:
     assert (summary.n_observations, summary.n_quote_dates) == (1, 2)
 
 
+def test_quote_dates_count_dates_not_rows_and_include_blank_iv_dates() -> None:
+    """Three strikes on one date are one date, and a date whose every IV is
+    blank is still a date the panel held -- refused, not unseen."""
+    quotes = pd.DataFrame(
+        [
+            _quote(DAYS[0], 28),
+            _quote(DAYS[0], 28, strike=99.0),
+            _quote(DAYS[0], 28, strike=101.0),
+            _quote(DAYS[5], 28, iv=None),
+        ]
+    )
+    summary = measure_vrp(quotes, _zigzag(DAYS), underlying="spy", as_of=dt.date(2020, 6, 1))
+    assert (summary.n_observations, summary.n_quote_dates) == (1, 2)
+
+
 @pytest.mark.parametrize(
     ("moneyness", "target_days"), [(1.10, 30), (0.50, 30), (1.0, 0), (1.0, 121)]
 )
