@@ -21,7 +21,7 @@ a large one strictly in order.
 - [ ] **Credit follow-ups from ADR 0033** (found 2026-10-31, none urgent):
       (1) `daily-verdict-sweep.yml` stays green when the API answers 5xx, so a
       `CreditHistoryError` seam breach would not turn it red (no `.github/`
-      edit here: ADR 0022). (2) `accuracy.py:579` and `putlab_routes.py:645` use
+      edit here: ADR 0022). (2) `accuracy.py:579` and `putlab_routes.py:647` use
       `except (LookupError, KeyError)`, while `accuracy.py:584` and
       `quote_coverage.py:275` use a plain `except LookupError` (a `KeyError`
       is a `LookupError`); all swallow a store `KeyError` around the regime
@@ -52,8 +52,6 @@ a large one strictly in order.
       It does not read `vintage_date`: if FRED's vintages ever start dating
       the real publication, take the later of the two. **(b): code done
       (ADR 0033); archive ingest: licence confirmed by Dio 2026-10-31 (internal use only; values never served publicly); only the one-off `make ingest-credit-archive` run after merge is pending.**
-      The loader reads every `credit` partition plus the one-off
-      `credit_archive`; `make ingest-credit-archive` is the pending human step.
 - [x] **Unlock 2010-2016 for real-quote backtests.** Marks shows optionsDX
       SPY/QQQ quotes from 2010/2012, but `ohlcv_*` starts 2016-10 (Nasdaq's
       ~10-year window), so six years of quotes -- including Aug 2011 and

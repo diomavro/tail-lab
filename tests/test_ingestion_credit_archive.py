@@ -340,14 +340,20 @@ def test_a_dot_is_a_blank_cell(tmp_path: Path) -> None:
 
 
 @pytest.mark.parametrize(
-    ("obs", "expected"), [("2025-11-05", "invalid_rows"), ("2025-11-04", None)]
+    ("obs", "expected"),
+    [
+        ("2025-11-05", "invalid_rows"),
+        ("2025-11-04", "invalid_rows"),
+        ("2025-11-03", None),
+    ],
 )
 def test_an_obs_after_the_capture_date_is_invalid(
     tmp_path: Path, obs: str, expected: str | None
 ) -> None:
     """WHY: a capture taken on 2025-11-04 cannot hold a later observation, so
     one means the file is not the capture it claims to be. The capture day
-    itself is allowed."""
+    itself is refused too: the 20:41 UTC capture cannot hold that day's print
+    (ICE posts it the next morning); the day before is the last allowed."""
     store = _store(tmp_path)
     _seed_live(store)
     content = _csv([*_archive_rows(), (obs, "4.0")])

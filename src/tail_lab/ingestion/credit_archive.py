@@ -117,11 +117,12 @@ def _validate(frame: pd.DataFrame) -> pd.DataFrame:
         raise CreditArchiveRefused(
             "invalid_rows", f"{len(err.failure_cases)} failure(s); nothing written"
         ) from err
-    # A capture cannot hold an observation dated after its own capture day.
-    late = int((valid["obs_date"] > pd.Timestamp(ARCHIVE_VINTAGE)).sum())
+    # A capture cannot hold an observation dated on or after its own capture day
+    # (that day's print is posted the next morning).
+    late = int((valid["obs_date"] >= pd.Timestamp(ARCHIVE_VINTAGE)).sum())
     if late:
         raise CreditArchiveRefused(
-            "invalid_rows", f"{late} obs dated after the capture date {ARCHIVE_VINTAGE}"
+            "invalid_rows", f"{late} obs dated on or after the capture date {ARCHIVE_VINTAGE}"
         )
     return valid
 

@@ -5,7 +5,8 @@ by credit spreads when they are available (`docs/END_STATE.md` §1.3 --
 ``label_vix_series``/``label_credit_series`` are pure (a level series in,
 regime labels out); ``compute_regime_timeline`` reads the bronze snapshots
 known on or before ``as_of`` and labels every VIX date, escalated by credit
-stress where a credit snapshot exists (`combine_regime_labels`). The memory
+stress where HY OAS history exists, the union of the credit partitions
+plus the archive (`combine_regime_labels`). The memory
 layer (phase 2) maps each backtest cycle's entry date onto this timeline to
 key its verdict by regime.
 """
@@ -221,8 +222,8 @@ def _align_credit(
 
 def compute_regime_timeline(store: LakeStore, *, as_of: dt.date) -> pd.Series:
     """Date-indexed regime labels from the VIX snapshot known as of
-    ``as_of``, escalated by credit-spread stress wherever a credit snapshot
-    is also available (`combine_regime_labels`: credit can only make a day
+    ``as_of``, escalated by credit-spread stress wherever HY OAS history (the union of
+    the credit partitions plus the archive) is available (`combine_regime_labels`: credit can only make a day
     look more severe, never less).
 
     Reads only bronze known on or before ``as_of`` (no look-ahead), and a
