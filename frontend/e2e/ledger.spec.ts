@@ -4,11 +4,11 @@ import { mockPutLabApi } from './fixtures/mock-api'
 
 // The roll ledger.
 //
-// The old table showed one "Cost" column holding `contracts x premium x 100` --
-// the cash actually filled -- next to a Net computed as `payoff - notional`, the
-// per-roll premium BUDGET. Those are different numbers, so a reader subtracting
-// the two visible columns got the wrong answer. Fill and Budget are now separate
-// columns and the arithmetic on screen is the arithmetic behind it.
+// Fill is the entry brokerage (put_roll.py's `cost`), charged on top of the
+// Budget the roll spends on puts, so Net = Payoff - Budget - Fill. An earlier
+// version of this spec read Fill as the contracts' cash cost and reconciled Net
+// as Payoff - Budget, against a fixture built the same wrong way; the backend
+// never worked like that.
 
 const money = (t: string) => Number(t.replace(/[$,]/g, '').replace('−', '-'))
 
@@ -37,7 +37,7 @@ test('prints Fill and Budget as separate columns', async ({ page }) => {
   await expect(table.locator('tbody tr')).toHaveCount(CYCLES.length)
 })
 
-test('reconciles Net against Budget on every visible row', async ({ page }) => {
+test('reconciles Net as Payoff minus Budget minus Fill on every row', async ({ page }) => {
   await page.getByRole('button', { name: /^Show all/ }).click()
   const rows = page.getByRole('table', { name: 'Roll ledger' }).locator('tbody tr')
   await expect(rows).toHaveCount(CYCLES.length)
@@ -47,22 +47,16 @@ test('reconciles Net against Budget on every visible row', async ({ page }) => {
     const cells = await rows.nth(i).locator('td').allTextContents()
     // Entry, Expiry, Spot, Strike, sigma, Premium, Cts, Fill, Budget, Payoff, Net
     const [fill, budget, payoff, net] = cells.slice(7).map(money) as [number, number, number, number]
-    // The reader can do this subtraction on screen and be right.
-    expect(payoff - budget).toBeCloseTo(net, 2)
-    // ...and doing it with Fill instead would be wrong, which is the whole point
-    // of showing both.
-    expect(fill).not.toBeCloseTo(budget, 2)
+    expect(budget).toBe(NOTIONAL)
+    expect(fill).toBeGreaterThan(0)
+    // Within a dollar: each figure is printed rounded to the dollar.
+    expect(Math.abs(payoff - budget - fill - net)).toBeLessThanOrEqual(1)
   }
 })
 
-test('shows a fill on either side of the budget', async ({ page }) => {
-  // `max(1, floor(notional / (premium * 100)))` forces at least one contract, so
-  // an expensive roll fills ABOVE the budget and a cheap one below.
+test('prints Cts in whole shares', async ({ page }) => {
+  // `contracts = notional / premium` is an unrounded float.
   await page.getByRole('button', { name: /^Show all/ }).click()
-  const cells = page.getByRole('table', { name: 'Roll ledger' }).locator('tbody tr td:nth-child(8)')
-  await expect(cells).toHaveCount(CYCLES.length)
-  const fills = await cells.allTextContents()
-  const values = fills.map(money)
-  expect(Math.min(...values)).toBeLessThan(NOTIONAL)
-  expect(Math.max(...values)).toBeGreaterThan(NOTIONAL)
+  const cells = page.getByRole('table', { name: 'Roll ledger' }).locator('tbody tr td:nth-child(7)')
+  await expect(cells).toHaveText(CYCLES.map((c) => String(Math.round(c.contracts))))
 })
