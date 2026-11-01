@@ -55,7 +55,9 @@ test('reconciles Net as Payoff minus Budget minus Fill on every row', async ({ p
 })
 
 test('prints Cts in whole shares', async ({ page }) => {
-  // `contracts = notional / premium` is an unrounded float.
+  // `contracts = notional / premium` is an unrounded float; a fixture of whole
+  // numbers would let a raw `{c.contracts}` pass.
+  expect(CYCLES.every((c) => !Number.isInteger(c.contracts))).toBe(true)
   await page.getByRole('button', { name: /^Show all/ }).click()
   const cells = page.getByRole('table', { name: 'Roll ledger' }).locator('tbody tr td:nth-child(7)')
   await expect(cells).toHaveText(CYCLES.map((c) => String(Math.round(c.contracts))))

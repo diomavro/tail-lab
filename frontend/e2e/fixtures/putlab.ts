@@ -1779,15 +1779,15 @@ export function backtestByDelta(target: number): PutBacktestResponse {
     const strike = Number(strikeForDelta(c.spot, target, c.sigma, c.t_years!, BACKTEST.rate, c.q).toFixed(2))
     const latest = i === CYCLES.length - 1
     const premium = latest ? Number(bsPut(c.spot, strike, c.t_years!, BACKTEST.rate, c.sigma, c.q).toFixed(2)) : c.premium
-    const contracts = Math.max(1, Math.floor(NOTIONAL / (premium * 100)))
+    // Same budget, brokerage and payoff as the moneyness roll, so `cost` and
+    // `net` carry over; only the share count follows the new premium.
     return {
       ...c,
       strike,
       entry_moneyness_pct: Number(((1 - strike / c.spot) * 100).toFixed(4)),
       entry_delta: -target,
       premium,
-      contracts,
-      cost: Number((contracts * premium * 100).toFixed(2)),
+      contracts: NOTIONAL / premium,
     }
   })
   return {
