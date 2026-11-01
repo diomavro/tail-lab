@@ -543,6 +543,20 @@ export const CONCEPTS = {
       'If a volatility screen does as well as the composite, the composite has not shown anything beyond volatility. The test does not statistically separate fragility from volatility; it only shows the comparison.',
     seeAlso: ['rv20', 'rv_ratio', 'random_baseline', 'model_priced_signal'],
   },
+  fama_macbeth: {
+    id: 'fama_macbeth',
+    term: 'Fragility beyond trailing vol (Fama–MacBeth)',
+    category: 'bakeoff',
+    short:
+      'Each period, regress how each put turned out on the composite\'s rank while holding the name\'s trailing volatility fixed; the average slope γ̄ says whether fragility adds anything vol does not already say.',
+    formula:
+      'each period t:  rank(ROI_it) = a_t + γ_t · rank(composite_it) + controls(trailing vol, asset class) + e_it;   γ̄ = mean of γ_t over the T periods;   90% CI = γ̄ ± c · √V',
+    intuition:
+      'The vol baselines only compare one screen with another. This test asks the sharper question: among names with the same trailing vol (20-day, signal-window and their ratio, entered flexibly, plus a non-equity dummy), did the more fragile ones\' puts finish better? The outcome is the rank of each put\'s ROI within its period, so a few huge payoffs cannot dominate. γ̄ is the average of the per-period slopes. Its uncertainty allows for names that stay the same from period to period and for slopes that drift together over time (Newey–West at a fixed 16 lags, with a simulated fixed-b null rather than a normal table). The rule was frozen before the real outcomes were opened (ADR 0035) and has no tuning knobs. Only the pre-registered test (0.10Δ, 4 weeks, 4-year window, top 5, on data to 2026-10-31) gets a p-value and a verdict. The same setting on later data is a monitoring re-run, and any other setting is exploratory: both show γ̄ and its 90% CI only.',
+    howToRead:
+      'γ̄ is the average slope of the outcome rank on the composite rank, so +0.05 means a name 20 percentile points higher on fragility ends about 1 percentile point higher on ROI, at equal trailing vol. "No evidence" is not "no effect": at this sample the test would catch a pay-rate gap of about 9.6 points (top against bottom fifth of the composite) 80% of the time, 71% at 8.6 and 98% at 12.8, so anything smaller can hide inside the CI. A pass is demoted to "not robust" if it is no longer significant once the market move is netted out (the intercept test), without the single best period or best stress episode, or among equity names alone. It controls for trailing vol only: a vol effect shaped like fragility cannot be told apart from it, so read it as beyond this vol surface only. Disclosed limits, measured by simulation (nominal size 5%): persistent factors on residual-fragility names, about 7.4%; in a simulated negatively skewed index, about 6.1% at zero drift and 2.8% at +10% a year; separately, in a simulated Gaussian market drifting −15% a year, about 6.0% (a bear sample can over-pass); all other worlds tried, 4.7% or less. Blinding was not perfect (20-day vol at the next entry is the realised vol of each holding period). The rank outcome sees how often a put finishes in the money more than how much it pays; the log(1 + payoff/cost) companion is shown in the data but not tested. The premium is a model price, so a pass means fragile names moved more than their trailing vol implied; real option prices may already reflect that, and part of it may be exposure to market crashes, which counts as fragility here.',
+    seeAlso: ['vol_baseline', 'walk_forward', 'random_baseline', 'model_priced_signal', 'ex_best'],
+  },
   ex_best: {
     id: 'ex_best',
     term: 'Excess without the best period',

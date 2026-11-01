@@ -29,15 +29,19 @@ a large one strictly in order.
         under today's labels, and report that number.
       - Then either re-score them, or mark them as legacy so memory reads
         under the active definition skip them. Don't silently relabel them.
-- [ ] **Separate fragility from volatility statistically** (`docs/adr/0033`).
-      The walk-forward signal test prints the best plain-volatility screen next
-      to the composite, but it does not test whether fragility adds anything
-      beyond vol. Three attempts failed review by simulation and were cut:
-      quintile-matched random baskets, linear rank residualisation, and squared
-      rank residualisation. Next to try: Fama–MacBeth per-period regressions of
-      name-period ROI on the composite rank with rv20 / rv_long / rv_ratio
-      controls, with an autocorrelation-robust error. Gate it with a simulation
-      study before shipping.
+- [x] **Separate fragility from volatility statistically** (`docs/adr/0033`).
+      *Done 2026-11-01 (`docs/adr/0035`):* `research/backtest/beyond_vol.py`
+      runs a frozen Fama–MacBeth test on the signal test's own periods and
+      the result carries it as `beyond_vol`, shown under the Bake-off verdict.
+      At the pre-registered setting (0.10Δ, 4w, 4y, top 5, data to 2026-10-31) the real result is
+      no evidence beyond trailing vol: γ̄ −0.0079, 90% CI [−0.033, +0.017],
+      p 0.71, T 81. The test would catch a pay-rate gap of about 9.6 points 80%
+      of the time, so a smaller effect can hide in that interval. It controls
+      for trailing vol only, and its disclosed limits (size 6–7% under
+      persistent factors or a skewed index; model-priced puts) are in the
+      `fama_macbeth` concept. Only that setting on the 2026-10-31 data is
+      confirmatory; a later date is a monitoring re-run and other rail settings
+      are exploratory, both with γ̄ and the CI but no p or status.
 - [ ] **Point-in-time universe for the signal test** (`docs/adr/0033`). The
       70-name list was chosen in 2026 with hindsight (MSTR, SMCI, COIN), so
       survivorship flatters any screen. This needs historical membership.

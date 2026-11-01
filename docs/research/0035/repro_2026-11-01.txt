@@ -1,0 +1,7 @@
+mode confirmatory reason None
+{'status': 'no_evidence_beyond_trailing_vol', 'gamma_bar': -0.007923490610735733, 'ci90': {'low': -0.03321601472095393, 'high': 0.01736903349948247}, 'p_value': 0.71086, 'n_periods': 81, 'a_intercept': -0.005296040353063048, 'a_p_value': 0.66105, 'gamma_no_controls': -0.005856055798944345}
+identical: True [] []
+n_periods 81 verdict {'status': 'beats_random', 'reasons': [], 'n_periods': 81, 'n_episodes': 9, 'composite_excess_vs_universe': 0.3371265754203252, 'composite_p_random': 0.049475262368815595, 'excess_ex_best_period': 0.1404408935273016, 'excess_ex_best_name_period': 0.21217850196707277, 'vol_baseline_as_good': True, 'best_vol_baseline': 'rv_ratio_high', 'best_vol_baseline_excess': 1.378069787477306, 'best_vol_baseline_p_bh': 0.005997001499250375, 'sentence': "The composite's top 5 beat random baskets (p = 0.049, excess over all names +33.7%), but a plain-volatility screen did as well: best of 6 plain-volatility screens, picked after the fact (rv_ratio_high, BH p = 0.006): +137.8% vs the signal's +33.7%."}
+episodes [{'start': '2020-08-24', 'end': '2020-09-22', 'n_periods': 1}, {'start': '2021-09-03', 'end': '2021-10-04', 'n_periods': 1}, {'start': '2021-12-29', 'end': '2022-01-27', 'n_periods': 1}, {'start': '2022-04-25', 'end': '2022-05-23', 'n_periods': 1}, {'start': '2022-08-18', 'end': '2022-09-16', 'n_per
+n_episodes 9
+182.8420181274414

@@ -110,7 +110,7 @@ from tail_lab.research.backtest.ranking import (
     _returns,
     composite_scores,
 )
-from tail_lab.research.backtest.strike_rule import ByDelta, ByMoneyness, StrikeRule
+from tail_lab.research.backtest.strike_rule import ByMoneyness, StrikeRule
 from tail_lab.research.dividends import DividendLookup, dividend_lookup
 from tail_lab.research.regimes.timeline import (
     VIX_DATASET,
@@ -350,24 +350,6 @@ class Evaluation(BaseModel):
     diagnostics: Diagnostics
 
 
-class SignalTestResult(Evaluation):
-    as_of: dt.date
-    moneyness_pct: float | None
-    strike_rule: Literal["moneyness", "delta"]
-    target_delta: float | None
-    tenor_weeks: float
-    signal_years: float
-    top_k: int
-    n_random: int
-    seed: int
-    universe_size: int
-    #: The bronze snapshots read (VIX, SPY, one set per loaded name, the
-    #: dividend snapshot) and the code that computed it; ``code_sha`` is
-    #: filled in by the API route, which may read ``Settings``.
-    snapshot_ids: list[str] = Field(default_factory=list)
-    code_sha: str = "unknown"
-
-
 # --------------------------------------------------------------------------
 # The statistics: pure, planted-signal testable
 # --------------------------------------------------------------------------
@@ -381,7 +363,9 @@ class PeriodInputs:
     collector flips the fragile-when-low metrics and the ``_low`` baselines).
     ``payoff`` and ``cost`` are per name, aligned with ``symbols``, where
     ``cost = notional + spread``. ``spy_payoff`` / ``spy_cost`` are the
-    equal-premium SPY put under the same rule.
+    equal-premium SPY put under the same rule. ``spy_return`` is SPY's own
+    price move over the period (expiry spot / entry spot - 1), which the
+    beyond-volatility test regresses its per-period slope on.
     """
 
     #: Position on the rebalance calendar (0, 1, 2, ...), counting periods that
@@ -396,6 +380,16 @@ class PeriodInputs:
     cost: FloatArray
     spy_payoff: float
     spy_cost: float
+    spy_return: float
+
+
+def _require_finite_outcomes(per: PeriodInputs) -> None:
+    """A NaN payoff ranks as 'paid most' and a NaN spy_payoff reads as 'not
+    stressed': neither may reach the statistics."""
+    if not math.isfinite(per.spy_return):
+        raise ValueError(f"{per.date}: spy_return must be finite")
+    if not np.all(np.isfinite(per.payoff)) or not math.isfinite(per.spy_payoff):
+        raise ValueError(f"{per.date}: payoff and spy_payoff must be finite")
 
 
 def _validate_periods(periods: Sequence[PeriodInputs], top_k: int, n_random: int) -> None:
@@ -407,6 +401,7 @@ def _validate_periods(periods: Sequence[PeriodInputs], top_k: int, n_random: int
             raise ValueError(f"{per.date}: payoff/cost must match symbols")
         if not np.all(per.cost > 0) or per.spy_cost <= 0:
             raise ValueError(f"{per.date}: costs must be positive")
+        _require_finite_outcomes(per)
         for screen in SCREENS:
             sig = per.signals.get(screen)
             if sig is None or sig.shape != (n,) or not np.all(np.isfinite(sig)):
@@ -1056,6 +1051,18 @@ def _prepare_name(
     )
 
 
+def _settle_index(name: _Name, p: int, cal: _Calendar) -> int:
+    """Row of ``name``'s last close on or before the expiry of the roll entered
+    at SPY position ``p``."""
+    expiry = cal.dates[p + cal.tenor_days]
+    return int(name.dates.searchsorted(expiry, side="right")) - 1
+
+
+def _spy_return(spy: _Name, p: int, cal: _Calendar) -> float:
+    """SPY's price move over the roll: settlement close / entry close - 1."""
+    return float(spy.px[_settle_index(spy, p, cal)] / spy.px[int(spy.own_pos[p])] - 1.0)
+
+
 def _roll_for(name: _Name, p: int, cal: _Calendar) -> tuple[CycleFacts, bool]:
     """Price and settle ``name``'s roll entered at SPY position ``p`` with the
     SAME function ``run_put_roll`` prices with, and whether the settlement was
@@ -1063,8 +1070,8 @@ def _roll_for(name: _Name, p: int, cal: _Calendar) -> tuple[CycleFacts, bool]:
     name's last close on or before the expiry date, so a gap is never a reason
     to drop a name after ``t``."""
     pos = int(name.own_pos[p])
+    settle = _settle_index(name, p, cal)
     expiry = cal.dates[p + cal.tenor_days]
-    settle = int(name.dates.searchsorted(expiry, side="right")) - 1
     facts = price_model_roll(
         float(name.px[pos]),
         clamp_realized_vol(float(name.rv20[pos])),
@@ -1204,6 +1211,7 @@ def _collect_period(
         cost=np.array([_NOTIONAL + x.facts.cost for x, _ in kept]),
         spy_payoff=spy_facts.payoff,
         spy_cost=_NOTIONAL + spy_facts.cost,
+        spy_return=_spy_return(spy, p, cal),
     )
 
 
@@ -1326,56 +1334,3 @@ def collect_periods(
     dividend_ids = [spy_dividends.snapshot_id] if spy_dividends.snapshot_id else []
     ordered = dict.fromkeys([*snapshot_ids, *name_snapshot_ids, *dividend_ids])
     return Collected(periods, diag, tuple(n.symbol for n in names), tuple(ordered))
-
-
-def walk_forward(
-    store: LakeStore,
-    *,
-    symbols: Sequence[str],
-    as_of: dt.date,
-    rule: StrikeRule,
-    tenor_weeks: float,
-    signal_years: float = 4.0,
-    top_k: int = 5,
-    n_random: int = 2000,
-    seed: int = 0,
-) -> SignalTestResult:
-    """The out-of-sample signal test over ``symbols`` as of ``as_of``.
-
-    Point-in-time throughout (see the module docstring); ``rule`` is the
-    strike rule every roll uses (the API defaults to ``ByDelta(0.10)`` -- at
-    realised vol, labelled so). Raises ``LookupError`` if VIX or SPY is
-    missing; a universe too thin for any period returns an
-    ``insufficient_data`` verdict rather than raising."""
-    collected = collect_periods(
-        store,
-        symbols=symbols,
-        as_of=as_of,
-        rule=rule,
-        tenor_weeks=tenor_weeks,
-        signal_years=signal_years,
-        top_k=top_k,
-    )
-    evaluation = evaluate_screens(
-        collected.periods,
-        top_k=top_k,
-        n_random=n_random,
-        seed=seed,
-        diagnostics=collected.diagnostics,
-    )
-    return SignalTestResult.model_validate(
-        {
-            **{f: getattr(evaluation, f) for f in Evaluation.model_fields},
-            "as_of": as_of,
-            "moneyness_pct": rule.pct if isinstance(rule, ByMoneyness) else None,
-            "strike_rule": rule.kind,
-            "target_delta": rule.target if isinstance(rule, ByDelta) else None,
-            "tenor_weeks": tenor_weeks,
-            "signal_years": signal_years,
-            "top_k": top_k,
-            "n_random": n_random,
-            "seed": seed,
-            "universe_size": len(collected.loaded),
-            "snapshot_ids": list(collected.snapshot_ids),
-        }
-    )

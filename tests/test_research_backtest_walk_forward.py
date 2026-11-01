@@ -12,7 +12,6 @@ from __future__ import annotations
 import dataclasses
 import datetime as dt
 import itertools
-from collections import Counter
 from collections.abc import Callable
 from pathlib import Path
 
@@ -43,7 +42,6 @@ from tail_lab.research.backtest.walk_forward import (
     PeriodInputs,
     collect_periods,
     evaluate_screens,
-    walk_forward,
 )
 
 INGEST = dt.date(2026, 3, 2)
@@ -96,6 +94,7 @@ def _make_periods(
                 cost=cost,
                 spy_payoff=3.0 if i in stress else 0.0,
                 spy_cost=1.05,
+                spy_return=0.0,
             )
         )
     return out
@@ -291,6 +290,7 @@ def test_totals_include_the_spread() -> None:
         cost=np.array([1.2, 1.2]),
         spy_payoff=0.0,
         spy_cost=1.2,
+        spy_return=0.0,
     )
     ev = evaluate_screens([p0], top_k=1, n_random=10)
     s = _summary(ev, COMPOSITE)
@@ -321,6 +321,7 @@ def _hand_periods() -> list[PeriodInputs]:
                 cost=np.ones(3),
                 spy_payoff=0.0,
                 spy_cost=1.0,
+                spy_return=0.0,
             )
         )
     return out
@@ -516,6 +517,7 @@ def _name_world() -> list[PeriodInputs]:
                 cost=np.ones(3),
                 spy_payoff=0.0,
                 spy_cost=1.0,
+                spy_return=0.0,
             )
         )
     return out
@@ -599,6 +601,7 @@ def test_paid_means_payoff_above_cost_not_merely_positive_or_equal() -> None:
                 cost=np.ones(2),
                 spy_payoff=0.0,
                 spy_cost=1.0,
+                spy_return=0.0,
             )
         )
     ev = evaluate_screens(out, top_k=1, n_random=10)
@@ -618,6 +621,16 @@ def test_malformed_periods_are_refused() -> None:
     bad_cost = PeriodInputs(**{**good[0].__dict__, "cost": np.zeros(10)})
     with pytest.raises(ValueError, match="costs must be positive"):
         evaluate_screens([bad_cost], top_k=2)
+    no_spy = PeriodInputs(**{**good[0].__dict__, "spy_return": float("nan")})
+    with pytest.raises(ValueError, match="spy_return must be finite"):
+        evaluate_screens([no_spy], top_k=2)
+    for bad in (float("nan"), float("inf")):
+        pay = good[0].payoff.copy()
+        pay[0] = bad
+        with pytest.raises(ValueError, match="payoff and spy_payoff must be finite"):
+            evaluate_screens([PeriodInputs(**{**good[0].__dict__, "payoff": pay})], top_k=2)
+        with pytest.raises(ValueError, match="payoff and spy_payoff must be finite"):
+            evaluate_screens([PeriodInputs(**{**good[0].__dict__, "spy_payoff": bad})], top_k=2)
     short = PeriodInputs(**{**good[0].__dict__, "payoff": np.zeros(3)})
     with pytest.raises(ValueError, match="must match symbols"):
         evaluate_screens([short], top_k=2)
@@ -788,6 +801,19 @@ def test_the_calendar_steps_by_tenor_and_leaves_room_for_a_full_roll(tmp_path: P
     assert pos[-1] + TENOR_DAYS <= len(dates) - 1
     assert col.periods[0].expiry_date == spy_dates[pos[0] + TENOR_DAYS]
     assert col.diagnostics.n_symbols_loaded == 12
+
+
+def test_spy_return_is_the_benchmark_move_from_entry_to_expiry(tmp_path: Path) -> None:
+    """The beyond-vol test regresses its per-period slope on SPY's own move, so
+    ``spy_return`` must be SPY's expiry close over its entry close, minus one --
+    not the put's payoff and not a name's return."""
+    dates, closes = _closes()
+    col = _collect(_store(tmp_path, closes, dates), _names(closes))
+    where = {d.date(): i for i, d in enumerate(dates)}
+    spy = closes["spy"]
+    for per in col.periods:
+        expected = spy[where[per.expiry_date]] / spy[where[per.date]] - 1.0
+        assert per.spy_return == pytest.approx(expected)
 
 
 def test_no_look_ahead_corrupting_prices_after_t_leaves_the_picks_at_t(tmp_path: Path) -> None:
@@ -1031,18 +1057,6 @@ def test_under_moneyness_a_too_deep_strike_removes_every_name(tmp_path: Path) ->
     assert col.diagnostics.n_removed_floor_or_depth == 12 * col.diagnostics.n_rebalance_dates
     assert col.diagnostics.n_name_periods_priced == 0
     assert col.diagnostics.depth_beyond_10pct_share is None
-    result = walk_forward(
-        store,
-        symbols=_names(closes),
-        as_of=INGEST,
-        rule=ByMoneyness(12.0),
-        tenor_weeks=TENOR_WEEKS,
-        signal_years=SIGNAL_YEARS,
-        top_k=2,
-        n_random=50,
-    )
-    assert result.verdict.status == "insufficient_data"
-    assert result.verdict.reasons == ["no_test_window"]
 
 
 def test_a_floored_premium_removes_the_name_under_moneyness_only(tmp_path: Path) -> None:
@@ -1221,96 +1235,6 @@ def test_dividends_enter_the_price_at_the_entry_date(tmp_path: Path) -> None:
     common = sorted(set(a) & set(b))
     assert common
     assert any(not np.allclose(a[d].cost, b[d].cost) for d in common)
-
-
-def test_walk_forward_end_to_end_is_complete_seeded_and_serialisable(tmp_path: Path) -> None:
-    dates, closes = _closes()
-    store = _store(tmp_path, closes, dates)
-    kw = dict(
-        symbols=_names(closes),
-        as_of=INGEST,
-        rule=ByDelta(0.10),
-        tenor_weeks=TENOR_WEEKS,
-        signal_years=SIGNAL_YEARS,
-        top_k=2,
-        n_random=200,
-    )
-    res = walk_forward(store, **kw)  # type: ignore[arg-type]
-    again = walk_forward(store, **kw)  # type: ignore[arg-type]
-    assert res.model_dump() == again.model_dump()
-    assert res.strike_rule == "delta" and res.target_delta == 0.10 and res.moneyness_pct is None
-    assert res.universe_size == 12 and res.n_periods == len(res.periods)
-    assert res.test_start == res.periods[0].date and res.test_end == res.periods[-1].expiry_date
-    assert [s.screen for s in res.screens] == list(SCREENS)
-    assert res.caveats == ["survivorship", "model_priced_signal"]
-    assert "caveats" not in wf.SignalVerdict.model_fields  # stated once, on the result
-    assert res.code_sha == "unknown"
-    # provenance: VIX, the benchmark and every loaded name are cited
-    assert len(res.snapshot_ids) >= 14
-    assert res.diagnostics.n_symbols_loaded == 12
-    assert {r.symbol for r in res.per_name} <= set(_names(closes))
-    assert res.model_dump_json()
-    # the moneyness path labels itself too
-    m = walk_forward(store, **{**kw, "rule": ByMoneyness(5.0)})  # type: ignore[arg-type]
-    assert m.strike_rule == "moneyness" and m.moneyness_pct == 5.0 and m.target_delta is None
-
-
-def _walk(store: DeltaLakeStore, names: list[str]) -> wf.SignalTestResult:
-    return walk_forward(
-        store,
-        symbols=names,
-        as_of=INGEST,
-        rule=ByDelta(0.10),
-        tenor_weeks=TENOR_WEEKS,
-        signal_years=SIGNAL_YEARS,
-        top_k=2,
-        n_random=50,
-    )
-
-
-@pytest.mark.parametrize("with_dividends", [False, True], ids=["no-tiingo", "tiingo"])
-def test_provenance_is_what_the_ranking_would_cite_and_each_table_opens_twice_at_most(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, with_dividends: bool
-) -> None:
-    """``snapshot_ids`` must be the same list ``ranking.snapshot_ids_for`` gives
-    (VIX, SPY and every name's price snapshots, then the dividend snapshot) --
-    but collected as the data was read, so no table is opened a second time just
-    to identify it. A Delta table is opened once to resolve the as-of partition
-    (which also yields the id) and once to read it: never a third time."""
-    from tail_lab.lake import store as store_module
-    from tail_lab.research.backtest.ranking import BENCHMARK, snapshot_ids_for
-    from tail_lab.research.dividends import _memo as dividend_memo
-    from tests.test_research_dividends import seed_tiingo_eod
-
-    dates, closes = _closes()
-    names = _names(closes)
-    root = tmp_path / "lake"
-    seeded = _store(root, closes, dates)
-    dividend_memo.clear()
-    if with_dividends:
-        seed_tiingo_eod(seeded, names, INGEST, annual_yield=0.03)
-    opens: Counter[str] = Counter()
-
-    class CountingTable(store_module.DeltaTable):  # type: ignore[misc]
-        def __init__(self, table_uri: str, *args: object, **kwargs: object) -> None:
-            opens[table_uri] += 1
-            super().__init__(table_uri, *args, **kwargs)
-
-    monkeypatch.setattr(store_module, "DeltaTable", CountingTable)
-    fresh = DeltaLakeStore(root)  # cold caches: every resolution really opens
-    dividend_memo.clear()
-    cited = _walk(fresh, names).snapshot_ids
-    existing = {
-        uri: n for uri, n in opens.items() if Path(uri).exists()
-    }  # absent tables fail to open
-    assert len(existing) >= 14  # VIX, SPY, 12 names (+ the dividend table)
-    assert max(existing.values()) <= 2, existing
-
-    monkeypatch.undo()
-    expected = snapshot_ids_for(DeltaLakeStore(root), INGEST, (BENCHMARK, *names))
-    dividend_memo.clear()
-    assert cited == expected
-    assert (len(cited) == 1 + 13 + 1) if with_dividends else (len(cited) == 1 + 13)
 
 
 def test_the_hindsight_diagnostics_default_is_empty() -> None:

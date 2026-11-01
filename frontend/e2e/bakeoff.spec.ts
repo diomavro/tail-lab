@@ -1,7 +1,14 @@
 import { expect, test, type Locator, type Page } from '@playwright/test'
+import { CONCEPTS } from '../src/content/concepts'
 import { apiRequests, mockPutLabApi } from './fixtures/mock-api'
 import { METRIC_SCREEN_WINNER } from './fixtures/putlab'
-import { SIGNAL_TEST_BEATS, SIGNAL_TEST_CRASH_CARRIED, SIGNAL_TEST_INSUFFICIENT, SIGNAL_TEST_NO_BETTER } from './fixtures/signal-test'
+import {
+  BEYOND_VOL_NO_EVIDENCE,
+  SIGNAL_TEST_BEATS,
+  SIGNAL_TEST_CRASH_CARRIED,
+  SIGNAL_TEST_INSUFFICIENT,
+  SIGNAL_TEST_NO_BETTER,
+} from './fixtures/signal-test'
 
 // The Bake-off tab (docs/adr/0033).
 //
@@ -209,6 +216,320 @@ test('a crash-carried verdict shows how much of the edge is left without the eve
   // The UI's own line (exBestText), distinct from the API sentence that also names it.
   await expect(verdict).toContainText(`Without its best period or name-period the excess is ${magnitude}.`)
   await expect(verdict).toContainText(`without the one that matters more: ${magnitude}`)
+})
+
+// ------------------------------------------- fragility beyond trailing vol ---
+// docs/adr/0035. One sentence after the verdict, worded by the result's
+// status at the pre-registered setting, and as an exploratory read (gamma_bar
+// and its CI, no p, no status) everywhere else.
+
+/** Serve one signal-test body for every read (the headline included) and
+ *  reopen the tab. Registered after the mock, so it wins. */
+async function serveHeadline(page: Page, body: unknown) {
+  await page.route(
+    (url) => url.pathname === '/api/putlab/signal-test',
+    (route) => route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(body) }),
+  )
+  await page.reload()
+  await expect(page.getByRole('tab', { name: 'Bake-off' })).toBeVisible()
+  await page.getByRole('tab', { name: 'Bake-off' }).click()
+}
+
+const beyond = (page: Page) => page.getByTestId('signal-beyond-vol').first()
+/** A coefficient as the page prints it: signed, three decimals, a true minus. */
+const s3 = (x: number) => `${x < 0 ? '−' : '+'}${Math.abs(x).toFixed(3)}`
+const est = (bv: { gamma_bar: number | null; ci90: { low: number; high: number } | null }) =>
+  `γ̄ = ${s3(bv.gamma_bar!)}, 90% CI [${s3(bv.ci90!.low)}, ${s3(bv.ci90!.high)}]`
+
+test('says there is no evidence beyond trailing vol, with the CI and what the test could catch', async ({ page }) => {
+  const line = beyond(page)
+  await expect(line).toHaveAttribute('data-mode', 'confirmatory')
+  await expect(line).toContainText(
+    'Controlling for trailing vol, there is no evidence the composite predicts better put outcomes (γ̄ = −0.008, 90% CI [−0.033, +0.017]); this test would catch a pay-rate gap of about 9.6 points 80% of the time.',
+  )
+  // It follows the verdict line directly, and the verdict is untouched.
+  const verdictBefore = await page.getByTestId('signal-verdict').evaluate((el, t) => !!(el.compareDocumentPosition(t) & Node.DOCUMENT_POSITION_FOLLOWING), await line.elementHandle())
+  expect(verdictBefore).toBe(true)
+  await expect(page.getByTestId('signal-status')).toHaveText('No better than random baskets')
+  // The caveat sits behind a concept tooltip.
+  await expect(page.getByTestId('signal-beyond-vol-caveat').first()).toHaveText('Beyond this vol surface only.')
+  const info = line.getByRole('button', { name: /What is/ })
+  await info.hover()
+  await expect(page.getByRole('tooltip')).toHaveText(CONCEPTS.fama_macbeth.short)
+})
+
+test('words a pass with the crash-exposure and model-pricing caveats', async ({ page }) => {
+  const bv = SIGNAL_TEST_BEATS.beyond_vol
+  await serveHeadline(page, SIGNAL_TEST_BEATS)
+  const line = beyond(page)
+  await expect(line).toHaveAttribute('data-mode', 'confirmatory')
+  await expect(line).toContainText(`Fragility predicted put outcomes beyond trailing vol (${est(bv)}, p = ${bv.p_value.toFixed(3)})`)
+  await expect(line).toContainText('possibly through their exposure to market crashes')
+  await expect(line).toContainText('under model pricing this means they moved more than their trailing vol implied, which real option prices may already reflect.')
+  await expect(page.getByTestId('signal-beyond-vol-caveat').first()).toHaveText('Beyond this vol surface only.')
+})
+
+const DEMOTIONS = {
+  intercept: 'it is no longer significant once the market’s own move is netted out',
+  drop_best_period: 'it disappears without its single best period',
+  drop_best_episode: 'it disappears without its best stress episode',
+  equity_only: 'it is absent among equity names alone, or could not be checked there',
+} as const
+
+for (const [demotion, words] of Object.entries(DEMOTIONS)) {
+  test(`names the ${demotion} demotion when a significant result is not robust`, async ({ page }) => {
+    const bv = SIGNAL_TEST_CRASH_CARRIED.beyond_vol
+    await serveHeadline(page, { ...SIGNAL_TEST_CRASH_CARRIED, beyond_vol: { ...bv, demotion } })
+    const line = beyond(page)
+    await expect(line).toContainText(`Controlling for trailing vol the composite looks significant (${est(bv)}, p = ${bv.p_value.toFixed(3)})`)
+    await expect(line).toContainText(`not robust, so it is not a pass: ${words}.`)
+    // Not worded as a pass.
+    await expect(line).not.toContainText('Fragility predicted')
+  })
+}
+
+test('says what is missing when there is too little to test, with no estimate and no chart', async ({ page }) => {
+  await serveHeadline(page, SIGNAL_TEST_INSUFFICIENT)
+  const line = beyond(page)
+  // It does not blame "history": the test also needs stress episodes and names.
+  await expect(line).toContainText(
+    'Not enough to test: 10 periods measured (0 skipped for fewer than 40 names), and the test needs at least 24 periods and 3 stress episodes.',
+  )
+  await expect(line).not.toContainText(/history/i)
+  await expect(line).not.toContainText('γ̄')
+  await expect(page.getByTestId('gamma-chart')).toHaveCount(0)
+  // The count of skipped periods is the response's own.
+  const bv = SIGNAL_TEST_INSUFFICIENT.beyond_vol
+  await serveHeadline(page, { ...SIGNAL_TEST_INSUFFICIENT, beyond_vol: { ...bv, n_periods: 61, n_skipped: 20 } })
+  await expect(beyond(page)).toContainText('61 periods measured (20 skipped for fewer than 40 names)')
+})
+
+test('an exploratory run with too little to test says so without a status or a p', async ({ page }) => {
+  await serveHeadline(page, { ...SIGNAL_TEST_INSUFFICIENT, beyond_vol_mode: 'exploratory' })
+  const line = beyond(page)
+  await expect(line).toHaveAttribute('data-mode', 'exploratory')
+  expect((await line.innerText()).replace(/\s*ⓘ$/, '')).toBe(
+    'Exploratory (not the pre-registered setting): not enough to test: 10 periods measured (0 skipped for fewer than 40 names), and the test needs at least 24 periods and 3 stress episodes.',
+  )
+  for (const banned of [/p\s*[=<]/, /insufficient/i, /status/i, /history/i, /γ̄/]) {
+    await expect(line).not.toContainText(banned)
+  }
+})
+
+test('says so, rather than staying silent, when the test could not run, and why', async ({ page }) => {
+  await serveHeadline(page, { ...SIGNAL_TEST_NO_BETTER, beyond_vol: null, beyond_vol_unavailable_reason: null })
+  await expect(beyond(page)).toContainText('could not be run on these periods')
+  await serveHeadline(page, { ...SIGNAL_TEST_NO_BETTER, beyond_vol: null, beyond_vol_unavailable_reason: '400 periods is more than the 120 this server tests' })
+  await expect(beyond(page)).toContainText('could not be run on these periods (400 periods is more than the 120 this server tests).')
+  await expect(beyond(page)).toHaveAttribute('data-mode', 'unavailable')
+  await expect(page.getByTestId('gamma-chart')).toHaveCount(0)
+})
+
+test('reads a response from before the field existed as "could not be run"', async ({ page }) => {
+  const { beyond_vol: _bv, beyond_vol_mode: _m, beyond_vol_unavailable_reason: _r, ...old } = SIGNAL_TEST_NO_BETTER
+  await serveHeadline(page, old)
+  await expect(beyond(page)).toHaveAttribute('data-mode', 'unavailable')
+})
+
+test('a response with an estimate but no mode, or an unknown one, is read as exploratory, never confirmatory', async ({ page }) => {
+  const { beyond_vol_mode: _m, ...noMode } = SIGNAL_TEST_BEATS
+  for (const body of [noMode, { ...SIGNAL_TEST_BEATS, beyond_vol_mode: 'definitely' }]) {
+    await serveHeadline(page, body)
+    const line = beyond(page)
+    await expect(line).toHaveAttribute('data-mode', 'exploratory')
+    await expect(line).toContainText('Exploratory (not the pre-registered setting): γ̄ =')
+    await expect(line).not.toContainText(/p\s*[=<]/)
+    await expect(page.getByTestId('gamma-chart')).toHaveCount(0)
+  }
+})
+
+test('the pre-registered setting on a later date is a monitoring re-run: no p, no status, the original result quoted', async ({ page }) => {
+  const bv = SIGNAL_TEST_BEATS.beyond_vol // a "predicts" payload with p < 0.05, which must stay unshown
+  await serveHeadline(page, { ...SIGNAL_TEST_BEATS, beyond_vol_mode: 'monitoring', as_of: '2026-11-14' })
+  const line = beyond(page)
+  await expect(line).toHaveAttribute('data-mode', 'monitoring')
+  expect((await line.innerText()).replace(/\s*ⓘ$/, '')).toBe(
+    `Re-run on data to 2026-11-14 (monitoring, not the pre-registered test): ${est(bv)}. ` +
+      'The pre-registered test, on data to 2026-10-31, found no evidence (γ̄ −0.008, 90% CI [−0.033, +0.017], p = 0.71; ADR 0035).',
+  )
+  await expect(line).not.toContainText('Fragility predicted')
+  await expect(page.getByTestId('gamma-chart')).toHaveCount(0)
+  // Too little to test on a re-run still quotes the pre-registered result.
+  await serveHeadline(page, { ...SIGNAL_TEST_INSUFFICIENT, beyond_vol_mode: 'monitoring', as_of: '2026-11-14' })
+  await expect(beyond(page)).toContainText('Re-run on data to 2026-11-14 (monitoring, not the pre-registered test): not enough to test: 10 periods measured')
+  await expect(beyond(page)).toContainText('The pre-registered test, on data to 2026-10-31, found no evidence')
+})
+
+test('a composite whose CI is wholly below zero is said to have predicted worse outcomes, not "no evidence"', async ({ page }) => {
+  const bv = { ...BEYOND_VOL_NO_EVIDENCE, gamma_bar: -0.06, ci90: { low: -0.09, high: -0.03 }, p_value: 0.9999 }
+  await serveHeadline(page, { ...SIGNAL_TEST_NO_BETTER, beyond_vol: bv })
+  const line = beyond(page)
+  await expect(line).toContainText('the composite predicted worse put outcomes, not better')
+  await expect(line).toContainText(`(${est(bv)}; the 90% CI is wholly below zero)`)
+  await expect(line).not.toContainText(/no evidence/i)
+  await expect(line).not.toContainText(/p\s*[=<]/)
+  // A CI that reaches zero is the ordinary null.
+  await serveHeadline(page, { ...SIGNAL_TEST_NO_BETTER, beyond_vol: { ...bv, ci90: { low: -0.09, high: 0 } } })
+  await expect(beyond(page)).toContainText('there is no evidence the composite predicts better put outcomes')
+})
+
+// A p-value is never printed as a number that contradicts its status.
+const P_CASES: [string, 'predicts' | 'not_robust', number, string][] = [
+  ['rounds up to 0.050', 'predicts', 0.0496, ', p < 0.05)'],
+  ['rounds up to 0.050 on a demoted pass', 'not_robust', 0.0496, ', p < 0.05)'],
+  ['is tiny', 'predicts', 0.0004, ', p < 0.001)'],
+  ['is an ordinary pass', 'predicts', 0.0123, ', p = 0.012)'],
+]
+for (const [name, kind, p, expected] of P_CASES) {
+  test(`p ${name}: prints "${expected.slice(2, -1)}"`, async ({ page }) => {
+    const base = kind === 'predicts' ? SIGNAL_TEST_BEATS : SIGNAL_TEST_CRASH_CARRIED
+    await serveHeadline(page, { ...base, beyond_vol: { ...base.beyond_vol, p_value: p } })
+    const text = await beyond(page).innerText()
+    expect(text).toContain(expected)
+    expect(text).not.toContain('0.050')
+  })
+}
+
+test('a pass whose p is not below 0.05 prints no p-value at all', async ({ page }) => {
+  for (const base of [SIGNAL_TEST_BEATS, SIGNAL_TEST_CRASH_CARRIED]) {
+    await serveHeadline(page, { ...base, beyond_vol: { ...base.beyond_vol, p_value: 0.0512 } })
+    const text = await beyond(page).innerText()
+    expect(text).not.toMatch(/p\s*[=<]/)
+    expect(text).not.toContain('0.051')
+  }
+})
+
+test('keeps the surface caveat on every verdict that states a result', async ({ page }) => {
+  for (const body of [SIGNAL_TEST_NO_BETTER, SIGNAL_TEST_BEATS, SIGNAL_TEST_CRASH_CARRIED]) {
+    await serveHeadline(page, body)
+    await expect(page.getByTestId('signal-beyond-vol-caveat').first()).toHaveText('Beyond this vol surface only.')
+  }
+})
+
+test('a demoted pass with no named demotion, or one the page does not know, still says it is not a pass', async ({ page }) => {
+  const bv = SIGNAL_TEST_CRASH_CARRIED.beyond_vol
+  for (const demotion of [null, 'something_new']) {
+    await serveHeadline(page, { ...SIGNAL_TEST_CRASH_CARRIED, beyond_vol: { ...bv, demotion } })
+    await expect(beyond(page)).toContainText('not robust, so it is not a pass: a robustness check failed.')
+  }
+})
+
+test('a status the page does not know reads "could not be read", and nothing throws', async ({ page }) => {
+  const errors: string[] = []
+  page.on('pageerror', (e) => errors.push(e.message))
+  const bv = SIGNAL_TEST_BEATS.beyond_vol
+  await serveHeadline(page, { ...SIGNAL_TEST_BEATS, beyond_vol: { ...bv, status: 'a_future_status' } })
+  const line = beyond(page)
+  await expect(line).toHaveAttribute('data-mode', 'unavailable')
+  await expect(line).toContainText('The test of fragility beyond trailing vol could not be read.')
+  await expect(line).not.toContainText(/p\s*[=<]/)
+  await expect(page.getByTestId('signal-panel')).toBeVisible()
+  expect(errors).toEqual([])
+})
+
+test('the concept keeps its two bear/skew limits apart and no longer claims a range for γ̄', () => {
+  const c = CONCEPTS.fama_macbeth
+  const text = `${c.intuition} ${c.howToRead}`
+  expect(text).not.toMatch(/−1 to \+1|-1 to \+1/)
+  expect(c.howToRead).toContain('average slope of the outcome rank on the composite rank')
+  // Different simulated worlds: a skewed index (6.1% at zero drift, 2.8% at +10%/yr) ...
+  expect(c.howToRead).toContain('simulated negatively skewed index, about 6.1% at zero drift and 2.8% at +10% a year')
+  // ... and a Gaussian market (6.0% at -15%/yr), never "skewed ... 6.0% in a bear sample".
+  expect(c.howToRead).toContain('separately, in a simulated Gaussian market drifting −15% a year, about 6.0%')
+  expect(c.howToRead).toContain('no longer significant once the market move is netted out')
+  expect(c.howToRead).not.toMatch(/vanishes once/)
+  expect(c.intuition).toContain('on data to 2026-10-31')
+  expect(c.intuition).toContain('monitoring re-run')
+})
+
+test('off the pre-registered setting it is exploratory: gamma_bar and CI, no p, no status, no chart', async ({ page }) => {
+  // The server sends a p-value and a "predicts" status regardless of the
+  // setting; the page must not show either off the confirmatory setting.
+  const bv = SIGNAL_TEST_BEATS.beyond_vol
+  expect(bv.status).toBe('predicts_beyond_trailing_vol')
+  expect(bv.p_value).toBeLessThan(0.05)
+  await serveHeadline(page, { ...SIGNAL_TEST_BEATS, beyond_vol_mode: 'exploratory' })
+  const line = beyond(page)
+  await expect(line).toHaveAttribute('data-mode', 'exploratory')
+  // The whole line: the label and the estimate, and nothing else but the ⓘ button.
+  expect((await line.innerText()).replace(/\s*ⓘ$/, '')).toBe(`Exploratory (not the pre-registered setting): ${est(bv)}.`)
+  for (const banned of [/p\s*[=<]/, /predict/i, /robust/, /80%/, /evidence/, /pay-rate/]) {
+    await expect(line).not.toContainText(banned)
+  }
+  await expect(page.getByTestId('gamma-chart')).toHaveCount(0)
+})
+
+test('a run at the rail is exploratory while the fixed headline stays confirmatory', async ({ page }) => {
+  await page.getByRole('button', { name: 'Run the signal test' }).click()
+  await expect(runTable(page)).toBeVisible()
+  const lines = page.getByTestId('signal-beyond-vol')
+  await expect(lines).toHaveCount(2)
+  await expect(lines.nth(0)).toHaveAttribute('data-mode', 'confirmatory')
+  await expect(lines.nth(1)).toHaveAttribute('data-mode', 'exploratory')
+  await expect(lines.nth(1)).toContainText('Exploratory (not the pre-registered setting): γ̄ =')
+  await expect(page.getByTestId('gamma-chart')).toHaveCount(1) // the headline's only
+})
+
+test('charts the per-period slopes, labelled, with the mean and its CI', async ({ page }) => {
+  const bv = BEYOND_VOL_NO_EVIDENCE
+  const chart = page.getByTestId('gamma-chart')
+  await expect(chart).toBeVisible()
+  await expect(chart.locator('rect.pl-sig-bar')).toHaveCount(bv.per_period.length)
+  await expect(chart.locator('rect.pl-sig-bar.is-pos')).toHaveCount(bv.per_period.filter((p) => p.gamma >= 0).length)
+  await expect(chart.getByTestId('gamma-mean')).toHaveCount(1)
+  await expect(chart.getByTestId('gamma-ci')).toHaveCount(1)
+  const label = await chart.getByRole('img').getAttribute('aria-label')
+  expect(label).toContain(`in each of ${bv.per_period.length} periods`)
+  expect(label).toContain(`the mean is ${s3(bv.gamma_bar)}`)
+  expect(label).toContain(`a 90% interval from ${s3(bv.ci90.low)} to ${s3(bv.ci90.high)}`)
+  // The chart's own label carries a concept.
+  await expect(chart.locator('.pl-pane-label').getByRole('button', { name: /What is/ })).toHaveCount(1)
+  // Hovering a bar reads that period out.
+  await chart.getByRole('img').hover({ position: { x: 5, y: 40 } })
+  await expect(chart.locator('[aria-live="polite"]')).toContainText(bv.per_period[0]!.date)
+})
+
+test('draws the slopes where they belong: positive above zero, negative below, the CI band over the CI, the mean at γ̄', async ({ page }) => {
+  const bv = BEYOND_VOL_NO_EVIDENCE
+  const chart = page.getByTestId('gamma-chart')
+  await expect(chart).toBeVisible()
+  const num = (l: Locator, name: string) => l.getAttribute(name).then(Number)
+  const zero = await num(chart.locator('line.pl-tape-zero'), 'y1')
+  const bars = chart.locator('rect.pl-sig-bar')
+  const geo = await bars.evaluateAll((els) =>
+    els.map((e) => ({ y: Number(e.getAttribute('y')), h: Number(e.getAttribute('height')) })),
+  )
+  expect(geo).toHaveLength(bv.per_period.length)
+  // Bars: a positive slope stands on the zero line and rises (above = smaller y);
+  // a negative one hangs from it. (A zero slope is a 1-unit sliver.)
+  const tol = 1.01
+  bv.per_period.forEach((p, i) => {
+    const { y, h } = geo[i]!
+    if (p.gamma > 0) expect(y + h, `period ${i} bottom on the zero line`).toBeLessThanOrEqual(zero + tol)
+    if (p.gamma > 0) expect(y, `period ${i} rises above zero`).toBeLessThan(zero)
+    if (p.gamma < 0) expect(y, `period ${i} top on the zero line`).toBeGreaterThanOrEqual(zero - tol)
+    if (p.gamma < 0) expect(y + h, `period ${i} hangs below zero`).toBeGreaterThan(zero)
+  })
+  // Scale in user units per unit of slope, from the tallest bar.
+  const k = Math.max(...bv.per_period.map((p, i) => (Math.abs(p.gamma) > 0.05 ? geo[i]!.h / Math.abs(p.gamma) : 0)))
+  expect(k).toBeGreaterThan(50)
+  const near = (actual: number, expected: number) => expect(Math.abs(actual - expected)).toBeLessThan(0.2)
+  // Every bar's length is its slope on that scale.
+  bv.per_period.forEach((p, i) => {
+    if (Math.abs(p.gamma) * k > 2) near(geo[i]!.h, Math.abs(p.gamma) * k)
+  })
+  // The CI band spans the CI: top at the upper end, bottom at the lower.
+  const band = chart.getByTestId('gamma-ci')
+  const bandY = await num(band, 'y')
+  const bandH = await num(band, 'height')
+  near(bandY, zero - bv.ci90.high * k)
+  near(bandY + bandH, zero - bv.ci90.low * k)
+  // The mean line sits at gamma_bar, not at zero.
+  const mean = chart.getByTestId('gamma-mean')
+  const meanY = await num(mean, 'y1')
+  near(meanY, zero - bv.gamma_bar * k)
+  expect(Math.abs(meanY - zero)).toBeGreaterThan(0.5)
+  expect(await num(mean, 'y2')).toBe(meanY)
 })
 
 test('reports a failed run instead of an empty table', async ({ page }) => {

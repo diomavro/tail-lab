@@ -916,6 +916,8 @@
 .pl-bake-verdict, .pl-signal-verdict { font-size: 17px; line-height: 1.5; max-width: 74ch; margin: 0 0 var(--space-4); }
 .pl-bake-verdict strong { font-weight: 600; }
 .pl-signal-verdict { margin-top: 6px; }
+/* The beyond-trailing-vol sentence (BeyondVol.tsx): a step under the verdict. */
+.pl-signal-beyond { font-size: 15px; line-height: 1.5; max-width: 74ch; margin: 0 0 var(--space-4); }
 .pl-bake-names { font-size: 12.5px; }
 /* Three notes, so they want a narrower track floor than the two-up default --
    otherwise the third wraps alone under an empty column. */
