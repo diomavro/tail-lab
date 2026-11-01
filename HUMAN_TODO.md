@@ -380,6 +380,31 @@ Phase 2/3 — paid decisions (small):
       names to Dec 1998), point-in-time S&P 500 constituents, and gives a
       dependable bulk-CSV broad-universe feed in one. Verify at checkout
       the plan includes the SP500 constituents table.
+
+      **This now blocks work you asked for.** On 2026-11-01 you chose the
+      full point-in-time universe (S&P 500 members on each date, plus the
+      ETF sleeve) for the signal test; the plan is in `AGENT_TODO.md`
+      under "Point-in-time universe". Nothing past step 1 there can start
+      without the subscription.
+
+      After buying:
+
+      1. Paste the API key once at a hidden prompt:
+
+         ```bash
+         cd ~/Documents/apps/tail-lab
+         read -rsp 'Sharadar key: ' K && printf 'SHARADAR_API_KEY=%s\n' "$K" >> .env && unset K
+         ```
+
+      2. Tell the agent the key is in. It will probe the format and check
+         four known delistings (SIVB, FRC, LEH, BBBY) before writing any
+         adapter.
+
+      3. When the adapter is merged, run its `make ingest-*` target
+         yourself; agents never run ingests.
+
+      The licence forbids republishing raw prices, and the site is public.
+      Only derived results may reach the page.
 - [ ] **Trigger set 2026-10-05 (`docs/adr/0027` §5): buy ORATS when the first
       trade-driving feature needs 2024+ real option prices, or before the
       first live trade — whichever comes first.** Until then nothing consumes it: Cboe's programs cover the Book tab's
