@@ -30,11 +30,14 @@ a large one strictly in order.
 - [ ] **Point-in-time universe for the signal test** (`docs/adr/0033`). The
       70-name list was chosen in 2026 with hindsight (MSTR, SMCI, COIN), so
       survivorship flatters any screen. This needs historical membership.
-- [ ] **The in-sample bake-off still prices at fixed moneyness with commission**
+- [x] **The in-sample bake-off still prices at fixed moneyness with commission**
       (found 2026-10-31). At 10% OOM, low-vol names hit the premium floor, and
       commission eats 60–90% of the premium. A floored SPY put paid about 2,122×
-      in Feb 2020. Co-kurtosis's "+116%" is probably this artifact. Move it to
-      delta or exclude floored legs, as `walk_forward` does.
+      in Feb 2020. Co-kurtosis's "+116%" is probably this artifact.
+      *Done 2026-11-01:* `metric_screen` charges no commission and leaves out
+      floored rolls (a name with only floored rolls is not scored), and reports
+      both counts. The Bake-off says so under the rule line. The rail's
+      moneyness rule stays selectable.
 - [ ] **Three copies of the fragility fold.** `ranking._fragility` still
       computes metrics on its own; `metric_screen` and `walk_forward` share
       `fragility_from_returns`. Route `ranking` through it too, if the outputs

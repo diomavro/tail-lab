@@ -1878,7 +1878,10 @@ def test_surface_says_a_stale_yield_is_stale_and_asks_for_a_refresh(
 
 
 def test_metric_screen_baskets_price_with_dividends(client: TestClient) -> None:
-    params = {"moneyness_pct": 10, "tenor_weeks": 4, "years": 1, "top_k": 2}
+    # 5% below spot, not 10%: at 10% no put in this fixture pays, and since the
+    # bake-off dropped commission (2026-11-01) dividends could only move a
+    # worthless roll's cost through the commission's contract count.
+    params = {"moneyness_pct": 5, "tenor_weeks": 4, "years": 1, "top_k": 2}
     before, after = _before_and_after_dividends(
         lambda: client.get("/api/putlab/metric-screen", params=params).json()
     )

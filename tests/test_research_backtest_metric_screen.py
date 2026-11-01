@@ -13,9 +13,16 @@ from tail_lab.contracts.ohlcv import dataset_id
 from tail_lab.lake.store import DeltaLakeStore
 from tail_lab.research.backtest.metric_screen import (
     _METRIC_FUNCS,
+    _unfloored,
     compare_metric_screens,
 )
-from tail_lab.research.backtest.put_roll import annualized_return
+from tail_lab.research.backtest.put_roll import (
+    PutBacktestResult,
+    PutRollCycle,
+    annualized_return,
+    load_asof_series,
+    run_put_roll,
+)
 from tail_lab.research.backtest.strike_rule import ByMoneyness
 
 _ALL_SCREENS = {*_METRIC_FUNCS, "vol_beta", "fragility_score"}
@@ -97,8 +104,13 @@ def test_bakeoff_covers_all_screens_and_is_sorted(tmp_path: Path) -> None:
 
     # Every one of the seven screens appears exactly once.
     assert {e.metric for e in cmp.entries} == _ALL_SCREENS
-    # 'missing' has no data -> skipped; the other four scored.
-    assert cmp.universe_size == 4
+    # 'missing' has no data -> skipped. 'calm' is so quiet that every 10%-OOM
+    # roll was priced at the premium floor, which is not a price -> not scored.
+    # SPY keeps 10 of its 12 rolls. Every floored roll is counted: SPY's 2
+    # and calm's 12.
+    assert cmp.universe_size == 3
+    assert cmp.n_names_all_floored == 1
+    assert cmp.n_floored_legs_excluded == 14
     assert isinstance(cmp.baseline_roi, float)
     assert cmp.top_k == 2
 
@@ -109,7 +121,7 @@ def test_bakeoff_covers_all_screens_and_is_sorted(tmp_path: Path) -> None:
     for e in cmp.entries:
         assert e.label
         assert 0 < len(e.top_k_assets) <= 2  # top_k picks, all scored names
-        assert set(e.top_k_assets) <= {"spy", "wild", "calm", "mid"}
+        assert set(e.top_k_assets) <= {"spy", "wild", "mid"}
         assert 0.0 <= e.hit_rate <= 1.0
         assert e.combined_max_drawdown <= 0.0  # drawdown is a peak-to-trough drop
         assert e.verdict in {"confirmed", "regime_only", "failed", "untested"}
@@ -146,11 +158,70 @@ def test_downside_beta_basket_holds_the_wild_name(tmp_path: Path) -> None:
         assert sl.regime in {"calm", "elevated", "crisis"}
 
 
-def test_deterministic_baseline_equals_mean_roi(tmp_path: Path) -> None:
-    """Pinned property: baseline_roi is exactly the mean of the per-name put
-    ROIs (the 'buy puts on everyone' baseline), independent of screen."""
-    from tail_lab.research.backtest.put_roll import load_asof_series, run_put_roll
+def _independent_roi(
+    store: DeltaLakeStore, symbol: str, ingest: dt.date, *, commission: float
+) -> float | None:
+    """A name's put ROI recomputed outside the bake-off, from its unfloored
+    rolls only (``None`` when every roll was floored)."""
+    prices, realized_vol = load_asof_series(store, symbol, ingest)
+    res = run_put_roll(
+        prices,
+        realized_vol,
+        asset=symbol,
+        as_of=ingest,
+        notional=1.0,
+        rule=ByMoneyness(10.0),
+        tenor_weeks=4.0,
+        lookback_years=1.0,
+        commission_per_contract=commission,
+    )
+    kept = [c for c in res.cycles if not c.premium_floored]
+    if not kept:
+        return None
+    return sum(c.net for c in kept) / sum(c.payoff - c.net - c.cost for c in kept)
 
+
+def _roll(day: int, *, floored: bool, payoff: float) -> PutRollCycle:
+    """One unit-budget roll: premium budget 1.0, half-spread cost 0.03."""
+    entry = dt.date(2025, 1, 1) + dt.timedelta(days=28 * day)
+    return PutRollCycle(
+        entry_date=entry,
+        expiry_date=entry + dt.timedelta(days=28),
+        spot=100.0,
+        strike=90.0,
+        sigma=0.06,
+        premium=0.01,
+        premium_floored=floored,
+        contracts=100.0,
+        cost=0.03,
+        payoff=payoff,
+        net=payoff - 1.0 - 0.03,
+    )
+
+
+def test_a_floored_roll_never_reaches_a_names_roi() -> None:
+    """The partial-floor case, pinned directly: a floored roll that paid a
+    fortune (the Feb 2020 SPY case paid ~2,122x) must not lift the name's ROI.
+    Kept: two rolls, one paying 3.0 -> ROI (1.97 - 1.03) / 2 = 0.47."""
+    cycles = [
+        _roll(0, floored=False, payoff=3.0),
+        _roll(1, floored=True, payoff=2122.0),
+        _roll(2, floored=False, payoff=0.0),
+    ]
+    result = PutBacktestResult.model_construct(cycles=cycles)
+    name = _unfloored("spy", {}, result)
+    assert [c.entry_date for c in name.cycles] == [cycles[0].entry_date, cycles[2].entry_date]
+    assert name.n_floored == 1
+    assert name.roi == pytest.approx((3.0 - 1.03 - 1.03) / 2.0)
+
+
+def test_baseline_and_baskets_are_commission_free_and_floor_free(tmp_path: Path) -> None:
+    """The cost rules must not be what the bake-off sorts (found 2026-10-31:
+    co-kurtosis "won" at +116% on floored legs and commission). Every name's
+    ROI, the baseline and every basket are judged on unfloored legs without
+    commission. In this fixture 'calm' has all 12 rolls floored and commission
+    moves every ROI. SPY's 2 floored rolls lose everything like its others,
+    so they cannot pin the partial-floor case: the test below does."""
     ingest = dt.date(2026, 3, 2)
     store = _seeded_store(tmp_path, ingest)
     symbols = ("spy", "wild", "calm", "mid")
@@ -162,24 +233,23 @@ def test_deterministic_baseline_equals_mean_roi(tmp_path: Path) -> None:
         rule=ByMoneyness(10.0),
         tenor_weeks=4.0,
         years=1.0,
-        top_k=3,
+        top_k=2,
     )
 
-    rois = []
-    for sym in symbols:
-        prices, realized_vol = load_asof_series(store, sym, ingest)
-        res = run_put_roll(
-            prices,
-            realized_vol,
-            asset=sym,
-            as_of=ingest,
-            notional=1.0,
-            rule=ByMoneyness(10.0),
-            tenor_weeks=4.0,
-            lookback_years=1.0,
-        )
-        rois.append(res.roi_on_premium)
-    assert cmp.baseline_roi == pytest.approx(sum(rois) / len(rois))
+    free = {s: _independent_roi(store, s, ingest, commission=0.0) for s in symbols}
+    charged = {s: _independent_roi(store, s, ingest, commission=0.65) for s in symbols}
+    assert free["calm"] is None  # all floored: not scored at all
+    rois = {s: r for s, r in free.items() if r is not None}
+    # The fixture discriminates: commission really moves the ROIs.
+    assert all(abs(rois[s] - (charged[s] or 0.0)) > 1e-3 for s in rois)
+
+    assert cmp.baseline_roi == pytest.approx(sum(rois.values()) / len(rois))
+    for e in cmp.entries:
+        # Equal-weight basket, each name's premium == its budget, so the
+        # basket ROI is the mean of its picks' ROIs.
+        assert e.roi_on_premium == pytest.approx(
+            sum(rois[a] for a in e.top_k_assets) / len(e.top_k_assets)
+        ), e.metric
 
 
 def test_missing_vix_raises(tmp_path: Path) -> None:
@@ -244,16 +314,17 @@ def _seeded_noise_store(
     fixture" pattern, same shape as `_seeded_store` above)."""
     store = DeltaLakeStore(tmp_path)
     _seed_vix(store, ingest, n)
-    # Seed 12 is pinned deliberately (not the first one tried): it is one of
+    # Seed 9 is pinned deliberately (re-pinned 2026-11-01, when the bake-off
+    # dropped commission and floored legs and seed 12 stopped showing it): it is one of
     # several draws where the uncorrected per-screen hurdle names a winner by
     # chance (exactly what seven simultaneous tests on pure noise sometimes
     # does) while Benjamini-Hochberg still declares none -- the contrast the
     # test below exists to demonstrate, not just "no relationship anywhere".
-    rng = np.random.default_rng(12)
+    rng = np.random.default_rng(9)
     spy_ret = rng.normal(0.0002, 0.011, size=n)
     _write_closes(store, "spy", ingest, np.clip(100.0 * np.exp(np.cumsum(spy_ret)), 5, None))
     for i in range(n_symbols):
-        r = np.random.default_rng(12_000 + i)
+        r = np.random.default_rng(9_000 + i)
         ret = r.normal(
             0.0, 0.011, size=n
         )  # zero drift, zero beta to spy -- pure idiosyncratic noise
@@ -310,7 +381,9 @@ def test_the_bakeoff_reads_its_directions_from_ranking_fragile_high(
 ) -> None:
     """The bake-off ranks each metric by the one shared table of directions
     (``ranking.FRAGILE_HIGH``), not a private copy: flipping it flips which
-    end of vol beta the screen calls fragile, and so its correlation's sign."""
+    end of vol beta the screen calls fragile, and so its correlation's sign.
+    At 5% OOM all four names keep unfloored rolls; at 10% 'calm' is floored
+    out and three names leave vol beta's correlation at exactly zero."""
     from tail_lab.research.backtest.ranking import FRAGILE_HIGH
 
     ingest = dt.date(2026, 3, 2)
@@ -321,7 +394,7 @@ def test_the_bakeoff_reads_its_directions_from_ranking_fragile_high(
             store,
             symbols=("spy", "wild", "calm", "mid"),
             as_of=ingest,
-            rule=ByMoneyness(10.0),
+            rule=ByMoneyness(5.0),
             tenor_weeks=4.0,
             years=1.0,
             top_k=2,

@@ -95,6 +95,9 @@ type SignalRun =
   | { status: 'error'; message: string }
   | { status: 'ready'; data: SignalTestResult }
 
+/** "1 floored roll", "14 floored rolls". */
+const countOf = (n: number, noun: string) => `${n} ${noun}${n === 1 ? '' : 's'}`
+
 const errorText = (err: unknown, what: string) =>
   err instanceof ApiError ? `The ${what} failed: ${err.status}. Nothing to compare yet.` : err instanceof Error ? err.message : String(err)
 
@@ -320,6 +323,24 @@ function InSampleBakeOff({ controls, topK }: { controls: PutLabControls; topK: n
               ? `${deltaLabel(data.target_delta)}: every roll's strike is solved from its own 20-day realised vol, so the distance below spot moves with the market`
               : `${data.moneyness_pct}% below spot on every roll`}
             .
+          </p>
+          <p className="pl-note" data-testid="bake-costs">
+            No commission is charged, and a roll whose model price fell under the premium floor is
+            left out: both are cost rules, not fragility.{' '}
+            {data.strike_rule !== 'delta' &&
+              'At a fixed distance below spot they dominated the ranking on quiet names. '}
+            {data.n_floored_legs_excluded > 0 &&
+              'Leaving floored rolls out is a selection too: a quiet name is judged only on its livelier entries, or dropped when it has none. '}
+            {data.n_floored_legs_excluded === 0
+              ? 'No roll hit the floor in this run.'
+              : `${countOf(data.n_floored_legs_excluded, 'floored roll')} left out${
+                  data.n_names_all_floored > 0
+                    ? `; ${countOf(data.n_names_all_floored, 'name')} had only floored rolls and ${
+                        data.n_names_all_floored === 1 ? 'is' : 'are'
+                      } not scored`
+                    : ''
+                }.`}
+            <ConceptInfo id="roll_premium" />
           </p>
           <p className="pl-bake-verdict">
             {winner.roi_on_premium > data.baseline_roi ? (
