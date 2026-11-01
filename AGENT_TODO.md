@@ -45,6 +45,50 @@ a large one strictly in order.
 - [ ] **Point-in-time universe for the signal test** (`docs/adr/0033`). The
       70-name list was chosen in 2026 with hindsight (MSTR, SMCI, COIN), so
       survivorship flatters any screen. This needs historical membership.
+
+      **Dio chose the full version on 2026-11-01:** the universe is the
+      S&P 500 members on each rebalance date, plus the ETF sleeve. It is
+      **blocked on the Sharadar subscription** (`HUMAN_TODO.md`). A cheaper
+      gate, the 70 names admitted only while they are S&P members, was
+      offered and declined.
+
+      *Measured 2026-11-01 against the lake:*
+
+      - `sp500_constituents` is in bronze, covering 1996-01-02 to
+        2026-08-18.
+      - Only 28 of the 70 names were members at any time since 2019-06. The
+        other 42 are 36 ETFs and MSTR, MARA, RIVN, CCJ, TSM and ASML.
+      - SMCI (2024), PLTR (2024), VST (2024), COIN (2025), VRT (2026) and
+        MRVL (2026) enter the current test years before they joined the
+        index.
+      - 164 members since 2019-06 had left the index by 2026-08-18. Tiingo
+        has no rows for delisted names (`HUMAN_TODO.md`).
+
+      *Plan, in order (run each step past `adversarial-plan-refinement`
+      before building it):*
+
+      1. **Probe the source** once the key is in. Check the format, whether
+         the SP500 table is included, and real rows for SIVB, FRC, LEH and
+         BBBY. Write it up in `docs/DATA_SOURCING.md` §8.
+      2. **Adapter** `ingestion/sharadar_sep.py` with its contract. Key on
+         Sharadar's permaticker, because tickers are reused (`FB` became
+         `META`, and delisted tickers get recycled). Dio runs the ingest.
+      3. **Membership resolver.** Map each `sp500_constituents` ticker on
+         date *d* to a permaticker as of *d*. Report the unmapped ones;
+         never drop them silently.
+      4. **Delisting settlement.** Decide what a put pays when its name
+         delists mid-roll: the last close for a failure, the deal price for
+         an acquisition. This needs an ADR, because it decides whether the
+         crashers pay.
+      5. **Wire it as a `universe` option** (`fixed` | `pit_sp500`) on the
+         signal test. Confirmatory mode (ADR 0035) stays on `fixed`, and
+         every `pit_sp500` run is exploratory.
+      6. **Measure cold-run time and memory at about 530 names** on the
+         1 GB VM before warming it daily. Today's cold run reads 70.
+
+      *Licence:* raw Sharadar prices must never be served, and the site is
+      public. Per-name pages for delisted names may show only derived
+      figures.
 - [x] **The in-sample bake-off still prices at fixed moneyness with commission**
       (found 2026-10-31). At 10% OOM, low-vol names hit the premium floor, and
       commission eats 60–90% of the premium. A floored SPY put paid about 2,122×
