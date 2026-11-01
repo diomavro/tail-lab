@@ -105,8 +105,12 @@ test('sets every ranged figure with a true minus, never a hyphen', async ({ page
   // bare `.toFixed()` reintroduces one.
   await page.getByRole('button', { name: /All 7 names/ }).click()
   await page.getByRole('tab', { name: 'Bake-off' }).click()
+  // Both the out-of-sample table and the (collapsed by default) in-sample one.
+  await page.getByRole('button', { name: 'Run the signal test' }).click()
+  await expect(page.getByRole('table', { name: /run at the rail/ })).toBeVisible()
+  await page.getByRole('button', { name: /In-sample association/ }).click()
   await page.getByRole('button', { name: 'Run the bake-off' }).click()
-  await expect(page.getByRole('table')).toBeVisible()
+  await expect(page.getByRole('table', { name: 'In-sample bake-off' })).toBeVisible()
   await page.getByRole('tab', { name: 'Workspace' }).click()
   await expect(page.locator('.pl-hero-num')).toBeVisible()
 

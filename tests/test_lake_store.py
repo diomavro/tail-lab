@@ -352,3 +352,32 @@ def test_earliest_in_partition_ms_reads_exactly_that_partition(tmp_path: Path) -
         store.write_bronze("ds", day + dt.timedelta(days=offset), pd.DataFrame({"t": stamps}))
     expected = int(pd.Timestamp("2026-10-30 12:00").value // 1_000_000)
     assert earliest_in_partition_ms(store, "ds", day, "t", event="test") == expected
+
+
+def test_snapshot_id_after_a_resolving_read_opens_no_table(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Resolving the as-of partition already fetches the add-actions the id is
+    hashed from, so identifying what was just read must not open the table
+    again (it cost ~1.3 s per name on Tigris), and must give the id a cold
+    store computes the long way."""
+    from tail_lab.lake import store as store_module
+
+    day = dt.date(2026, 1, 5)
+    DeltaLakeStore(tmp_path).write_bronze(DATASET, day, _frame(["2026-01-02"], [15.0]))
+    opens: list[str] = []
+
+    class CountingTable(store_module.DeltaTable):  # type: ignore[misc]
+        def __init__(self, table_uri: str, *args: object, **kwargs: object) -> None:
+            opens.append(table_uri)
+            super().__init__(table_uri, *args, **kwargs)
+
+    monkeypatch.setattr(store_module, "DeltaTable", CountingTable)
+    store = DeltaLakeStore(tmp_path)
+    store.read_bronze_as_of(DATASET, day)
+    after_read = len(opens)
+    snapshot_id = store.bronze_snapshot_id(DATASET, day)
+    assert len(opens) == after_read  # no second open for the id
+    monkeypatch.undo()
+    cold = DeltaLakeStore(tmp_path)
+    assert cold.bronze_snapshot_id(DATASET, day) == snapshot_id

@@ -948,3 +948,71 @@ def test_the_roll_refuses_a_zero_budget_or_tenor(bad: dict[str, float]) -> None:
     )
     with pytest.raises(ValueError, match="notional>0 and tenor_weeks>0"):
         run_put_roll(prices, rv, **{**kw, **bad})  # type: ignore[arg-type]
+
+
+@pytest.mark.parametrize("with_dividends", [False, True], ids=["no_div", "div"])
+@pytest.mark.parametrize("delta_rule", [False, True], ids=["moneyness", "delta"])
+def test_price_model_roll_is_the_one_function_run_put_roll_prices_with(
+    delta_rule: bool, with_dividends: bool
+) -> None:
+    """The walk-forward and the tape must price the SAME roll. Every cycle of
+    ``run_put_roll`` is rebuilt from ``price_model_roll`` at its index, field
+    for field: a second implementation of the roll would let the signal test
+    and the strategy it tests drift apart without any test noticing."""
+    from tail_lab.research.backtest.put_roll import (
+        PricingBasis,
+        RollTerms,
+        clamp_realized_vol,
+        price_model_roll,
+    )
+    from tail_lab.research.backtest.strike_rule import ByDelta
+    from tail_lab.transforms.dividend_yield import DividendYield
+
+    prices, rv = _calm_then_wild()
+    rule = ByDelta(0.10) if delta_rule else ByMoneyness(5.0)
+    paying = DividendYield(0.03, "measured", 0, (), 100.0)
+    basis = PricingBasis(dividends=(lambda d: paying) if with_dividends else None)
+    res = run_put_roll(
+        prices,
+        rv,
+        asset="spy",
+        as_of=prices.index[-1].date(),
+        notional=1000.0,
+        rule=rule,
+        tenor_weeks=4.0,
+        lookback_years=2.0,
+        basis=basis,
+    )
+    tenor_days = 20
+    terms = RollTerms(
+        basis=basis,
+        rate=res.rate,
+        notional=1000.0,
+        rule=rule,
+        tenor_weeks=4.0,
+        t_years=tenor_days / 252.0,
+        commission_per_contract=0.65,
+        spread_scale=1.0,
+    )
+    px = prices.to_numpy(dtype=float)
+    dates = [d.date() for d in prices.index]
+    assert len(res.cycles) > 5
+    for cycle in res.cycles:
+        i = dates.index(cycle.entry_date)
+        facts = price_model_roll(
+            px[i], clamp_realized_vol(float(rv.iloc[i])), px[i + tenor_days], dates[i], terms
+        )
+        assert cycle.spot == facts.spot
+        assert cycle.strike == facts.strike
+        assert cycle.sigma == facts.sigma
+        assert cycle.premium == facts.premium
+        assert cycle.premium_floored == facts.premium_floored
+        assert cycle.contracts == facts.contracts
+        assert cycle.cost == facts.cost
+        assert cycle.payoff == facts.payoff
+        assert cycle.net == facts.net
+        assert cycle.q == facts.q
+        assert cycle.q_source == facts.q_source
+        assert cycle.t_years == facts.t_years
+        assert cycle.entry_moneyness_pct == facts.entry_moneyness_pct
+        assert cycle.entry_delta == facts.entry_delta

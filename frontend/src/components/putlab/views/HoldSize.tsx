@@ -2,6 +2,7 @@ import type { HedgeOverlayResponse, OverlayWindow, ProgramOverlay, SizingAnswer 
 import { dots, poly, type Label, type Pt } from '../chart'
 import { ChartLabels } from '../ChartLabels'
 import { ConceptInfo } from '../ConceptInfo'
+import { Th } from '../Th'
 import { bp, inWords, pct } from './planFormat'
 
 /* "How much to hold": the Book's answer to the question its title asks, per
@@ -229,11 +230,11 @@ export function HoldSize({ data }: { data: HedgeOverlayResponse }) {
         <table className="pl-table pl-hold-table" data-testid="hold-table">
           <thead>
             <tr>
-              <th>Program</th>
-              <th>Window</th>
-              <th className="num">Full-Kelly w*</th>
-              <th className="num">Hold</th>
-              <th>Why</th>
+              <th data-noexplain="name">Program</th>
+              <Th concept="hold_window">Window</Th>
+              <Th concept="w_star" className="num">Full-Kelly w*</Th>
+              <Th concept="hold_size" className="num">Hold</Th>
+              <Th concept="hold_reason">Why</Th>
             </tr>
           </thead>
           <tbody>

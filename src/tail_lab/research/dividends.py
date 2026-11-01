@@ -46,6 +46,7 @@ __all__ = [
     "dividend_lookup",
     "dividend_snapshot_id",
     "index_history",
+    "session_dates",
 ]
 
 #: ``q`` on a date for one symbol.
@@ -180,6 +181,17 @@ def dividend_lookup(store: LakeStore, symbol: str, as_of: dt.date) -> SymbolDivi
     if series is None:
         return SymbolDividends(_unknown, snapshot_id)
     return SymbolDividends(series.at, snapshot_id)
+
+
+def session_dates(store: LakeStore, symbol: str, as_of: dt.date) -> pd.DatetimeIndex | None:
+    """The sessions ``symbol`` has a ``tiingo_eod`` row for in the snapshot
+    known on ``as_of``, read from the memoised snapshot (never re-read per
+    symbol). ``None`` when there is no snapshot or it lacks the symbol."""
+    found = _read(store, as_of)
+    if found is None:
+        return None
+    series = found[0].yields.get(symbol.lower())
+    return None if series is None else series.session_dates
 
 
 def index_history(store: LakeStore, as_of: dt.date) -> IndexHistory | None:

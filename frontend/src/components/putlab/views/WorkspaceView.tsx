@@ -1,23 +1,26 @@
 import type {
   AccuracyResponse,
-  MetricScreenComparison,
   PutBacktestResponse,
   PutLabLeaderboardResponse,
   RegimeTimelineView,
   RegimeVerdictResponse,
+  SignalTestResult,
   SweepResponse,
 } from '../../../api/client'
 import { useState } from 'react'
+import type { ConceptId } from '../../../content/concepts'
 import { AccuracyPanel } from '../AccuracyPanel'
-import { ConceptInfo } from '../ConceptInfo'
 import { fmtDollar, fmtFixed, fmtMult, fmtPct, fmtPrice, signedPts } from '../format'
 import { Ledger } from '../Ledger'
 import { MemoryTeaser } from '../MemoryTeaser'
+import { NameCoverage } from '../NameCoverage'
+import { NameSignals } from '../NameSignals'
 import { PriceBuild } from '../PriceBuild'
 import { StrikeBuild } from '../StrikeBuild'
 import type { ResourceState } from '../PutLab'
 import { RankingStrip } from '../RankingStrip'
 import { StrategyTape } from '../StrategyTape'
+import { StatK } from '../StatK'
 import { SweepGrid } from '../SweepGrid'
 import { StandaloneNote } from '../StandaloneNote'
 import { deltaLabel, type PutLabControls, type RankSort } from '../types'
@@ -26,7 +29,8 @@ import { deltaLabel, type PutLabControls, type RankSort } from '../types'
  *
  * Reading order is the argument: which name (ranking strip) -> is it worth it
  * (the spread) -> what it cost to find out (stat row) -> what happened (tape) ->
- * would another cell have been better (sweep) -> how wrong could this be
+ * would another cell have been better (sweep) -> what the lake holds for it
+ * (data coverage) -> how the signals treated it -> how wrong could this be
  * (accuracy) -> did it only work in one regime (memory) -> every roll (ledger).
  *
  * The hero is the annualized spread against the benchmark, not return on
@@ -45,7 +49,7 @@ interface Props {
   sweep: ResourceState<SweepResponse>
   accuracy: ResourceState<AccuracyResponse>
   ranking: ResourceState<PutLabLeaderboardResponse>
-  bakeoffLine: ResourceState<MetricScreenComparison>
+  signalLine: ResourceState<SignalTestResult>
   rankSort: RankSort
   onRankSort: (sort: RankSort) => void
   onOpenBakeOff: () => void
@@ -65,7 +69,7 @@ export function WorkspaceView({
   sweep,
   accuracy,
   ranking,
-  bakeoffLine,
+  signalLine,
   rankSort,
   onRankSort,
   onOpenBakeOff,
@@ -89,7 +93,7 @@ export function WorkspaceView({
           screen re-reads, and the strip says what it is waiting for. */}
       <RankingStrip
         ranking={ranking}
-        bakeoff={bakeoffLine}
+        signal={signalLine}
         sort={rankSort}
         onSort={onRankSort}
         requested={{ moneyness_pct: controls.moneyness_pct, tenor_weeks: controls.tenor_weeks, years: controls.years }}
@@ -164,7 +168,7 @@ function Result({
   const benchSymbol = sweep.status === 'ready' ? sweep.data.benchmark_symbol : 'benchmark'
   const bleedMonths = ((bt.worst_bleed_streak * controls.tenor_weeks) / 4.33).toFixed(0)
 
-  const stats: { k: string; v: string; cls?: string; note: string; concept?: string }[] = [
+  const stats: { k: string; v: string; cls?: string; note: string; concept: ConceptId }[] = [
     {
       k: 'Return on premium',
       v: fmtPct(bt.roi_on_premium),
@@ -183,6 +187,7 @@ function Result({
       v: fmtDollar(bt.net_pnl),
       cls: bt.net_pnl >= 0 ? 'pl-pos' : 'pl-neg',
       note: `on ${fmtDollar(bt.total_premium)} premium + ${fmtDollar(bt.total_brokerage)} fees`,
+      concept: 'net_pnl',
     },
     {
       k: 'Hit rate',
@@ -196,17 +201,20 @@ function Result({
       k: 'Biggest payoff',
       v: fmtMult(bt.biggest_payoff_mult),
       note: 'best single roll, on its premium budget',
+      concept: 'biggest_payoff',
     },
     {
       k: 'Worst bleed',
       v: `${bt.worst_bleed_streak}×`,
       cls: bt.worst_bleed_streak > 10 ? 'pl-neg' : undefined,
       note: `≈${bleedMonths} months of paying`,
+      concept: 'bleed',
     },
     {
       k: 'Sharpe',
       v: bt.sharpe_ratio == null ? '—' : fmtFixed(bt.sharpe_ratio),
       note: 'rough for a convex payoff',
+      concept: 'sharpe',
     },
   ]
 
@@ -279,10 +287,7 @@ function Result({
       <div className="pl-stats">
         {stats.map((s) => (
           <div key={s.k}>
-            <div className="pl-stat-k">
-              {s.k}
-              {s.concept && <ConceptInfo id={s.concept} />}
-            </div>
+            <StatK concept={s.concept}>{s.k}</StatK>
             <div className={`pl-stat-v ${s.cls ?? ''}`}>{s.v}</div>
             <div className="pl-stat-note">{s.note}</div>
           </div>
@@ -381,6 +386,11 @@ function Result({
         )}
       </section>
 
+      {/* Summaries stay visible; only their detail expands. */}
+      <NameCoverage asset={bt.asset} regimes={regimes} />
+
+      <NameSignals asset={bt.asset} />
+
       {/* Directly under the headline numbers, never behind a toggle: the size of
           a result's error is part of the result, and a collapsed panel is a
           filed one. */}
@@ -399,7 +409,12 @@ function Result({
       </section>
 
       <section className="pl-section">
-        <MemoryTeaser verdict={regimeVerdict} />
+        <MemoryTeaser
+          verdict={regimeVerdict}
+          rule={`${
+            bt.strike_rule === 'delta' && bt.target_delta != null ? deltaLabel(bt.target_delta) : `${bt.moneyness_pct}% out`
+          } · ${bt.tenor_weeks}-week rolls · ${bt.lookback_years}y`}
+        />
       </section>
 
       <section className="pl-section">

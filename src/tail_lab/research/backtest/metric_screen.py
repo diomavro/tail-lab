@@ -66,10 +66,9 @@ from tail_lab.research.backtest.put_roll import (
 )
 from tail_lab.research.backtest.ranking import (
     BENCHMARK,
-    COMPOSITE_METRICS,
     FRAGILE_HIGH,
-    _frac_rank,
     _returns,
+    composite_scores,
     snapshot_ids_for,
 )
 from tail_lab.research.backtest.regime_verdict import RegimeSlice, regime_breakdown
@@ -215,6 +214,8 @@ def _spearman(
         return None, None
     xs = [p[0] for p in pairs]
     ys = [p[1] for p in pairs]
+    if len(set(xs)) < 2 or len(set(ys)) < 2:
+        return None, None  # constant column: undefined (and scipy would warn)
     result = spearmanr(xs, ys)
     corr, pvalue = float(result.statistic), float(result.pvalue)
     if math.isnan(corr) or math.isnan(pvalue):
@@ -309,6 +310,27 @@ def _safe_metric(
         return None
 
 
+def fragility_from_returns(
+    bench_pair_window: pd.DataFrame, vol_pair_window: pd.DataFrame
+) -> dict[str, float | None]:
+    """Every raw fragility metric from two ALREADY-windowed return frames:
+    ``bench_pair_window`` (columns ``a`` = the asset, ``b`` = SPY) for the five
+    benchmark-regressed metrics, and ``vol_pair_window`` (``a`` = the asset,
+    ``v`` = VIX changes) for vol beta. They are separately inner-joined
+    windows, never one frame: the VIX pair has its own dates, and sharing a
+    join would shrink one metric's sample to the other's overlap. A metric
+    that cannot be estimated is ``None``."""
+    a, b = bench_pair_window["a"], bench_pair_window["b"]
+    values: dict[str, float | None] = {
+        name: _safe_metric(fn, a, b) for name, fn in _METRIC_FUNCS.items()
+    }
+    try:
+        values["vol_beta"] = vol_beta(vol_pair_window["a"], vol_pair_window["v"])
+    except ValueError:
+        values["vol_beta"] = None
+    return values
+
+
 def _fragility(
     asset_prices: pd.Series,
     *,
@@ -317,30 +339,14 @@ def _fragility(
     lookback_days: int,
 ) -> dict[str, float | None]:
     """Every raw fragility metric for ``asset_prices`` over the trailing
-    ``lookback_days``, keyed by name. Un-nested from ``compare_metric_screens``
-    (``docs/adr/0023``'s max-complexity ratchet — mccabe folds a nested
-    closure's own complexity into its enclosing function, so this and
-    ``_safe_metric`` being defined inside ``compare_metric_screens`` added
-    their combined complexity on top of its own branching), mirroring
-    ``ranking.py:rank_universe``'s identical fix."""
-    aligned = pd.concat({"a": _returns(asset_prices), "b": bench_ret}, axis=1).dropna()
-    window = aligned.iloc[-lookback_days:]
-    a, b = window["a"], window["b"]
-
-    values: dict[str, float | None] = {
-        name: _safe_metric(fn, a, b) for name, fn in _METRIC_FUNCS.items()
-    }
-
-    # Vol beta regresses against VIX changes, not the SPY benchmark, so it
-    # aligns and windows its own pair rather than reusing (a, b) above.
-    vol_aligned = pd.concat({"a": _returns(asset_prices), "v": vol_changes}, axis=1).dropna()
-    vol_window = vol_aligned.iloc[-lookback_days:]
-    try:
-        values["vol_beta"] = vol_beta(vol_window["a"], vol_window["v"])
-    except ValueError:
-        values["vol_beta"] = None
-
-    return values
+    ``lookback_days``, keyed by name: a thin wrapper that inner-joins and
+    windows the two pairs, then defers to :func:`fragility_from_returns`.
+    Un-nested from ``compare_metric_screens`` (``docs/adr/0023``'s
+    max-complexity ratchet), mirroring ``ranking.py:rank_universe``."""
+    asset_ret = _returns(asset_prices)
+    bench = pd.concat({"a": asset_ret, "b": bench_ret}, axis=1).dropna()
+    vol = pd.concat({"a": asset_ret, "v": vol_changes}, axis=1).dropna()
+    return fragility_from_returns(bench.iloc[-lookback_days:], vol.iloc[-lookback_days:])
 
 
 def compare_metric_screens(
@@ -420,20 +426,12 @@ def compare_metric_screens(
     if not scored:
         raise LookupError(f"no universe name could be scored as of {as_of.isoformat()}")
 
-    # Cross-sectional fragility rank of every metric (all six are ranked so
-    # each gets a bake-off row), but the composite averages only the
-    # COMPOSITE_METRICS -- identical to how rank_universe builds fragility_score,
-    # so the "Composite fragility" row here matches the shipped screen exactly
+    # The composite averages only the COMPOSITE_METRICS -- identical to how
+    # rank_universe builds fragility_score (`ranking.composite_scores`), so the
+    # "Composite fragility" row here matches the shipped screen exactly
     # (co-kurtosis excluded; see ranking.COMPOSITE_METRICS).
-    per_metric_rank = {
-        name: _frac_rank([s.metrics[name] for s in scored], fragile_high=FRAGILE_HIGH[name])
-        for name in _ALL_METRIC_NAMES
-    }
-    for i, s in enumerate(scored):
-        parts = [
-            per_metric_rank[name][i] for name in COMPOSITE_METRICS if i in per_metric_rank[name]
-        ]
-        s.fragility_score = sum(parts) / len(parts) if parts else None
+    for s_, score in zip(scored, composite_scores([x.metrics for x in scored]), strict=True):
+        s_.fragility_score = score
 
     baseline_roi = sum(s.result.roi_on_premium for s in scored) / len(scored)
 

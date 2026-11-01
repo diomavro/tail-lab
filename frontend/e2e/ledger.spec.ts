@@ -31,7 +31,8 @@ test('prints Fill and Budget as separate columns', async ({ page }) => {
   await page.getByRole('button', { name: /^Show all/ }).click()
   const table = page.getByRole('table', { name: 'Roll ledger' })
   for (const head of ['Fill', 'Budget', 'Payoff', 'Net', 'σ', 'Cts', 'Premium']) {
-    await expect(table.getByRole('columnheader', { name: head, exact: true })).toBeVisible()
+    // The header's name also carries its ⓘ button's ("What is …?").
+    await expect(table.getByRole('columnheader', { name: new RegExp(`^${head} What is `) })).toBeVisible()
   }
   await expect(table.locator('tbody tr')).toHaveCount(CYCLES.length)
 })

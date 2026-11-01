@@ -1,5 +1,7 @@
 import type { RegimeVerdictResponse, Verdict } from '../../api/client'
+import { fmtMult } from './format'
 import type { ResourceState } from './PutLab'
+import { StatK } from './StatK'
 
 // The Put Lab's live regime verdict (docs/adr/0015): split the current backtest
 // by the regime each roll was ENTERED in, and show whether the strategy paid off
@@ -37,7 +39,15 @@ const VERDICT_COPY: Record<Verdict, { label: string; tag: string; note: string }
 
 const pct = (n: number) => `${n >= 0 ? '+' : '−'}${Math.abs(n * 100).toFixed(0)}%`
 
-export function MemoryTeaser({ verdict }: { verdict: ResourceState<RegimeVerdictResponse> }) {
+/** `rule` is the tape's own rule in words (the backtest on screen): every
+ *  figure here is that one backtest split by entry regime, never a second rule. */
+export function MemoryTeaser({
+  verdict,
+  rule,
+}: {
+  verdict: ResourceState<RegimeVerdictResponse>
+  rule: string
+}) {
   const data = verdict.status === 'ready' ? verdict.data : null
   const copy = data ? VERDICT_COPY[data.verdict] : null
 
@@ -69,6 +79,9 @@ export function MemoryTeaser({ verdict }: { verdict: ResourceState<RegimeVerdict
           <p className="pl-note" style={{ marginBottom: 14 }}>
             Split by the regime each roll was <em>entered</em> in — {copy.note}
           </p>
+          <p className="pl-note" style={{ marginBottom: 14 }} data-testid="verdict-rule">
+            Source: this page&rsquo;s own backtest, {rule}.
+          </p>
           <div className="pl-mem">
             {data.slices.length === 0 && (
               <p className="pl-status">
@@ -85,6 +98,20 @@ export function MemoryTeaser({ verdict }: { verdict: ResourceState<RegimeVerdict
                   {pct(s.roi_on_premium)}
                 </div>
                 <div className="pl-micro">{s.paid_off ? 'net-paid here' : 'bled here'}</div>
+                <div className="pl-readout" style={{ marginTop: 6 }}>
+                  <span>
+                    <StatK variant="readout" concept="hit_rate">
+                      Hit rate
+                    </StatK>{' '}
+                    <strong>{Math.round(s.hit_rate * 100)}%</strong>
+                  </span>
+                  <span>
+                    <StatK variant="readout" concept="biggest_payoff">
+                      Biggest payoff
+                    </StatK>{' '}
+                    <strong>{fmtMult(s.biggest_payoff_mult)}</strong>
+                  </span>
+                </div>
               </div>
             ))}
           </div>

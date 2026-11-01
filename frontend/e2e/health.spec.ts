@@ -74,6 +74,7 @@ test('survives an API that is entirely down', async ({ page }) => {
       '/api/putlab/data-quality',
       '/api/putlab/leaderboard',
       '/api/putlab/metric-screen',
+      '/api/putlab/signal-test',
       '/api/putlab/regime-verdict',
       '/api/putlab/regimes',
       '/api/vix/stretch',

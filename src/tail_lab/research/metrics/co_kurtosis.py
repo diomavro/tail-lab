@@ -18,7 +18,11 @@ series in, float out. No lake/transforms dependency.
 
 from __future__ import annotations
 
+import math
+
 import pandas as pd
+
+from tail_lab.research.metrics._numeric import paired_arrays, var
 
 
 def co_kurtosis(
@@ -43,27 +47,28 @@ def co_kurtosis(
     has zero variance (co-kurtosis is undefined, not zero, when a denominator
     term vanishes).
     """
-    if not asset_returns.index.equals(benchmark_returns.index):
-        raise ValueError(
-            "asset_returns and benchmark_returns must share the same index "
-            "(same trading calendar) -- align them before calling co_kurtosis"
-        )
+    asset, bench = paired_arrays(
+        asset_returns,
+        benchmark_returns,
+        names=("asset_returns", "benchmark_returns"),
+        caller="co_kurtosis",
+    )
 
-    n = len(asset_returns)
+    n = len(asset)
     if n < min_observations:
         raise ValueError(
             f"only {n} paired observations; need at least {min_observations} "
             "to estimate co-kurtosis"
         )
 
-    asset_std = asset_returns.std(ddof=0)
-    bench_std = benchmark_returns.std(ddof=0)
+    asset_std = math.sqrt(var(asset, ddof=0))
+    bench_std = math.sqrt(var(bench, ddof=0))
     if asset_std == 0 or bench_std == 0:
         raise ValueError(
             "asset_returns or benchmark_returns has zero variance; co-kurtosis is undefined"
         )
 
-    asset_demeaned = asset_returns - asset_returns.mean()
-    bench_demeaned = benchmark_returns - benchmark_returns.mean()
+    asset_demeaned = asset - asset.mean()
+    bench_demeaned = bench - bench.mean()
     numerator = (asset_demeaned * bench_demeaned**3).mean()
     return float(numerator / (asset_std * bench_std**3))

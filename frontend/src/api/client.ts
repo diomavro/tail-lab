@@ -417,6 +417,10 @@ export interface RegimeSlice {
   n_cycles: number
   roi_on_premium: number
   paid_off: boolean
+  /** Share of this regime's rolls whose payoff cleared the premium budget. */
+  hit_rate: number
+  /** Best single roll's payoff as a multiple of its premium budget. */
+  biggest_payoff_mult: number
 }
 
 export interface RegimeVerdictResponse {
@@ -618,6 +622,197 @@ export async function fetchMetricScreen(
     throw new ApiError(`GET /api/putlab/metric-screen failed: ${resp.status}`, resp.status)
   }
   return (await resp.json()) as MetricScreenComparison
+}
+
+// --- Out-of-sample signal test (research/backtest/walk_forward.py, docs/adr/0033) ---
+// Field names mirror walk_forward.py's pydantic models exactly.
+
+export type SignalVerdictStatus = 'insufficient_data' | 'no_better_than_random' | 'crash_carried' | 'beats_random'
+export type InsufficientReason = 'too_few_periods' | 'too_few_episodes' | 'no_test_window'
+export type SignalScreenRole = 'composite' | 'best_vol_baseline' | 'exploratory'
+
+export interface SignalRegimeExcess {
+  regime: RegimeLabel
+  n_periods: number
+  excess_vs_universe: number
+}
+
+export interface SignalScreenSummary {
+  screen: string
+  label: string
+  kind: 'composite' | 'raw_metric' | 'vol_baseline'
+  n_periods: number
+  basket_total_roi: number
+  excess_vs_universe: number
+  excess_vs_spy: number
+  mean_ic: number | null
+  ic_hit_share: number | null
+  n_ic_periods: number
+  p_random: number
+  /** BH q-value across the 12 exploratory screens; null for the composite. */
+  p_bh: number | null
+  significant_bh: boolean | null
+  excess_ex_best_period: number | null
+  excess_ex_best_name_period: number | null
+  excess_by_regime: SignalRegimeExcess[]
+}
+
+export interface SignalPeriodRecord {
+  date: string
+  expiry_date: string
+  regime: RegimeLabel
+  n_eligible: number
+  top_k_assets: string[]
+  basket_roi: number
+  universe_roi: number
+  excess: number
+  band_low: number
+  band_high: number
+  spy_roi: number
+  ic: number | null
+  stress: boolean
+}
+
+export interface SignalEpisode {
+  start: string
+  end: string
+  n_periods: number
+}
+
+export interface SignalVerdict {
+  status: SignalVerdictStatus
+  reasons: InsufficientReason[]
+  n_periods: number
+  n_episodes: number
+  composite_excess_vs_universe: number | null
+  composite_p_random: number | null
+  excess_ex_best_period: number | null
+  excess_ex_best_name_period: number | null
+  vol_baseline_as_good: boolean
+  best_vol_baseline: string | null
+  best_vol_baseline_excess: number | null
+  best_vol_baseline_p_bh: number | null
+  sentence: string
+}
+
+export interface SignalPaidGroup {
+  n: number
+  n_paid: number
+  largest_payoff_multiple: number | null
+}
+
+export interface SignalRegimeGroup extends SignalPaidGroup {
+  regime: RegimeLabel
+}
+
+export interface SignalNameScreenRecord {
+  screen: string
+  role: SignalScreenRole
+  n_picked_periods: number
+  picked: SignalPaidGroup
+  other: SignalPaidGroup
+  contribution: number
+}
+
+export interface SignalNameRecord {
+  symbol: string
+  n_eligible_periods: number
+  by_regime: SignalRegimeGroup[]
+  screens: SignalNameScreenRecord[]
+}
+
+export interface SignalDiagnostics {
+  n_symbols_requested: number
+  n_symbols_loaded: number
+  skipped_symbols: string[]
+  n_rebalance_dates: number
+  n_sat_out: number
+  n_no_regime: number
+  n_no_entry_close: number
+  n_stale_settlements: number
+  n_name_periods_priced: number
+  n_beyond_model_depth: number
+  depth_beyond_10pct_share: number | null
+  n_removed_floor_or_depth: number
+  signal_removed: Record<string, number>
+}
+
+export interface SignalTestResult {
+  test_start: string | null
+  test_end: string | null
+  n_periods: number
+  universe_total_roi: number | null
+  spy_total_roi: number | null
+  screens: SignalScreenSummary[]
+  periods: SignalPeriodRecord[]
+  episodes: SignalEpisode[]
+  n_episodes: number
+  verdict: SignalVerdict
+  /** Ids of the caveats to print beside the verdict (concepts.ts). */
+  caveats: string[]
+  per_name: SignalNameRecord[]
+  diagnostics: SignalDiagnostics
+  as_of: string
+  moneyness_pct: number | null
+  strike_rule: StrikeRuleKind
+  target_delta: number | null
+  tenor_weeks: number
+  signal_years: number
+  top_k: number
+  n_random: number
+  seed: number
+  universe_size: number
+  snapshot_ids: string[]
+  code_sha: string
+}
+
+export interface SignalTestParams {
+  strike_rule: StrikeRuleKind
+  target_delta: number
+  /** Read only when strike_rule is 'moneyness'. */
+  moneyness_pct?: number
+  tenor_weeks: number
+  signal_years: number
+  top_k: number
+}
+
+/** The query both signal-test routes take. */
+function signalQuery(params: SignalTestParams): URLSearchParams {
+  return new URLSearchParams({
+    ...ruleQuery({
+      strike_rule: params.strike_rule,
+      target_delta: params.target_delta,
+      moneyness_pct: params.moneyness_pct ?? 5,
+    }),
+    tenor_weeks: String(params.tenor_weeks),
+    signal_years: String(params.signal_years),
+    top_k: String(params.top_k),
+  })
+}
+
+export async function fetchSignalTest(params: SignalTestParams, signal?: AbortSignal): Promise<SignalTestResult> {
+  const qs = signalQuery(params)
+  const resp = await fetch(`/api/putlab/signal-test?${qs.toString()}`, { signal })
+  if (!resp.ok) {
+    throw new ApiError(`GET /api/putlab/signal-test failed: ${resp.status}`, resp.status)
+  }
+  return (await resp.json()) as SignalTestResult
+}
+
+/** One name's slice of the signal test (GET /api/putlab/signal-test/{symbol}),
+ *  from the same memo as the full result, at the same query parameters. */
+export async function fetchNameSignal(
+  symbol: string,
+  params: SignalTestParams,
+  signal?: AbortSignal,
+): Promise<SignalNameRecord> {
+  const qs = signalQuery(params)
+  const path = `/api/putlab/signal-test/${encodeURIComponent(symbol)}`
+  const resp = await fetch(`${path}?${qs.toString()}`, { signal })
+  if (!resp.ok) {
+    throw new ApiError(`GET ${path} failed: ${resp.status}`, resp.status)
+  }
+  return (await resp.json()) as SignalNameRecord
 }
 
 // --- Strike preview (research/backtest/strike_preview.py, docs/adr/0029) ---
@@ -1267,4 +1462,35 @@ export async function fetchMarks(symbol: string, signal?: AbortSignal): Promise<
     throw new ApiError(`GET /api/putlab/marks failed: ${resp.status}`, resp.status)
   }
   return (await resp.json()) as MarksCoverage
+}
+
+// --- Data coverage per name (api/coverage_routes.py) ---
+
+export interface CoverageYear {
+  year: number
+  sessions_present: number
+  /** SPY's sessions in that calendar year; null when SPY's own history does
+   *  not cover the whole year (before it starts, or its partial first year),
+   *  so there is no honest denominator. */
+  sessions_expected: number | null
+}
+
+export interface SymbolCoverage {
+  symbol: string
+  as_of: string
+  ohlcv: CoverageYear[]
+  tiingo_eod: CoverageYear[]
+  /** Shared by every name: the volatility index the regimes come from. */
+  vix: CoverageYear[]
+  /** Whether the lake collects put quotes for this name (membership only). */
+  quotes_collected: boolean
+}
+
+export async function fetchCoverage(symbol: string, signal?: AbortSignal): Promise<SymbolCoverage> {
+  const path = `/api/putlab/coverage/${encodeURIComponent(symbol)}`
+  const resp = await fetch(path, { signal })
+  if (!resp.ok) {
+    throw new ApiError(`GET ${path} failed: ${resp.status}`, resp.status)
+  }
+  return (await resp.json()) as SymbolCoverage
 }

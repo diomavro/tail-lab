@@ -1,9 +1,10 @@
-import { expect, test, type Page, type Route } from '@playwright/test'
+import { expect, test, type Locator, type Page, type Route } from '@playwright/test'
 import { cellContrast, cellPaint, outlineContrast, textContrastOnPage } from './contrast'
-import { LEADERBOARD, METRIC_SCREEN_NO_WINNER, METRIC_SCREEN_WINNER, MODEL_PRICED_MAX } from './fixtures/putlab'
+import { LEADERBOARD, MODEL_PRICED_MAX } from './fixtures/putlab'
+import { SIGNAL_TEST_NO_BETTER } from './fixtures/signal-test'
 import { type MockOptions, mockPutLabApi } from './fixtures/mock-api'
 import { fmtPct } from '../src/components/putlab/format'
-import type { MetricScreenComparison, PutLabLeaderboardResponse, RankedAsset } from '../src/api/client'
+import type { PutLabLeaderboardResponse, RankedAsset } from '../src/api/client'
 
 // The screen: the universe ranking as a strip at the top of the Workspace, in
 // two orders over one response -- by fragility (the server's order) and by
@@ -25,6 +26,11 @@ const expand = (page: Page) => page.getByRole('button', { name: /All \d+ names/ 
 const picks = (page: Page) => strip(page).getByTestId('rank-pick')
 const bestTable = (page: Page) => page.getByRole('table', { name: 'Ranked strategies' })
 const fragTable = (page: Page) => page.getByRole('table', { name: /fragility ranking/i })
+/** A header of the fragility table by its label, AND its ⓘ button: a header that
+ *  explains itself has the button's name ("What is …?") joined to its own, and
+ *  the pattern requires it, so a bare header does not match. */
+const colHead = (table: Locator, label: string) =>
+  table.getByRole('columnheader', { name: new RegExp(`^${label.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')} What is `) })
 
 async function plate(page: Page) {
   await page.getByRole('radiogroup', { name: 'Sheet' }).getByText('Plate').click()
@@ -58,9 +64,10 @@ async function serveLeaderboard(page: Page, body: (url: URL) => PutLabLeaderboar
   )
 }
 
-async function serveBakeoff(page: Page, body: MetricScreenComparison) {
+/** Serve one signal-test result of our own, registered before the page loads. */
+async function serveSignal(page: Page, body: unknown) {
   await page.route(
-    (url) => url.pathname === '/api/putlab/metric-screen',
+    (url) => url.pathname === '/api/putlab/signal-test',
     (route: Route) => route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(body) }),
   )
 }
@@ -107,12 +114,12 @@ test.describe('with the shared fixture', () => {
     await expand(page)
     const table = fragTable(page)
     for (const head of ['Fragility', 'Dn β', 'Co-skew', 'Co-kurt', 'Tail β', 'Dn cap', 'Vol β']) {
-      await expect(table.getByRole('columnheader', { name: head, exact: true })).toBeVisible()
+      await expect(colHead(table, head)).toBeVisible()
     }
     // The two strategy groups, named from the response -- and two "Per year"
     // columns, told apart by their accessible names.
-    await expect(table.getByRole('columnheader', { name: 'At 5% · 4w', exact: true })).toBeVisible()
-    await expect(table.getByRole('columnheader', { name: 'Best cell', exact: true })).toBeVisible()
+    await expect(colHead(table, 'At 5% · 4w')).toBeVisible()
+    await expect(colHead(table, 'Best cell')).toBeVisible()
     await expect(table.getByRole('columnheader', { name: 'Per year at 5% · 4w', exact: true })).toBeVisible()
     await expect(table.getByRole('columnheader', { name: 'Per year at best cell', exact: true })).toBeVisible()
     await expect(table.locator('tbody tr')).toHaveCount(LEADERBOARD.ranked.length)
@@ -167,7 +174,13 @@ test.describe('with the shared fixture', () => {
     // Every column of both strategy groups, the screened group's last (q, which
     // carries the q = 0 warning) included.
     for (const name of ['Per year at best cell', 'At', 'Per year at 5% · 4w', 'Hit', 'Biggest', 'Verdict', 'q']) {
-      const box = (await fragTable(page).getByRole('columnheader', { name, exact: true }).boundingBox())!
+      // The two "Per year" headers carry an aria-label that tells them apart,
+      // which replaces the "What is …?" suffix in their name: find them by it,
+      // and assert their ⓘ button directly.
+      const labelled = name.startsWith('Per year')
+      const head = labelled ? fragTable(page).getByRole('columnheader', { name, exact: true }) : colHead(fragTable(page), name)
+      if (labelled) await expect(head.locator('button.pl-concept')).toHaveCount(1)
+      const box = (await head.boundingBox())!
       expect(box.x + box.width, name).toBeLessThanOrEqual(scroller.x + scroller.width)
     }
     // The pinned name and the current row's outline survive a sideways scroll.
@@ -342,13 +355,13 @@ test.describe('with the shared fixture', () => {
     await expect(bestTable(page).locator('thead th')).toHaveText([
       '#',
       'The strategy',
-      'Per year',
-      'On premium',
-      'Hit',
-      'Rolls',
-      'Biggest payoff',
-      'Fragility',
-      'Verdict',
+      'Per yearⓘ',
+      'On premiumⓘ',
+      'Hitⓘ',
+      'Rollsⓘ',
+      'Biggest payoffⓘ',
+      'Fragilityⓘ',
+      'Verdictⓘ',
     ])
     // The screened cell's dividend and pricing basis are not best-cell figures.
     await expect(bestTable(page).getByRole('columnheader', { name: 'q', exact: true })).toHaveCount(0)
@@ -437,9 +450,9 @@ test.describe('with the shared fixture', () => {
       // Contrast alone passes an unpainted cell. The worst-case cells -- SPY's
       // loss (the column's largest) and the top-ranked metric cell -- must
       // paint an opaque background unlike an unshaded cell's.
-      // The legend and the bake-off verdict carry the reading: AA too.
+      // The legend and the signal-test verdict carry the reading: AA too.
       expect(await cellContrastOnPage(page, 'rank-legend')).toBeGreaterThanOrEqual(4.5)
-      expect(await cellContrastOnPage(page, 'rank-bakeoff')).toBeGreaterThanOrEqual(4.5)
+      expect(await cellContrastOnPage(page, 'rank-signal')).toBeGreaterThanOrEqual(4.5)
       // A deeper loss shades deeper: SPY's is the column's largest, EEM's smaller.
       const d = (id: string) =>
         page.getByTestId(id).evaluate((el) => Number((el as HTMLElement).style.getPropertyValue('--pl-d')))
@@ -757,24 +770,53 @@ test.describe('with the shared fixture', () => {
     expect(overflow).toBeLessThanOrEqual(0)
   })
 
-  test('the bake-off line reads the composite at fixed settings', async ({ page }) => {
-    const line = strip(page).getByTestId('rank-bakeoff')
-    await expect(line).toContainText(`Bake-off · 5% · 4w · 4y · by distance · top 5 of ${METRIC_SCREEN_WINNER.universe_size}`)
-    await expect(line).toContainText('Same settings as the screen above')
+  test('the signal-test line reads the walk-forward verdict at fixed, stated settings', async ({ page }) => {
+    const line = strip(page).getByTestId('rank-signal')
+    await expect(line).toContainText('Signal test · 0.10Δ at realised vol · 4w · 4y · top 5')
+    await expect(line).toContainText('out of sample, rebalanced every 4 weeks')
+    await expect(line).toContainText('No better than random baskets.')
+    // The API's own sentence, with the best volatility screen beside the composite.
+    await expect(line).toContainText('did not beat random baskets')
+    await expect(line).toContainText('picked after the fact')
+    await expect(line).toContainText(`Test window ${SIGNAL_TEST_NO_BETTER.test_start} to ${SIGNAL_TEST_NO_BETTER.test_end}`)
     // Its own provenance, not the ranking's.
-    await expect(line).toContainText(METRIC_SCREEN_WINNER.code_sha)
-    await expect(line).toContainText(`${METRIC_SCREEN_WINNER.snapshot_ids.length} bronze snapshots`)
+    await expect(line).toContainText(SIGNAL_TEST_NO_BETTER.code_sha.slice(0, 7))
+    await expect(line).toContainText(`${SIGNAL_TEST_NO_BETTER.snapshot_ids.length} bronze snapshots`)
     await expect(line).not.toContainText(LEADERBOARD.code_sha)
+    // No in-sample clause: that reading lives on the Bake-off tab, collapsed.
+    await expect(line).not.toContainText('on premium')
+    await expect(line).not.toContainText('correlation')
     // A verdict on the fragility order: shown with it, not with best return.
     await sortTo(page, 'Best return')
-    await expect(strip(page).getByTestId('rank-bakeoff')).toHaveCount(0)
+    await expect(strip(page).getByTestId('rank-signal')).toHaveCount(0)
   })
 
-  test('the bake-off line keeps its own settings when the rail moves', async ({ page }) => {
+  test('the signal-test line keeps its own settings when the rail moves', async ({ page }) => {
     await rail(page).getByRole('radiogroup', { name: 'Strike presets' }).getByText('10%').click()
     await rail(page).getByRole('radiogroup', { name: 'Held to expiry' }).getByText('1 quarter').click()
-    await expect(strip(page).getByTestId('rank-bakeoff')).toContainText('Bake-off · 5% · 4w · 4y · by distance · top 5 of')
+    await expect(strip(page).getByTestId('rank-signal')).toContainText('Signal test · 0.10Δ at realised vol · 4w · 4y · top 5')
+    // It does not compare itself with the list: the rail's default is a
+    // distance and the test's a delta, so the two would never match.
+    await expect(strip(page).getByTestId('rank-signal')).not.toContainText('settings of the screen')
   })
+
+  for (const [status, label] of [
+    ['beats_random', 'Beats random baskets.'],
+    ['crash_carried', 'Carried by one event.'],
+    ['insufficient_data', 'Too little history to judge.'],
+  ] as const) {
+    test(`the signal-test line words a ${status} verdict plainly`, async ({ page }) => {
+      await mockPutLabApi(page)
+      await serveSignal(page, {
+        ...SIGNAL_TEST_NO_BETTER,
+        verdict: { ...SIGNAL_TEST_NO_BETTER.verdict, status, sentence: `A planted ${status} sentence.` },
+      })
+      await page.goto('/')
+      const line = strip(page).getByTestId('rank-signal')
+      await expect(line).toContainText(label)
+      await expect(line).toContainText(`A planted ${status} sentence.`)
+    })
+  }
 
   test('the bake-off link opens the Bake-off tab', async ({ page }) => {
     await strip(page).getByRole('button', { name: 'Bake-off →' }).click()
@@ -918,7 +960,7 @@ test.describe('with a response of its own', () => {
       await expect(page.getByRole('radiogroup', { name: 'Sort the screen' })).toBeVisible()
       await expect(picks(page)).toHaveCount(0)
       if (state === 'loading') {
-        // The bake-off line's link is a button in the strip, which is why the
+        // The signal-test line's link is a button in the strip, which is why the
         // "ranking loaded" signal is `rank-pick`, never any strip button.
         await expect(strip(page).getByRole('button', { name: 'Bake-off →' })).toBeVisible()
       }
@@ -995,7 +1037,7 @@ test.describe('with a response of its own', () => {
     await serveLeaderboard(page, () => ({ ...LEADERBOARD, moneyness_pct: 7.5, tenor_weeks: 8, notional: 2500 }))
     await page.goto('/')
     await expand(page)
-    await expect(fragTable(page).getByRole('columnheader', { name: 'At 7.5% · 8w', exact: true })).toBeVisible()
+    await expect(colHead(fragTable(page), 'At 7.5% · 8w')).toBeVisible()
     await sortTo(page, 'Best return')
     await expect(page.getByTestId('best-return')).toContainText('own $2,500 per roll')
     // The export names the screen shown, not the default strike.
@@ -1021,15 +1063,14 @@ test.describe('with a response of its own', () => {
     await expect(page.getByTestId('q-zero-note')).toBeVisible()
   })
 
-  test('the bake-off line will not call two days’ results the same settings', async ({ page }) => {
+  test('the signal-test line says when it is from a different day than the list', async ({ page }) => {
     await mockPutLabApi(page)
-    await serveBakeoff(page, {
-      ...METRIC_SCREEN_WINNER,
+    await serveSignal(page, {
+      ...SIGNAL_TEST_NO_BETTER,
       as_of: '2026-08-20',
-      snapshot_ids: METRIC_SCREEN_WINNER.snapshot_ids.map((s) => s.replace('2026-08-21', '2026-08-20')),
     })
     await page.goto('/')
-    await expect(strip(page).getByTestId('rank-bakeoff')).toContainText(
+    await expect(strip(page).getByTestId('rank-signal')).toContainText(
       'From a different day (2026-08-20) than the screen above.',
     )
   })
@@ -1075,35 +1116,7 @@ test.describe('with a response of its own', () => {
     await expect(picks(page).first().locator('.pl-neg')).toHaveText('−5%')
   })
 
-  test('the bake-off line’s figures add up at an exact half', async ({ page }) => {
-    // −1.25% and −1.3%: one rounding for both levels and the gap.
-    await mockPutLabApi(page)
-    await serveBakeoff(page, {
-      ...METRIC_SCREEN_WINNER,
-      baseline_roi: -0.013,
-      entries: METRIC_SCREEN_WINNER.entries.map((e) =>
-        e.metric === 'fragility_score' ? { ...e, roi_on_premium: -0.0125, lift_vs_baseline: 0.0005 } : e,
-      ),
-    })
-    await page.goto('/')
-    await expect(strip(page).getByTestId('rank-bakeoff')).toContainText('−1.3% on premium against −1.3% for buying all 35: no difference.')
-  })
 
-  test('a negative correlation that is not significant is not called the wrong way', async ({ page }) => {
-    await mockPutLabApi(page)
-    await serveBakeoff(page, {
-      ...METRIC_SCREEN_WINNER,
-      entries: METRIC_SCREEN_WINNER.entries.map((e) =>
-        e.metric === 'fragility_score'
-          ? { ...e, spearman_vs_payoff: -0.3, spearman_pvalue: 0.2, significant_corrected: false }
-          : e,
-      ),
-    })
-    await page.goto('/')
-    const line = strip(page).getByTestId('rank-bakeoff')
-    await expect(line).toContainText('(ρ = −0.30) is not significant')
-    await expect(line).not.toContainText('wrong way')
-  })
 
   test('tied metric values share a shade', async ({ page }) => {
     await mockPutLabApi(page)
@@ -1121,20 +1134,6 @@ test.describe('with a response of its own', () => {
     expect(await r('iwm')).toBeCloseTo(0.75, 5)
   })
 
-  test('the bake-off line keeps a tenth of a point', async ({ page }) => {
-    // The "no difference" bar is half a tenth; a full tenth is a difference.
-    await mockPutLabApi(page)
-    await serveBakeoff(page, {
-      ...METRIC_SCREEN_WINNER,
-      entries: METRIC_SCREEN_WINNER.entries.map((e) =>
-        e.metric === 'fragility_score'
-          ? { ...e, roi_on_premium: METRIC_SCREEN_WINNER.baseline_roi + 0.001, lift_vs_baseline: 0.001 }
-          : e,
-      ),
-    })
-    await page.goto('/')
-    await expect(strip(page).getByTestId('rank-bakeoff')).toContainText('0.1 pts better.')
-  })
 
   test('the best-return Market tag is the best cell’s own', async ({ page }) => {
     await mockPutLabApi(page)
@@ -1167,7 +1166,7 @@ test.describe('with a response of its own', () => {
     }))
     await page.goto('/')
     await expand(page)
-    await expect(fragTable(page).getByRole('columnheader', { name: 'Basis' })).toBeVisible()
+    await expect(colHead(fragTable(page), 'Basis')).toBeVisible()
     // Basis sits under the screened group's band, and the bands still cover
     // every column (the band widens by one rather than pushing Basis under
     // "Fragility measures").
@@ -1179,7 +1178,7 @@ test.describe('with a response of its own', () => {
         at += c.colSpan
         return band
       })
-      const basis = [...heads!.cells].findIndex((c) => c.textContent!.trim() === 'Basis')
+      const basis = [...heads!.cells].findIndex((c) => c.textContent!.trim().startsWith('Basis'))
       return { spans, basis, columns: heads!.cells.length }
     })
     const screened = bands.spans.find((b) => b.text.startsWith('At '))!
@@ -1270,66 +1269,9 @@ test.describe('with a response of its own', () => {
     await expect(page.getByTestId('rank-legend')).not.toContainText('Co-skew and')
   })
 
-  test('the bake-off line reads the composite entry, wherever it sorts', async ({ page }) => {
-    await mockPutLabApi(page)
-    const composite = METRIC_SCREEN_WINNER.entries.find((e) => e.metric === 'fragility_score')!
-    await serveBakeoff(page, {
-      ...METRIC_SCREEN_WINNER,
-      entries: [...METRIC_SCREEN_WINNER.entries.filter((e) => e !== composite), composite],
-    })
-    await page.goto('/')
-    const line = strip(page).getByTestId('rank-bakeoff')
-    // The composite's +1.6 pts and its significance -- not entries[0]'s
-    // (downside beta: +0.3, not significant).
-    // Both levels, not just the gap: these two baskets both LOST money.
-    await expect(line).toContainText(
-      "The composite screen's top 5 returned −22.5% on premium against −24.1% for buying all 35: 1.6 pts better.",
-    )
-    await expect(line).toContainText(
-      "Its ranking's correlation with payoff (ρ = 0.34) is significant after FDR correction across 7 screens.",
-    )
-    await expect(line).not.toContainText('the wrong way')
-  })
 
-  test('the bake-off line says when the composite trailed', async ({ page }) => {
-    await mockPutLabApi(page)
-    await serveBakeoff(page, { ...METRIC_SCREEN_NO_WINNER, top_k: 5 })
-    await page.goto('/')
-    await expect(strip(page).getByTestId('rank-bakeoff')).toContainText(
-      "The composite screen's top 5 returned −28.5% on premium against −19.8% for buying all 35: 8.7 pts worse.",
-    )
-  })
 
-  test('the bake-off line calls a gap that rounds away no difference', async ({ page }) => {
-    await mockPutLabApi(page)
-    await serveBakeoff(page, {
-      ...METRIC_SCREEN_WINNER,
-      entries: METRIC_SCREEN_WINNER.entries.map((e) =>
-        e.metric === 'fragility_score'
-          ? { ...e, roi_on_premium: METRIC_SCREEN_WINNER.baseline_roi + 0.0004, lift_vs_baseline: 0.0004 }
-          : e,
-      ),
-    })
-    await page.goto('/')
-    const line = strip(page).getByTestId('rank-bakeoff')
-    await expect(line).toContainText('for buying all 35: no difference.')
-    await expect(line).not.toContainText('better')
-  })
 
-  test('the bake-off line’s gap is the gap between the levels it prints', async ({ page }) => {
-    // −22.46% against −24.14% rounds to −22.5% and −24.1%; the raw gap (1.68)
-    // would print 1.7, which those two figures do not add up to.
-    await mockPutLabApi(page)
-    await serveBakeoff(page, {
-      ...METRIC_SCREEN_WINNER,
-      baseline_roi: -0.2414,
-      entries: METRIC_SCREEN_WINNER.entries.map((e) =>
-        e.metric === 'fragility_score' ? { ...e, roi_on_premium: -0.2246, lift_vs_baseline: 0.0168 } : e,
-      ),
-    })
-    await page.goto('/')
-    await expect(strip(page).getByTestId('rank-bakeoff')).toContainText('−22.5% on premium against −24.1% for buying all 35: 1.6 pts better.')
-  })
 
   test('an empty screen says so in the fragility order too', async ({ page }) => {
     await mockPutLabApi(page)
@@ -1340,144 +1282,42 @@ test.describe('with a response of its own', () => {
     await expect(strip(page).getByTestId('rank-empty')).toHaveText('No name had enough history to score its grid.')
   })
 
-  test('the bake-off line says when the screen ordered names the wrong way', async ({ page }) => {
-    // The p-value is two-sided: a significant NEGATIVE correlation must not
-    // read as an endorsement on the landing view.
-    await mockPutLabApi(page)
-    await serveBakeoff(page, {
-      ...METRIC_SCREEN_WINNER,
-      entries: METRIC_SCREEN_WINNER.entries.map((e) =>
-        e.metric === 'fragility_score'
-          ? { ...e, spearman_vs_payoff: -0.62, spearman_pvalue: 0.0004, significant_corrected: true, lift_vs_baseline: -0.05 }
-          : e,
-      ),
-    })
-    await page.goto('/')
-    await expect(strip(page).getByTestId('rank-bakeoff')).toContainText(
-      '(ρ = −0.62) is significant after FDR correction across 7 screens: it ordered names the wrong way, more fragile paying less.',
-    )
-  })
 
-  test('the bake-off line says when its top five is the whole universe', async ({ page }) => {
-    // Found on a two-name lake: "top 5 matched buying all 2" compared a basket
-    // with itself. With no more names than the basket holds there is no
-    // selection to measure.
-    await mockPutLabApi(page)
-    await serveBakeoff(page, { ...METRIC_SCREEN_WINNER, universe_size: 3 })
-    await page.goto('/')
-    const line = strip(page).getByTestId('rank-bakeoff')
-    await expect(line).toContainText('It scored only 3 names, so its top 5 is all of them: no selection to measure.')
-    await expect(line).not.toContainText('buying all 3')
-  })
 
-  test('the bake-off line says so at the boundary, five names for a top five', async ({ page }) => {
-    await mockPutLabApi(page)
-    await serveBakeoff(page, { ...METRIC_SCREEN_WINNER, universe_size: 5 })
-    await page.goto('/')
-    await expect(strip(page).getByTestId('rank-bakeoff')).toContainText('It scored only 5 names, so its top 5 is all of them')
-  })
 
-  test('the bake-off line says when the correlation could not be tested', async ({ page }) => {
-    await mockPutLabApi(page)
-    await serveBakeoff(page, {
-      ...METRIC_SCREEN_WINNER,
-      entries: METRIC_SCREEN_WINNER.entries.map((e) =>
-        e.metric === 'fragility_score' ? { ...e, spearman_vs_payoff: null, spearman_pvalue: null, significant_corrected: false } : e,
-      ),
-    })
-    await page.goto('/')
-    await expect(strip(page).getByTestId('rank-bakeoff')).toContainText('could not be tested')
-  })
 
-  test('the bake-off line counts only the screens that entered the correction', async ({ page }) => {
-    // A screen with no p-value is not among the K tests the FDR correction ran.
-    await mockPutLabApi(page)
-    await serveBakeoff(page, {
-      ...METRIC_SCREEN_WINNER,
-      n_comparisons: METRIC_SCREEN_WINNER.entries.length - 1,
-      entries: METRIC_SCREEN_WINNER.entries.map((e) =>
-        e.metric === 'co_kurtosis' ? { ...e, spearman_vs_payoff: null, spearman_pvalue: null, significant_corrected: false } : e,
-      ),
-    })
-    await page.goto('/')
-    await expect(strip(page).getByTestId('rank-bakeoff')).toContainText(
-      `across ${METRIC_SCREEN_WINNER.entries.length - 1} screens`,
-    )
-  })
 
-  test('the bake-off line compares its settings with the list’s', async ({ page }) => {
-    await mockPutLabApi(page)
-    // A leaderboard that answers at whatever it was asked for.
-    await serveLeaderboard(page, (u) => ({
-      ...LEADERBOARD,
-      moneyness_pct: Number(u.searchParams.get('moneyness_pct')),
-      tenor_weeks: Number(u.searchParams.get('tenor_weeks')),
-      lookback_years: Number(u.searchParams.get('years')),
-    }))
-    await page.goto('/')
-    const line = strip(page).getByTestId('rank-bakeoff')
-    await expect(line).toContainText('Same settings as the screen above')
-    await rail(page).getByRole('radiogroup', { name: 'Strike presets' }).getByText('10%').click()
-    await rail(page).getByRole('radiogroup', { name: 'Held to expiry' }).getByText('1 quarter').click()
-    await expect(page.getByTestId('rank-pick').first()).toBeVisible()
-    await expect(page.getByLabel('Out of the money, %')).toHaveValue('10')
-    await expect(line).toContainText('Not the settings of the screen above')
-  })
 
-  for (const [axis, patch] of [
-    ['strike', { moneyness_pct: 10 }],
-    ['tenor', { tenor_weeks: 12 }],
-  ] as const) {
-    test(`the bake-off line notices when only the ${axis} differs`, async ({ page }) => {
-      await mockPutLabApi(page)
-      await serveLeaderboard(page, () => ({ ...LEADERBOARD, ...patch }))
-      await page.goto('/')
-      await expect(picks(page).first()).toBeVisible()
-      await expect(strip(page).getByTestId('rank-bakeoff')).toContainText('Not the settings of the screen above')
-    })
-  }
 
-  test('the bake-off line does not point at a screen that listed nothing', async ({ page }) => {
+  test('the signal-test line does not point at a screen that listed nothing', async ({ page }) => {
     await mockPutLabApi(page)
     await serveLeaderboard(page, () => ({ ...LEADERBOARD, ranked: [] }))
+    await serveSignal(page, { ...SIGNAL_TEST_NO_BETTER, as_of: '2026-08-20' })
     await page.goto('/')
-    await expect(strip(page).getByTestId('rank-bakeoff')).toContainText('Same settings as the screen asked for')
+    await expect(strip(page).getByTestId('rank-signal')).toContainText('than the screen asked for.')
   })
 
-  test('the bake-off line notices when only the years differ', async ({ page }) => {
-    await mockPutLabApi(page)
-    await serveLeaderboard(page, (u) => ({
-      ...LEADERBOARD,
-      moneyness_pct: Number(u.searchParams.get('moneyness_pct')),
-      tenor_weeks: Number(u.searchParams.get('tenor_weeks')),
-      lookback_years: Number(u.searchParams.get('years')),
-    }))
-    await page.goto('/')
-    await expect(strip(page).getByTestId('rank-bakeoff')).toContainText('Same settings as the screen above')
-    await rail(page).getByText('3y', { exact: true }).click()
-    await expect(rail(page).getByRole('radio', { name: '3y' })).toBeChecked()
-    await expect(strip(page).getByTestId('rank-bakeoff')).toContainText('Not the settings of the screen above')
-  })
 
-  test('while the list loads, the bake-off line compares with what was asked for', async ({ page }) => {
+  test('while the list loads, the signal-test line makes no claim about it', async ({ page }) => {
     await mockPutLabApi(page, { hang: ['/api/putlab/leaderboard'] })
     await page.goto('/')
-    // No screen is on the page yet, so the line names the one asked for.
-    await expect(strip(page).getByTestId('rank-bakeoff')).toContainText('Same settings as the screen asked for')
+    // No screen is on the page, so there is no day to compare with.
+    await expect(strip(page).getByTestId('rank-signal')).toContainText('Signal test · 0.10Δ at realised vol')
+    await expect(strip(page).getByTestId('rank-signal')).not.toContainText('different day')
   })
 
   for (const [state, opts, text] of [
-    ['fails', { fail: ['/api/putlab/metric-screen'] }, 'Bake-off unavailable: GET /api/putlab/metric-screen failed: 500'],
-    ['has no data', { noData: ['/api/putlab/metric-screen'] }, 'Bake-off: no screen for this window'],
+    ['fails', { fail: ['/api/putlab/signal-test'] }, 'Signal test unavailable: GET /api/putlab/signal-test failed: 500'],
+    ['has no data', { noData: ['/api/putlab/signal-test'] }, 'Signal test: no result for this window'],
   ] as [string, MockOptions, string][]) {
-    test(`the bake-off line says so when the read ${state}`, async ({ page }) => {
+    test(`the signal-test line says so when the read ${state}`, async ({ page }) => {
       await mockPutLabApi(page, opts)
       await page.goto('/')
-      await expect(strip(page).getByTestId('rank-bakeoff')).toContainText(text)
+      await expect(strip(page).getByTestId('rank-signal')).toContainText(text)
     })
   }
 
-  test('the bake-off line never follows the rail', async ({ page }) => {
+  test('the signal-test line never follows the rail', async ({ page }) => {
     // The strip's first read happens while the rail is at its defaults, so a
     // fetch that leaked the rail would look right on load. Fail that read, move
     // the rail to non-default values on the Bake-off tab, and come back: the
@@ -1485,7 +1325,7 @@ test.describe('with a response of its own', () => {
     await mockPutLabApi(page)
     let first = true
     await page.route(
-      (url) => url.pathname === '/api/putlab/metric-screen',
+      (url) => url.pathname === '/api/putlab/signal-test',
       async (route) => {
         if (first) {
           first = false
@@ -1495,27 +1335,30 @@ test.describe('with a response of its own', () => {
       },
     )
     await page.goto('/')
-    await expect(strip(page).getByTestId('rank-bakeoff')).toContainText('Bake-off unavailable')
+    await expect(strip(page).getByTestId('rank-signal')).toContainText('Signal test unavailable')
+    // The Bake-off headline is the other reader of this result, and retries the
+    // failed read on its own: capture from here, so either tab's retry counts.
+    const urls: URL[] = []
+    page.on('request', (r) => {
+      const u = new URL(r.url())
+      if (u.pathname === '/api/putlab/signal-test') urls.push(u)
+    })
     await page.getByRole('tab', { name: 'Bake-off' }).click()
     await rail(page).getByRole('radiogroup', { name: 'Strike presets' }).getByText('10%').click()
     await rail(page).getByRole('radiogroup', { name: 'Held to expiry' }).getByText('1 quarter').click()
     await rail(page).getByText('3y', { exact: true }).click()
     await expect(rail(page).getByRole('radio', { name: '3y' })).toBeChecked()
-    await rail(page).getByRole('radiogroup', { name: 'Strike chosen by' }).getByText('Delta').click()
-    const urls: URL[] = []
-    page.on('request', (r) => {
-      const u = new URL(r.url())
-      if (u.pathname === '/api/putlab/metric-screen') urls.push(u)
-    })
+    await rail(page).getByRole('radiogroup', { name: 'Strike chosen by' }).getByText('Distance').click()
     await page.getByRole('tab', { name: 'Workspace' }).click()
-    await expect(strip(page).getByTestId('rank-bakeoff')).toContainText('Bake-off · 5% · 4w · 4y')
+    await expect(strip(page).getByTestId('rank-signal')).toContainText('Signal test · 0.10Δ at realised vol · 4w · 4y')
     expect(urls.length).toBeGreaterThan(0)
     for (const u of urls) {
-      expect(u.searchParams.get('moneyness_pct')).toBe('5')
+      expect(u.searchParams.get('strike_rule')).toBe('delta')
+      expect(u.searchParams.get('target_delta')).toBe('0.1')
       expect(u.searchParams.get('tenor_weeks')).toBe('4')
-      expect(u.searchParams.get('years')).toBe('4')
+      expect(u.searchParams.get('signal_years')).toBe('4')
       expect(u.searchParams.get('top_k')).toBe('5')
-      expect(u.searchParams.get('strike_rule')).not.toBe('delta')
+      expect(u.searchParams.has('moneyness_pct')).toBe(false)
     }
   })
 })

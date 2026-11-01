@@ -85,10 +85,10 @@ test('the ladder chart has one rung per quoted strike, capped at 8, and a hover 
   await expect(rungs).toHaveCount(expected)
   const readout = page.getByTestId('ladder-readout')
   // Defaults to the first rung (the shallowest), then follows the pointer.
-  await expect(readout).toContainText(`Strike ${SURFACE_FITTED.surface.ladder[0]!.strike.toFixed(0)}`)
+  await expect(readout).toContainText(`Strikeⓘ ${SURFACE_FITTED.surface.ladder[0]!.strike.toFixed(0)}`)
   await rungs.nth(3).click()
-  await expect(readout).toContainText(`Strike ${SURFACE_FITTED.surface.ladder[3]!.strike.toFixed(0)}`)
-  await expect(readout).toContainText(`Paretan ${SURFACE_FITTED.surface.ladder[3]!.paretan_price.toFixed(2)}`)
+  await expect(readout).toContainText(`Strikeⓘ ${SURFACE_FITTED.surface.ladder[3]!.strike.toFixed(0)}`)
+  await expect(readout).toContainText(`Paretanⓘ ${SURFACE_FITTED.surface.ladder[3]!.paretan_price.toFixed(2)}`)
 
   await page.getByText('The ladder as numbers').click()
   await expect(page.getByRole('table', { name: 'Tail ladder rungs' }).locator('tbody tr')).toHaveCount(expected)

@@ -24,7 +24,7 @@ across every name.
 from __future__ import annotations
 
 import datetime as dt
-from collections.abc import Callable, Iterable
+from collections.abc import Callable, Iterable, Mapping, Sequence
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from functools import partial
@@ -220,16 +220,29 @@ def _load_benchmark_returns(store: LakeStore, as_of: dt.date) -> pd.Series | Non
     return _returns(bench_prices)
 
 
-def _score_and_sort(rows: list[RankedAsset]) -> list[RankedAsset]:
-    """Composite fragility score (average of ``COMPOSITE_METRICS``' cross-sectional
-    ranks) then sort most-fragile-first; rows too thin to score sort last."""
+def composite_scores(rows: Sequence[Mapping[str, float | None]]) -> list[float | None]:
+    """Composite fragility score per row: the average of its
+    ``COMPOSITE_METRICS`` cross-sectional ranks (0..1, 1 = most fragile),
+    ranked among ``rows`` only. A row with none of the five metrics scores
+    ``None``. One place, so the shipped screen, the in-sample bake-off and the
+    walk-forward compute the composite identically."""
     ranks = {
-        m: _frac_rank([getattr(r, m) for r in rows], fragile_high=FRAGILE_HIGH[m])
+        m: _frac_rank([r.get(m) for r in rows], fragile_high=FRAGILE_HIGH[m])
         for m in COMPOSITE_METRICS
     }
-    for i, r in enumerate(rows):
+    scores: list[float | None] = []
+    for i in range(len(rows)):
         parts = [ranks[m][i] for m in COMPOSITE_METRICS if i in ranks[m]]
-        r.fragility_score = sum(parts) / len(parts) if parts else None
+        scores.append(sum(parts) / len(parts) if parts else None)
+    return scores
+
+
+def _score_and_sort(rows: list[RankedAsset]) -> list[RankedAsset]:
+    """Composite fragility score (:func:`composite_scores`) then sort
+    most-fragile-first; rows too thin to score sort last."""
+    scores = composite_scores([{m: getattr(r, m) for m in COMPOSITE_METRICS} for r in rows])
+    for r, score in zip(rows, scores, strict=True):
+        r.fragility_score = score
     rows.sort(
         key=lambda r: r.fragility_score if r.fragility_score is not None else -1.0, reverse=True
     )

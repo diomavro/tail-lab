@@ -65,9 +65,10 @@ export const PUTLAB_DEFAULT_CONTROLS: PutLabControls = {
  *  server's own order; best return re-sorts the same response client-side. */
 export type RankSort = 'fragility' | 'return'
 
-/** The one bake-off the ranking strip's verdict line reads: the composite
- *  fragility screen at the app's opening screen, by distance, top 5. It never
- *  follows the rail, and it mirrors the server's pre-warmed `_WARM_BAKEOFF`
+/** The in-sample bake-off the server still pre-warms (the strip's verdict line
+ *  now reads STRIP_SIGNAL_TEST below). Kept because the backend parity test
+ *  reads it: the composite fragility screen at the app's opening screen, by
+ *  distance, top 5. It mirrors the server's pre-warmed `_WARM_BAKEOFF`
  *  (api/putlab_routes.py), so the line is read from the server's memo. */
 export const STRIP_BAKEOFF = {
   strike_rule: 'moneyness' as const,
@@ -77,3 +78,17 @@ export const STRIP_BAKEOFF = {
   years: 4,
   top_k: 5,
 }
+
+/** The one signal test the Workspace strip's verdict line reads (docs/adr/0033):
+ *  0.10Δ at realised vol, 4-week puts, a 4-year signal window, top 5. It never
+ *  follows the rail, and it mirrors the server's pre-warmed `_WARM_SIGNAL_TEST`
+ *  (api/putlab_routes.py); a pytest parses this literal, so keep each field a
+ *  plain literal with no comments inside the braces. `years` is the signal
+ *  window (the API's `signal_years`). */
+export const STRIP_SIGNAL_TEST = {
+  strike_rule: 'delta',
+  target_delta: 0.1,
+  tenor_weeks: 4,
+  years: 4,
+  top_k: 5,
+} as const

@@ -11,6 +11,8 @@ import { ChartLabels } from '../ChartLabels'
 import { fmtFixed } from '../format'
 import type { ResourceState } from '../PutLab'
 import type { PutLabControls } from '../types'
+import { StatK } from '../StatK'
+import { Th } from '../Th'
 
 /* The Surface: the market's implied tail index beside the realised one.
  *
@@ -331,20 +333,20 @@ function LadderChart({ rungs }: { rungs: SurfaceRung[] }) {
       <div className="pl-axis-title">strike → deeper</div>
       <div className="pl-readout" data-testid="ladder-readout">
         <span>
-          <span className="pl-readout-k">Strike</span> <strong>{r.strike.toFixed(0)}</strong>
+          <StatK concept="strike_price" variant="readout">Strike</StatK> <strong>{r.strike.toFixed(0)}</strong>
         </span>
         <span>
-          <span className="pl-readout-k">Bid–ask</span>{' '}
+          <StatK concept="bid_ask" variant="readout">Bid–ask</StatK>{' '}
           <strong>{r.bid == null || r.ask == null ? 'no quote' : `${r.bid.toFixed(2)}–${r.ask.toFixed(2)}`}</strong>
         </span>
         <span>
-          <span className="pl-readout-k">Paretan</span> <strong>{r.paretan_price.toFixed(2)}</strong>
+          <StatK concept="paretan_price" variant="readout">Paretan</StatK> <strong>{r.paretan_price.toFixed(2)}</strong>
         </span>
         <span>
-          <span className="pl-readout-k">BS</span> <strong>{money(r.black_scholes_price)}</strong>
+          <StatK concept="bs_flat_price" variant="readout">BS</StatK> <strong>{money(r.black_scholes_price)}</strong>
         </span>
         <span>
-          <span className="pl-readout-k">IV ratio</span>{' '}
+          <StatK concept="iv_ratio" variant="readout">IV ratio</StatK>{' '}
           <strong>{r.iv_ratio == null ? 'no IV' : r.iv_ratio.toFixed(3)}</strong>
         </span>
       </div>
@@ -557,12 +559,12 @@ function LadderTable({ rungs }: { rungs: SurfaceRung[] }) {
       <table className="pl-table pl-ladder-table" aria-label="Tail ladder rungs">
         <thead>
           <tr>
-            <th className="num">Strike</th>
-            <th className="num">Bid</th>
-            <th className="num">Ask</th>
-            <th className="num">Paretan</th>
-            <th className="num">BS</th>
-            <th className="num">IV ratio</th>
+            <Th concept="strike_price" className="num">Strike</Th>
+            <Th concept="bid_ask" className="num">Bid</Th>
+            <Th concept="bid_ask" className="num">Ask</Th>
+            <Th concept="paretan_price" className="num">Paretan</Th>
+            <Th concept="bs_flat_price" className="num">BS</Th>
+            <Th concept="iv_ratio" className="num">IV ratio</Th>
           </tr>
         </thead>
         <tbody>

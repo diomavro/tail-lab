@@ -151,6 +151,11 @@ class DividendYields:
         self._sessions: dict[int, DividendYield] = {}
 
     @property
+    def session_dates(self) -> pd.DatetimeIndex:
+        """Every session this symbol has a row for, ascending."""
+        return pd.DatetimeIndex(self._dates)
+
+    @property
     def last_date(self) -> dt.date | None:
         return None if not len(self._dates) else _to_date(self._dates[-1])
 

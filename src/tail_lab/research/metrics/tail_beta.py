@@ -19,6 +19,8 @@ from __future__ import annotations
 
 import pandas as pd
 
+from tail_lab.research.metrics._numeric import cov, paired_arrays, percentile, var
+
 
 def tail_beta(
     asset_returns: pd.Series,
@@ -48,20 +50,23 @@ def tail_beta(
     returns have zero variance (beta is undefined, not zero, when the
     denominator vanishes).
     """
-    if not asset_returns.index.equals(benchmark_returns.index):
-        raise ValueError(
-            "asset_returns and benchmark_returns must share the same index "
-            "(same trading calendar) -- align them before calling tail_beta"
-        )
+    asset, bench = paired_arrays(
+        asset_returns,
+        benchmark_returns,
+        names=("asset_returns", "benchmark_returns"),
+        caller="tail_beta",
+    )
 
-    n = len(asset_returns)
+    n = len(asset)
     if n < min_observations:
         raise ValueError(
             f"only {n} paired observations; need at least {min_observations} to estimate tail beta"
         )
 
-    threshold = benchmark_returns.quantile(tail_pct / 100.0)
-    tail_mask = benchmark_returns <= threshold
+    # `pandas.Series.quantile(q)` is `np.percentile(x, q * 100)`; `percentile`
+    # reproduces it bit for bit, so the tail subset is unchanged.
+    threshold = percentile(bench, (tail_pct / 100.0) * 100.0)
+    tail_mask = bench <= threshold
     n_tail = int(tail_mask.sum())
     if n_tail < 2:
         raise ValueError(
@@ -69,12 +74,12 @@ def tail_beta(
             "need at least 2 to estimate tail beta"
         )
 
-    asset_tail = asset_returns[tail_mask]
-    bench_tail = benchmark_returns[tail_mask]
+    asset_tail = asset[tail_mask]
+    bench_tail = bench[tail_mask]
 
-    bench_variance = bench_tail.var(ddof=0)
+    bench_variance = var(bench_tail, ddof=0)
     if bench_variance == 0:
         raise ValueError("benchmark tail-subset returns have zero variance; tail beta is undefined")
 
-    covariance = asset_tail.cov(bench_tail, ddof=0)
+    covariance = cov(asset_tail, bench_tail, ddof=0)
     return float(covariance / bench_variance)

@@ -1,13 +1,15 @@
 import { type CSSProperties, useEffect, useId, useRef, useState } from 'react'
-import type { MetricScreenComparison, PutLabLeaderboardResponse, RankedAsset, Verdict } from '../../api/client'
-import { CONCEPTS, UNKNOWN_Q_CAUSES } from '../../content/concepts'
+import type { PutLabLeaderboardResponse, RankedAsset, SignalTestResult, Verdict } from '../../api/client'
+import { UNKNOWN_Q_CAUSES } from '../../content/concepts'
 import { BestReturnTable } from './BestReturnTable'
 import { type BestRow, bestReturnRows, VERDICT_TITLE } from './rankOrder'
 import { ConceptInfo } from './ConceptInfo'
 import { fmtFixed, fmtMult, fmtPct, fmtPrice } from './format'
 import type { ResourceState } from './PutLab'
 import { biggestBarWidth, fragilityRank, lossHeat } from './rankShade'
-import { type RankSort, STRIP_BAKEOFF } from './types'
+import { cadenceText, sentenceText, STATUS_LABEL } from './signalWording'
+import { Th } from './Th'
+import { deltaLabel, type RankSort, STRIP_SIGNAL_TEST } from './types'
 
 /* The screen: the universe ranking at the top of the Workspace.
  *
@@ -31,7 +33,7 @@ import { type RankSort, STRIP_BAKEOFF } from './types'
  * produced it.
  *
  * The strip stays mounted while its read loads, so the switch and the
- * bake-off line never vanish with it; only the picks, the expand button and
+ * signal-test line never vanish with it; only the picks, the expand button and
  * the tables wait for `ready`.
  */
 
@@ -84,7 +86,8 @@ interface ScreenAxes {
 
 interface Props {
   ranking: ResourceState<PutLabLeaderboardResponse>
-  bakeoff: ResourceState<MetricScreenComparison>
+  /** The fixed STRIP_SIGNAL_TEST read (docs/adr/0033). */
+  signal: ResourceState<SignalTestResult>
   sort: RankSort
   onSort: (sort: RankSort) => void
   /** The screen the strip asked for -- what the bake-off line compares itself
@@ -100,7 +103,7 @@ interface Props {
 
 export function RankingStrip({
   ranking,
-  bakeoff,
+  signal,
   sort,
   onSort,
   requested,
@@ -173,14 +176,6 @@ export function RankingStrip({
         : undefined,
     )
   }
-
-  const axes: ScreenAxes = data
-    ? { moneyness_pct: data.moneyness_pct, tenor_weeks: data.tenor_weeks, years: data.lookback_years }
-    : requested
-  const sameAsBakeoff =
-    axes.moneyness_pct === STRIP_BAKEOFF.moneyness_pct &&
-    axes.tenor_weeks === STRIP_BAKEOFF.tenor_weeks &&
-    axes.years === STRIP_BAKEOFF.years
 
   return (
     <div ref={stripRef}>
@@ -270,9 +265,8 @@ export function RankingStrip({
         )}
 
         {sort === 'fragility' && (
-          <BakeoffLine
-            bakeoff={bakeoff}
-            sameAsList={sameAsBakeoff}
+          <SignalLine
+            signal={signal}
             screenShown={data != null && rows.length > 0}
             listAsOf={data?.as_of ?? null}
             onOpen={onOpenBakeOff}
@@ -359,63 +353,60 @@ function FragilityTable({
       <table className="pl-table pl-rank-table" aria-label="Full fragility ranking">
         <thead>
           <tr className="pl-rank-groups">
-            <th colSpan={4} aria-hidden="true" />
-            <th colSpan={2} className="pl-rank-group" title="Each name's own best cell over its strike × tenor grid">
+            <td colSpan={4} aria-hidden="true" />
+            <Th concept="best_cell" colSpan={2} className="pl-rank-group">
               Best cell
-            </th>
-            <th
-              colSpan={anyMarket ? 6 : 5}
-              className="pl-rank-group"
-              title={
-                deltaMode
-                  ? 'The last distance below spot the rail held, and its tenor: the ranking screens by distance only'
-                  : "The rail's strike and tenor, screened by distance below spot"
-              }
-            >
+            </Th>
+            <Th concept="strike_rule" colSpan={anyMarket ? 6 : 5} className="pl-rank-group">
               {screened}
-            </th>
-            <th colSpan={6} className="pl-rank-group" title="Each measure ranked across the screen on its own">
+            </Th>
+            <Th concept="fragility_score" colSpan={6} className="pl-rank-group">
               Fragility measures
-            </th>
+            </Th>
           </tr>
           <tr>
-            <th className="num">#</th>
-            <th>Name</th>
-            <th className="num">Spot</th>
-            <th
-              className="num"
-              title="Composite fragility, 0-100: the mean of the name's rank on each composite measure (100 = the most fragile on every one)"
-            >
+            <th className="num" data-noexplain="index">
+              #
+            </th>
+            <th data-noexplain="name">Name</th>
+            <Th concept="spot" className="num">
+              Spot
+            </Th>
+            <Th concept="fragility_score" className="num">
               Fragility
-            </th>
-            <th className="num pl-rank-group-start" aria-label="Per year at best cell">
+            </Th>
+            <Th concept="annualized_return" className="num pl-rank-group-start" aria-label="Per year at best cell">
               Per year
-            </th>
-            <th>At</th>
-            <th className="num pl-rank-group-start" aria-label={`Per year ${screened.toLowerCase()}`}>
-              Per year
-            </th>
-            <th className="num">Hit</th>
-            <th className="num" title="The largest single roll's payoff, as a multiple of its premium">
-              Biggest
-            </th>
-            <th className="num">Verdict</th>
-            <th
-              className="num"
-              title="Whether every roll was priced with the name's own dividend yield, or some at an unknown q = 0"
-              style={{ textTransform: 'none' }}
+            </Th>
+            <Th concept="best_cell">At</Th>
+            <Th
+              concept="annualized_return"
+              className="num pl-rank-group-start"
+              aria-label={`Per year ${screened.toLowerCase()}`}
             >
+              Per year
+            </Th>
+            <Th concept="hit_rate" className="num">
+              Hit
+            </Th>
+            <Th concept="biggest_payoff" className="num">
+              Biggest
+            </Th>
+            <Th concept="verdict" className="num">
+              Verdict
+            </Th>
+            <Th concept="dividend_yield" className="num" style={{ textTransform: 'none' }}>
               q
-            </th>
+            </Th>
             {anyMarket && (
-              <th className="num" title="Whether this row's ROI came from the pricing model or a real listed quote">
+              <Th concept="model_priced" className="num">
                 Basis
-              </th>
+              </Th>
             )}
             {METRICS.map((m) => (
-              <th key={m.key} className="num" title={CONCEPTS[m.key]?.short}>
+              <Th key={m.key} concept={m.key} className="num">
                 {m.head}
-              </th>
+              </Th>
             ))}
           </tr>
         </thead>
@@ -561,88 +552,57 @@ function FragilityTable({
 }
 
 /** One line on whether the fragility ordering has earned its keep: the
- *  bake-off's composite screen at fixed settings (`STRIP_BAKEOFF`). It states
- *  those settings, and says when they are not the list's -- it is a verdict on
- *  the composite screen, not on the list above it. */
-function BakeoffLine({
-  bakeoff,
-  sameAsList,
+ *  out-of-sample signal test's verdict at fixed settings (`STRIP_SIGNAL_TEST`,
+ *  docs/adr/0033). It states those settings and never compares them with the
+ *  list's -- the rail's default is a distance, the test's a delta, so the two
+ *  would never match. It does keep the same-day guard: a page left open past
+ *  midnight can hold a list and a signal test from different days. */
+function SignalLine({
+  signal,
   screenShown,
   listAsOf,
   onOpen,
 }: {
-  bakeoff: ResourceState<MetricScreenComparison>
-  sameAsList: boolean
+  signal: ResourceState<SignalTestResult>
   /** Whether a screen is on the page to compare with, or only asked for. */
   screenShown: boolean
-  /** The shown screen's as-of: a page left open across midnight can hold a
-   *  list and a bake-off from different days. */
   listAsOf: string | null
   onOpen: () => void
 }) {
-  const b = STRIP_BAKEOFF
-  const base = `Bake-off · ${b.moneyness_pct}% · ${b.tenor_weeks}w · ${b.years}y · by distance · top ${b.top_k}`
+  const s = STRIP_SIGNAL_TEST
+  const base = `Signal test · ${deltaLabel(s.target_delta)} · ${s.tenor_weeks}w · ${s.years}y · top ${s.top_k}`
   const link = (
     <button type="button" className="pl-btn pl-btn-ghost pl-rank-bakeoff-link" onClick={onOpen}>
       Bake-off →
     </button>
   )
-  if (bakeoff.status !== 'ready') {
+  if (signal.status !== 'ready') {
     const text =
-      bakeoff.status === 'loading'
-        ? 'Bake-off: loading…'
-        : bakeoff.status === 'no-data'
-          ? 'Bake-off: no screen for this window'
-          : `Bake-off unavailable: ${bakeoff.message}`
+      signal.status === 'loading'
+        ? 'Signal test: loading…'
+        : signal.status === 'no-data'
+          ? 'Signal test: no result for this window'
+          : `Signal test unavailable: ${signal.message}`
     return (
-      <p className="pl-micro pl-rank-bakeoff" data-testid="rank-bakeoff">
+      <p className="pl-micro pl-rank-bakeoff" data-testid="rank-signal">
         {text} {link}
       </p>
     )
   }
-  const data = bakeoff.data
-  const composite = data.entries.find((e) => e.metric === 'fragility_score')
-  const n = data.universe_size
-  // Both levels, not only the gap: a "beat" between two losing baskets reads
-  // as a gain. Under half a tenth of a point the gap rounds away: "matched".
-  // One rounding for the printed levels AND the gap between them, so the
-  // sentence's own figures always add up (toFixed and Math.round disagree
-  // on negative halves).
-  const tenths = (x: number) => Math.sign(x) * Number(Math.abs(x * 100).toFixed(1))
-  const shown = (t: number) => `${t >= 0 ? '+' : '−'}${Math.abs(t).toFixed(1)}%`
-  const a = composite ? tenths(composite.roi_on_premium) : 0
-  const baseline = tenths(data.baseline_roi)
-  const levels = composite ? `returned ${shown(a)} on premium against ${shown(baseline)} for buying all ${n}` : ''
-  const gapPts = Math.round((a - baseline) * 10) / 10
-  const gap = Math.abs(gapPts).toFixed(1)
-  // With no more scored names than the basket holds, the top K IS everyone:
-  // there is no selection to measure, and "beat/matched buying all N" would
-  // describe comparing a basket with itself.
-  const liftText =
-    composite == null
-      ? 'This bake-off carried no composite row.'
-      : b.top_k >= n
-      ? `It scored only ${n} name${n === 1 ? '' : 's'}, so its top ${b.top_k} is all of them: no selection to measure.`
-      : Math.abs(gapPts) < 0.05
-      ? `The composite screen's top ${b.top_k} ${levels}: no difference.`
-      : `The composite screen's top ${b.top_k} ${levels}: ${gap} pts ${gapPts > 0 ? 'better' : 'worse'}.`
-  // The p-value is two-sided, so "significant" alone would endorse a screen
-  // that ordered names significantly the WRONG way: the sign is stated.
-  const rho = composite?.spearman_vs_payoff
-  const sigText =
-    composite == null || composite.spearman_pvalue == null || rho == null
-      ? 'Its correlation with payoff could not be tested (too few names, or no variation to rank).'
-      : `Its ranking's correlation with payoff (ρ = ${fmtFixed(rho)}) is ${composite.significant_corrected ? '' : 'not '}significant after FDR correction across ${data.n_comparisons} screens${composite.significant_corrected && rho < 0 ? ': it ordered names the wrong way, more fragile paying less' : ''}.`
+  const data = signal.data
+  const v = data.verdict
   const which = screenShown ? 'the screen above' : 'the screen asked for'
   const sameDay = listAsOf == null || listAsOf === data.as_of
-  const scope = !sameDay
-    ? `From a different day (${data.as_of}) than ${which}.`
-    : sameAsList
-      ? `Same settings as ${which}; its universe can differ.`
-      : `Not the settings of ${which}.`
   return (
-    <p className="pl-micro pl-rank-bakeoff" data-testid="rank-bakeoff">
-      <strong>{`${base} of ${n}`}</strong>: {liftText} {sigText} {scope}{' '}
+    <p className="pl-micro pl-rank-bakeoff" data-testid="rank-signal">
+      <strong>{base}</strong>, out of sample, rebalanced {cadenceText(data.tenor_weeks)}:{' '}
+      <span data-testid="rank-signal-status">{STATUS_LABEL[v.status]}.</span> {sentenceText(v)}{' '}
+      {data.test_start != null && data.test_end != null && (
+        <span data-testid="rank-signal-window">
+          Test window {data.test_start} to {data.test_end}, {data.n_periods} periods.{' '}
+        </span>
+      )}
+      {!sameDay && `From a different day (${data.as_of}) than ${which}. `}
       <span>
         As of {data.as_of} · {data.snapshot_ids.length} bronze snapshot{data.snapshot_ids.length === 1 ? '' : 's'} ·{' '}
         {data.code_sha === 'unknown' ? 'code sha unknown' : data.code_sha.slice(0, 7)}

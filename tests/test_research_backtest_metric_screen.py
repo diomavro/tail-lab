@@ -381,3 +381,45 @@ def test_the_bakeoff_cites_its_benchmark_even_when_it_is_not_scored(tmp_path: Pa
         top_k=2,
     )
     assert "ohlcv_spy" in [s.split("@")[0] for s in cmp.snapshot_ids]
+
+
+def test_fragility_from_returns_keeps_the_two_pairs_separately_joined() -> None:
+    """Vol beta regresses on VIX changes, whose dates differ from SPY's. If the
+    two pairs shared one inner join, every benchmark metric would silently
+    shrink to the VIX overlap. The wrapper must equal an independent
+    computation that joins each pair on its own."""
+    from tail_lab.research.backtest.metric_screen import _fragility, fragility_from_returns
+    from tail_lab.research.backtest.ranking import _returns
+    from tail_lab.research.metrics.vol_beta import vol_beta
+
+    rng = np.random.default_rng(3)
+    idx = pd.bdate_range("2024-01-02", periods=300)
+    market = pd.Series(rng.normal(0, 0.01, 300), index=idx)
+    asset_px = pd.Series(
+        100 * np.exp(np.cumsum(1.2 * market + rng.normal(0, 0.005, 300))), index=idx
+    )
+    bench_ret = market.iloc[1:]
+    vix_dates = idx[100::2]  # every other date: a different overlap than SPY's
+    vix_chg = pd.Series(rng.normal(0, 0.05, len(vix_dates)), index=vix_dates)
+
+    got = _fragility(asset_px, bench_ret=bench_ret, vol_changes=vix_chg, lookback_days=120)
+
+    a = _returns(asset_px)
+    bench = pd.concat({"a": a, "b": bench_ret}, axis=1).dropna().iloc[-120:]
+    vol = pd.concat({"a": a, "v": vix_chg}, axis=1).dropna().iloc[-120:]
+    expected = {n: fn(bench["a"], bench["b"]) for n, fn in _METRIC_FUNCS.items()}
+    expected["vol_beta"] = vol_beta(vol["a"], vol["v"])
+    assert got == pytest.approx(expected)
+    assert fragility_from_returns(bench, vol) == got
+    assert len(bench) == 120 and len(vol) == 100  # the windows are NOT the same rows
+    assert not bench.index.equals(vol.index)
+
+
+def test_fragility_from_returns_reports_an_unestimable_metric_as_none() -> None:
+    from tail_lab.research.backtest.metric_screen import fragility_from_returns
+
+    empty_b = pd.DataFrame({"a": [0.0], "b": [0.0]})
+    empty_v = pd.DataFrame({"a": [0.0], "v": [0.0]})
+    out = fragility_from_returns(empty_b, empty_v)
+    assert set(out) == {*_METRIC_FUNCS, "vol_beta"}
+    assert all(v is None for v in out.values())

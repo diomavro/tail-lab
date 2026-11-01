@@ -18,6 +18,37 @@ a large one strictly in order.
 
 ## Next increments
 
+- [ ] **Separate fragility from volatility statistically** (`docs/adr/0033`).
+      The walk-forward signal test prints the best plain-volatility screen next
+      to the composite, but it does not test whether fragility adds anything
+      beyond vol. Three attempts failed review by simulation and were cut:
+      quintile-matched random baskets, linear rank residualisation, and squared
+      rank residualisation. Next to try: Fama–MacBeth per-period regressions of
+      name-period ROI on the composite rank with rv20 / rv_long / rv_ratio
+      controls, with an autocorrelation-robust error. Gate it with a simulation
+      study before shipping.
+- [ ] **Point-in-time universe for the signal test** (`docs/adr/0033`). The
+      70-name list was chosen in 2026 with hindsight (MSTR, SMCI, COIN), so
+      survivorship flatters any screen. This needs historical membership.
+- [ ] **The in-sample bake-off still prices at fixed moneyness with commission**
+      (found 2026-10-31). At 10% OOM, low-vol names hit the premium floor, and
+      commission eats 60–90% of the premium. A floored SPY put paid about 2,122×
+      in Feb 2020. Co-kurtosis's "+116%" is probably this artifact. Move it to
+      delta or exclude floored legs, as `walk_forward` does.
+- [ ] **Three copies of the fragility fold.** `ranking._fragility` still
+      computes metrics on its own; `metric_screen` and `walk_forward` share
+      `fragility_from_returns`. Route `ranking` through it too, if the outputs
+      stay identical.
+- [ ] **The Ledger's "Fill" column is described wrongly** (found 2026-11-01
+      during the tooltip sweep). The real `cost` field is entry brokerage
+      (commission plus half-spread), and `net = payoff − budget − cost`. But
+      `Ledger.tsx`'s comment, its e2e fixture and `ledger.spec.ts` describe Fill
+      as the cash the contracts cost, and reconcile Net as payoff − budget. The
+      new `roll_cost` concept describes the backend correctly. Make the comment,
+      the fixture and the spec agree with `put_roll.py`.
+- [ ] **README:35 ("the page never scrolls") contradicts ADR 0017** ("the page
+      scrolls normally"), which is what is implemented. Dio to settle; the
+      README is constitutional.
 - [ ] **Credit follow-ups from ADR 0034** (found 2026-10-31, none urgent):
       (1) `daily-verdict-sweep.yml` stays green when the API answers 5xx, so a
       `CreditHistoryError` seam breach would not turn it red (no `.github/`

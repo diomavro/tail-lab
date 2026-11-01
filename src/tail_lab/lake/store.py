@@ -33,7 +33,7 @@ import operator
 import time
 from abc import ABC, abstractmethod
 from collections import OrderedDict
-from collections.abc import Mapping, Sequence
+from collections.abc import Iterable, Mapping, Sequence
 from functools import reduce
 from pathlib import Path
 
@@ -351,21 +351,29 @@ class DeltaLakeStore(LakeStore):
         except TableNotFoundError:
             return None
 
-    def _existing_bronze_ingest_date_strings(self, table_uri: str) -> set[str]:
+    def _add_actions(self, table_uri: str) -> pa.Table | None:
+        """The table's flattened add-actions (log metadata only), or ``None``
+        when there is no table. The single place a bronze table is opened for
+        listing partitions."""
         table = self._open_delta_table(table_uri)
-        if table is None:
-            return set()
-        actions = table.get_add_actions(flatten=True)
+        return None if table is None else pa.table(table.get_add_actions(flatten=True))
+
+    @staticmethod
+    def _partition_strings(actions: pa.Table | None) -> set[str]:
         col = f"partition.{_INGEST_DATE_COL}"
-        if col not in actions.column_names:
+        if actions is None or col not in actions.column_names:
             return set()
         return {v for v in actions.column(col).to_pylist() if v is not None}
 
+    def _existing_bronze_ingest_date_strings(self, table_uri: str) -> set[str]:
+        return self._partition_strings(self._add_actions(table_uri))
+
     # ---- as-of resolution -------------------------------------------------
 
-    def _list_bronze_ingest_dates(self, table_uri: str) -> list[dt.date]:
+    @staticmethod
+    def _parse_ingest_dates(raw_dates: Iterable[str]) -> list[dt.date]:
         dates: list[dt.date] = []
-        for raw in self._existing_bronze_ingest_date_strings(table_uri):
+        for raw in raw_dates:
             try:
                 dates.append(dt.date.fromisoformat(raw))
             except ValueError:
@@ -374,8 +382,16 @@ class DeltaLakeStore(LakeStore):
                 continue
         return sorted(dates)
 
+    def _list_bronze_ingest_dates(self, table_uri: str) -> list[dt.date]:
+        return self._parse_ingest_dates(self._existing_bronze_ingest_date_strings(table_uri))
+
     def _resolve_bronze_snapshot(self, table_uri: str, dataset: str, as_of: dt.date) -> dt.date:
-        dates = self._list_bronze_ingest_dates(table_uri)
+        # ONE open of the table serves both the as-of date AND the snapshot id
+        # (see `_remember_snapshot_id`): the same add-actions list the dates
+        # come from carries the statistics the id is hashed from. Opening the
+        # table again just to id the partition cost ~1.3 s per name on Tigris.
+        actions = self._add_actions(table_uri)
+        dates = self._parse_ingest_dates(self._partition_strings(actions))
         if not dates:
             raise BronzeSnapshotMissing(f"no bronze data for dataset {dataset!r}")
         eligible = [d for d in dates if d <= as_of]
@@ -383,7 +399,9 @@ class DeltaLakeStore(LakeStore):
             raise BronzeSnapshotMissing(
                 f"no bronze snapshot for dataset {dataset!r} on or before {as_of.isoformat()}"
             )
-        return max(eligible)
+        snapshot_date = max(eligible)
+        self._remember_snapshot_id(dataset, snapshot_date, actions)
+        return snapshot_date
 
     def _read_bronze_partition(self, table_uri: str, snapshot_date: dt.date) -> pd.DataFrame:
         table = DeltaTable(table_uri, storage_options=self._storage_options)
@@ -650,25 +668,51 @@ class DeltaLakeStore(LakeStore):
         cached_id = self._snapshot_id_cache.get(memo_key)
         if cached_id is not None:
             return cached_id
-        table = DeltaTable(table_uri, storage_options=self._storage_options)
-        actions = pa.table(table.get_add_actions(flatten=True)).to_pydict()
-        prefix = f"{_INGEST_DATE_COL}={snapshot_date.isoformat()}/"
-        keep = [i for i, path in enumerate(actions["path"]) if path.startswith(prefix)]
-        material = {
-            name: [values[i] for i in keep]
-            for name, values in sorted(actions.items())
-            if name == "num_records" or name.split(".")[0] in self._SNAPSHOT_STAT_PREFIXES
-        }
-        if not keep:
+        # Normally unreachable after `_resolve_cached`, which memoises the id
+        # from the same open; kept for a resolve that found no files to hash.
+        actions = self._add_actions(table_uri)
+        snapshot_id = (
+            None if actions is None else self._digest_snapshot_id(dataset, snapshot_date, actions)
+        )
+        if snapshot_id is None:
             # A well-formed id whose digest is a dataset-independent constant
             # would be worse than an error: it would look like provenance.
             raise LookupError(
                 f"no files in the {snapshot_date.isoformat()} partition of {dataset!r}"
             )
-        digest = hashlib.sha256(repr(material).encode()).hexdigest()[:16]
-        snapshot_id = f"{dataset}@{snapshot_date.isoformat()}#{digest}"
         self._snapshot_id_cache[memo_key] = snapshot_id
         return snapshot_id
+
+    def _digest_snapshot_id(
+        self, dataset: str, snapshot_date: dt.date, actions: pa.Table
+    ) -> str | None:
+        """The content id of one partition from the table's add-actions, or
+        ``None`` when the partition has no files."""
+        columns = actions.to_pydict()
+        prefix = f"{_INGEST_DATE_COL}={snapshot_date.isoformat()}/"
+        keep = [i for i, path in enumerate(columns["path"]) if path.startswith(prefix)]
+        if not keep:
+            return None
+        material = {
+            name: [values[i] for i in keep]
+            for name, values in sorted(columns.items())
+            if name == "num_records" or name.split(".")[0] in self._SNAPSHOT_STAT_PREFIXES
+        }
+        digest = hashlib.sha256(repr(material).encode()).hexdigest()[:16]
+        return f"{dataset}@{snapshot_date.isoformat()}#{digest}"
+
+    def _remember_snapshot_id(
+        self, dataset: str, snapshot_date: dt.date, actions: pa.Table | None
+    ) -> None:
+        """Memoise the id of a just-resolved partition from the add-actions the
+        resolution already fetched, so `bronze_snapshot_id` costs no second
+        open of the table."""
+        memo_key = (dataset, snapshot_date.isoformat())
+        if actions is None or memo_key in self._snapshot_id_cache:
+            return
+        snapshot_id = self._digest_snapshot_id(dataset, snapshot_date, actions)
+        if snapshot_id is not None:
+            self._snapshot_id_cache[memo_key] = snapshot_id
 
     def write_silver(self, dataset: str, df: pd.DataFrame) -> str:
         return self._write_derived("silver", dataset, df)

@@ -107,7 +107,7 @@ them.
   Bake-off, Prior Art, Carry Budget, Regime, Pitch. Code layers keep their plumbing
   names; anything a human reads takes a desk word or argues for a new one in an
   ADR. "Leaderboard", "dashboard" and "panel" are not desk words.
-- **A strike is picked by moneyness OR by delta, and only two surfaces offer delta**
+- **A strike is picked by moneyness OR by delta, and only some routes take delta**
   (`docs/adr/0029`, `research/backtest/strike_rule.py`). Fixed moneyness
   confounds regime comparisons (`docs/PRIOR_ART.md` §1: a "10% OOM 4-week put"
   has delta 0.0006 in calm, 0.18 in crisis -- PRIOR_ART's "0.05" and "17.6"
@@ -115,8 +115,8 @@ them.
   instead. Three traps: (1) the served delta is **at realised vol** — the only
   vol every past day has — so "0.10Δ" sits much closer to spot than the
   market's 10-delta put (`make delta-strike-gap` measures the gap; label it,
-  never write a bare "10Δ"); (2) only `/backtest`, `/regime-verdict` and
-  `/metric-screen` (Workspace, Bake-off) take a delta — the ranking, sweep,
+  never write a bare "10Δ"); (2) only `/backtest`, `/regime-verdict`,
+  `/metric-screen` and `/signal-test` (Workspace, Bake-off) take a delta (the signal test defaults to 0.10Δ, `docs/adr/0033`) — the ranking, sweep,
   Surface, roll schedule, accuracy and **hypothesis memory** are moneyness-only,
   and a delta verdict has `rule_hash = None`; (3) a low-delta rule can land deeper
   than `MODEL_PRICED_MAX_MONEYNESS_PCT` (now in `put_roll.py`) when realised
@@ -201,7 +201,7 @@ The layer boundaries and dependency rules in `ARCHITECTURE.md` are enforced and 
 - `api/` is flat (`main.py`, `putlab_routes.py`, `putlab_memory_routes.py`, `feedback_routes.py`, `ingest_routes.py`, `marks_routes.py`, `deribit_routes.py`, `auth.py`, `memo.py`, `schemas.py`), no `routes/` subpackage yet.
 - `feedback/` is a real layer (peer of ingestion/transforms in the import-linter contract) not shown in the tree.
 - `transforms/` gained `dividend_yield.py` (bronze `tiingo_eod` -> the yield `q`), and `research/dividends.py` is its one reader (backtest, ranking, sweep, portfolio, metric screen, roll schedule, Surface; not yet the Book).
-- `research/` currently has `metrics/` (downside_beta, downside_capture, tail_beta, co_skewness, co_kurtosis, vol_beta), `option_pricer.py` (one module, not the `pricing/` package `ARCHITECTURE.md` shows), `skew.py`, `accuracy.py`, `cadence.py`, `vix_stretch.py`, `data_quality.py`, `regimes/timeline.py`, `surface/` (hill, karamata, returns, paretan, ladder, implied_alpha, alpha_bound — the Paretan tail analytics, `docs/adr/0026`), and `backtest/` (put_roll, portfolio, ranking, metric_screen, regime_verdict, brokerage, index_replication, hedge_overlay, sizing, sweep, growth, marks, quote_fills, quote_cache, roll_schedule).
+- `research/` currently has `metrics/` (downside_beta, downside_capture, tail_beta, co_skewness, co_kurtosis, vol_beta), `option_pricer.py` (one module, not the `pricing/` package `ARCHITECTURE.md` shows), `skew.py`, `accuracy.py`, `cadence.py`, `vix_stretch.py`, `data_quality.py`, `regimes/timeline.py`, `surface/` (hill, karamata, returns, paretan, ladder, implied_alpha, alpha_bound — the Paretan tail analytics, `docs/adr/0026`), and `backtest/` (put_roll, portfolio, ranking, metric_screen, regime_verdict, walk_forward (the out-of-sample signal test, `docs/adr/0033`), brokerage, index_replication, hedge_overlay, sizing, sweep, growth, marks, quote_fills, quote_cache, roll_schedule).
 
 Follow the existing code's shape when extending; update `ARCHITECTURE.md` in the same change if you move it structurally, and add an ADR for consequential decisions.
 

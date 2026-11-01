@@ -24,6 +24,12 @@ from tail_lab.contracts.options_expiry import dataset_id as options_expiry_datas
 from tail_lab.lake.store import DeltaLakeStore
 from tail_lab.research.backtest.hedge_overlay import HedgeOverlayResult
 from tail_lab.research.backtest.metric_screen import MetricScreenComparison
+from tail_lab.research.backtest.walk_forward import (
+    Evaluation,
+    NameRecord,
+    SignalTestResult,
+    evaluate_screens,
+)
 
 
 def _seed_ohlcv(store: DeltaLakeStore, symbol: str, ingest_date: dt.date, n: int = 320) -> None:
@@ -61,6 +67,7 @@ def client(tmp_path: Path) -> Iterator[TestClient]:
     # (different) store, and the compute-path log assertions need a cache miss.
     putlab_routes._LEADERBOARD_CACHE.clear()
     putlab_routes._METRIC_SCREEN_CACHE.clear()
+    putlab_routes._SIGNAL_TEST_CACHE.clear()
     putlab_routes._BACKTEST_CACHE.clear()
     putlab_routes._SWEEP_CACHE.clear()
     putlab_routes._REGIME_VERDICT_CACHE.clear()
@@ -482,19 +489,46 @@ def test_the_warmed_bakeoff_is_the_one_the_workspace_asks_for() -> None:
     )
 
 
+def test_the_warmed_signal_test_is_the_one_the_workspace_strip_reads() -> None:
+    """The strip asks for STRIP_SIGNAL_TEST (frontend types.ts); the server
+    warms _WARM_SIGNAL_TEST. If they drift, every page load runs a cold
+    walk-forward and nothing else fails, so this reads the client constant.
+    Its fields are literals (``target_delta: 0.1``) so this can parse them."""
+    import re
+
+    src = (
+        Path(__file__).resolve().parents[1] / "frontend/src/components/putlab/types.ts"
+    ).read_text()
+    block = src[src.index("export const STRIP_SIGNAL_TEST") :]
+    block = block[: block.index("}")]
+    # Each value up to its comma (or the closing brace), whole: an expression
+    # ("4 + 1") must fail the float() below rather than be read as its first
+    # token.
+    fields = {k: v.strip() for k, v in re.findall(r"(\w+): ([^,\n]+)", block)}
+    rule, tenor, years, top_k = putlab_routes._WARM_SIGNAL_TEST
+    assert fields["strike_rule"].startswith("'delta'")
+    assert rule == putlab_routes.ByDelta(float(fields["target_delta"]))
+    assert (tenor, years, top_k) == (
+        float(fields["tenor_weeks"]),
+        float(fields["years"]),
+        int(fields["top_k"]),
+    )
+
+
 def test_a_ranking_warm_that_crosses_midnight_warms_the_new_days_bakeoff(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """The bake-off key is read after the (blocking) ranking screen, so a
-    warm that crosses midnight warms the day readers are about to ask for."""
-    days = iter([dt.date(2026, 10, 8), dt.date(2026, 10, 9)])
+    """The date is read again before each warm, so a warm that crosses
+    midnight warms the day readers are about to ask for."""
+    days = iter([dt.date(2026, 10, 8), dt.date(2026, 10, 9), dt.date(2026, 10, 10)])
     monkeypatch.setattr(putlab_routes, "_resolve_as_of", lambda _as_of: next(days))
     calls: list[tuple[str, object]] = []
     _patch_warm_memos(monkeypatch, calls)
     putlab_routes.warm_leaderboard(DeltaLakeStore(Path("unused")))
     assert calls == [
         ("leaderboard.get", (5.0, 4.0, 4.0, "2026-10-08")),
-        ("bakeoff.warm", (putlab_routes.ByMoneyness(5.0), 4.0, 4.0, 5, "2026-10-09")),
+        ("bakeoff.get", (putlab_routes.ByMoneyness(5.0), 4.0, 4.0, 5, "2026-10-09")),
+        ("signal_test.warm", (putlab_routes.ByDelta(0.10), 4.0, 4.0, 5, "2026-10-10")),
     ]
 
 
@@ -503,21 +537,29 @@ def _patch_warm_memos(
     calls: list[tuple[str, object]],
     *,
     leaderboard_get: Callable[[object, object], object] | None = None,
+    bakeoff_get: Callable[[object, object], object] | None = None,
 ) -> None:
-    def get(key: object, compute: object, *, miss_reason: str = "miss") -> object:
-        # Recorded, not asserted here: warm_leaderboard's broad except would
-        # swallow an assertion. A warm labelled as a visitor's miss shows up
-        # in the call log the tests compare.
-        calls.append(
-            ("leaderboard.get" if miss_reason == "warm" else "leaderboard.get (miss)", key)
-        )
-        return leaderboard_get(key, compute) if leaderboard_get else None
+    """Record what ``warm_leaderboard`` asks of each memo, in order. Recorded,
+    not asserted here: its broad excepts would swallow an assertion. A blocking
+    ``get`` labelled as a visitor's miss shows up as ``<name>.get (miss)``."""
 
-    monkeypatch.setattr(putlab_routes._LEADERBOARD_CACHE, "get", get)
+    def recorder(
+        name: str, hook: Callable[[object, object], object] | None
+    ) -> Callable[..., object]:
+        def get(key: object, compute: object, *, miss_reason: str = "miss") -> object:
+            calls.append((f"{name}.get" if miss_reason == "warm" else f"{name}.get (miss)", key))
+            return hook(key, compute) if hook else None
+
+        return get
+
     monkeypatch.setattr(
-        putlab_routes._METRIC_SCREEN_CACHE,
+        putlab_routes._LEADERBOARD_CACHE, "get", recorder("leaderboard", leaderboard_get)
+    )
+    monkeypatch.setattr(putlab_routes._METRIC_SCREEN_CACHE, "get", recorder("bakeoff", bakeoff_get))
+    monkeypatch.setattr(
+        putlab_routes._SIGNAL_TEST_CACHE,
         "warm",
-        lambda key, compute: calls.append(("bakeoff.warm", key)),
+        lambda key, compute: calls.append(("signal_test.warm", key)),
     )
 
 
@@ -527,21 +569,29 @@ def test_warm_leaderboard_screens_the_workspace_defaults(monkeypatch: pytest.Mon
     putlab_routes.warm_leaderboard(DeltaLakeStore(Path("unused")))
     today = dt.datetime.now(dt.UTC).date().isoformat()
     # PUTLAB_DEFAULT_CONTROLS in the frontend, and the route's query defaults;
-    # then the Workspace's fixed bake-off line at the same screen, top 5.
+    # then the Workspace's fixed bake-off line at the same screen, top 5; then
+    # the signal test its strip reads (0.10 delta).
     assert calls == [
         ("leaderboard.get", (5.0, 4.0, 4.0, today)),
-        ("bakeoff.warm", (putlab_routes.ByMoneyness(5.0), 4.0, 4.0, 5, today)),
+        ("bakeoff.get", (putlab_routes.ByMoneyness(5.0), 4.0, 4.0, 5, today)),
+        ("signal_test.warm", (putlab_routes.ByDelta(0.10), 4.0, 4.0, 5, today)),
     ]
 
 
-def test_the_bakeoff_warm_waits_for_the_ranking(monkeypatch: pytest.MonkeyPatch) -> None:
-    """The landing ranking is screened first, in full: two background warms
-    could let the bake-off take the (unfair) screen slot first after every
-    restart. A ranking that runs in a spawned thread would let the bake-off
-    warm start while it is still going."""
+def test_each_warm_finishes_before_the_next_starts(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The ranking, then the bake-off, are screened in full and in turn:
+    `_SCREEN_SLOT` is not fair, so a warm started while an earlier one still
+    runs could take the slot first after every restart. A bake-off that ran
+    in a spawned thread would let the signal-test warm start while it is
+    still going."""
     calls: list[tuple[str, object]] = []
-    release = threading.Event()
-    _patch_warm_memos(monkeypatch, calls, leaderboard_get=lambda _k, _c: release.wait(5))
+    release_ranking, release_bakeoff = threading.Event(), threading.Event()
+    _patch_warm_memos(
+        monkeypatch,
+        calls,
+        leaderboard_get=lambda _k, _c: release_ranking.wait(5),
+        bakeoff_get=lambda _k, _c: release_bakeoff.wait(5),
+    )
     worker = threading.Thread(
         target=putlab_routes.warm_leaderboard, args=(DeltaLakeStore(Path("unused")),)
     )
@@ -549,13 +599,17 @@ def test_the_bakeoff_warm_waits_for_the_ranking(monkeypatch: pytest.MonkeyPatch)
     try:
         time.sleep(0.3)
         assert [c[0] for c in calls] == ["leaderboard.get"]
+        release_ranking.set()
+        time.sleep(0.3)
+        assert [c[0] for c in calls] == ["leaderboard.get", "bakeoff.get"]
     finally:
-        release.set()
+        release_ranking.set()
+        release_bakeoff.set()
         worker.join(5)
-    assert [c[0] for c in calls] == ["leaderboard.get", "bakeoff.warm"]
+    assert [c[0] for c in calls] == ["leaderboard.get", "bakeoff.get", "signal_test.warm"]
 
 
-def test_a_failed_ranking_warm_is_logged_and_the_bakeoff_still_warms(
+def test_a_failed_ranking_warm_is_logged_and_the_later_warms_still_run(
     monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
 ) -> None:
     """A blocking ``get`` re-raises; uncaught, one failed screen would end the
@@ -568,8 +622,33 @@ def test_a_failed_ranking_warm_is_logged_and_the_bakeoff_still_warms(
     _patch_warm_memos(monkeypatch, calls, leaderboard_get=boom)
     with caplog.at_level("ERROR", logger="tail_lab.api.putlab"):
         putlab_routes.warm_leaderboard(DeltaLakeStore(Path("unused")))
-    assert [c[0] for c in calls] == ["leaderboard.get", "bakeoff.warm"]
+    assert [c[0] for c in calls] == ["leaderboard.get", "bakeoff.get", "signal_test.warm"]
     assert "event=putlab.leaderboard_warm_failed" in caplog.text
+
+
+def test_a_failed_bakeoff_warm_is_logged_the_signal_test_still_warms_and_the_loop_survives(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    """The bake-off warm now blocks, so it re-raises like the ranking's. The
+    signal test must still warm, and the daily thread must reach its next
+    round -- a dead thread means no warm until the next deploy."""
+    calls: list[tuple[str, object]] = []
+
+    def boom(_key: object, _compute: object) -> object:
+        raise LookupError("no OHLCV known")
+
+    _patch_warm_memos(monkeypatch, calls, bakeoff_get=boom)
+    sleeps: list[float] = []
+    with caplog.at_level("ERROR", logger="tail_lab.api.putlab"):
+        putlab_routes.warm_leaderboard_daily(
+            DeltaLakeStore(Path("unused")),
+            now=lambda: dt.datetime(2026, 10, 8, 12, tzinfo=dt.UTC),
+            sleep=sleeps.append,
+            rounds=2,
+        )
+    assert [c[0] for c in calls] == ["leaderboard.get", "bakeoff.get", "signal_test.warm"] * 2
+    assert len(sleeps) == 2
+    assert caplog.text.count("event=putlab.bakeoff_warm_failed") == 2
 
 
 def test_the_warm_computes_hold_the_screen_slot(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -583,11 +662,17 @@ def test_the_warm_computes_hold_the_screen_slot(monkeypatch: pytest.MonkeyPatch)
     )
     monkeypatch.setattr(
         putlab_routes._METRIC_SCREEN_CACHE,
+        "get",
+        lambda key, compute, **_kw: computes.setdefault("bakeoff", compute),
+    )
+    monkeypatch.setattr(
+        putlab_routes._SIGNAL_TEST_CACHE,
         "warm",
-        lambda key, compute: computes.setdefault("bakeoff", compute),
+        lambda key, compute: computes.setdefault("signal_test", compute),
     )
     monkeypatch.setattr(putlab_routes, "rank_universe", lambda *a, **k: "ranked")
     monkeypatch.setattr(putlab_routes, "compare_metric_screens", lambda *a, **k: _fake_bakeoff())
+    monkeypatch.setattr(putlab_routes, "walk_forward", lambda *a, **k: _fake_signal_result())
     putlab_routes.warm_leaderboard(DeltaLakeStore(Path("unused")))
     for name, compute in computes.items():
         done = threading.Event()
@@ -597,6 +682,31 @@ def test_the_warm_computes_hold_the_screen_slot(monkeypatch: pytest.MonkeyPatch)
             assert not done.wait(0.3), f"{name} warm ran without the screen slot"
         t.join(5)
         assert done.is_set()
+
+
+def _fake_signal_result(*symbols: str) -> SignalTestResult:
+    """An empty-universe signal test (the real pure path, so the shape is the
+    model's own) whose ``per_name`` lists ``symbols``."""
+    ev = evaluate_screens([], top_k=5, n_random=10)
+    names = [
+        NameRecord(symbol=sym, n_eligible_periods=3, by_regime=[], screens=[]) for sym in symbols
+    ]
+    return SignalTestResult.model_validate(
+        {
+            **{f: getattr(ev, f) for f in Evaluation.model_fields},
+            "per_name": names,
+            "as_of": dt.date(2026, 10, 9),
+            "moneyness_pct": None,
+            "strike_rule": "delta",
+            "target_delta": 0.10,
+            "tenor_weeks": 4.0,
+            "signal_years": 4.0,
+            "top_k": 5,
+            "n_random": 10,
+            "seed": 0,
+            "universe_size": 3,
+        }
+    )
 
 
 def _fake_bakeoff() -> MetricScreenComparison:
@@ -1611,6 +1721,7 @@ def _clear_putlab_caches() -> None:
     for cache in (
         putlab_routes._LEADERBOARD_CACHE,
         putlab_routes._METRIC_SCREEN_CACHE,
+        putlab_routes._SIGNAL_TEST_CACHE,
         putlab_routes._BACKTEST_CACHE,
         putlab_routes._SWEEP_CACHE,
         putlab_routes._REGIME_VERDICT_CACHE,
@@ -1863,6 +1974,182 @@ def test_a_repeat_bakeoff_is_served_from_the_memo(
         assert client.get("/api/putlab/metric-screen", params=params).status_code == 200
     assert calls == [1]
     assert spawned == []
+
+
+# --- The out-of-sample signal test (research/backtest/walk_forward.py) ---
+
+
+def _count_walk_forward(monkeypatch: pytest.MonkeyPatch, *symbols: str) -> list[dict[str, object]]:
+    """Replace the (universe-wide, slow) walk-forward with a counted fake; each
+    entry is the keyword arguments of one compute. Background refreshes are
+    recorded, not run, so a memo that thought its entry stale shows up."""
+    calls: list[dict[str, object]] = []
+
+    def fake(*_args: object, **kwargs: object) -> SignalTestResult:
+        calls.append(kwargs)
+        return _fake_signal_result(*symbols)
+
+    monkeypatch.setattr(putlab_routes, "walk_forward", fake)
+    spawned: list[object] = []
+    monkeypatch.setattr(putlab_routes._SIGNAL_TEST_CACHE, "_spawn", spawned.append)
+    return calls
+
+
+def test_signal_test_returns_the_walk_forward_result_on_the_real_path(client: TestClient) -> None:
+    """End to end through the real walk-forward on a lake too thin to test
+    anything: the verdict is a value (``insufficient_data``), not an error."""
+    resp = client.get("/api/putlab/signal-test", params={"signal_years": 1})
+    assert resp.status_code == 200
+    body = resp.json()
+    assert set(body) == set(SignalTestResult.model_fields)
+    assert body["strike_rule"] == "delta"
+    assert body["target_delta"] == 0.10
+    assert body["verdict"]["status"] == "insufficient_data"
+
+
+def test_signal_test_and_its_per_name_route_share_one_compute(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The per-name page reads its slice from the SAME memo entry: the symbol
+    is not in the key, so opening a name never re-runs the universe-wide test."""
+    calls = _count_walk_forward(monkeypatch, "aapl", "msft")
+    assert client.get("/api/putlab/signal-test").status_code == 200
+    one = client.get("/api/putlab/signal-test/AAPL")
+    two = client.get("/api/putlab/signal-test/msft")
+    assert (one.status_code, two.status_code) == (200, 200)
+    assert one.json()["symbol"] == "aapl"
+    assert two.json()["symbol"] == "msft"
+    assert len(calls) == 1
+    # The other way round, from cold: a name first, then the whole.
+    putlab_routes._SIGNAL_TEST_CACHE.clear()
+    assert client.get("/api/putlab/signal-test/aapl").status_code == 200
+    assert client.get("/api/putlab/signal-test").status_code == 200
+    assert len(calls) == 2
+
+
+def test_signal_test_symbol_route_404s_a_name_outside_the_result(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _count_walk_forward(monkeypatch, "aapl")
+    resp = client.get("/api/putlab/signal-test/zzzz")
+    assert resp.status_code == 404
+    assert "zzzz" in resp.json()["detail"]
+
+
+def test_signal_test_recomputes_for_other_parameters_and_hands_them_down(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Each parameter is part of the key (a stale entry is served without
+    recomputing), and reaches the walk-forward as asked."""
+    calls = _count_walk_forward(monkeypatch)
+    for extra in (
+        {},
+        {"top_k": 3},
+        {"tenor_weeks": 2},
+        {"signal_years": 2},
+        {"as_of": "2026-01-02"},
+    ):
+        assert client.get("/api/putlab/signal-test", params=extra).status_code == 200
+    assert len(calls) == 5
+    assert calls[0]["rule"] == putlab_routes.ByDelta(0.10)
+    assert (calls[1]["top_k"], calls[2]["tenor_weeks"], calls[3]["signal_years"]) == (3, 2.0, 2.0)
+    assert calls[4]["as_of"] == dt.date(2026, 1, 2)
+    putlab_routes._SIGNAL_TEST_CACHE.clear()
+    assert (
+        client.get(
+            "/api/putlab/signal-test", params={"strike_rule": "moneyness", "moneyness_pct": 7}
+        ).status_code
+        == 200
+    )
+    assert calls[-1]["rule"] == putlab_routes.ByMoneyness(7.0)
+
+
+@pytest.mark.parametrize(
+    "params",
+    [
+        {"top_k": 1},
+        {"top_k": 16},
+        {"tenor_weeks": 0},
+        {"tenor_weeks": 53},
+        {"signal_years": 0},
+        {"signal_years": 21},
+        {"strike_rule": "other"},
+        {"target_delta": 0.9},
+        {"strike_rule": "moneyness", "moneyness_pct": 100},
+    ],
+)
+def test_signal_test_validates_like_the_metric_screen(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch, params: dict[str, object]
+) -> None:
+    calls = _count_walk_forward(monkeypatch)
+    assert client.get("/api/putlab/signal-test", params=params).status_code == 422
+    assert client.get("/api/putlab/signal-test/aapl", params=params).status_code == 422
+    assert calls == []
+
+
+def test_signal_test_ignores_the_inactive_rules_leftover_parameter(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The UI keeps both values, so an out-of-range moneyness arrives with a
+    delta request; it must not refuse a valid one (as `_rule` does for the
+    bake-off)."""
+    _count_walk_forward(monkeypatch)
+    resp = client.get("/api/putlab/signal-test", params={"moneyness_pct": 500})
+    assert resp.status_code == 200
+
+
+def test_signal_test_maps_its_known_refusals_to_statuses(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def no_vix(*_a: object, **_k: object) -> SignalTestResult:
+        raise LookupError("no VIX known as of 2026-10-09")
+
+    monkeypatch.setattr(putlab_routes, "walk_forward", no_vix)
+    resp = client.get("/api/putlab/signal-test")
+    assert (resp.status_code, resp.json()["detail"]) == (404, "no VIX known as of 2026-10-09")
+
+    def unreachable(*_a: object, **_k: object) -> SignalTestResult:
+        raise putlab_routes.UnreachableDeltaError("no strike has that delta")
+
+    monkeypatch.setattr(putlab_routes, "walk_forward", unreachable)
+    assert client.get("/api/putlab/signal-test").status_code == 422
+
+
+def test_signal_test_is_stamped_with_the_running_code_but_the_memo_is_not(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from tail_lab.config import Settings
+
+    _count_walk_forward(monkeypatch, "aapl")
+    monkeypatch.setattr(putlab_routes, "get_settings", lambda: Settings(code_sha="abc1234"))
+    assert client.get("/api/putlab/signal-test").json()["code_sha"] == "abc1234"
+    (cached,) = [e.value for e in putlab_routes._SIGNAL_TEST_CACHE._entries.values()]
+    assert cached.code_sha == "unknown"
+
+
+def test_signal_test_logs_once_per_compute_with_its_parameters_and_verdict(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    """STANDARDS §f: a computed test leaves one record (what it ran on, what it
+    said, how long it took); a memo hit, or the per-name route, is not a new one."""
+    _count_walk_forward(monkeypatch, "aapl")
+    with caplog.at_level("INFO", logger="tail_lab.api.putlab"):
+        for url in ("/api/putlab/signal-test",) * 2 + ("/api/putlab/signal-test/aapl",):
+            assert client.get(url).status_code == 200
+    [line] = [
+        r.getMessage() for r in caplog.records if "event=putlab.signal_test " in r.getMessage()
+    ]
+    for part in (
+        "strike_rule=delta",
+        "target_delta=0.1",
+        "tenor_weeks=4 ",
+        "signal_years=4 ",
+        "top_k=5",
+        "status=insufficient_data",
+        "n_periods=0",
+        "seconds=",
+    ):
+        assert part in line
 
 
 def test_every_pricing_route_logs_the_dividend_snapshot_it_priced_with(
