@@ -35,6 +35,32 @@ false-discovery-rate correction across every screen with a defined p-value in
 the comparison (``multiple_testing.benjamini_hochberg``) -- read the corrected
 column, not the raw one, before calling any screen a real winner.
 
+THE OUTCOME is cost-rule-free in the two ways ``docs/adr/0033`` §2 found
+dominating it (found 2026-10-31, when co-kurtosis "won" at +116% on a 1% hit
+rate):
+
+* **No commission.** Per-contract commission depends on the split-adjusted
+  share price level (contracts = notional / premium), so it leaks later splits into an earlier result, and at a
+  fixed moneyness on a calm name it ate 60-90% of the premium -- the ranking
+  was then sorting commission, not fragility. The model half-spread (a
+  fraction of notional) is kept, exactly as in ``walk_forward``.
+* **Floored legs are left out.** A leg whose Black-Scholes premium fell under
+  ``PREMIUM_FLOOR_FRAC * spot`` was priced at the floor, which is not a price:
+  a floored SPY put paid about 2,122x in Feb 2020. Each name's ROI, the
+  baseline, the baskets and the Spearman tests all use its unfloored legs
+  only; a name with no unfloored leg is not scored. The counts are reported
+  (``n_floored_legs_excluded``, ``n_names_all_floored``).
+
+  This is a SELECTION rule as well as a cost fix. The floor binds when a
+  name's trailing vol is low, so under a fixed moneyness a quiet name is
+  judged only on the rolls it entered while lively, and a volatile name on
+  all of them: names are no longer compared over the same dates. The rule
+  uses no future data (the floor is decided at entry), but the bias is real
+  -- ``walk_forward`` avoids it by comparing names within each period. A
+  delta rule mostly avoids it, because its strike moves with the name's vol,
+  but not always: on the 2026-11-01 universe nothing floored from 0.02 delta
+  up (4-week rolls), while at 0.01 delta 214 rolls did.
+
 Efficiency: each name is loaded and backtested **once**; the seven screens differ
 only in how they *rank and select* from that shared pass, so 35 names cost 35
 backtests, not 35x7.
@@ -101,6 +127,8 @@ _COMPOSITE = "fragility_score"
 #: 0.05 hurdle this also gates the *uncorrected* `significant_raw` reading,
 #: so the two columns are directly comparable at the same nominal level.
 _FDR_ALPHA = 0.05
+#: Commission charged per contract: none (module docstring, THE OUTCOME).
+_COMMISSION_PER_CONTRACT = 0.0
 #: Human labels for the cockpit table.
 _LABELS: dict[str, str] = {
     "downside_beta": "Downside beta",
@@ -165,7 +193,13 @@ class MetricScreenComparison(BaseModel):
     tenor_weeks: float
     lookback_years: float
     top_k: int
-    universe_size: int  # names scored (had data + a completable roll)
+    universe_size: int  # names scored (had data + at least one unfloored roll)
+    #: Rolls priced at ``PREMIUM_FLOOR_FRAC * spot`` (not a price) and left out
+    #: of every number here, over every name backtested -- the all-floored
+    #: names' rolls included.
+    n_floored_legs_excluded: int = 0
+    #: Names whose every roll was floored, so they could not be scored at all.
+    n_names_all_floored: int = 0
     baseline_roi: float  # mean per-name ROI, the "buy puts on everyone" baseline
     #: How many of the seven screens had a defined `spearman_pvalue` and so
     #: entered the Benjamini-Hochberg correction (`docs/END_STATE.md` §4 Q1) --
@@ -193,7 +227,24 @@ class _Scored:
     symbol: str
     metrics: dict[str, float | None]  # the six raw metric values (or None)
     fragility_score: float | None  # cross-sectional composite, filled below
-    result: PutBacktestResult
+    #: The name's unit-notional rolls whose premium was a model price (never
+    #: floored), and the ROI over exactly those; never empty.
+    cycles: list[PutRollCycle]
+    roi: float
+    n_floored: int
+
+
+def _roi(cycles: list[PutRollCycle]) -> float:
+    """Net ROI on premium over ``cycles``, net of brokerage: payoff - net -
+    cost is each roll's premium budget, so this is sum(net) / sum(budget)."""
+    total_premium = sum(c.payoff - c.net - c.cost for c in cycles)
+    return sum(c.net for c in cycles) / total_premium if total_premium > 0 else 0.0
+
+
+def _unfloored(symbol: str, metrics: dict[str, float | None], result: PutBacktestResult) -> _Scored:
+    """Keep only the rolls priced by the model, not at the premium floor."""
+    kept = [c for c in result.cycles if not c.premium_floored]
+    return _Scored(symbol, metrics, None, kept, _roi(kept), len(result.cycles) - len(kept))
 
 
 def _spearman(
@@ -252,16 +303,14 @@ def _run_screen(
     if picks:
         budget = notional / len(picks)
         for name in picks:
-            s = budget / name.result.n_cycles
-            pooled.extend(_scaled(c, s) for c in name.result.cycles)
+            s = budget / len(name.cycles)
+            pooled.extend(_scaled(c, s) for c in name.cycles)
 
     slices, verdict = regime_breakdown(pooled, timeline)
 
     # payoff - net - cost == budget (net is net of brokerage); ROI is on that
     # premium budget and net of brokerage (== sum(net)/budget).
-    total_premium = sum(c.payoff - c.net - c.cost for c in pooled)
-    total_net = sum(c.net for c in pooled)
-    roi = total_net / total_premium if total_premium > 0 else 0.0
+    roi = _roi(pooled)
     hit_rate = sum(1 for c in pooled if c.net > 0.0) / len(pooled) if pooled else 0.0
 
     # Combined bleed: accumulate realized net at each expiry DATE (summing any
@@ -278,9 +327,7 @@ def _run_screen(
         cum_values.append(cum)
     combined_dd = _max_drawdown(cum_values)
 
-    spearman, pvalue = _spearman(
-        values, [s.result.roi_on_premium for s in scored], fragile_high=fragile_high
-    )
+    spearman, pvalue = _spearman(values, [s.roi for s in scored], fragile_high=fragile_high)
     return MetricScreenEntry(
         metric=metric,
         label=_LABELS[metric],
@@ -349,6 +396,40 @@ def _fragility(
     return fragility_from_returns(bench.iloc[-lookback_days:], vol.iloc[-lookback_days:])
 
 
+def _score_name(
+    store: LakeStore,
+    symbol: str,
+    *,
+    as_of: dt.date,
+    rule: StrikeRule,
+    tenor_weeks: float,
+    years: float,
+    fragility: Callable[[pd.Series], dict[str, float | None]],
+) -> _Scored | None:
+    """Backtest one name once, commission-free, and keep its unfloored rolls
+    (module docstring, THE OUTCOME). ``None`` when the name has no data as of
+    ``as_of`` or too short a window for one roll."""
+    try:
+        prices, realized_vol_proxy = load_asof_series(store, symbol, as_of)
+        # Unit notional: outputs scale linearly, so we backtest once at 1.0
+        # and scale into each basket's budget (mirrors run_portfolio).
+        result = run_put_roll(
+            prices,
+            realized_vol_proxy,
+            asset=symbol,
+            as_of=as_of,
+            notional=1.0,
+            rule=rule,
+            tenor_weeks=tenor_weeks,
+            lookback_years=years,
+            basis=PricingBasis(dividends=dividend_lookup(store, symbol, as_of).lookup),
+            commission_per_contract=_COMMISSION_PER_CONTRACT,
+        )
+    except LookupError:
+        return None
+    return _unfloored(symbol, fragility(prices), result)
+
+
 def compare_metric_screens(
     store: LakeStore,
     *,
@@ -371,7 +452,8 @@ def compare_metric_screens(
 
     Point-in-time: the regime timeline, the SPY benchmark, and every price path
     are read as of ``as_of``. A name with no OHLCV as-of, or too short a window
-    for one roll, is skipped. Raises ``LookupError`` if the VIX regime timeline
+    for one roll, is skipped, and so is a name whose every roll was priced at
+    the premium floor (counted in ``n_names_all_floored``). Raises ``LookupError`` if the VIX regime timeline
     is missing, if the SPY benchmark is absent (the metrics can't be computed
     without it), or if no name could be scored.
     """
@@ -391,49 +473,40 @@ def compare_metric_screens(
     bench_ret = _returns(bench_prices)
 
     scored: list[_Scored] = []
+    n_all_floored = 0
+    n_floored_legs = 0
     for symbol in symbols:
-        try:
-            prices, realized_vol_proxy = load_asof_series(store, symbol, as_of)
-            # Unit notional: outputs scale linearly, so we backtest once at 1.0
-            # and scale into each basket's budget (mirrors run_portfolio).
-            result = run_put_roll(
-                prices,
-                realized_vol_proxy,
-                asset=symbol,
-                as_of=as_of,
-                notional=1.0,
-                rule=rule,
-                tenor_weeks=tenor_weeks,
-                lookback_years=years,
-                basis=PricingBasis(dividends=dividend_lookup(store, symbol, as_of).lookup),
-            )
-        except LookupError:
-            continue  # no data / too short a window for this name -> skip
-        scored.append(
-            _Scored(
-                symbol,
-                _fragility(
-                    prices,
-                    bench_ret=bench_ret,
-                    vol_changes=vol_changes,
-                    lookback_days=lookback_days,
-                ),
-                None,
-                result,
-            )
+        named = _score_name(
+            store,
+            symbol,
+            as_of=as_of,
+            rule=rule,
+            tenor_weeks=tenor_weeks,
+            years=years,
+            fragility=lambda prices: _fragility(
+                prices, bench_ret=bench_ret, vol_changes=vol_changes, lookback_days=lookback_days
+            ),
         )
+        if named is None:
+            continue  # no data / too short a window for this name -> skip
+        n_floored_legs += named.n_floored
+        if not named.cycles:
+            n_all_floored += 1  # every roll floored: nothing priced to judge
+            continue
+        scored.append(named)
 
     if not scored:
         raise LookupError(f"no universe name could be scored as of {as_of.isoformat()}")
 
-    # The composite averages only the COMPOSITE_METRICS -- identical to how
-    # rank_universe builds fragility_score (`ranking.composite_scores`), so the
-    # "Composite fragility" row here matches the shipped screen exactly
-    # (co-kurtosis excluded; see ranking.COMPOSITE_METRICS).
+    # The composite averages only the COMPOSITE_METRICS with the same formula
+    # rank_universe uses (`ranking.composite_scores`; co-kurtosis excluded, see
+    # ranking.COMPOSITE_METRICS). It is cross-sectional, so it matches the
+    # shipped screen only when the same names are scored: a name dropped for
+    # all-floored rolls shifts every other name's composite.
     for s_, score in zip(scored, composite_scores([x.metrics for x in scored]), strict=True):
         s_.fragility_score = score
 
-    baseline_roi = sum(s.result.roi_on_premium for s in scored) / len(scored)
+    baseline_roi = sum(s.roi for s in scored) / len(scored)
 
     entries: list[MetricScreenEntry] = []
     for name in _ALL_METRIC_NAMES:
@@ -475,6 +548,8 @@ def compare_metric_screens(
         lookback_years=years,
         top_k=top_k,
         universe_size=len(scored),
+        n_floored_legs_excluded=n_floored_legs,
+        n_names_all_floored=n_all_floored,
         baseline_roi=baseline_roi,
         n_comparisons=n_comparisons,
         fdr_alpha=_FDR_ALPHA,

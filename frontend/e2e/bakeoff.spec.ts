@@ -1,5 +1,6 @@
 import { expect, test, type Locator, type Page } from '@playwright/test'
 import { apiRequests, mockPutLabApi } from './fixtures/mock-api'
+import { METRIC_SCREEN_WINNER } from './fixtures/putlab'
 import { SIGNAL_TEST_BEATS, SIGNAL_TEST_CRASH_CARRIED, SIGNAL_TEST_INSUFFICIENT, SIGNAL_TEST_NO_BETTER } from './fixtures/signal-test'
 
 // The Bake-off tab (docs/adr/0033).
@@ -349,6 +350,58 @@ test('reads the winner as a screen chooser when lift is positive', async ({ page
   await expect(verdict).toContainText('+1.6 points above')
   await expect(verdict).toContainText('all 35 names')
   await expect(verdict).toContainText('in sample')
+})
+
+test('says it charges no commission and how many floored rolls it left out', async ({ page }) => {
+  await runInSample(page)
+  const costs = page.getByTestId('bake-costs')
+  await expect(costs).toContainText('No commission is charged')
+  await expect(costs).toContainText('14 floored rolls left out; 1 name had only floored rolls and is not scored.')
+})
+
+test('counts several dropped names in the plural', async ({ page }) => {
+  await page.route((url) => url.pathname === '/api/putlab/metric-screen', (route) =>
+    route.fulfill({ json: { ...METRIC_SCREEN_WINNER, n_floored_legs_excluded: 30, n_names_all_floored: 2 } }),
+  )
+  await runInSample(page)
+  await expect(page.getByTestId('bake-costs')).toContainText('30 floored rolls left out; 2 names had only floored rolls and are not scored.')
+})
+
+test('counts a single floored roll without a dropped-name clause', async ({ page }) => {
+  await page.route((url) => url.pathname === '/api/putlab/metric-screen', (route) =>
+    route.fulfill({ json: { ...METRIC_SCREEN_WINNER, n_floored_legs_excluded: 1, n_names_all_floored: 0 } }),
+  )
+  await runInSample(page)
+  const costs = page.getByTestId('bake-costs')
+  await expect(costs).toContainText('1 floored roll left out.')
+  await expect(costs).not.toContainText('not scored')
+})
+
+test('names the selection the floor rule makes at fixed moneyness', async ({ page }) => {
+  await runInSample(page)
+  await expect(page.getByTestId('bake-costs')).toContainText('At a fixed distance below spot they dominated the ranking on quiet names.')
+  await expect(page.getByTestId('bake-costs')).toContainText('Leaving floored rolls out is a selection too')
+})
+
+test('drops the fixed-moneyness clause under the delta rule', async ({ page }) => {
+  await page.route((url) => url.pathname === '/api/putlab/metric-screen', (route) =>
+    route.fulfill({ json: { ...METRIC_SCREEN_WINNER, strike_rule: 'delta', moneyness_pct: null, target_delta: 0.1 } }),
+  )
+  await runInSample(page)
+  const costs = page.getByTestId('bake-costs')
+  await expect(costs).toContainText('No commission is charged')
+  await expect(costs).not.toContainText('fixed distance below spot')
+  // The floor can still bind at the smallest deltas: when it did, the
+  // selection it makes is named under delta too.
+  await expect(costs).toContainText('Leaving floored rolls out is a selection too')
+})
+
+test('says no roll hit the floor when none did', async ({ page }) => {
+  await page.getByRole('radiogroup', { name: 'Basket size' }).getByText('Top 3').click()
+  await runInSample(page)
+  const costs = page.getByTestId('bake-costs')
+  await expect(costs).toContainText('No roll hit the floor in this run.')
+  await expect(costs).not.toContainText('is a selection too')
 })
 
 test('says so plainly when no screen beats buying everything', async ({ page }) => {

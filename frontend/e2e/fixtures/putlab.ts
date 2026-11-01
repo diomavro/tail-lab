@@ -457,6 +457,8 @@ export const METRIC_SCREEN_WINNER: MetricScreenComparison = {
   top_k: 5,
   universe_size: 35,
   baseline_roi: -0.241,
+  n_floored_legs_excluded: 14,
+  n_names_all_floored: 1,
   n_comparisons: 7,
   fdr_alpha: 0.05,
   // Its own provenance, distinct from the leaderboard's (sha, count), so a
@@ -482,6 +484,8 @@ export const METRIC_SCREEN_NO_WINNER: MetricScreenComparison = {
   ...METRIC_SCREEN_WINNER,
   top_k: 3,
   baseline_roi: -0.198,
+  n_floored_legs_excluded: 0,
+  n_names_all_floored: 0,
   entries: METRIC_SCREEN_WINNER.entries.map((e) => ({
     ...e,
     top_k_assets: e.top_k_assets.slice(0, 3),

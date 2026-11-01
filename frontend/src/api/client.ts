@@ -587,6 +587,11 @@ export interface MetricScreenComparison {
   top_k: number
   universe_size: number
   baseline_roi: number
+  /** Rolls priced at the premium floor (not a price), left out of every
+   *  number, and names whose every roll was floored (not scored at all). The
+   *  bake-off also charges no commission (metric_screen.py, THE OUTCOME). */
+  n_floored_legs_excluded: number
+  n_names_all_floored: number
   // How many of the seven screens had a defined spearman_pvalue and so entered
   // the Benjamini-Hochberg correction (Harvey, Liu & Zhu 2016 says this must be
   // reported alongside any "which metric wins" verdict).
