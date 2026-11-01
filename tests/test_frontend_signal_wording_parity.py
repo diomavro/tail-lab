@@ -71,6 +71,16 @@ def test_the_wording_handles_exactly_the_backends_statuses_and_demotions() -> No
     )
 
 
+def test_the_quoted_eligibility_rule_is_the_backends() -> None:
+    src = WORDING.read_text()
+    consts = dict(re.findall(r"^const (N_MIN|MIN_PERIODS|MIN_EPISODES) = (\d+)$", src, re.M))
+    assert {k: int(v) for k, v in consts.items()} == {
+        "N_MIN": beyond_vol.N_MIN,
+        "MIN_PERIODS": walk_forward.MIN_PERIODS,
+        "MIN_EPISODES": walk_forward.MIN_EPISODES,
+    }
+
+
 def _decimals(literal: str) -> int:
     return len(literal.split(".")[1]) if "." in literal else 0
 

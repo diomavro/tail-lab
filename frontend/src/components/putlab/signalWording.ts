@@ -156,21 +156,26 @@ function estimate(gammaBar: number, ci: BeyondVolCi): string {
 }
 
 /** The p-value clause (", p = 0.012"), or '' when there is nothing true to
- *  print. A value that rounds to 0.05 or more while p < 0.05 reads "p < 0.05",
- *  and a "pass" status with p at or above 0.05 prints no p at all: the page
- *  never shows a number that contradicts the status beside it. */
-export function pClause(p: number | null, passing: boolean): string {
-  if (p == null || Number.isNaN(p)) return ''
-  if (passing && p >= 0.05) return ''
+ *  print. Only the two significant statuses reach it, so p at or above 0.05
+ *  prints no p at all, and a value that rounds to 0.05 while p < 0.05 reads
+ *  "p < 0.05": the page never shows a number that contradicts the status. */
+function pClause(p: number | null): string {
+  if (p == null || Number.isNaN(p) || p >= 0.05) return ''
   if (p < 0.001) return ', p < 0.001'
   const rounded = p.toFixed(3)
   if (p < 0.05 && Number(rounded) >= 0.05) return ', p < 0.05'
   return `, p = ${rounded}`
 }
 
+/** The eligibility rule: beyond_vol.N_MIN, walk_forward.MIN_PERIODS and
+ *  walk_forward.MIN_EPISODES, checked by test_frontend_signal_wording_parity.py. */
+const N_MIN = 40
+const MIN_PERIODS = 24
+const MIN_EPISODES = 3
+
 /** Why a test could not be read as an estimate. The same words on every path. */
 function notEnough(bv: BeyondVolTest): string {
-  return `Not enough to test: ${bv.n_periods} periods measured (${bv.n_skipped} skipped for fewer than 40 names), and the test needs at least 24 periods and 3 stress episodes.`
+  return `Not enough to test: ${bv.n_periods} periods measured (${bv.n_skipped} skipped for fewer than ${N_MIN} names), and the test needs at least ${MIN_PERIODS} periods and ${MIN_EPISODES} stress episodes.`
 }
 
 /** The pre-registered result, quoted beside a later re-run so the two are never confused. */
@@ -182,7 +187,7 @@ function preregisteredText(): string {
 /** The confirmatory sentence for each status; the status is not trusted to be one we know. */
 function confirmatoryLine(bv: BeyondVolTest, est: string): BeyondVolLine {
   const mode = 'confirmatory'
-  const p = (passing: boolean) => pClause(bv.p_value, passing)
+  const p = pClause(bv.p_value)
   switch (bv.status) {
     case 'no_evidence_beyond_trailing_vol': {
       const wholeBelowZero = bv.ci90 != null && bv.ci90.high < 0
@@ -197,13 +202,13 @@ function confirmatoryLine(bv: BeyondVolTest, est: string): BeyondVolLine {
     case 'predicts_beyond_trailing_vol':
       return {
         mode,
-        text: `Fragility predicted put outcomes beyond trailing vol (${est}${p(true)}), possibly through their exposure to market crashes; under model pricing this means they moved more than their trailing vol implied, which real option prices may already reflect.`,
+        text: `Fragility predicted put outcomes beyond trailing vol (${est}${p}), possibly through their exposure to market crashes; under model pricing this means they moved more than their trailing vol implied, which real option prices may already reflect.`,
         caveat: SURFACE_CAVEAT,
       }
     case 'not_robust':
       return {
         mode,
-        text: `Controlling for trailing vol the composite looks significant (${est}${p(true)}), but the result is not robust, so it is not a pass: ${bv.demotion == null ? 'a robustness check failed' : (DEMOTION_TEXT[bv.demotion] ?? 'a robustness check failed')}.`,
+        text: `Controlling for trailing vol the composite looks significant (${est}${p}), but the result is not robust, so it is not a pass: ${bv.demotion == null ? 'a robustness check failed' : (DEMOTION_TEXT[bv.demotion] ?? 'a robustness check failed')}.`,
         caveat: SURFACE_CAVEAT,
       }
     case 'insufficient_data':
