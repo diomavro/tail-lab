@@ -6,8 +6,13 @@ independently of the function under test."""
 from __future__ import annotations
 
 import pytest
+from hypothesis import assume, given, settings
+from hypothesis import strategies as st
 
-from tail_lab.research.backtest.multiple_testing import benjamini_hochberg
+from tail_lab.research.backtest.multiple_testing import (
+    benjamini_hochberg,
+    benjamini_hochberg_adjusted,
+)
 
 
 def test_benjamini_hochberg_textbook_case() -> None:
@@ -69,3 +74,57 @@ def test_benjamini_hochberg_rejects_alpha_out_of_range(bad_alpha: float) -> None
 def test_benjamini_hochberg_rejects_p_value_out_of_range(bad_p: float) -> None:
     with pytest.raises(ValueError, match="p-value"):
         benjamini_hochberg([0.01, bad_p])
+
+
+def test_adjusted_p_values_match_a_hand_computed_textbook_case() -> None:
+    """Sorted p = .01, .04, .03, .005 (m = 4): step-up q from the largest:
+    q4 = .04*4/4 = .04; q3 = min(.04, .03*4/3 = .04) = .04;
+    q2 = min(.04, .01*4/2 = .02) = .02; q1 = min(.02, .005*4/1 = .02) = .02."""
+    q = benjamini_hochberg_adjusted([0.01, 0.04, 0.03, 0.005])
+    assert q == pytest.approx([0.02, 0.04, 0.04, 0.02])
+    assert benjamini_hochberg_adjusted([]) == []
+    assert benjamini_hochberg_adjusted([0.9, 0.95]) == pytest.approx([0.95, 0.95])
+
+
+def test_adjusted_p_values_agree_with_the_rejection_rule() -> None:
+    ps = [0.001, 0.008, 0.039, 0.041, 0.042, 0.06, 0.074, 0.205, 0.212, 0.216]
+    q = benjamini_hochberg_adjusted(ps)
+    assert [x <= 0.05 for x in q] == benjamini_hochberg(ps, alpha=0.05)
+    assert all(0.0 <= x <= 1.0 for x in q)
+
+
+def test_adjusted_p_values_refuse_out_of_range_input() -> None:
+    with pytest.raises(ValueError, match="p-values"):
+        benjamini_hochberg_adjusted([0.2, 1.2])
+
+
+def _textbook_step_up(ps: list[float], alpha: float) -> list[bool]:
+    """Benjamini-Hochberg as the paper states it, written independently of the
+    implementation: reject every p at or below the largest rank k with
+    p_(k) <= k / m * alpha."""
+    m = len(ps)
+    ordered = sorted(ps)
+    ks = [k for k in range(1, m + 1) if ordered[k - 1] <= k / m * alpha]
+    cutoff = ordered[max(ks) - 1] if ks else -1.0
+    return [p <= cutoff for p in ps]
+
+
+@settings(max_examples=300, deadline=None)
+@given(
+    ps=st.lists(st.floats(min_value=0.0, max_value=1.0), min_size=1, max_size=12),
+    alpha=st.floats(min_value=0.01, max_value=0.5),
+)
+def test_the_single_step_up_implementation_matches_the_textbook_rule(
+    ps: list[float], alpha: float
+) -> None:
+    """``benjamini_hochberg`` is ``q <= alpha`` over the adjusted p-values (one
+    implementation, so the flag and the q-value cannot disagree). Away from
+    the float knife-edge it must equal the textbook rule; ON a boundary the two
+    float expressions may differ by an ulp, and that case is excluded rather
+    than asserted either way."""
+    m = len(ps)
+    ordered = sorted(ps)
+    assume(all(abs(p - (k / m) * alpha) > 1e-9 for k, p in enumerate(ordered, start=1)))
+    got = benjamini_hochberg(ps, alpha=alpha)
+    assert got == _textbook_step_up(ps, alpha)
+    assert got == [q <= alpha for q in benjamini_hochberg_adjusted(ps)]

@@ -476,7 +476,7 @@ class _CycleAccumulation:
 
 
 @dataclass(frozen=True)
-class _CycleFacts:
+class CycleFacts:
     """The economics of one completed roll.
 
     Bundled rather than passed as nine keyword arguments: `_record_cycle`
@@ -512,7 +512,7 @@ def _record_cycle(
     entry_idx: int,
     expiry_idx: int,
     dates: list[dt.date],
-    facts: _CycleFacts,
+    facts: CycleFacts,
     notional: float,
 ) -> None:
     """Append one settled cycle to ``acc`` and update its running bookkeeping.
@@ -562,6 +562,85 @@ def _record_cycle(
     acc.last_expiry_idx = expiry_idx
 
 
+@dataclass(frozen=True)
+class RollTerms:
+    """Everything ``price_model_roll`` needs besides the three prices and the
+    entry date: the contract terms and the cost model, fixed for a whole run.
+    Bundled (not nine arguments) for ``docs/adr/0023``'s ``max-args`` ratchet.
+    """
+
+    basis: PricingBasis
+    rate: float
+    notional: float
+    rule: StrikeRule
+    tenor_weeks: float
+    t_years: float
+    commission_per_contract: float
+    spread_scale: float
+
+
+def clamp_realized_vol(sigma: float) -> float:
+    """The IV proxy as the model path prices with it: floored and capped."""
+    return float(min(max(sigma, REALIZED_VOL_FLOOR), REALIZED_VOL_CAP))
+
+
+def price_model_roll(
+    spot: float, sigma: float, spot_at_expiry: float, entry_date: dt.date, terms: RollTerms
+) -> CycleFacts:
+    """Price and settle ONE model-path roll: strike by ``terms.rule``, premium
+    from the pricer (floored at ``spot * PREMIUM_FLOOR_FRAC``), contracts from
+    the notional, brokerage, and the intrinsic payoff at ``spot_at_expiry``.
+
+    ``sigma`` must already be clamped (:func:`clamp_realized_vol`) and finite:
+    skipping a non-finite estimate is the caller's loop logic. The dividend
+    yield is read at ``entry_date`` from ``terms.basis.dividends`` (``q = 0``
+    labelled ``unknown`` without one), so the walk-forward and
+    ``run_put_roll`` price the identical roll from one function.
+    """
+    basis = terms.basis
+    pricer = basis.pricer or BlackScholesPricer()
+    t_years, rate = terms.t_years, terms.rate
+    dividend = basis.dividends(entry_date) if basis.dividends is not None else UNKNOWN
+    strike = terms.rule.strike(spot=spot, sigma=sigma, t_years=t_years, r=rate, q=dividend.q)
+    # The rule's own pct when it has one: recomputing it as (1 - K/S) * 100
+    # adds float noise (10% reads 10.000000000000002) to the costs and the
+    # depth check, and a moneyness run must stay identical to before.
+    rule = terms.rule
+    moneyness_pct = rule.pct if isinstance(rule, ByMoneyness) else (1.0 - strike / spot) * 100.0
+    model_premium = pricer.price_put(
+        spot=spot, strike=strike, t_years=t_years, r=rate, sigma=sigma, q=dividend.q
+    )
+    premium = max(model_premium, spot * PREMIUM_FLOOR_FRAC)
+    contracts = terms.notional / premium
+    cost = roll_cost(
+        contracts,
+        terms.notional,
+        terms.tenor_weeks,
+        moneyness_pct,
+        commission_per_contract=terms.commission_per_contract,
+        spread_scale=terms.spread_scale,
+    )
+    payoff = contracts * max(strike - spot_at_expiry, 0.0)
+    return CycleFacts(
+        spot=spot,
+        strike=strike,
+        sigma=sigma,
+        premium=premium,
+        contracts=contracts,
+        cost=cost,
+        payoff=payoff,
+        net=payoff - terms.notional - cost,
+        q=dividend.q,
+        q_source=dividend.source,
+        t_years=t_years,
+        premium_floored=model_premium < spot * PREMIUM_FLOOR_FRAC,
+        entry_moneyness_pct=moneyness_pct,
+        entry_delta=put_delta(
+            spot=spot, strike=strike, sigma=sigma, t_years=t_years, r=rate, q=dividend.q
+        ),
+    )
+
+
 def _roll_model_cycles(
     *,
     px: np.ndarray,
@@ -582,8 +661,16 @@ def _roll_model_cycles(
     ``_CycleAccumulation``'s docstring for why). Each entry is priced with the
     underlying's dividend yield on that date when ``basis.dividends`` is set,
     else at ``q = 0`` labelled ``unknown``."""
-    pricer = basis.pricer or BlackScholesPricer()
-    t_years = tenor_days / 252.0
+    terms = RollTerms(
+        basis=basis,
+        rate=rate,
+        notional=notional,
+        rule=rule,
+        tenor_weeks=tenor_weeks,
+        t_years=tenor_days / 252.0,
+        commission_per_contract=commission_per_contract,
+        spread_scale=spread_scale,
+    )
     acc = _CycleAccumulation(last_expiry_idx=first_entry)
     i = first_entry
     while i + tenor_days < n:
@@ -591,53 +678,14 @@ def _roll_model_cycles(
         if not np.isfinite(sigma):  # not enough trailing history yet — step forward
             i += 1
             continue
-        sigma = float(min(max(sigma, REALIZED_VOL_FLOOR), REALIZED_VOL_CAP))
-        spot = px[i]
-        dividend = basis.dividends(dates[i]) if basis.dividends is not None else UNKNOWN
-        strike = rule.strike(spot=spot, sigma=sigma, t_years=t_years, r=rate, q=dividend.q)
-        # The rule's own pct when it has one: recomputing it as (1 - K/S) * 100
-        # adds float noise (10% reads 10.000000000000002) to the costs and the
-        # depth check, and a moneyness run must stay identical to before.
-        moneyness_pct = rule.pct if isinstance(rule, ByMoneyness) else (1.0 - strike / spot) * 100.0
-        model_premium = pricer.price_put(
-            spot=spot, strike=strike, t_years=t_years, r=rate, sigma=sigma, q=dividend.q
-        )
-        premium = max(model_premium, spot * PREMIUM_FLOOR_FRAC)
-        contracts = notional / premium
-        cost = roll_cost(
-            contracts,
-            notional,
-            tenor_weeks,
-            moneyness_pct,
-            commission_per_contract=commission_per_contract,
-            spread_scale=spread_scale,
-        )
-        spot_at_expiry = px[i + tenor_days]
-        payoff = contracts * max(strike - spot_at_expiry, 0.0)
-        net = payoff - notional - cost
+        sigma = clamp_realized_vol(float(sigma))
+        facts = price_model_roll(px[i], sigma, px[i + tenor_days], dates[i], terms)
         _record_cycle(
             acc,
             entry_idx=i,
             expiry_idx=i + tenor_days,
             dates=dates,
-            facts=_CycleFacts(
-                spot=spot,
-                strike=strike,
-                sigma=sigma,
-                premium=premium,
-                contracts=contracts,
-                cost=cost,
-                payoff=payoff,
-                net=net,
-                q=dividend.q,
-                q_source=dividend.source,
-                t_years=t_years,
-                premium_floored=model_premium < spot * PREMIUM_FLOOR_FRAC,
-                entry_moneyness_pct=moneyness_pct,
-                entry_delta=put_delta(
-                    spot=spot, strike=strike, sigma=sigma, t_years=t_years, r=rate, q=dividend.q
-                ),
-            ),
+            facts=facts,
             notional=notional,
         )
         i += tenor_days
@@ -731,7 +779,7 @@ def _roll_market_cycles(
             entry_idx=i,
             expiry_idx=expiry_idx,
             dates=dates,
-            facts=_CycleFacts(
+            facts=CycleFacts(
                 spot=spot,
                 strike=strike,
                 sigma=sigma,

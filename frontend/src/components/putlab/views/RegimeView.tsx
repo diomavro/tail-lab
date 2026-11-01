@@ -7,6 +7,7 @@ import { ConceptInfo } from '../ConceptInfo'
 import { fmtFixed } from '../format'
 import type { ResourceState } from '../PutLab'
 import { REGIME_FILL, REGIME_ORDER } from '../regimeColors'
+import { Th } from '../Th'
 
 /* "What regime are we in?"
  *
@@ -187,10 +188,10 @@ export function RegimeView({ regimes, vix, accuracy }: Props) {
           <table className="pl-table" aria-label="Longest regime stretches">
             <thead>
               <tr>
-                <th>Regime</th>
-                <th>From</th>
-                <th>To</th>
-                <th className="num">Sessions</th>
+                <th data-noexplain="name">Regime</th>
+                <Th concept="regime_stretch">From</Th>
+                <Th concept="regime_stretch">To</Th>
+                <Th concept="regime_sessions" className="num">Sessions</Th>
               </tr>
             </thead>
             <tbody>

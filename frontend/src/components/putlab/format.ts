@@ -33,6 +33,12 @@ export function fmtFixed(n: number, digits = 2): string {
   return `${n < 0 ? '−' : ''}${Math.abs(n).toFixed(digits)}`
 }
 
+/** A p-value to three decimals, but never "0.000": the tests here bottom out at
+ *  (k + 1) / (R + 1), so a p under 0.001 is small, not zero. */
+export function fmtP(p: number): string {
+  return p < 0.001 ? '< 0.001' : p.toFixed(3)
+}
+
 // Cents-precision dollar formatting for spot/strike prices, where fmtDollar's
 // whole-number rounding would hide the difference between adjacent strikes.
 export function fmtPrice(n: number): string {

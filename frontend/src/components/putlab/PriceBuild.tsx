@@ -2,6 +2,7 @@ import type { DividendBasis, DividendSource, PutBacktestResponse } from '../../a
 import { UNKNOWN_Q_CAUSES } from '../../content/concepts'
 import { ConceptInfo } from './ConceptInfo'
 import { fmtPrice } from './format'
+import { Th } from './Th'
 
 /* "How the price is built": the latest roll's premium, taken apart into the
  * inputs that produced it, with the dividend yield redone by hand from the
@@ -182,16 +183,16 @@ function DividendDerivation({ basis }: { basis: DividendBasis }) {
             <table className="pl-table">
               <thead>
                 <tr>
-                  <th>Ex-date</th>
-                  <th className="num">Paid per share</th>
-                  <th className="num">On {on}&rsquo;s basis{rounded ? ' (6 dp)' : ''}</th>
+                  <th data-noexplain="row-label">Ex-date</th>
+                  <Th concept="div_cash" className="num">Paid per share</Th>
+                  <Th concept="div_adjusted" className="num">On {on}&rsquo;s basis{rounded ? ' (6 dp)' : ''}</Th>
                 </tr>
               </thead>
               <tbody>
                 {basis.payments.map((p) => (
                   <tr key={p.ex_date}>
                     {/* The date labels its row: a row header, not a figure cell. */}
-                    <th scope="row" className="pl-explain-rowhead">
+                    <th scope="row" className="pl-explain-rowhead" data-noexplain="row-label">
                       {p.ex_date}
                     </th>
                     <td className="num">{exact(p.cash)}</td>

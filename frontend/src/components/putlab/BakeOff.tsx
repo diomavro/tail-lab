@@ -2,16 +2,30 @@ import { useMemo, useState } from 'react'
 import {
   ApiError,
   fetchMetricScreen,
+  fetchSignalTest,
   type MetricScreenComparison,
   type MetricScreenEntry,
+  type SignalTestResult,
   type Verdict,
 } from '../../api/client'
 import { ConceptInfo } from './ConceptInfo'
-import { fmtDollar, fmtFixed, fmtPct, signedPts } from './format'
-import { deltaLabel, type PutLabControls } from './types'
+import { fmtDollar, fmtFixed, fmtP, fmtPct, signedPts } from './format'
+import type { ResourceState } from './PutLab'
+import { SignalPanel } from './SignalTest'
+import { settingsText } from './signalWording'
 import { StandaloneNote } from './StandaloneNote'
+import { Th } from './Th'
+import { deltaLabel, type PutLabControls } from './types'
 
-/* The metric bake-off.
+/* The bake-off tab (docs/adr/0033).
+ *
+ * It leads with the OUT-OF-SAMPLE signal test: does ranking the names on a date
+ * pick puts that pay afterwards? The headline reads the fixed STRIP_SIGNAL_TEST
+ * result on its own; "Run" runs the same test at the rail's settings and shows
+ * it below, labelled with them. The in-sample association below (the older
+ * metric bake-off) is collapsed and fetches only when its own Run is pressed.
+ *
+ * The in-sample bake-off, as it was:
  *
  * `spearman_vs_payoff`, `lift_vs_baseline` and `combined_max_drawdown` were
  * once computed server-side and thrown away; this tab surfaces them. The
@@ -59,7 +73,7 @@ function significanceTag(e: MetricScreenEntry): { cls: string; text: string; tit
   if (e.spearman_pvalue == null) {
     return { cls: 'pl-tag pl-tag-outline', text: '—', title: 'No p-value (fewer than 3 usable pairs)' }
   }
-  const p = `p = ${fmtFixed(e.spearman_pvalue, 3)}`
+  const p = e.spearman_pvalue < 0.001 ? 'p < 0.001' : `p = ${fmtP(e.spearman_pvalue)}`
   if (e.significant_corrected) {
     return { cls: 'pl-tag pl-tag-ok', text: 'FDR-sig.', title: `${p} — survives Benjamini-Hochberg correction` }
   }
@@ -73,8 +87,161 @@ function significanceTag(e: MetricScreenEntry): { cls: string; text: string; tit
   return { cls: 'pl-tag pl-tag-outline', text: 'n.s.', title: p }
 }
 
-export function BakeOff({ controls }: { controls: PutLabControls }) {
+const SIGNAL_TABLE = 'Out-of-sample signal test'
+
+type SignalRun =
+  | { status: 'idle' }
+  | { status: 'loading' }
+  | { status: 'error'; message: string }
+  | { status: 'ready'; data: SignalTestResult }
+
+const errorText = (err: unknown, what: string) =>
+  err instanceof ApiError ? `The ${what} failed: ${err.status}. Nothing to compare yet.` : err instanceof Error ? err.message : String(err)
+
+export function BakeOff({
+  controls,
+  headline,
+}: {
+  controls: PutLabControls
+  /** The fixed STRIP_SIGNAL_TEST read, owned by PutLab so the Workspace strip and this headline share it. */
+  headline: ResourceState<SignalTestResult>
+}) {
+  // One selector feeds both reads below.
   const [topK, setTopK] = useState(5)
+  const [run, setRun] = useState<SignalRun>({ status: 'idle' })
+  const [inSampleOpen, setInSampleOpen] = useState(false)
+
+  const runSignal = () => {
+    setRun({ status: 'loading' })
+    fetchSignalTest({
+      strike_rule: controls.strike_rule,
+      target_delta: controls.target_delta,
+      moneyness_pct: controls.moneyness_pct,
+      tenor_weeks: controls.tenor_weeks,
+      signal_years: controls.years,
+      top_k: topK,
+    })
+      .then((data) => setRun({ status: 'ready', data }))
+      .catch((err: unknown) => setRun({ status: 'error', message: errorText(err, 'signal test') }))
+  }
+
+  const railSettings = settingsText({
+    strike_rule: controls.strike_rule,
+    target_delta: controls.target_delta,
+    moneyness_pct: controls.moneyness_pct,
+    tenor_weeks: controls.tenor_weeks,
+    signal_years: controls.years,
+    top_k: topK,
+  })
+
+  return (
+    <div>
+      <h2 style={{ marginBottom: 4 }}>The bake-off</h2>
+      <StandaloneNote />
+      <p className="pl-lede" style={{ marginBottom: 10 }}>
+        The fragility index is meant to tell us which names to hold puts on next. So the question is
+        forward-looking: ranked on what was known at each date, did the top names&rsquo; next put
+        pay more than the alternatives?
+      </p>
+
+      <section data-testid="signal-headline" aria-labelledby="signal-headline-h">
+        <h3 id="signal-headline-h" style={{ marginBottom: 4 }}>
+          Does the signal pick better puts going forward?
+        </h3>
+        {headline.status === 'loading' && (
+          <p className="pl-status" role="status" aria-live="polite" data-testid="signal-headline-status">
+            Reading the walk-forward test at its fixed settings…
+          </p>
+        )}
+        {headline.status === 'no-data' && (
+          <p className="pl-status" role="status" aria-live="polite" data-testid="signal-headline-status">
+            No signal test for this window yet.
+          </p>
+        )}
+        {headline.status === 'error' && (
+          <p className="pl-status pl-status-error" role="alert" data-testid="signal-headline-status">
+            {headline.message}
+          </p>
+        )}
+        {headline.status === 'ready' && (
+          <SignalPanel
+            result={headline.data}
+            tableLabel={SIGNAL_TABLE}
+            heading={
+              <p className="pl-micro" data-testid="signal-headline-settings">
+                Fixed settings, whatever the rail says: {settingsText(headline.data)}
+              </p>
+            }
+          />
+        )}
+      </section>
+
+      <div className="pl-bake-controls">
+        <span className="pl-kicker">Basket size</span>
+        <div className="pl-seg" role="radiogroup" aria-label="Basket size">
+          {TOP_K.map((k) => (
+            <label className="pl-seg-opt" key={k}>
+              <input type="radio" name="pl-bakek" checked={topK === k} onChange={() => setTopK(k)} />
+              Top {k}
+            </label>
+          ))}
+        </div>
+        <button
+          type="button"
+          className="pl-btn pl-btn-primary"
+          onClick={runSignal}
+          disabled={run.status === 'loading'}
+        >
+          {run.status === 'loading' ? 'Testing…' : 'Run the signal test'}
+        </button>
+        <span className="pl-micro" data-testid="signal-run-settings">
+          At the rail: {railSettings}
+        </span>
+      </div>
+      <p className="pl-micro">
+        Runs the test above at these settings. It reads every name in the universe, so a run not
+        already computed today can take a minute or more.
+      </p>
+      {run.status === 'error' && (
+        <p className="pl-status pl-status-error" role="alert">
+          {run.message}
+        </p>
+      )}
+      {run.status === 'ready' && (
+        <SignalPanel
+          result={run.data}
+          tableLabel={`${SIGNAL_TABLE}, run at the rail`}
+          heading={
+            <h3 style={{ marginBottom: 4 }} data-testid="signal-run-heading">
+              Your run: {settingsText(run.data)}
+            </h3>
+          }
+        />
+      )}
+
+      <section className="pl-bake-section" aria-labelledby="in-sample-h">
+        <h3 id="in-sample-h" style={{ margin: 0 }}>
+          <button
+            type="button"
+            className="pl-btn pl-btn-ghost"
+            aria-expanded={inSampleOpen}
+            aria-controls="in-sample-body"
+            onClick={() => setInSampleOpen((v) => !v)}
+          >
+            {inSampleOpen ? '▾' : '▸'} In-sample association (same window, not a forecast)
+          </button>
+        </h3>
+        {inSampleOpen && (
+          <div id="in-sample-body">
+            <InSampleBakeOff controls={controls} topK={topK} />
+          </div>
+        )}
+      </section>
+    </div>
+  )
+}
+
+function InSampleBakeOff({ controls, topK }: { controls: PutLabControls; topK: number }) {
   const [state, setState] = useState<State>({ status: 'idle' })
 
   const run = () => {
@@ -88,17 +255,7 @@ export function BakeOff({ controls }: { controls: PutLabControls }) {
       top_k: topK,
     })
       .then((data) => setState({ status: 'ready', data }))
-      .catch((err: unknown) =>
-        setState({
-          status: 'error',
-          message:
-            err instanceof ApiError
-              ? `The metric-screen failed: ${err.status}. Nothing to compare yet.`
-              : err instanceof Error
-                ? err.message
-                : String(err),
-        }),
-      )
+      .catch((err: unknown) => setState({ status: 'error', message: errorText(err, 'metric-screen') }))
   }
 
   const rows = useMemo(() => {
@@ -111,8 +268,6 @@ export function BakeOff({ controls }: { controls: PutLabControls }) {
 
   return (
     <div>
-      <h2 style={{ marginBottom: 4 }}>The bake-off</h2>
-      <StandaloneNote />
       <p className="pl-lede" style={{ marginBottom: 10 }}>
         The fragility ranking assumes these metrics are worth ranking on. This tests the prior
         question: which one actually sorted realized put payoffs over the lookback. Each screen
@@ -128,15 +283,6 @@ export function BakeOff({ controls }: { controls: PutLabControls }) {
       </p>
 
       <div className="pl-bake-controls">
-        <span className="pl-kicker">Basket size</span>
-        <div className="pl-seg" role="radiogroup" aria-label="Basket size">
-          {TOP_K.map((k) => (
-            <label className="pl-seg-opt" key={k}>
-              <input type="radio" name="pl-bakek" checked={topK === k} onChange={() => setTopK(k)} />
-              Top {k}
-            </label>
-          ))}
-        </div>
         <button
           type="button"
           className="pl-btn pl-btn-primary"
@@ -149,7 +295,7 @@ export function BakeOff({ controls }: { controls: PutLabControls }) {
           {controls.strike_rule === 'delta'
             ? deltaLabel(controls.target_delta)
             : `${controls.moneyness_pct}% OOM`}{' '}
-          · {controls.tenor_weeks}wk · {controls.years}y
+          · {controls.tenor_weeks}wk · {controls.years}y · top {topK}
         </span>
       </div>
 
@@ -194,20 +340,38 @@ export function BakeOff({ controls }: { controls: PutLabControls }) {
           </p>
 
           <div className="pl-scroll">
-            <table className="pl-table" aria-label="Metric bake-off">
+            <table className="pl-table" aria-label="In-sample bake-off">
               <thead>
                 <tr>
-                  <th className="num">#</th>
-                  <th>Screen</th>
-                  <th>Its top names</th>
-                  <th className="num">ROI</th>
-                  <th className="num">/yr</th>
-                  <th className="num">Hit</th>
-                  <th className="num">Bleed</th>
-                  <th className="num">Spearman</th>
-                  <th className="num">Sig.</th>
-                  <th className="num">Lift</th>
-                  <th className="num">Verdict</th>
+                  <th className="num" data-noexplain="index">
+                    #
+                  </th>
+                  <th data-noexplain="name">Screen</th>
+                  <th data-noexplain="name">Its top names</th>
+                  <Th concept="roi_on_premium" className="num">
+                    ROI
+                  </Th>
+                  <Th concept="annualized_return" className="num">
+                    /yr
+                  </Th>
+                  <Th concept="hit_rate" className="num">
+                    Hit
+                  </Th>
+                  <Th concept="bleed" className="num">
+                    Bleed
+                  </Th>
+                  <Th concept="spearman" className="num">
+                    Spearman
+                  </Th>
+                  <Th concept="multiple_testing" className="num">
+                    Sig.
+                  </Th>
+                  <Th concept="lift" className="num">
+                    Lift
+                  </Th>
+                  <Th concept="verdict" className="num">
+                    Verdict
+                  </Th>
                 </tr>
               </thead>
               <tbody>

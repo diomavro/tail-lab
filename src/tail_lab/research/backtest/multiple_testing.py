@@ -52,3 +52,30 @@ def benjamini_hochberg(p_values: Sequence[float], *, alpha: float = 0.05) -> lis
         if rank <= threshold_rank:
             significant[idx] = True
     return significant
+
+
+def benjamini_hochberg_adjusted(p_values: Sequence[float]) -> list[float]:
+    """BH-adjusted p-values (q-values), in the original order: the smallest
+    FDR level at which each hypothesis would be called significant. Step-up
+    from the largest p: ``q_(i) = min(1, min_{j >= i} p_(j) * m / j)``.
+
+    For DISPLAY only. Significance is always decided by
+    :func:`benjamini_hochberg`, never by ``q <= alpha``: the two forms round
+    differently, so at an exact boundary (e.g. ``[0.0, 0.0, 0.05]`` at 0.05,
+    where q = 0.05000000000000001) a q-value can read a hair above alpha for a
+    hypothesis that is significant.
+
+    Raises:
+        ValueError: any p-value is outside ``[0, 1]``.
+    """
+    if any(not (0.0 <= p <= 1.0) for p in p_values):
+        raise ValueError("p-values must be in [0, 1]")
+    m = len(p_values)
+    order = sorted(range(m), key=lambda i: p_values[i])
+    adjusted = [0.0] * m
+    running = 1.0
+    for rank in range(m, 0, -1):
+        idx = order[rank - 1]
+        running = min(running, p_values[idx] * m / rank)
+        adjusted[idx] = running
+    return adjusted

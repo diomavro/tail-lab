@@ -22,6 +22,8 @@ from __future__ import annotations
 
 import pandas as pd
 
+from tail_lab.research.metrics._numeric import cov, paired_arrays, var
+
 
 def downside_beta(
     asset_returns: pd.Series,
@@ -48,13 +50,14 @@ def downside_beta(
     the downside-day benchmark returns have zero variance (beta is
     undefined, not zero, when the denominator vanishes).
     """
-    if not asset_returns.index.equals(benchmark_returns.index):
-        raise ValueError(
-            "asset_returns and benchmark_returns must share the same index "
-            "(same trading calendar) -- align them before calling downside_beta"
-        )
+    asset, bench = paired_arrays(
+        asset_returns,
+        benchmark_returns,
+        names=("asset_returns", "benchmark_returns"),
+        caller="downside_beta",
+    )
 
-    downside_mask = benchmark_returns < threshold
+    downside_mask = bench < threshold
     n_downside = int(downside_mask.sum())
     if n_downside < min_observations:
         raise ValueError(
@@ -62,14 +65,14 @@ def downside_beta(
             f"need at least {min_observations} to estimate downside beta"
         )
 
-    asset_down = asset_returns[downside_mask]
-    bench_down = benchmark_returns[downside_mask]
+    asset_down = asset[downside_mask]
+    bench_down = bench[downside_mask]
 
-    bench_variance = bench_down.var()  # sample variance, ddof=1 (pandas default)
+    bench_variance = var(bench_down, ddof=1)  # sample variance
     if bench_variance == 0:
         raise ValueError(
             "benchmark downside-day returns have zero variance; downside beta is undefined"
         )
 
-    covariance = asset_down.cov(bench_down)  # ddof=1, matches bench_variance's convention
+    covariance = cov(asset_down, bench_down, ddof=1)  # matches bench_variance's convention
     return float(covariance / bench_variance)

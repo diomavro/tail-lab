@@ -2,6 +2,7 @@ import { type CSSProperties, useId } from 'react'
 import type { PutLabLeaderboardResponse, RankedAsset, Verdict } from '../../api/client'
 import { UNKNOWN_Q_CAUSES } from '../../content/concepts'
 import { fmtDollar, fmtFixed, fmtMult, fmtPct } from './format'
+import { Th } from './Th'
 import { type BestRow, VERDICT_TITLE } from './rankOrder'
 import { biggestBarWidth, lossHeat } from './rankShade'
 
@@ -99,28 +100,25 @@ export function BestReturnTable({ data, rows, currentAsset, onPick }: Props) {
         <table className="pl-table pl-rec-table" aria-label="Ranked strategies">
           <thead>
             <tr>
-              <th className="num">#</th>
-              <th>The strategy</th>
-              <th className="num" title="Geometric annualization of the return on premium, at the row's best cell">
+              <th className="num" data-noexplain="index">#</th>
+              <th data-noexplain="name">The strategy</th>
+              <Th concept="annualized_return" className="num">
                 Per year
-              </th>
-              <th className="num" title="Return on the premium spent, at the row's best cell">
+              </Th>
+              <Th concept="roi_on_premium" className="num">
                 On premium
-              </th>
-              <th className="num" title="Share of rolls whose payoff cleared the premium budget">
+              </Th>
+              <Th concept="hit_rate" className="num">
                 Hit
-              </th>
-              <th className="num">Rolls</th>
-              <th className="num" title="The largest single roll's payoff, as a multiple of its premium (bar on a log scale)">
+              </Th>
+              <Th concept="rolls_count" className="num">Rolls</Th>
+              <Th concept="biggest_payoff" className="num">
                 Biggest payoff
-              </th>
-              <th
-                className="num"
-                title="Composite fragility, 0-100: the mean of the name's rank on each composite measure (100 = the most fragile on every one)"
-              >
+              </Th>
+              <Th concept="fragility_score" className="num">
                 Fragility
-              </th>
-              <th className="num">Verdict</th>
+              </Th>
+              <Th concept="verdict" className="num">Verdict</Th>
             </tr>
           </thead>
           <tbody>

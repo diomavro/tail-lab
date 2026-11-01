@@ -22,6 +22,7 @@ import logging
 import threading
 import time
 from collections.abc import Callable, Mapping, Sequence
+from dataclasses import dataclass
 from functools import lru_cache
 from typing import Any, Literal
 
@@ -103,6 +104,7 @@ from tail_lab.research.backtest.strike_rule import (
     UnreachableDeltaError,
 )
 from tail_lab.research.backtest.sweep import run_sweep
+from tail_lab.research.backtest.walk_forward import NameRecord, SignalTestResult, walk_forward
 from tail_lab.research.cadence import resolve_cadence
 from tail_lab.research.data_quality import DataQualityReport, assess_asset_quality
 from tail_lab.research.dividends import dividend_lookup, dividend_snapshot_id
@@ -160,6 +162,18 @@ _WARM_BAKEOFF: tuple[StrikeRule, float, float, int] = (
     _WARM_SCREEN[2],
     5,
 )
+
+#: The out-of-sample signal test (`research/backtest/walk_forward.py`), keyed
+#: by (rule, tenor, signal years, top_k, as_of) -- no symbol: the per-name
+#: route reads its record out of this same entry. A RefreshingMemo for the
+#: reasons of the two above.
+_SIGNAL_TEST_CACHE: RefreshingMemo[tuple[StrikeRule, float, float, int, str], SignalTestResult] = (
+    RefreshingMemo(name="signal_test", fresh_s=15 * 60.0, serve_stale_s=24 * 3600.0)
+)
+#: The signal test the Workspace's strip reads (`STRIP_SIGNAL_TEST` in the
+#: frontend's putlab/types.ts): 0.10 delta, 4-week puts, 4 years, top 5.
+#: Warmed after the bake-off each day.
+_WARM_SIGNAL_TEST: tuple[StrikeRule, float, float, int] = (ByDelta(0.10), 4.0, 4.0, 5)
 
 #: Universe-wide screens (the ranking and the bake-off) take one at a time.
 #: Each memo already single-flights its own keys, but two memos -- or two keys
@@ -326,7 +340,9 @@ def _rule(
     return ByDelta(target_delta)
 
 
-def _cited_dividend_snapshot(result: UniverseRanking | MetricScreenComparison) -> str | None:
+def _cited_dividend_snapshot(
+    result: UniverseRanking | MetricScreenComparison | SignalTestResult,
+) -> str | None:
     """The dividend snapshot a screen cites in its own ``snapshot_ids``."""
     return next((s for s in result.snapshot_ids if s.startswith("tiingo_eod@")), None)
 
@@ -763,14 +779,16 @@ def _rank_cached(
 
 
 def warm_leaderboard(store: LakeStore) -> None:
-    """Screen the app's opening ranking, then start warming the Workspace's
-    bake-off line, so the first visitor after a deploy waits for neither.
+    """Screen the app's opening ranking, then the Workspace's bake-off line,
+    then start warming its signal test, so the first visitor after a deploy
+    waits for none of them.
 
     Called only from the daily warm's daemon thread, so it may block: the
-    ranking is computed first and in full (``get`` blocks), because the
-    landing view needs it and `_SCREEN_SLOT` is not fair -- two background
-    warms could let the bake-off take the slot first. A failed screen is
-    logged and does not stop the bake-off warm or the daily loop.
+    ranking and the bake-off are computed first and in full (``get`` blocks),
+    one after the other, because the landing view needs them and
+    `_SCREEN_SLOT` is not fair -- background warms could let a later screen
+    take the slot first. A failed screen is logged and does not stop the
+    warms after it or the daily loop.
     """
     key = (*_WARM_SCREEN, _resolve_as_of(None).isoformat())
     try:
@@ -778,14 +796,20 @@ def warm_leaderboard(store: LakeStore) -> None:
     except Exception:
         # Deliberately broad (Rule 14's process-boundary case): the daily
         # warm's daemon thread has no caller to raise to, and one failed
-        # screen must not stop the bake-off warm or every later day's. Not
+        # screen must not stop the warms after it or every later day's. Not
         # silent -- the traceback is logged.
         logger.exception("event=putlab.leaderboard_warm_failed")
-    # Read the date again: the ranking screen above blocks, and if it ran past
-    # midnight UTC the bake-off should warm the day that has begun, not the
-    # one that ended (which no reader will ask for).
+    # Read the date again before each step: the screen above blocks, and if it
+    # ran past midnight UTC the next should warm the day that has begun, not
+    # the one that ended (which no reader will ask for).
     bakeoff_key = (*_WARM_BAKEOFF, _resolve_as_of(None).isoformat())
-    _METRIC_SCREEN_CACHE.warm(bakeoff_key, _bakeoff(store, bakeoff_key))
+    try:
+        _METRIC_SCREEN_CACHE.get(bakeoff_key, _bakeoff(store, bakeoff_key), miss_reason="warm")
+    except Exception:
+        # Same process boundary as above; the signal test still warms.
+        logger.exception("event=putlab.bakeoff_warm_failed")
+    signal_key = (*_WARM_SIGNAL_TEST, _resolve_as_of(None).isoformat())
+    _SIGNAL_TEST_CACHE.warm(signal_key, _signal_test(store, signal_key))
 
 
 #: How long after midnight UTC the next day's ranking is warmed: past the date
@@ -879,6 +903,45 @@ def _bakeoff(
         return comparison
 
     return _in_screen_slot("metric_screen", compute)
+
+
+def _signal_test(
+    store: LakeStore, key: tuple[StrikeRule, float, float, int, str]
+) -> Callable[[], SignalTestResult]:
+    """The walk-forward signal test a memo key stands for, as a deferred
+    compute. Logs once per compute (memo hits are not new tests)."""
+    rule, tenor_weeks, signal_years, top_k, as_of = key
+
+    def compute() -> SignalTestResult:
+        started = time.monotonic()
+        result = walk_forward(
+            store,
+            symbols=universe_symbols(),
+            as_of=dt.date.fromisoformat(as_of),
+            rule=rule,
+            tenor_weeks=tenor_weeks,
+            signal_years=signal_years,
+            top_k=top_k,
+        )
+        log_event(
+            logger,
+            "putlab.signal_test",
+            dividend_snapshot=_cited_dividend_snapshot(result),
+            as_of=as_of,
+            moneyness_pct=rule.pct if isinstance(rule, ByMoneyness) else None,
+            strike_rule=rule.kind,
+            target_delta=rule.target if isinstance(rule, ByDelta) else None,
+            tenor_weeks=tenor_weeks,
+            signal_years=signal_years,
+            top_k=top_k,
+            code_sha=get_settings().code_sha,
+            status=result.verdict.status,
+            n_periods=result.n_periods,
+            seconds=round(time.monotonic() - started, 1),
+        )
+        return result
+
+    return _in_screen_slot("signal_test", compute)
 
 
 @router.get("/api/putlab/roll-schedule/marked")
@@ -1107,6 +1170,88 @@ def putlab_metric_screen(
     # `code_sha` is a deploy identity, stamped here as the leaderboard does
     # (`research/` may not import `config`; the memo key stays the params).
     return comparison.model_copy(update={"code_sha": get_settings().code_sha})
+
+
+@dataclass(frozen=True)
+class _SignalTestRequest:
+    """A signal-test request's validated parameters: the memo key's pieces."""
+
+    rule: StrikeRule
+    tenor_weeks: float
+    signal_years: float
+    top_k: int
+    as_of: dt.date | None
+
+
+def _signal_test_request(
+    strike_rule: Literal["moneyness", "delta"] = Query(
+        default="delta", description="Pick strikes by distance below spot or by put delta."
+    ),
+    target_delta: float = Query(
+        default=0.10,
+        description="Absolute put delta for strike_rule=delta (model delta at realised vol).",
+    ),
+    moneyness_pct: float = Query(
+        default=10.0, description="Percent below spot for strike_rule=moneyness (0-100)."
+    ),
+    tenor_weeks: float = Query(default=4.0, gt=0, le=52),
+    signal_years: float = Query(default=4.0, gt=0, le=20),
+    top_k: int = Query(default=5, ge=2, le=15),
+    as_of: dt.date | None = Query(default=None),
+) -> _SignalTestRequest:
+    """The query parameters both signal-test routes take, validated as
+    `/metric-screen` validates its own."""
+    return _SignalTestRequest(
+        _rule(strike_rule, moneyness_pct, target_delta), tenor_weeks, signal_years, top_k, as_of
+    )
+
+
+def _read_signal_test(store: LakeStore, req: _SignalTestRequest) -> SignalTestResult:
+    """The memoised signal test for a request, stamped with the running code's
+    sha (`research/` may not import `config`; the memo keeps the unstamped
+    value)."""
+    cache_key = (
+        req.rule,
+        req.tenor_weeks,
+        req.signal_years,
+        req.top_k,
+        _resolve_as_of(req.as_of).isoformat(),
+    )
+    try:
+        result = _SIGNAL_TEST_CACHE.get(cache_key, _signal_test(store, cache_key))
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except UnreachableDeltaError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    return result.model_copy(update={"code_sha": get_settings().code_sha})
+
+
+@router.get("/api/putlab/signal-test")
+def putlab_signal_test(
+    req: _SignalTestRequest = Depends(_signal_test_request),
+    store: LakeStore = Depends(get_lake_store),
+) -> SignalTestResult:
+    """The out-of-sample test of the fragility signal (docs/adr/0033): at each
+    rebalance, rank names on what was knowable then and buy the top-k puts,
+    versus the universe and a random draw. Unlike `/metric-screen`, nothing in
+    it is fitted on the period it is judged on."""
+    return _read_signal_test(store, req)
+
+
+@router.get("/api/putlab/signal-test/{symbol}")
+def putlab_signal_test_symbol(
+    symbol: str,
+    req: _SignalTestRequest = Depends(_signal_test_request),
+    store: LakeStore = Depends(get_lake_store),
+) -> NameRecord:
+    """One name's slice of the signal test, from the same memo entry as
+    `/signal-test` (never a second compute). 404 if the name is not in it."""
+    result = _read_signal_test(store, req)
+    name = symbol.lower()
+    found = next((r for r in result.per_name if r.symbol.lower() == name), None)
+    if found is None:
+        raise HTTPException(status_code=404, detail=f"{name!r} is not in this signal test")
+    return found
 
 
 @router.get("/api/putlab/surface")

@@ -31,10 +31,10 @@ test('real data: the table shows full-Kelly w* beside the size held, and why', a
   await expect(rows(page)).toHaveCount(6)
   await expect(hold(page).getByTestId('hold-table').locator('thead th')).toHaveText([
     'Program',
-    'Window',
-    'Full-Kelly w*',
-    'Hold',
-    'Why',
+    'Windowⓘ',
+    'Full-Kelly w*ⓘ',
+    'Holdⓘ',
+    'Whyⓘ',
   ])
   // The put programs: none, because growth falls from the first step.
   await expect(rows(page).nth(0).locator('td')).toHaveText([

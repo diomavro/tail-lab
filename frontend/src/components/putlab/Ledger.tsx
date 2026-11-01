@@ -1,5 +1,6 @@
 import type { PutBacktestCycle } from '../../api/client'
 import { fmtDollar, fmtPrice } from './format'
+import { Th } from './Th'
 
 /* The roll ledger — every cycle the backtest actually placed.
  *
@@ -30,17 +31,17 @@ export function Ledger({ cycles, notional }: { cycles: PutBacktestCycle[]; notio
       <table className="pl-table pl-ledger" aria-label="Roll ledger">
         <thead className="sticky">
           <tr>
-            <th>Entry</th>
-            <th>Expiry</th>
-            <th className="num">Spot</th>
-            <th className="num">Strike</th>
-            <th className="num">&sigma;</th>
-            <th className="num">Premium</th>
-            <th className="num">Cts</th>
-            <th className="num">Fill</th>
-            <th className="num">Budget</th>
-            <th className="num">Payoff</th>
-            <th className="num">Net</th>
+            <Th concept="roll_dates">Entry</Th>
+            <Th concept="roll_dates">Expiry</Th>
+            <Th concept="roll_spot" className="num">Spot</Th>
+            <Th concept="strike_price" className="num">Strike</Th>
+            <Th concept="roll_sigma" className="num">&sigma;</Th>
+            <Th concept="roll_premium" className="num">Premium</Th>
+            <Th concept="roll_contracts" className="num">Cts</Th>
+            <Th concept="roll_cost" className="num">Fill</Th>
+            <Th concept="roll_budget" className="num">Budget</Th>
+            <Th concept="roll_payoff" className="num">Payoff</Th>
+            <Th concept="roll_net" className="num">Net</Th>
           </tr>
         </thead>
         <tbody>

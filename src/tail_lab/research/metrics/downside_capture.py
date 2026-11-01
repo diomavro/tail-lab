@@ -19,6 +19,8 @@ from __future__ import annotations
 
 import pandas as pd
 
+from tail_lab.research.metrics._numeric import paired_arrays
+
 
 def downside_capture(
     asset_returns: pd.Series,
@@ -40,27 +42,28 @@ def downside_capture(
     available, or if the benchmark's mean down-day return is zero (the
     ratio is undefined, not zero, when the denominator vanishes).
     """
-    if not asset_returns.index.equals(benchmark_returns.index):
-        raise ValueError(
-            "asset_returns and benchmark_returns must share the same index "
-            "(same trading calendar) -- align them before calling downside_capture"
-        )
+    asset, bench = paired_arrays(
+        asset_returns,
+        benchmark_returns,
+        names=("asset_returns", "benchmark_returns"),
+        caller="downside_capture",
+    )
 
-    n = len(asset_returns)
+    n = len(asset)
     if n < min_observations:
         raise ValueError(
             f"only {n} paired observations; need at least {min_observations} "
             "to estimate downside capture"
         )
 
-    down_mask = benchmark_returns < 0
+    down_mask = bench < 0
     n_down = int(down_mask.sum())
     if n_down < 2:
         raise ValueError(
             f"only {n_down} benchmark down-days; need at least 2 to estimate downside capture"
         )
 
-    bench_down_mean = benchmark_returns[down_mask].mean()
+    bench_down_mean = bench[down_mask].mean()
     if bench_down_mean == 0:  # pragma: no cover -- unreachable with real float64 data:
         # every selected value is strictly negative, so their mean can only
         # be exactly 0.0 via subnormal-float underflow; kept as a defensive
@@ -68,5 +71,5 @@ def downside_capture(
         # other metrics, not something a synthetic test can trigger normally.
         raise ValueError("benchmark down-day returns have zero mean; downside capture is undefined")
 
-    asset_down_mean = asset_returns[down_mask].mean()
+    asset_down_mean = asset[down_mask].mean()
     return float(asset_down_mean / bench_down_mean)

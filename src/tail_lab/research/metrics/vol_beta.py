@@ -31,6 +31,8 @@ from __future__ import annotations
 
 import pandas as pd
 
+from tail_lab.research.metrics._numeric import cov, paired_arrays, var
+
 
 def vol_beta(
     asset_returns: pd.Series,
@@ -55,21 +57,19 @@ def vol_beta(
     ``vol_changes`` has zero variance (beta is undefined, not zero, when
     the denominator vanishes).
     """
-    if not asset_returns.index.equals(vol_changes.index):
-        raise ValueError(
-            "asset_returns and vol_changes must share the same index "
-            "(same trading calendar) -- align them before calling vol_beta"
-        )
+    asset, vol = paired_arrays(
+        asset_returns, vol_changes, names=("asset_returns", "vol_changes"), caller="vol_beta"
+    )
 
-    n = len(asset_returns)
+    n = len(asset)
     if n < min_observations:
         raise ValueError(
             f"only {n} paired observations; need at least {min_observations} to estimate vol beta"
         )
 
-    variance = vol_changes.var()  # sample variance, ddof=1 (pandas default)
+    variance = var(vol, ddof=1)  # sample variance
     if variance == 0:
         raise ValueError("vol_changes has zero variance; vol beta is undefined")
 
-    covariance = asset_returns.cov(vol_changes)  # ddof=1, matches variance's convention
+    covariance = cov(asset, vol, ddof=1)  # matches variance's convention
     return float(covariance / variance)

@@ -5,7 +5,7 @@ import {
   fetchAccuracy,
   fetchCadence,
   fetchDataQuality,
-  fetchMetricScreen,
+  fetchSignalTest,
   fetchPutBacktest,
   fetchPutLabLeaderboard,
   fetchRegimes,
@@ -17,7 +17,7 @@ import {
   type AccuracyResponse,
   type CadenceResponse,
   type DataQualityResponse,
-  type MetricScreenComparison,
+  type SignalTestResult,
   type PutBacktestResponse,
   type PutLabLeaderboardResponse,
   type RegimeTimelineView,
@@ -41,7 +41,7 @@ import {
   PUTLAB_TENORS,
   type PutLabControls,
   type RankSort,
-  STRIP_BAKEOFF,
+  STRIP_SIGNAL_TEST,
 } from './types'
 import { BakeOffView } from './views/BakeOffView'
 import { GlossaryView } from './views/GlossaryView'
@@ -155,7 +155,7 @@ const DATA_QUALITY_CACHE = new Map<string, DataQualityResponse>()
 const REGIME_VERDICT_CACHE = new Map<string, RegimeVerdictResponse>()
 const ACCURACY_CACHE = new Map<string, AccuracyResponse>()
 const RANKING_CACHE = new Map<string, PutLabLeaderboardResponse>()
-const BAKEOFF_LINE_CACHE = new Map<string, MetricScreenComparison>()
+const SIGNAL_STRIP_CACHE = new Map<string, SignalTestResult>()
 const SURFACE_CACHE = new Map<string, SurfaceResponse>()
 
 function cachePut<T>(cache: Map<string, T>, key: string, value: T): void {
@@ -359,10 +359,13 @@ export function PutLab() {
   // which names are most fragile does not depend on how much premium you would
   // spend.
   const rankKey = onWorkspace ? JSON.stringify([controls.moneyness_pct, controls.tenor_weeks, controls.years]) : null
-  // The strip's bake-off verdict line: one fixed-parameter read (STRIP_BAKEOFF,
-  // the server's pre-warmed bake-off) that never follows the rail. Null off the
-  // Workspace, so coming back after a failed read tries again.
-  const bakeoffKey = onWorkspace ? 'strip' : null
+  // The fixed signal test (STRIP_SIGNAL_TEST, the server's pre-warmed
+  // walk-forward): the strip's verdict line and the Bake-off's headline. It
+  // never follows the rail. Two hooks, one cache: the second to ask is served
+  // the first's result, and each tab retries a failed read on its own. Null off
+  // its own tab, so coming back after a failure tries again.
+  const signalKey = onWorkspace ? 'strip' : null
+  const headlineKey = tab === 'bakeoff' ? 'strip' : null
 
   // The Surface reads one chain session, so it keys on the name and the anchor
   // only (the OOM control IS the anchor); the tenor is the rail's weeks in days.
@@ -425,12 +428,19 @@ export function PutLab() {
     DEBOUNCE_MS,
   )
 
-  const bakeoffLine = useCachedResource(
-    BAKEOFF_LINE_CACHE,
-    bakeoffKey,
-    (s) => fetchMetricScreen(STRIP_BAKEOFF, s),
-    DEBOUNCE_MS,
-  )
+  const fetchStripSignal = (s: AbortSignal) =>
+    fetchSignalTest(
+      {
+        strike_rule: STRIP_SIGNAL_TEST.strike_rule,
+        target_delta: STRIP_SIGNAL_TEST.target_delta,
+        tenor_weeks: STRIP_SIGNAL_TEST.tenor_weeks,
+        signal_years: STRIP_SIGNAL_TEST.years,
+        top_k: STRIP_SIGNAL_TEST.top_k,
+      },
+      s,
+    )
+  const signalStrip = useCachedResource(SIGNAL_STRIP_CACHE, signalKey, fetchStripSignal, DEBOUNCE_MS)
+  const signalHeadline = useCachedResource(SIGNAL_STRIP_CACHE, headlineKey, fetchStripSignal, DEBOUNCE_MS)
 
   const surface = useCachedResource(
     SURFACE_CACHE,
@@ -622,7 +632,7 @@ export function PutLab() {
                 sweep={sweep}
                 accuracy={accuracy}
                 ranking={ranking}
-                bakeoffLine={bakeoffLine}
+                signalLine={signalStrip}
                 rankSort={rankSort}
                 onRankSort={setRankSort}
                 onOpenBakeOff={() => setTab('bakeoff')}
@@ -633,7 +643,7 @@ export function PutLab() {
             )}
             {tab === 'portfolio' && <PortfolioView universe={universe} controls={controls} />}
             {tab === 'book' && <OverlayView narrow={narrow} />}
-            {tab === 'bakeoff' && <BakeOffView controls={controls} />}
+            {tab === 'bakeoff' && <BakeOffView controls={controls} headline={signalHeadline} />}
             {tab === 'regime' && <RegimeView regimes={regimes} vix={vix} accuracy={accuracy} />}
             {tab === 'marks' && <MarksView asset={controls.asset} regimes={regimes} />}
             {tab === 'surface' && <SurfaceView surface={surface} controls={controls} narrow={narrow} />}

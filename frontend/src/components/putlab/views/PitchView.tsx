@@ -1,6 +1,7 @@
 import { EVIDENCE as E, LIVE, gateLabel, ruleLabel, ruleShort, type EveryDay, type HedgeConfig, type Standalone } from '../../../content/pitch'
 import { ConceptInfo } from '../ConceptInfo'
 import { fmtFixed } from '../format'
+import { Th } from '../Th'
 
 /* The Pitch: does the put book have a genuine edge? (docs/adr/0021, 2026-10-27
  * amendment.) Verdict first, then the evidence, then how to kill or rescue it.
@@ -381,10 +382,10 @@ export function PitchView() {
           <table className="pl-table pl-pitch-stack pl-pitch-sched" data-testid="pitch-schedule">
             <thead>
               <tr>
-                <th>What runs</th>
-                <th>When</th>
-                <th>What it produces</th>
-                <th>A decision?</th>
+                <th data-noexplain="name">What runs</th>
+                <Th concept="pitch_schedule">When</Th>
+                <Th concept="pitch_schedule">What it produces</Th>
+                <Th concept="pitch_schedule">A decision?</Th>
               </tr>
             </thead>
             <tbody>
@@ -451,12 +452,12 @@ export function PitchView() {
           <table className="pl-table" data-testid="pitch-flips">
             <thead>
               <tr>
-                <th>As of</th>
-                <th>Verdict</th>
-                <th className="num">Calm: return, pooled</th>
-                <th className="num">Elevated: return, pooled</th>
-                <th className="num">Crisis rolls</th>
-                <th>First entry → last expiry</th>
+                <th data-noexplain="row-label">As of</th>
+                <Th concept="verdict">Verdict</Th>
+                <Th concept="pooled_regime_return" className="num">Calm: return, pooled</Th>
+                <Th concept="pooled_regime_return" className="num">Elevated: return, pooled</Th>
+                <Th concept="crisis_rolls" className="num">Crisis rolls</Th>
+                <Th concept="roll_window_span">First entry → last expiry</Th>
               </tr>
             </thead>
             <tbody>
@@ -500,10 +501,10 @@ export function PitchView() {
           <table className="pl-table pl-pitch-stack" data-testid="pitch-data">
             <thead>
               <tr>
-                <th>Dataset (lake snapshot)</th>
-                <th>Span</th>
-                <th>What it is</th>
-                <th>Known gaps</th>
+                <th data-noexplain="name">Dataset (lake snapshot)</th>
+                <Th concept="pitch_datasets">Span</Th>
+                <Th concept="pitch_datasets">What it is</Th>
+                <Th concept="pitch_datasets">Known gaps</Th>
               </tr>
             </thead>
             <tbody>
@@ -715,14 +716,14 @@ export function PitchView() {
           <table className="pl-table" data-testid="pitch-standalone">
             <thead>
               <tr>
-                <th>SPY rule</th>
-                <th className="num">Rolls</th>
-                <th className="num">Mean</th>
-                <th className="num">95% interval</th>
-                <th className="num">Winners</th>
-                <th className="num">Best</th>
-                <th className="num">Median ask, % spot</th>
-                <th className="num">Refused</th>
+                <th data-noexplain="name">SPY rule</th>
+                <Th concept="rolls_count" className="num">Rolls</Th>
+                <Th concept="mean_roll_return" className="num">Mean</Th>
+                <Th concept="ci95_block" className="num">95% interval</Th>
+                <Th concept="winners" className="num">Winners</Th>
+                <Th concept="best_roll" className="num">Best</Th>
+                <Th concept="median_ask" className="num">Median ask, % spot</Th>
+                <Th concept="refused_fills" className="num">Refused</Th>
               </tr>
             </thead>
             <tbody>
@@ -785,11 +786,11 @@ export function PitchView() {
           <table className="pl-table" data-testid="pitch-hedge">
             <thead>
               <tr>
-                <th>SPY rule</th>
-                <th className="num">Growth vs unhedged</th>
-                <th className="num">Budget/roll</th>
-                <th className="num">Worst drawdown</th>
-                <th className="num">Premium spent/yr, % of wealth (gross)</th>
+                <th data-noexplain="name">SPY rule</th>
+                <Th concept="growth_vs_unhedged" className="num">Growth vs unhedged</Th>
+                <Th concept="budget_share" className="num">Budget/roll</Th>
+                <Th concept="max_drawdown" className="num">Worst drawdown</Th>
+                <Th concept="premium_per_year" className="num">Premium spent/yr, % of wealth (gross)</Th>
               </tr>
             </thead>
             <tbody>
@@ -906,16 +907,16 @@ export function PitchView() {
           <table className="pl-table" data-testid="pitch-2008">
             <thead>
               <tr>
-                <th>Depth</th>
-                <th className="num">Filled</th>
-                <th className="num">Mean</th>
-                <th className="num">Winners</th>
-                <th className="num">Best</th>
-                <th className="num">Budget/roll</th>
-                <th className="num">Ends at ×</th>
-                <th className="num">vs unhedged ×</th>
-                <th className="num">w/o best roll</th>
-                <th className="num">Worst DD</th>
+                <th data-noexplain="name">Depth</th>
+                <Th concept="filled_rolls" className="num">Filled</Th>
+                <Th concept="mean_roll_return" className="num">Mean</Th>
+                <Th concept="winners" className="num">Winners</Th>
+                <Th concept="best_roll" className="num">Best</Th>
+                <Th concept="budget_share" className="num">Budget/roll</Th>
+                <Th concept="ends_at_multiple" className="num">Ends at ×</Th>
+                <Th concept="vs_unhedged_multiple" className="num">vs unhedged ×</Th>
+                <Th concept="without_best_roll" className="num">w/o best roll</Th>
+                <Th concept="max_drawdown" className="num">Worst DD</Th>
               </tr>
             </thead>
             <tbody>

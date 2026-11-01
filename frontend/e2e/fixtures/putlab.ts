@@ -433,8 +433,8 @@ const screenEntry = (
   combined_max_drawdown: -4200 - Math.round(lift * 1000),
   verdict,
   regime_slices: [
-    { regime: 'calm', n_cycles: 31, roi_on_premium: roi - 0.08, paid_off: roi > 0.08 },
-    { regime: 'crisis', n_cycles: 7, roi_on_premium: roi + 0.31, paid_off: true },
+    { regime: 'calm', n_cycles: 31, roi_on_premium: roi - 0.08, paid_off: roi > 0.08, hit_rate: 0.1, biggest_payoff_mult: 6.2 },
+    { regime: 'crisis', n_cycles: 7, roi_on_premium: roi + 0.31, paid_off: true, hit_rate: 0.43, biggest_payoff_mult: 14.8 },
   ],
   spearman_vs_payoff: spearman,
   spearman_pvalue: pvalue,
@@ -496,9 +496,9 @@ export const REGIME_VERDICT: RegimeVerdictResponse = {
   rule_hash: 'a91f3c2e',
   verdict: 'regime_only',
   slices: [
-    { regime: 'calm', n_cycles: 8, roi_on_premium: -0.72, paid_off: false },
-    { regime: 'elevated', n_cycles: 3, roi_on_premium: -0.19, paid_off: false },
-    { regime: 'crisis', n_cycles: 1, roi_on_premium: 1.86, paid_off: true },
+    { regime: 'calm', n_cycles: 8, roi_on_premium: -0.72, paid_off: false, hit_rate: 0.125, biggest_payoff_mult: 1.6 },
+    { regime: 'elevated', n_cycles: 3, roi_on_premium: -0.19, paid_off: false, hit_rate: 0.33, biggest_payoff_mult: 2.4 },
+    { regime: 'crisis', n_cycles: 1, roi_on_premium: 1.86, paid_off: true, hit_rate: 1, biggest_payoff_mult: 11.3 },
   ],
 }
 

@@ -421,3 +421,60 @@ def test_the_composite_reads_its_directions_from_fragile_high(
     assert [r.asset for r in _score_and_sort(rows())] == ["a", "b", "c"]
     monkeypatch.setitem(FRAGILE_HIGH, "vol_beta", True)
     assert [r.asset for r in _score_and_sort(rows())] == ["c", "b", "a"]
+
+
+def _reference_composite(rows: list[dict[str, float | None]]) -> list[float | None]:
+    """The pre-extraction fold, written out longhand: average each row's
+    cross-sectional fragility ranks over COMPOSITE_METRICS it has."""
+    from tail_lab.research.backtest.ranking import COMPOSITE_METRICS, _frac_rank
+
+    ranks = {
+        m: _frac_rank([r.get(m) for r in rows], fragile_high=FRAGILE_HIGH[m])
+        for m in COMPOSITE_METRICS
+    }
+    out: list[float | None] = []
+    for i in range(len(rows)):
+        parts = [ranks[m][i] for m in COMPOSITE_METRICS if i in ranks[m]]
+        out.append(sum(parts) / len(parts) if parts else None)
+    return out
+
+
+def test_composite_scores_pins_a_hand_computed_case() -> None:
+    """Three names, one metric each way: the most fragile on every metric
+    scores 1.0, the least 0.0, and a name with no metrics scores None --
+    co-kurtosis is ignored even when present (it is excluded by design)."""
+    from tail_lab.research.backtest.ranking import COMPOSITE_METRICS, composite_scores
+
+    fragile = {m: (10.0 if FRAGILE_HIGH[m] else -10.0) for m in COMPOSITE_METRICS}
+    calm = {m: (-10.0 if FRAGILE_HIGH[m] else 10.0) for m in COMPOSITE_METRICS}
+    mid = dict.fromkeys(COMPOSITE_METRICS, 0.0)
+    empty: dict[str, float | None] = {"co_kurtosis": 99.0}
+    scores = composite_scores([calm, fragile, mid, empty])
+    assert scores == [0.0, 1.0, 0.5, None]
+
+
+def test_composite_scores_equals_the_old_fold_and_the_shipped_sort() -> None:
+    from tail_lab.research.backtest.ranking import (
+        COMPOSITE_METRICS,
+        _score_and_sort,
+        composite_scores,
+    )
+
+    rng = np.random.default_rng(5)
+    rows: list[dict[str, float | None]] = []
+    for _ in range(12):
+        rows.append(
+            {m: (None if rng.random() < 0.25 else float(rng.normal())) for m in COMPOSITE_METRICS}
+        )
+    assert composite_scores(rows) == _reference_composite(rows)
+
+    assets = [
+        RankedAsset.model_construct(asset=f"a{i}", fragility_score=None, **row)
+        for i, row in enumerate(rows)
+    ]
+    ordered = _score_and_sort(list(assets))
+    expected = composite_scores(rows)
+    for asset, score in zip(assets, expected, strict=True):
+        assert asset.fragility_score == score
+    keys = [a.fragility_score if a.fragility_score is not None else -1.0 for a in ordered]
+    assert keys == sorted(keys, reverse=True)  # the sort is kept

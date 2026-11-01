@@ -7,8 +7,10 @@ import type { Page, Route } from '@playwright/test'
 import { BOOK_PLAN, BOOK_PLAN_BILLS_REFUSED } from './book-plan'
 import { HEDGE_OVERLAY } from './hedge-overlay'
 import { MARKS } from './marks'
+import { coverage, nameRecord } from './name-record'
 import { MODEL_PLAN } from './model-plan'
 import * as fx from './putlab'
+import { SIGNAL_TEST_BEATS, SIGNAL_TEST_CRASH_CARRIED, SIGNAL_TEST_INSUFFICIENT, SIGNAL_TEST_NO_BETTER } from './signal-test'
 
 export interface MockOptions {
   /** Endpoints to fail with a 500, by pathname (e.g. '/api/putlab/sweep'). */
@@ -39,6 +41,17 @@ export async function mockPutLabApi(page: Page, opts: MockOptions = {}): Promise
     }
     if (opts.noData?.includes(path)) {
       return route.fulfill({ status: 404, contentType: 'application/json', body: '{"detail":"no data"}' })
+    }
+
+    // Per-name reads carry the symbol in the path.
+    const name = /^\/api\/putlab\/(coverage|signal-test)\/([^/]+)$/.exec(path)
+    if (name) {
+      const symbol = decodeURIComponent(name[2]!).toLowerCase()
+      if (name[1] === 'coverage') return json(route, coverage(symbol))
+      const rec = nameRecord(symbol)
+      return rec
+        ? json(route, rec)
+        : route.fulfill({ status: 404, contentType: 'application/json', body: '{"detail":"not in this signal test"}' })
     }
 
     switch (path) {
@@ -101,6 +114,32 @@ export async function mockPutLabApi(page: Page, opts: MockOptions = {}): Promise
               }
             : {}),
         })
+      case '/api/putlab/signal-test': {
+        // The fixed strip read (0.10Δ, top 5) is the no-better-than-random
+        // instance; a run at any other rule is the beats-random one, a 3-year
+        // signal window at a distance rule is the crash-carried one, and Top 3
+        // is the thin-history one. The request's own settings are echoed, as
+        // the real route does.
+        const q = url.searchParams
+        const base =
+          q.get('top_k') === '3'
+            ? SIGNAL_TEST_INSUFFICIENT
+            : q.get('strike_rule') === 'delta'
+              ? SIGNAL_TEST_NO_BETTER
+              : q.get('signal_years') === '3'
+                ? SIGNAL_TEST_CRASH_CARRIED
+                : SIGNAL_TEST_BEATS
+        const delta = q.get('strike_rule') === 'delta'
+        return json(route, {
+          ...base,
+          strike_rule: delta ? 'delta' : 'moneyness',
+          target_delta: delta ? Number(q.get('target_delta')) : null,
+          moneyness_pct: delta ? null : Number(q.get('moneyness_pct')),
+          tenor_weeks: Number(q.get('tenor_weeks')),
+          signal_years: Number(q.get('signal_years')),
+          top_k: Number(q.get('top_k')),
+        })
+      }
       case '/api/putlab/surface':
         // TSLA is the all-refused payload; every other name is the fitted one.
         return json(route, url.searchParams.get('asset') === 'tsla' ? fx.SURFACE_REFUSED : fx.SURFACE_FITTED)

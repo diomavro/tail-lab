@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import type { CadenceResponse, DataQualityResponse, UniverseMember } from '../../api/client'
 import type { TabId } from './PutLab'
+import { ConceptInfo } from './ConceptInfo'
 import { RAIL, railSummary, type RailSection } from './rail'
 import {
   PUTLAB_ASSETS,
@@ -156,7 +157,10 @@ export function ParamRail({ tab, tabLabel, controls, onChange, universe, dataQua
 
             {has('delta') && (
               <div className="pl-field" style={{ marginBottom: 12 }}>
-                <label id="pl-rule-label">Strike chosen by</label>
+                <div className="pl-field-head">
+                  <label id="pl-rule-label">Strike chosen by</label>
+                  <ConceptInfo id="strike_rule" />
+                </div>
                 <div className="pl-seg pl-seg-block" role="radiogroup" aria-labelledby="pl-rule-label">
                   <label className="pl-seg-opt">
                     <input
@@ -183,7 +187,10 @@ export function ParamRail({ tab, tabLabel, controls, onChange, universe, dataQua
             <div className={has('notional') ? 'pl-two-col' : undefined} style={{ marginBottom: 15 }}>
               {has('notional') && (
                 <div className="pl-field">
-                  <label htmlFor="pl-notional">Premium per roll, $</label>
+                  <div className="pl-field-head">
+                    <label htmlFor="pl-notional">Premium per roll, $</label>
+                    <ConceptInfo id="roll_budget" />
+                  </div>
                   <input
                     className="pl-input"
                     id="pl-notional"
@@ -208,7 +215,10 @@ export function ParamRail({ tab, tabLabel, controls, onChange, universe, dataQua
               )}
               {has('strike') && byDelta && (
                 <div className="pl-field">
-                  <label htmlFor="pl-delta">Put delta, at realised vol</label>
+                  <div className="pl-field-head">
+                    <label htmlFor="pl-delta">Put delta, at realised vol</label>
+                    <ConceptInfo id="put_delta" />
+                  </div>
                   <input
                     className="pl-input"
                     id="pl-delta"
@@ -235,7 +245,10 @@ export function ParamRail({ tab, tabLabel, controls, onChange, universe, dataQua
               )}
               {has('strike') && !byDelta && (
                 <div className="pl-field">
-                  <label htmlFor="pl-oom">Out of the money, %</label>
+                  <div className="pl-field-head">
+                    <label htmlFor="pl-oom">Out of the money, %</label>
+                    <ConceptInfo id="oom_put" />
+                  </div>
                   <input
                     className="pl-input"
                     id="pl-oom"
@@ -297,7 +310,10 @@ export function ParamRail({ tab, tabLabel, controls, onChange, universe, dataQua
           <div className="pl-field" style={{ marginBottom: 15 }}>
             {/* On the Surface the tenor picks the listed expiry nearest it;
                 nothing is held. */}
-            <label id="pl-tenor-label">{surface ? 'Expiry nearest' : 'Held to expiry'}</label>
+            <div className="pl-field-head">
+              <label id="pl-tenor-label">{surface ? 'Expiry nearest' : 'Held to expiry'}</label>
+              <ConceptInfo id="rolling" />
+            </div>
             <div className="pl-seg pl-seg-block" role="radiogroup" aria-labelledby="pl-tenor-label">
               {PUTLAB_TENORS.map((t) => (
                 <label className="pl-seg-opt" key={t.weeks}>
@@ -316,7 +332,10 @@ export function ParamRail({ tab, tabLabel, controls, onChange, universe, dataQua
 
         {has('years') && (
           <div className="pl-field" style={{ marginBottom: 20 }}>
-            <label id="pl-years-label">Rolled over</label>
+            <div className="pl-field-head">
+              <label id="pl-years-label">Rolled over</label>
+              <ConceptInfo id="lookback_window" />
+            </div>
             <div className="pl-seg pl-seg-block" role="radiogroup" aria-labelledby="pl-years-label">
               {PUTLAB_YEARS.map((y) => (
                 <label className="pl-seg-opt" key={y}>

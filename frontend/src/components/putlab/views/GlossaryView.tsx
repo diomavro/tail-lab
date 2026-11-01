@@ -5,6 +5,7 @@ import {
   CONCEPT_LIST,
   type Concept,
   type ConceptCategory,
+  isConceptId,
 } from '../../../content/concepts'
 
 /* "What do these mean?" — the concept reference.
@@ -54,7 +55,7 @@ export function GlossaryView() {
                     <span className="pl-kicker">See also</span>
                     {c.seeAlso.map((id) => (
                       <a key={id} href={`#${id}`}>
-                        {CONCEPTS[id]?.term ?? id}
+                        {isConceptId(id) ? CONCEPTS[id].term : id}
                       </a>
                     ))}
                   </div>

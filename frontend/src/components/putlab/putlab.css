@@ -359,12 +359,15 @@
 /* ---------------------------------------------------------------- forms --- */
 
 .pl-field { display: block; }
-.pl-field > label {
+.pl-field-head { display: flex; align-items: center; gap: 2px; margin-bottom: 5px; }
+.pl-field-head .pl-concept { margin: -4px 0; }
+.pl-field > label,
+.pl-field-head > label {
   display: block;
   font-size: 12px;
-  margin-bottom: 5px;
   color: color-mix(in srgb, var(--ink) 70%, transparent);
 }
+.pl-field > label { margin-bottom: 5px; }
 .pl-input {
   width: 100%;
   min-height: 36px;
@@ -910,8 +913,9 @@
   border-top: 1px solid var(--ink);
   padding: var(--space-2) 0 var(--space-3);
 }
-.pl-bake-verdict { font-size: 17px; line-height: 1.5; max-width: 74ch; margin: 0 0 var(--space-4); }
+.pl-bake-verdict, .pl-signal-verdict { font-size: 17px; line-height: 1.5; max-width: 74ch; margin: 0 0 var(--space-4); }
 .pl-bake-verdict strong { font-weight: 600; }
+.pl-signal-verdict { margin-top: 6px; }
 .pl-bake-names { font-size: 12.5px; }
 /* Three notes, so they want a narrower track floor than the two-up default --
    otherwise the third wraps alone under an empty column. */
@@ -1096,10 +1100,32 @@
   border-radius: 50%;
   cursor: pointer;
 }
+.pl-table th .pl-concept { margin: -6px -8px -6px -3px; }
 .pl-concept:hover { color: var(--cyan); background: color-mix(in srgb, var(--cyan) 10%, transparent); }
+/* Tier 1: the hover/focus tooltip. Takes no pointer, so it can sit flush
+   against the button and never needs a gap to be crossed. */
+.pl-concept-tip {
+  box-sizing: border-box; /* TIP_WIDTH is the whole box: the viewport clamp relies on it */
+  position: fixed;
+  z-index: 70;
+  padding: var(--space-2) var(--space-3);
+  background: var(--paper);
+  border: 1px solid var(--rule-2);
+  border-radius: var(--radius-lg);
+  font-size: 12.5px;
+  line-height: 1.45;
+  color: var(--ink-70);
+  text-transform: none;
+  letter-spacing: normal;
+  font-weight: 400;
+  text-align: left;
+  pointer-events: none;
+}
 .pl-concept-pop {
   position: fixed;
   z-index: 60;
+  max-height: calc(100vh - 24px);
+  overflow-y: auto;
   padding: var(--space-3);
   background: var(--paper);
   border: 1px solid var(--rule-2);
@@ -1546,3 +1572,30 @@
 .pl-marks-row:focus { outline: none; }
 .pl-marks-rowring { stroke: none; pointer-events: none; }
 .pl-marks-row:focus-visible .pl-marks-rowring { stroke: var(--cyan); stroke-width: 2; }
+
+/* ------------------------------------------------- signal test (ADR 0033) --- */
+
+.pl-sig-stress { fill: var(--warn-fill); opacity: 0.28; }
+.pl-sig-band { fill: var(--ink); opacity: 0.13; }
+.pl-sig-bar.is-pos { fill: var(--ink); }
+.pl-sig-bar.is-neg { fill: var(--mag); }
+.pl-sig-key { display: inline-block; width: 14px; height: 9px; }
+.pl-sig-key-bar { background: var(--ink); }
+.pl-sig-key-band { background: var(--ink); opacity: 0.2; }
+.pl-sig-key-stress { background: var(--warn-fill); opacity: 0.5; }
+.pl-bake-section { border-top: 1px solid var(--ink); margin-top: var(--space-6); padding-top: var(--space-3); }
+
+/* Data coverage grid (NameCoverage.tsx): the fraction is always printed, the ink is the second carrier. */
+.pl-cov-cell { text-align: center; font-size: 11px; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.pl-cov-have { background: color-mix(in srgb, var(--cyan) 45%, var(--paper-2)); }
+.pl-cov-partial { background: color-mix(in srgb, var(--cyan) 18%, var(--paper-2)); }
+/* Rows exist but SPY gives no denominator for the year: hatched, never "complete". */
+.pl-cov-noref { background: repeating-linear-gradient(135deg, color-mix(in srgb, var(--cyan) 30%, var(--paper-2)) 0 4px, var(--paper-2) 4px 8px); }
+.pl-cov-none { background: var(--paper-2); color: var(--ink-45); }
+
+/* A phone: the Pitch tables are sideways-scrolling and the column the hedge
+   section is about must still fit at 390px, so the header ⓘ takes (almost) no
+   width there -- it overlaps the cell's padding rather than widening the column. */
+@media (max-width: 480px) {
+  .pl-pitch .pl-table th .pl-concept { width: 20px; margin-right: -14px; }
+}

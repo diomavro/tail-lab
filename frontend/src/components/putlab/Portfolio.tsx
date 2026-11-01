@@ -8,7 +8,8 @@ import {
   type UniverseMember,
   type Verdict,
 } from '../../api/client'
-import { ConceptInfo } from './ConceptInfo'
+import { StatK } from './StatK'
+import { Th } from './Th'
 import { EquityCurve } from './EquityCurve'
 import { fmtDollar, fmtPct } from './format'
 import { PUTLAB_ASSETS, PUTLAB_TENORS, type PutLabControls } from './types'
@@ -297,10 +298,7 @@ export function Portfolio({
         <>
           <div className="pl-stats">
             <div>
-              <div className="pl-stat-k">
-                Return on premium
-                <ConceptInfo id="roi_on_premium" />
-              </div>
+              <StatK concept="roi_on_premium">Return on premium</StatK>
               <div className={`pl-stat-v ${r.roi_on_premium >= 0 ? 'pl-pos' : 'pl-neg'}`}>
                 {fmtPct(r.roi_on_premium)}
               </div>
@@ -310,22 +308,19 @@ export function Portfolio({
               </div>
             </div>
             <div>
-              <div className="pl-stat-k">Net P&amp;L</div>
+              <StatK concept="net_pnl">Net P&amp;L</StatK>
               <div className={`pl-stat-v ${r.net_pnl >= 0 ? 'pl-pos' : 'pl-neg'}`}>
                 {fmtDollar(r.net_pnl)}
               </div>
               <div className="pl-stat-note">on {fmtDollar(r.total_premium)} premium</div>
             </div>
             <div>
-              <div className="pl-stat-k">Combined bleed</div>
+              <StatK concept="bleed">Combined bleed</StatK>
               <div className="pl-stat-v pl-neg">{fmtDollar(r.combined_max_drawdown)}</div>
               <div className="pl-stat-note">worst drawdown of the mix</div>
             </div>
             <div>
-              <div className="pl-stat-k">
-                Diversification
-                <ConceptInfo id="diversification" />
-              </div>
+              <StatK concept="diversification">Diversification</StatK>
               <div className="pl-stat-v">{fmtDollar(saved)}</div>
               <div className="pl-stat-note">
                 shallower than the legs&rsquo; summed {fmtDollar(r.sum_individual_max_drawdown)}
@@ -351,13 +346,13 @@ export function Portfolio({
               <table className="pl-table" aria-label="Basket legs">
                 <thead>
                   <tr>
-                    <th>Leg</th>
-                    <th className="num">Weight</th>
-                    <th className="num">Premium</th>
-                    <th className="num">Return</th>
-                    <th className="num">/yr</th>
-                    <th className="num">Rolls</th>
-                    <th className="num">Verdict</th>
+                    <th data-noexplain="name">Leg</th>
+                    <Th concept="leg_weight" className="num">Weight</Th>
+                    <Th concept="leg_premium" className="num">Premium</Th>
+                    <Th concept="roi_on_premium" className="num">Return</Th>
+                    <Th concept="annualized_return" className="num">/yr</Th>
+                    <Th concept="rolls_count" className="num">Rolls</Th>
+                    <Th concept="verdict" className="num">Verdict</Th>
                   </tr>
                 </thead>
                 <tbody>

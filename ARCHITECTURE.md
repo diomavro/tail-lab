@@ -162,7 +162,8 @@ src/tail_lab/
 │   │   └── paretan.py           # Paretan relative pricing. NOT an OptionPricer.
 │   └── backtest/
 │       ├── engine.py            # Simulation clock; reads ONLY via lake/asof.py.
-│       └── compare.py           # Cross-metric backtest comparison.
+│       ├── compare.py           # Cross-metric backtest comparison.
+│       └── walk_forward.py      # Out-of-sample signal test: rank at t, buy at t (docs/adr/0033).
 │
 └── api/                       # FastAPI app. The ONLY layer the frontend talks to.
     ├── main.py                 # Composition root: middleware, router includes.

@@ -9,6 +9,7 @@ import {
 import { ConceptInfo } from './ConceptInfo'
 import { fmtPrice } from './format'
 import { deltaLabel } from './types'
+import { Th } from './Th'
 
 /* "How the strike is chosen": the second step of the thread -- where q comes
  * from -> how it moves the price -> HOW THE STRIKE IS CHOSEN -> whether any of
@@ -146,15 +147,15 @@ export function StrikeBuild({
         <table className="pl-table" aria-label="Today's strike two ways" data-testid="strike-preview">
           <thead>
             <tr>
-              <th>Target delta &minus;{target.toFixed(2)}</th>
-              <th className="num">Vol</th>
-              <th className="num">Strike</th>
-              <th className="num">From spot</th>
+              <Th concept="put_delta">Target delta &minus;{target.toFixed(2)}</Th>
+              <Th concept="strike_vol" className="num">Vol</Th>
+              <Th concept="strike_price" className="num">Strike</Th>
+              <Th concept="strike_from_spot" className="num">From spot</Th>
             </tr>
           </thead>
           <tbody>
             <tr data-testid="strike-preview-model">
-              <th scope="row" className="pl-explain-rowhead">
+              <th scope="row" className="pl-explain-rowhead" data-noexplain="row-label">
                 Backtest, realised vol
               </th>
               <td className="num">{preview?.model ? pct(preview.model.sigma * 100) : '—'}</td>
@@ -162,7 +163,7 @@ export function StrikeBuild({
               <td className="num">{preview?.model ? fromSpot(preview.model.moneyness_pct) : '—'}</td>
             </tr>
             <tr data-testid="strike-preview-market">
-              <th scope="row" className="pl-explain-rowhead">
+              <th scope="row" className="pl-explain-rowhead" data-noexplain="row-label">
                 Market, implied vol
               </th>
               <td className="num">{preview?.market ? pct(preview.market.iv * 100) : '—'}</td>

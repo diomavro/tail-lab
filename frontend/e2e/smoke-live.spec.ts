@@ -51,12 +51,22 @@ test('the metric-screen endpoint answers the bake-off', async ({ page }) => {
   // memo and never exercise the compute this test exists to check. A same-day
   // repeat of Top 3 may still be a memo hit (any key is served for 24h).
   await page.getByRole('radiogroup', { name: 'Basket size' }).getByText('Top 3').click()
+  await page.getByRole('button', { name: /In-sample association/ }).click()
   await page.getByRole('button', { name: 'Run the bake-off' }).click()
 
   // One server-side backtest per screened name (up to 70), about 53s. After a
   // deploy or restart it queues behind the startup warms on the one screen
   // slot: on the 2026-10-12 cold deploy it waited 104s (the 85s ranking warm,
   // then the Workspace's fixed Bake-off) before computing, ~155s in all.
-  await expect(page.getByRole('table', { name: 'Metric bake-off' })).toBeVisible({ timeout: 240_000 })
+  await expect(page.getByRole('table', { name: 'In-sample bake-off' })).toBeVisible({ timeout: 240_000 })
   await expect(page.locator('.pl-bake-verdict')).toBeVisible()
+})
+
+test('the signal-test endpoint answers the Bake-off headline', async ({ page }) => {
+  await page.goto('/')
+  await page.getByRole('tab', { name: 'Bake-off' }).click()
+  // The fixed STRIP_SIGNAL_TEST is pre-warmed daily; a cold start queues it
+  // behind the other warms on the one screen slot.
+  await expect(page.getByRole('table', { name: 'Out-of-sample signal test', exact: true })).toBeVisible({ timeout: 240_000 })
+  await expect(page.getByTestId('signal-verdict')).toBeVisible()
 })

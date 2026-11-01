@@ -1,5 +1,6 @@
 import type { AccuracyResponse } from '../../api/client'
 import type { ResourceState } from './PutLab'
+import { Th } from './Th'
 
 // "How wrong is this?" -- the constitutional companion to every backtest result
 // (README, "Accuracy is surfaced, not filed"). It renders on EVERY state,
@@ -182,9 +183,9 @@ export function AccuracyPanel({ accuracy }: { accuracy: ResourceState<AccuracyRe
             <table className="pl-table" aria-label="Published put programs">
               <thead>
                 <tr>
-                  <th>Program</th>
-                  <th className="num">Total</th>
-                  <th className="num">Per year</th>
+                  <th data-noexplain="name">Program</th>
+                  <Th concept="published_total" className="num">Total</Th>
+                  <Th concept="published_annual" className="num">Per year</Th>
                 </tr>
               </thead>
               <tbody>

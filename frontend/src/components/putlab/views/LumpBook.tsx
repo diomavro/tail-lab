@@ -11,6 +11,7 @@ import { dots, poly, type Label, type Pt } from '../chart'
 import { ChartLabels } from '../ChartLabels'
 import { fmtFixed } from '../format'
 import { HoldSize } from './HoldSize'
+import { Th } from '../Th'
 import { inWords, legName, type LumpMetric } from './planFormat'
 
 /* The Book, lump sum: one panel per program and window, the growth (or CAGR
@@ -318,11 +319,11 @@ function Panel({
           <table className="pl-table">
             <thead>
               <tr>
-                <th>Hedge ratio</th>
-                <th className="num">Growth (CAGR)</th>
-                <th className="num">Volatility</th>
-                <th className="num">Max drawdown</th>
-                <th className="num">CAGR / vol</th>
+                <Th concept="hedge_ratio">Hedge ratio</Th>
+                <Th concept="cagr" className="num">Growth (CAGR)</Th>
+                <Th concept="ann_volatility" className="num">Volatility</Th>
+                <Th concept="max_drawdown" className="num">Max drawdown</Th>
+                <Th concept="cagr_per_vol" className="num">CAGR / vol</Th>
               </tr>
             </thead>
             <tbody>

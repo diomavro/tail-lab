@@ -2,6 +2,7 @@ import type { PlanArm, PlanLegRow, PlanWindow, RollingSummary } from '../../../a
 import type { Label } from '../chart'
 import { ChartLabels } from '../ChartLabels'
 import { legName, pct, pp, share, usd } from './planFormat'
+import { Th } from '../Th'
 
 /* The rolling-start verdict and one window's two arms, drawn. Shared by both
  * sources; ``legs`` is the real-quote source's per-index-leg rerun. The
@@ -213,11 +214,11 @@ export function PlanVerdict({
           <table className="pl-table">
             <thead>
               <tr>
-                <th>Arm</th>
-                <th className="num">Paid in</th>
-                <th className="num">Ends with</th>
-                <th className="num">IRR</th>
-                <th className="num">Worst drawdown</th>
+                <th data-noexplain="name">Arm</th>
+                <Th concept="plan_paid_in" className="num">Paid in</Th>
+                <Th concept="plan_ends_with" className="num">Ends with</Th>
+                <Th concept="plan_irr" className="num">IRR</Th>
+                <Th concept="max_drawdown" className="num">Worst drawdown</Th>
               </tr>
             </thead>
             <tbody>
