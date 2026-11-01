@@ -742,6 +742,52 @@ export interface SignalDiagnostics {
   signal_removed: Record<string, number>
 }
 
+export type BeyondVolStatus =
+  | 'insufficient_data'
+  | 'no_evidence_beyond_trailing_vol'
+  | 'not_robust'
+  | 'predicts_beyond_trailing_vol'
+
+/** The first check that turned a significant result into `not_robust`. */
+export type BeyondVolDemotion = 'intercept' | 'drop_best_period' | 'drop_best_episode' | 'equity_only'
+
+export type BeyondVolMode = 'confirmatory' | 'monitoring' | 'exploratory'
+
+export interface BeyondVolCi {
+  low: number
+  high: number
+}
+
+export interface BeyondVolPeriodGamma {
+  date: string
+  gamma: number
+}
+
+/** The Fama-MacBeth test of fragility beyond trailing vol (beyond_vol.py,
+ *  ADR 0035). Every inference field is null under `insufficient_data`. */
+export interface BeyondVolTest {
+  status: BeyondVolStatus
+  /** Mean per-period slope of the ROI rank on the composite rank, vol controlled. */
+  gamma_bar: number | null
+  ci90: BeyondVolCi | null
+  /** One-sided fixed-b p. Show it only when `beyond_vol_mode` is `confirmatory`. */
+  p_value: number | null
+  a_intercept: number | null
+  a_p_value: number | null
+  b_slope: number | null
+  n_periods: number
+  n_skipped: number
+  bandwidth: number
+  demotion: BeyondVolDemotion | null
+  gamma_no_controls: number | null
+  log1p_gamma_bar: number | null
+  log1p_ci90: BeyondVolCi | null
+  raw_roi_gamma_bar: number | null
+  per_period: BeyondVolPeriodGamma[]
+  /** Pay-rate gap (top vs bottom composite quintile) caught 80% of the time. */
+  mde_pay_rate_gap: number
+}
+
 export interface SignalTestResult {
   test_start: string | null
   test_end: string | null
@@ -769,6 +815,19 @@ export interface SignalTestResult {
   universe_size: number
   snapshot_ids: string[]
   code_sha: string
+  /** Null when the test did not run on this result's periods (also absent
+   *  on a response from before the field existed); see the reason below. */
+  beyond_vol: BeyondVolTest | null
+  /** Why `beyond_vol` is null: too many periods for the server's memory, or
+   *  the frozen procedure refused them. Null when it ran. */
+  beyond_vol_unavailable_reason: string | null
+  /** What this run is. Only `confirmatory` (the pre-registered setting, 0.10Δ ·
+   *  4w · 4y · top 5, on the pre-registered data date) may show `p_value` or
+   *  `status`. `monitoring` is that setting on a later date, `exploratory` any
+   *  other setting: show gamma_bar and ci90 only. The server sends p and status
+   *  regardless; this is where the rule is enforced (signalWording.ts
+   *  `beyondVolLine`). */
+  beyond_vol_mode: BeyondVolMode
 }
 
 export interface SignalTestParams {

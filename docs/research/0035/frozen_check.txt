@@ -1,0 +1,89 @@
+
+=== frozen ===
+module sha256 bcfecaf730766427d0945b050084944806ce6f0413c7b0017d2a3005fca1c57a
+MODE=frozen repo beyond_vol_test, L=16, N_MIN=40, T=81, reps/world=1000
+world | n | P(predicts) uncond | n sufficient | P(predicts | sufficient) | P(p<.05 | sufficient) | mean gbar | sd gbar | statuses
+N0 pure noise | 1000 | 0.000 [0.000,0.004] | 1000 | 0.000 [0.000,0.004] | 0.009 [0.004,0.017] | -0.0013 | 0.0216 | no_evidence_beyond_trailing_vol=991, not_robust:equity_only=9
+N9 one-factor drift -0.15 | 1000 | 0.000 [0.000,0.004] | 1000 | 0.000 [0.000,0.004] | 0.140 [0.119,0.163] | +0.0186 | 0.0205 | no_evidence_beyond_trailing_vol=860, not_robust:equity_only=50, not_robust:intercept=90
+ALT pay a=0.30 | alpha 0.0 | 1000 | 0.000 [0.000,0.004] | 626 | 0.000 [0.000,0.006] | 0.973 [0.957,0.984] | +0.0953 | 0.0212 | insufficient_data=374, no_evidence_beyond_trailing_vol=17, not_robust:equity_only=608, not_robust:intercept=1
+ALT pay a=0.40 | alpha 0.0 | 1000 | 0.000 [0.000,0.004] | 587 | 0.000 [0.000,0.006] | 1.000 [0.994,1.000] | +0.1274 | 0.0226 | insufficient_data=413, not_robust:equity_only=587
+
+=== d3fix ===
+module sha256 5b6014ef814057e7e05751bced1d549ac7c24ce870ec127c603b18df8ec4be94
+MODE=d3fix repo beyond_vol_test, L=16, N_MIN=30, T=81, reps/world=2000
+world | n | P(predicts) uncond | n sufficient | P(predicts | sufficient) | P(p<.05 | sufficient) | mean gbar | sd gbar | statuses
+N0 pure noise | 2000 | 0.013 [0.009,0.019] | 2000 | 0.013 [0.009,0.019] | 0.013 [0.009,0.019] | -0.0008 | 0.0217 | no_evidence_beyond_trailing_vol=1974, predicts_beyond_trailing_vol=26
+N1 linear rv20 | 2000 | 0.013 [0.008,0.018] | 1962 | 0.013 [0.008,0.019] | 0.013 [0.008,0.019] | +0.0004 | 0.0213 | insufficient_data=38, no_evidence_beyond_trailing_vol=1937, predicts_beyond_trailing_vol=25
+N3 V-shape rv20 | 2000 | 0.013 [0.009,0.019] | 2000 | 0.013 [0.009,0.019] | 0.013 [0.009,0.020] | +0.0005 | 0.0196 | no_evidence_beyond_trailing_vol=1973, not_robust:intercept=1, predicts_beyond_trailing_vol=26
+N6 pay(rv_long)+size(rv20) | 2000 | 0.020 [0.014,0.027] | 1988 | 0.020 [0.014,0.027] | 0.021 [0.015,0.028] | +0.0014 | 0.0209 | insufficient_data=12, no_evidence_beyond_trailing_vol=1947, not_robust:intercept=1, predicts_beyond_trailing_vol=40
+N8 alpha sd 0.3 | 2000 | 0.028 [0.021,0.036] | 1932 | 0.028 [0.022,0.037] | 0.029 [0.022,0.037] | +0.0007 | 0.0262 | insufficient_data=68, no_evidence_beyond_trailing_vol=1876, not_robust:intercept=1, predicts_beyond_trailing_vol=55
+N8b alpha non-equity -0.6 | 2000 | 0.032 [0.025,0.041] | 1970 | 0.032 [0.025,0.041] | 0.034 [0.026,0.043] | +0.0079 | 0.0208 | insufficient_data=30, no_evidence_beyond_trailing_vol=1903, not_robust:intercept=3, predicts_beyond_trailing_vol=64
+N9 one-factor drift +0.00 | 2000 | 0.015 [0.010,0.021] | 1987 | 0.015 [0.010,0.021] | 0.018 [0.012,0.024] | +0.0003 | 0.0181 | insufficient_data=13, no_evidence_beyond_trailing_vol=1952, not_robust:intercept=5, predicts_beyond_trailing_vol=30
+N9 one-factor drift +0.15 | 2000 | 0.001 [0.000,0.004] | 1781 | 0.001 [0.000,0.004] | 0.001 [0.000,0.004] | -0.0119 | 0.0168 | insufficient_data=219, no_evidence_beyond_trailing_vol=1779, predicts_beyond_trailing_vol=2
+N9 one-factor drift -0.15 | 2000 | 0.060 [0.050,0.072] | 2000 | 0.060 [0.050,0.072] | 0.135 [0.120,0.150] | +0.0188 | 0.0208 | no_evidence_beyond_trailing_vol=1731, not_robust:intercept=148, predicts_beyond_trailing_vol=121
+A both a.3 k.15 phi.85 | 2000 | 0.045 [0.037,0.056] | 1926 | 0.047 [0.038,0.058] | 0.049 [0.040,0.059] | -0.0011 | 0.0340 | insufficient_data=74, no_evidence_beyond_trailing_vol=1832, not_robust:intercept=3, predicts_beyond_trailing_vol=91
+A both a.3 k.25 phi.85 | 2000 | 0.071 [0.061,0.084] | 1933 | 0.074 [0.063,0.087] | 0.075 [0.064,0.088] | -0.0029 | 0.0444 | insufficient_data=67, no_evidence_beyond_trailing_vol=1788, not_robust:intercept=2, predicts_beyond_trailing_vol=143
+A time-only k.25 phi.85 | 2000 | 0.059 [0.049,0.070] | 1967 | 0.059 [0.049,0.071] | 0.062 [0.051,0.073] | -0.0044 | 0.0408 | insufficient_data=33, no_evidence_beyond_trailing_vol=1846, not_robust:intercept=4, predicts_beyond_trailing_vol=117
+B skew drift 0.00 | 2000 | 0.061 [0.051,0.072] | 2000 | 0.061 [0.051,0.072] | 0.072 [0.062,0.085] | +0.0116 | 0.0195 | no_evidence_beyond_trailing_vol=1855, not_robust:intercept=23, predicts_beyond_trailing_vol=122
+B skew drift +0.10 | 2000 | 0.028 [0.021,0.036] | 1997 | 0.028 [0.021,0.036] | 0.029 [0.022,0.037] | +0.0035 | 0.0182 | insufficient_data=3, no_evidence_beyond_trailing_vol=1940, not_robust:intercept=2, predicts_beyond_trailing_vol=55
+B 2022 block | 2000 | 0.005 [0.002,0.009] | 1857 | 0.005 [0.003,0.010] | 0.006 [0.003,0.011] | -0.0084 | 0.0163 | insufficient_data=143, no_evidence_beyond_trailing_vol=1846, not_robust:intercept=1, predicts_beyond_trailing_vol=10
+E alpha +-1.0 on 5 heaviest names | 2000 | 0.035 [0.028,0.045] | 1967 | 0.036 [0.028,0.045] | 0.037 [0.029,0.046] | -0.0081 | 0.0404 | insufficient_data=33, no_evidence_beyond_trailing_vol=1895, not_robust:intercept=1, predicts_beyond_trailing_vol=71
+Z2m vol moves away from name mean | 2000 | 0.045 [0.037,0.056] | 1970 | 0.046 [0.037,0.056] | 0.049 [0.040,0.059] | +0.0093 | 0.0158 | insufficient_data=30, no_evidence_beyond_trailing_vol=1874, not_robust:intercept=5, predicts_beyond_trailing_vol=91
+N4t rv_long thr=0.25 | 2000 | 0.013 [0.009,0.020] | 2000 | 0.013 [0.009,0.020] | 0.015 [0.010,0.021] | -0.0002 | 0.0274 | no_evidence_beyond_trailing_vol=1971, not_robust:intercept=2, predicts_beyond_trailing_vol=27
+N4u rv20 thr=0.25 | 2000 | 0.011 [0.007,0.016] | 2000 | 0.011 [0.007,0.016] | 0.011 [0.007,0.016] | -0.0020 | 0.0255 | no_evidence_beyond_trailing_vol=1979, predicts_beyond_trailing_vol=21
+N4t rv_long thr=0.30 | 2000 | 0.011 [0.007,0.017] | 1999 | 0.012 [0.007,0.017] | 0.013 [0.009,0.019] | -0.0030 | 0.0259 | insufficient_data=1, no_evidence_beyond_trailing_vol=1973, not_robust:intercept=3, predicts_beyond_trailing_vol=23
+N4u rv20 thr=0.30 | 2000 | 0.009 [0.005,0.014] | 2000 | 0.009 [0.005,0.014] | 0.010 [0.006,0.015] | -0.0012 | 0.0241 | no_evidence_beyond_trailing_vol=1980, not_robust:intercept=2, predicts_beyond_trailing_vol=18
+N4t rv_long thr=0.35 | 2000 | 0.021 [0.015,0.028] | 2000 | 0.021 [0.015,0.028] | 0.022 [0.016,0.029] | +0.0068 | 0.0245 | no_evidence_beyond_trailing_vol=1956, not_robust:intercept=2, predicts_beyond_trailing_vol=42
+N4u rv20 thr=0.35 | 2000 | 0.014 [0.009,0.020] | 2000 | 0.014 [0.009,0.020] | 0.015 [0.010,0.021] | -0.0004 | 0.0233 | no_evidence_beyond_trailing_vol=1971, not_robust:intercept=1, predicts_beyond_trailing_vol=28
+N4t rv_long thr=0.40 | 2000 | 0.011 [0.007,0.017] | 2000 | 0.011 [0.007,0.017] | 0.011 [0.007,0.017] | -0.0012 | 0.0226 | no_evidence_beyond_trailing_vol=1978, predicts_beyond_trailing_vol=22
+N4u rv20 thr=0.40 | 2000 | 0.022 [0.016,0.029] | 2000 | 0.022 [0.016,0.029] | 0.023 [0.017,0.031] | +0.0029 | 0.0232 | no_evidence_beyond_trailing_vol=1954, not_robust:intercept=2, predicts_beyond_trailing_vol=44
+N4t rv_long thr=0.42 | 2000 | 0.040 [0.032,0.050] | 1999 | 0.040 [0.032,0.050] | 0.041 [0.033,0.051] | +0.0086 | 0.0228 | insufficient_data=1, no_evidence_beyond_trailing_vol=1917, not_robust:intercept=2, predicts_beyond_trailing_vol=80
+N4u rv20 thr=0.42 | 2000 | 0.011 [0.007,0.017] | 2000 | 0.011 [0.007,0.017] | 0.011 [0.007,0.017] | +0.0004 | 0.0220 | no_evidence_beyond_trailing_vol=1977, predicts_beyond_trailing_vol=23
+N4t rv_long thr=0.45 | 2000 | 0.021 [0.015,0.028] | 2000 | 0.021 [0.015,0.028] | 0.021 [0.015,0.028] | +0.0048 | 0.0219 | no_evidence_beyond_trailing_vol=1958, predicts_beyond_trailing_vol=42
+N4u rv20 thr=0.45 | 2000 | 0.028 [0.021,0.036] | 2000 | 0.028 [0.021,0.036] | 0.029 [0.023,0.038] | +0.0049 | 0.0225 | no_evidence_beyond_trailing_vol=1941, not_robust:intercept=3, predicts_beyond_trailing_vol=56
+N4t rv_long thr=0.48 | 2000 | 0.007 [0.004,0.012] | 1999 | 0.008 [0.004,0.012] | 0.008 [0.005,0.013] | -0.0032 | 0.0209 | insufficient_data=1, no_evidence_beyond_trailing_vol=1983, not_robust:intercept=1, predicts_beyond_trailing_vol=15
+N4u rv20 thr=0.48 | 2000 | 0.016 [0.011,0.023] | 2000 | 0.016 [0.011,0.023] | 0.016 [0.011,0.023] | +0.0000 | 0.0225 | no_evidence_beyond_trailing_vol=1968, predicts_beyond_trailing_vol=32
+N4t rv_long thr=0.50 | 2000 | 0.009 [0.005,0.014] | 1998 | 0.009 [0.005,0.014] | 0.009 [0.005,0.014] | -0.0016 | 0.0207 | insufficient_data=2, no_evidence_beyond_trailing_vol=1981, predicts_beyond_trailing_vol=17
+N4u rv20 thr=0.50 | 2000 | 0.015 [0.010,0.021] | 1999 | 0.015 [0.010,0.021] | 0.016 [0.011,0.022] | +0.0001 | 0.0216 | insufficient_data=1, no_evidence_beyond_trailing_vol=1968, not_robust:intercept=1, predicts_beyond_trailing_vol=30
+N4t rv_long thr=0.60 | 2000 | 0.009 [0.005,0.014] | 2000 | 0.009 [0.005,0.014] | 0.009 [0.005,0.014] | -0.0045 | 0.0197 | no_evidence_beyond_trailing_vol=1982, predicts_beyond_trailing_vol=18
+N4u rv20 thr=0.60 | 2000 | 0.013 [0.008,0.018] | 1999 | 0.013 [0.008,0.018] | 0.013 [0.008,0.018] | -0.0016 | 0.0206 | insufficient_data=1, no_evidence_beyond_trailing_vol=1974, predicts_beyond_trailing_vol=25
+ALT pay a=0.05 | alpha 0.0 | 2000 | 0.045 [0.037,0.056] | 1407 | 0.065 [0.052,0.079] | 0.067 [0.054,0.081] | +0.0160 | 0.0218 | insufficient_data=593, no_evidence_beyond_trailing_vol=1313, not_robust:intercept=3, predicts_beyond_trailing_vol=91
+ALT pay a=0.10 | alpha 0.0 | 2000 | 0.167 [0.150,0.184] | 1390 | 0.240 [0.217,0.263] | 0.243 [0.221,0.267] | +0.0332 | 0.0228 | insufficient_data=610, no_evidence_beyond_trailing_vol=1052, not_robust:intercept=5, predicts_beyond_trailing_vol=333
+ALT pay a=0.15 | alpha 0.0 | 2000 | 0.338 [0.317,0.359] | 1383 | 0.489 [0.462,0.515] | 0.495 [0.469,0.522] | +0.0488 | 0.0227 | insufficient_data=617, no_evidence_beyond_trailing_vol=698, not_robust:intercept=9, predicts_beyond_trailing_vol=676
+ALT pay a=0.20 | alpha 0.0 | 2000 | 0.482 [0.460,0.505] | 1364 | 0.707 [0.683,0.732] | 0.714 [0.689,0.738] | +0.0642 | 0.0224 | insufficient_data=636, no_evidence_beyond_trailing_vol=390, not_robust:intercept=9, predicts_beyond_trailing_vol=965
+ALT pay a=0.25 | alpha 0.0 | 2000 | 0.598 [0.576,0.620] | 1319 | 0.907 [0.890,0.922] | 0.910 [0.893,0.925] | +0.0801 | 0.0218 | insufficient_data=681, no_evidence_beyond_trailing_vol=119, not_robust:intercept=4, predicts_beyond_trailing_vol=1196
+ALT pay a=0.30 | alpha 0.0 | 2000 | 0.624 [0.602,0.645] | 1277 | 0.977 [0.967,0.984] | 0.977 [0.968,0.985] | +0.0954 | 0.0213 | insufficient_data=723, no_evidence_beyond_trailing_vol=29, not_robust:intercept=1, predicts_beyond_trailing_vol=1247
+ALT pay a=0.40 | alpha 0.0 | 2000 | 0.605 [0.583,0.627] | 1210 | 1.000 [0.997,1.000] | 1.000 [0.997,1.000] | +0.1270 | 0.0224 | insufficient_data=790, predicts_beyond_trailing_vol=1210
+ALT pay a=0.20 | alpha 0.2 | 2000 | 0.444 [0.422,0.466] | 1345 | 0.660 [0.634,0.686] | 0.666 [0.640,0.691] | +0.0634 | 0.0250 | insufficient_data=655, no_evidence_beyond_trailing_vol=449, not_robust:intercept=8, predicts_beyond_trailing_vol=888
+ALT pay a=0.30 | alpha 0.2 | 2000 | 0.608 [0.586,0.629] | 1273 | 0.955 [0.942,0.966] | 0.955 [0.942,0.966] | +0.0963 | 0.0240 | insufficient_data=727, no_evidence_beyond_trailing_vol=57, predicts_beyond_trailing_vol=1216
+
+power curve (alpha 0.0, conditional on sufficient data): a, beyond-vol gap pp, power
+  a=0.05  gap= 2.20pp  power=0.065 [0.052,0.079]
+  a=0.10  gap= 4.37pp  power=0.240 [0.217,0.263]
+  a=0.15  gap= 6.52pp  power=0.489 [0.462,0.515]
+  a=0.20  gap= 8.64pp  power=0.707 [0.683,0.732]
+  a=0.25  gap=10.72pp  power=0.907 [0.890,0.922]
+  a=0.30  gap=12.77pp  power=0.977 [0.967,0.984]
+  a=0.40  gap=16.76pp  power=1.000 [0.997,1.000]
+MDE (linear interpolation of power in gap, 80%): 9.61 pp
+
+=== notes ===
+Module drift: beyond_vol.py was edited while this ran (frozen run sha bcfecaf7..., d3fix run 5b6014ef...,
+now b9e933fe...). Recheck on b9e933fe with the same seeds (frozen_check_recheck_*.txt): d3fix N0, N9 -0.15,
+A k.25, ALT a=0.20 reproduce bit-identically; frozen ALT a=0.30 differs by 1 replication in 1000 (16 vs 17
+no_evidence) -- a p-value at the 0.05 edge, immaterial.
+
+AS FROZEN, NOTHING CAN PASS: one period of the real panel has 39 equity names < N_MIN = 40, so
+_equity_gamma returns None there, eq_bar is None in every replication, and D3 ("equity_only") fires on every
+significant result. Power is 0.000 [0,0.006] even at a = 0.40 (16.8pp gap; raw p<.05 in 100%).
+d3fix = BV.N_MIN patched to 30 at runtime; on this panel (min 43 names) it changes only that equity check.
+
+"sufficient" = >= 3 stress episodes. Episodes come from the SIMULATED SPY payoff; the logit worlds give SPY
+a low pay rate (worst in the ALT worlds: 30-40% insufficient), an artifact -- the real panel's episodes are
+fixed by real SPY outcomes. Rates conditional on sufficient data are the relevant ones.
+
+Repo critical values (simulated fixed-b, T=81, L=16): mean-t 2.077, intercept-t 2.085 (adv3_L16 used the
+KV polynomial 2.114; that, plus fresh seeds, is the likely reason A k.25 reads 0.074 here vs 0.060 there -- not isolated).
+
+MDE: linear interpolation between a=0.20 (8.64pp, 0.707) and a=0.25 (10.72pp, 0.907) -> 9.61pp, i.e.
+MDE_PAY_RATE_GAP = 0.096 (9.6pp). With name effects alpha sd 0.2: 0.660 at 8.64pp, 0.955 at 12.77pp -> ~10.6pp.

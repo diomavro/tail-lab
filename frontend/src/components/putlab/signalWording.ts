@@ -1,10 +1,15 @@
 import type {
+  BeyondVolCi,
+  BeyondVolDemotion,
+  BeyondVolMode,
+  BeyondVolTest,
   SignalNameRecord,
   SignalPaidGroup,
   SignalTestResult,
   SignalVerdict,
   SignalVerdictStatus,
 } from '../../api/client'
+import { PREREGISTERED } from './preregistered'
 import { deltaLabel } from './types'
 
 // Wording for the out-of-sample signal test, shared by the Bake-off headline
@@ -117,4 +122,130 @@ export function nameSummary(rec: SignalNameRecord, topK: number): string | null 
   const picked = c.picked.n < MIN_GROUP ? 'too few to judge' : paidText(c.picked).replace(/^(\d+) of (\d+) paid/, '$1 of those $2 paid')
   const other = c.other.n < MIN_GROUP ? 'too few to judge' : `${c.other.n_paid} of ${c.other.n}`
   return `Composite put it in the top ${topK} in ${c.n_picked_periods} of ${rec.n_eligible_periods} periods; ${picked}, vs ${other} otherwise.`
+}
+
+// ---- Fragility beyond trailing vol (Fama-MacBeth, ADR 0035) ----
+
+/** A coefficient to three decimals with an explicit sign and a true minus. */
+export const signed3 = (x: number): string => `${x < 0 ? MINUS : '+'}${Math.abs(x).toFixed(3)}`
+
+const DEMOTION_TEXT: Record<BeyondVolDemotion, string> = {
+  intercept: 'it is no longer significant once the market’s own move is netted out',
+  drop_best_period: 'it disappears without its single best period',
+  drop_best_episode: 'it disappears without its best stress episode',
+  equity_only: 'it is absent among equity names alone, or could not be checked there',
+}
+
+/** What the sentence is: a run's mode, or no test at all. */
+export type BeyondVolLineMode = BeyondVolMode | 'unavailable'
+
+export interface BeyondVolLine {
+  mode: BeyondVolLineMode
+  text: string
+  /** Printed after the sentence, behind a concept tooltip. Null when none applies. */
+  caveat: string | null
+}
+
+const lowerFirst = (s: string): string => s.charAt(0).toLowerCase() + s.slice(1)
+
+const SURFACE_CAVEAT = 'Beyond this vol surface only.'
+const NOT_READ = 'The test of fragility beyond trailing vol could not be read.'
+
+function estimate(gammaBar: number, ci: BeyondVolCi): string {
+  return `γ̄ = ${signed3(gammaBar)}, 90% CI [${signed3(ci.low)}, ${signed3(ci.high)}]`
+}
+
+/** The p-value clause (", p = 0.012"), or '' when there is nothing true to
+ *  print. A value that rounds to 0.05 or more while p < 0.05 reads "p < 0.05",
+ *  and a "pass" status with p at or above 0.05 prints no p at all: the page
+ *  never shows a number that contradicts the status beside it. */
+export function pClause(p: number | null, passing: boolean): string {
+  if (p == null || Number.isNaN(p)) return ''
+  if (passing && p >= 0.05) return ''
+  if (p < 0.001) return ', p < 0.001'
+  const rounded = p.toFixed(3)
+  if (p < 0.05 && Number(rounded) >= 0.05) return ', p < 0.05'
+  return `, p = ${rounded}`
+}
+
+/** Why a test could not be read as an estimate. The same words on every path. */
+function notEnough(bv: BeyondVolTest): string {
+  return `Not enough to test: ${bv.n_periods} periods measured (${bv.n_skipped} skipped for fewer than 40 names), and the test needs at least 24 periods and 3 stress episodes.`
+}
+
+/** The pre-registered result, quoted beside a later re-run so the two are never confused. */
+function preregisteredText(): string {
+  const P = PREREGISTERED
+  return `The pre-registered test, on data to ${P.as_of}, found no evidence (γ̄ ${signed3(P.gamma_bar)}, 90% CI [${signed3(P.ci90_low)}, ${signed3(P.ci90_high)}], p = ${P.p_value}; ADR 0035).`
+}
+
+/** The confirmatory sentence for each status; the status is not trusted to be one we know. */
+function confirmatoryLine(bv: BeyondVolTest, est: string): BeyondVolLine {
+  const mode = 'confirmatory'
+  const p = (passing: boolean) => pClause(bv.p_value, passing)
+  switch (bv.status) {
+    case 'no_evidence_beyond_trailing_vol': {
+      const wholeBelowZero = bv.ci90 != null && bv.ci90.high < 0
+      return {
+        mode,
+        text: wholeBelowZero
+          ? `Controlling for trailing vol, the composite predicted worse put outcomes, not better (${est}; the 90% CI is wholly below zero).`
+          : `Controlling for trailing vol, there is no evidence the composite predicts better put outcomes (${est}); this test would catch a pay-rate gap of about ${(bv.mde_pay_rate_gap * 100).toFixed(1)} points 80% of the time.`,
+        caveat: SURFACE_CAVEAT,
+      }
+    }
+    case 'predicts_beyond_trailing_vol':
+      return {
+        mode,
+        text: `Fragility predicted put outcomes beyond trailing vol (${est}${p(true)}), possibly through their exposure to market crashes; under model pricing this means they moved more than their trailing vol implied, which real option prices may already reflect.`,
+        caveat: SURFACE_CAVEAT,
+      }
+    case 'not_robust':
+      return {
+        mode,
+        text: `Controlling for trailing vol the composite looks significant (${est}${p(true)}), but the result is not robust, so it is not a pass: ${bv.demotion == null ? 'a robustness check failed' : (DEMOTION_TEXT[bv.demotion] ?? 'a robustness check failed')}.`,
+        caveat: SURFACE_CAVEAT,
+      }
+    case 'insufficient_data':
+      return { mode, text: notEnough(bv), caveat: null }
+    default: {
+      const unknown: never = bv.status
+      void unknown
+      return { mode: 'unavailable', text: NOT_READ, caveat: null }
+    }
+  }
+}
+
+/** The one sentence on whether the composite predicts beyond trailing vol,
+ *  built from the API fields (PLAN_FM section 5).
+ *
+ *  Only a `confirmatory` run (the pre-registered setting on the pre-registered
+ *  date) gets a p-value and a verdict. A `monitoring` re-run and an
+ *  `exploratory` setting read gamma_bar and its CI only: the server sends
+ *  `p_value` and `status` regardless, so this is the line that enforces it. A
+ *  missing or unknown mode is exploratory, never confirmatory. */
+export function beyondVolLine(
+  r: Pick<SignalTestResult, 'beyond_vol' | 'beyond_vol_mode' | 'beyond_vol_unavailable_reason' | 'as_of'>,
+): BeyondVolLine {
+  const bv = r.beyond_vol
+  if (bv == null) {
+    const why = r.beyond_vol_unavailable_reason
+    return {
+      mode: 'unavailable',
+      text: `The test of fragility beyond trailing vol could not be run on these periods${why == null ? '' : ` (${why})`}.`,
+      caveat: null,
+    }
+  }
+  const mode: BeyondVolMode = r.beyond_vol_mode === 'confirmatory' || r.beyond_vol_mode === 'monitoring' ? r.beyond_vol_mode : 'exploratory'
+  if (mode === 'confirmatory') {
+    return bv.gamma_bar == null || bv.ci90 == null
+      ? { mode, text: notEnough(bv), caveat: null }
+      : confirmatoryLine(bv, estimate(bv.gamma_bar, bv.ci90))
+  }
+  const label =
+    mode === 'monitoring'
+      ? `Re-run on data to ${r.as_of} (monitoring, not the pre-registered test)`
+      : 'Exploratory (not the pre-registered setting)'
+  const body = bv.gamma_bar == null || bv.ci90 == null ? lowerFirst(notEnough(bv)) : `${estimate(bv.gamma_bar, bv.ci90)}.`
+  return { mode, text: `${label}: ${body}${mode === 'monitoring' ? ` ${preregisteredText()}` : ''}`, caveat: null }
 }

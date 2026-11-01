@@ -1,6 +1,7 @@
 import { type ReactNode, useMemo, useState } from 'react'
 import type { SignalPeriodRecord, SignalScreenSummary, SignalTestResult } from '../../api/client'
 import { CONCEPTS, isConceptId } from '../../content/concepts'
+import { BeyondVolSentence, GammaChart } from './BeyondVol'
 import { ConceptInfo } from './ConceptInfo'
 import { fmtFixed, fmtP, fmtPct } from './format'
 import { exBestText, pct1, sentenceText, STATUS_LABEL, STATUS_TAG, windowText } from './signalWording'
@@ -269,6 +270,7 @@ export function SignalPanel({
         </span>{' '}
         {sentenceText(v)} {carried}
       </p>
+      <BeyondVolSentence result={result} />
       <p className="pl-note" data-testid="signal-window">
         {windowText(result)}
         <ConceptInfo id="test_window" />
@@ -288,6 +290,7 @@ export function SignalPanel({
         ),
       )}
       {result.periods.length > 0 && <ExcessChart periods={result.periods} topK={result.top_k} />}
+      {result.beyond_vol_mode === 'confirmatory' && result.beyond_vol != null && <GammaChart bv={result.beyond_vol} />}
       <SignalTable r={result} label={tableLabel} />
       <p className="pl-micro" data-testid="signal-provenance">
         As of {result.as_of} · {result.snapshot_ids.length} bronze snapshot{result.snapshot_ids.length === 1 ? '' : 's'}{' '}

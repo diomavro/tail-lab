@@ -1,0 +1,8 @@
+L = 3 cv = 1.7536
+module sha256 6648196d39638cb975fd120cce7153365a88af7f45c2dba81bf600ae6dc4744f
+MODE=frozen repo beyond_vol_test, L=16, N_MIN=40, T=81, reps/world=2000
+world | P(status=predicts) [CP95] | P(p<0.05) [CP95] | mean gbar | sd gbar | statuses
+N0 pure noise | 0.013 [0.009,0.019] | 0.013 [0.009,0.019] | -0.0008 | 0.0217 | no_evidence_beyond_trailing_vol=1974, predicts_beyond_trailing_vol=26  (169s)
+N9 one-factor drift -0.15 | 0.060 [0.050,0.071] | 0.135 [0.120,0.150] | +0.0188 | 0.0208 | no_evidence_beyond_trailing_vol=1731, not_robust:intercept=149, predicts_beyond_trailing_vol=120  (345s)
+ALT pay a=0.20 | alpha 0.0 | 0.482 [0.460,0.505] | 0.487 [0.465,0.509] | +0.0642 | 0.0224 | insufficient_data=636, no_evidence_beyond_trailing_vol=390, not_robust:intercept=9, predicts_beyond_trailing_vol=965  (514s)
+ALT pay a=0.25 | alpha 0.0 | 0.598 [0.576,0.620] | 0.600 [0.578,0.622] | +0.0801 | 0.0218 | insufficient_data=681, no_evidence_beyond_trailing_vol=119, not_robust:intercept=4, predicts_beyond_trailing_vol=1196  (622s)

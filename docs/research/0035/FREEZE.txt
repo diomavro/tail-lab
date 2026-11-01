@@ -1,0 +1,8 @@
+FREEZE RECORD 2026-11-01T10:10:30Z
+commit ef31431c15c05f95b9b08db41b52997da46ff533
+6648196d39638cb975fd120cce7153365a88af7f45c2dba81bf600ae6dc4744f  src/tail_lab/research/backtest/beyond_vol.py
+704cc2dea6fe74ca50fa3b2f3fd7b461696b5c17972169d2a94e7cdebea270f5  src/tail_lab/research/backtest/walk_forward.py
+f6bf0a400a50128598f1425f75ad5959826f0e790133dfaf68ed97c803500a63  /tmp/claude-1001/-home-dio-Documents-apps/5c4474db-e24d-40fe-bff2-9dbfe880639c/scratchpad/fm/PLAN_FM.md
+numpy 2.5.2 scipy 1.18.0
+crit_T81 2.0768723973380223
+crit_a_T81 2.0925209387579167

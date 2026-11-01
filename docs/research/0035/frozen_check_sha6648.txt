@@ -1,0 +1,15 @@
+L = 3 cv = 1.7536
+module sha256 6648196d39638cb975fd120cce7153365a88af7f45c2dba81bf600ae6dc4744f
+MODE=frozen repo beyond_vol_test, L=16, N_MIN=40, T=81, reps/world=1000
+world | P(status=predicts) [CP95] | P(p<0.05) [CP95] | mean gbar | sd gbar | statuses
+N0 pure noise | 0.011 [0.006,0.020] | 0.011 [0.006,0.020] | -0.0013 | 0.0216 | no_evidence_beyond_trailing_vol=989, predicts_beyond_trailing_vol=11  (104s)
+N8 alpha sd 0.3 | 0.023 [0.015,0.034] | 0.024 [0.015,0.036] | +0.0001 | 0.0258 | insufficient_data=33, no_evidence_beyond_trailing_vol=943, not_robust:intercept=1, predicts_beyond_trailing_vol=23  (147s)
+N8b alpha non-equity -0.6 | 0.025 [0.016,0.037] | 0.029 [0.020,0.041] | +0.0072 | 0.0203 | insufficient_data=16, no_evidence_beyond_trailing_vol=955, not_robust:intercept=4, predicts_beyond_trailing_vol=25  (225s)
+N9 one-factor drift -0.15 | 0.049 [0.036,0.064] | 0.133 [0.113,0.156] | +0.0186 | 0.0205 | no_evidence_beyond_trailing_vol=867, not_robust:intercept=84, predicts_beyond_trailing_vol=49  (289s)
+A both a.3 k.25 phi.85 | 0.075 [0.059,0.093] | 0.077 [0.061,0.095] | -0.0013 | 0.0446 | insufficient_data=38, no_evidence_beyond_trailing_vol=885, not_robust:intercept=2, predicts_beyond_trailing_vol=75  (357s)
+B skew drift 0.00 | 0.068 [0.053,0.085] | 0.084 [0.068,0.103] | +0.0121 | 0.0196 | no_evidence_beyond_trailing_vol=916, not_robust:intercept=16, predicts_beyond_trailing_vol=68  (430s)
+E alpha +-1.0 on 5 heaviest names | 0.037 [0.026,0.051] | 0.037 [0.026,0.051] | -0.0097 | 0.0413 | insufficient_data=20, no_evidence_beyond_trailing_vol=943, predicts_beyond_trailing_vol=37  (482s)
+Z2m vol moves away from name mean | 0.050 [0.037,0.065] | 0.053 [0.040,0.069] | +0.0093 | 0.0163 | insufficient_data=12, no_evidence_beyond_trailing_vol=935, not_robust:intercept=3, predicts_beyond_trailing_vol=50  (559s)
+N4t rv_long thr=0.42 | 0.044 [0.032,0.059] | 0.045 [0.033,0.060] | +0.0088 | 0.0226 | insufficient_data=1, no_evidence_beyond_trailing_vol=954, not_robust:intercept=1, predicts_beyond_trailing_vol=44  (640s)
+ALT pay a=0.20 | alpha 0.0 | 0.496 [0.465,0.527] | 0.501 [0.470,0.532] | +0.0636 | 0.0222 | insufficient_data=301, no_evidence_beyond_trailing_vol=198, not_robust:intercept=5, predicts_beyond_trailing_vol=496  (691s)
+ALT pay a=0.25 | alpha 0.0 | 0.595 [0.564,0.626] | 0.598 [0.567,0.629] | +0.0794 | 0.0226 | insufficient_data=328, no_evidence_beyond_trailing_vol=74, not_robust:intercept=3, predicts_beyond_trailing_vol=595  (742s)

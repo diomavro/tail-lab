@@ -24,10 +24,10 @@ from tail_lab.contracts.options_expiry import dataset_id as options_expiry_datas
 from tail_lab.lake.store import DeltaLakeStore
 from tail_lab.research.backtest.hedge_overlay import HedgeOverlayResult
 from tail_lab.research.backtest.metric_screen import MetricScreenComparison
+from tail_lab.research.backtest.signal_test import SignalTestResult
 from tail_lab.research.backtest.walk_forward import (
     Evaluation,
     NameRecord,
-    SignalTestResult,
     evaluate_screens,
 )
 
@@ -1979,7 +1979,7 @@ def test_a_repeat_bakeoff_is_served_from_the_memo(
     assert spawned == []
 
 
-# --- The out-of-sample signal test (research/backtest/walk_forward.py) ---
+# --- The out-of-sample signal test (research/backtest/signal_test.py) ---
 
 
 def _count_walk_forward(monkeypatch: pytest.MonkeyPatch, *symbols: str) -> list[dict[str, object]]:
@@ -2008,6 +2008,45 @@ def test_signal_test_returns_the_walk_forward_result_on_the_real_path(client: Te
     assert body["strike_rule"] == "delta"
     assert body["target_delta"] == 0.10
     assert body["verdict"]["status"] == "insufficient_data"
+
+
+def test_the_beyond_vol_fields_reach_the_response_and_ride_the_memo(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The Fama-MacBeth verdict, its mode and the reason it was not run are part
+    of the signal-test body, served from the one memo entry (a second GET does
+    not recompute), and the run's own mode is what the API reports."""
+    from tail_lab.research.backtest.beyond_vol import beyond_vol_test
+
+    calls: list[dict[str, object]] = []
+    planted = _fake_signal_result("aapl").model_copy(
+        update={"beyond_vol": beyond_vol_test([]), "beyond_vol_mode": "confirmatory"}
+    )
+
+    def fake(*_args: object, **kwargs: object) -> SignalTestResult:
+        calls.append(kwargs)
+        return planted
+
+    monkeypatch.setattr(putlab_routes, "walk_forward", fake)
+    monkeypatch.setattr(putlab_routes._SIGNAL_TEST_CACHE, "_spawn", lambda _f: None)
+    first = client.get("/api/putlab/signal-test").json()
+    second = client.get("/api/putlab/signal-test").json()
+    assert first["beyond_vol_mode"] == "confirmatory"
+    assert first["beyond_vol_unavailable_reason"] is None
+    assert first["beyond_vol"]["status"] == "insufficient_data"
+    assert first["beyond_vol"]["mde_pay_rate_gap"] == 0.096
+    assert first["beyond_vol"] == second["beyond_vol"]
+    assert len(calls) == 1
+
+
+def test_the_warmed_signal_test_is_the_preregistered_beyond_vol_setting() -> None:
+    """One constant, not two that agree today: the setting the Fama-MacBeth
+    test was pre-registered at is the one the server warms. (Whether a result is
+    confirmatory also depends on its date: ``signal_test.FREEZE_AS_OF``. The
+    warmed result on a later date is a monitoring re-run.)"""
+    from tail_lab.research.backtest.signal_test import CONFIRMATORY_SETTING
+
+    assert putlab_routes._WARM_SIGNAL_TEST is CONFIRMATORY_SETTING
 
 
 def test_signal_test_and_its_per_name_route_share_one_compute(

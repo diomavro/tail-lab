@@ -735,3 +735,135 @@ def test_the_frozen_knots_and_asset_class_list_match_the_plan() -> None:
         40,
         0.05,
     )
+
+
+# ==========================================================================
+# The outcome is the ROI rank, not the payoff rank (varying cost)
+# ==========================================================================
+
+
+def _cost_world(a: float, b: float, seed: int = 2) -> list[PeriodInputs]:
+    """Payoff ``exp(a*u + noise)`` and cost ``exp(b*u)`` for ``u`` the composite's
+    rank in [0, 1]. ROI is ``exp((a - b) u + noise) - 1``: at ``b == a`` it does not
+    depend on fragility at all, while the PAYOFF still does (a payoff-ranking
+    implementation sees a strong effect). At ``b == 0`` the two rank alike."""
+    rng = np.random.default_rng(seed + 100)
+    out = []
+    for p in _panel(seed=seed):
+        u = bv._rank_scaled(p.signals[bv.COMPOSITE]) + 0.5
+        pay = np.exp(a * u + rng.normal(0.0, 0.5, len(u)))
+        out.append(replace(p, payoff=pay, cost=np.exp(b * u)))
+    return out
+
+
+def _ols_gamma(per: PeriodInputs, y_raw: FloatArray, keep: npt.NDArray[np.bool_]) -> float:
+    """gamma on the composite from a plain least-squares fit of the rank of
+    ``y_raw`` within ``keep`` (the dummy only where the full design has it)."""
+    X = bv._design(per, keep, with_dummy=bool(keep.all()))
+    return float(np.linalg.lstsq(X, bv._rank_scaled(y_raw[keep]), rcond=None)[0][1])
+
+
+def _spy_equity_bar(monkeypatch: pytest.MonkeyPatch) -> list[float | None]:
+    """Record what ``_equity_bar`` returns (the value D3 is decided on; it is
+    computed for every run, even those whose intercept test short-circuits D3)."""
+    seen: list[float | None] = []
+    real = bv._equity_bar
+
+    def spy(gammas: list[float | None], n_decision: int) -> float | None:
+        seen.append(real(gammas, n_decision))
+        return seen[-1]
+
+    monkeypatch.setattr(bv, "_equity_bar", spy)
+    return seen
+
+
+def test_the_decision_ranks_roi_not_payoff_when_cost_varies() -> None:
+    """N2. Cost rises with fragility exactly as fast as payoff, so ROI is unrelated
+    to fragility and the verdict is 'no evidence'; gamma_bar is the mean of the
+    least-squares slopes of the ROI rank. The same payoffs at a constant cost pass,
+    and the payoff-rank gamma (what a mutation would report) is far from ours."""
+    world = _cost_world(2.0, 2.0)
+    res = bv.beyond_vol_test(world)
+    everyone = [np.ones(len(p.symbols), dtype=bool) for p in world]
+    by_roi = np.mean(
+        [_ols_gamma(p, p.payoff / p.cost - 1.0, k) for p, k in zip(world, everyone, strict=True)]
+    )
+    by_payoff = np.mean([_ols_gamma(p, p.payoff, k) for p, k in zip(world, everyone, strict=True)])
+    assert res.gamma_bar == pytest.approx(by_roi, abs=1e-9)
+    assert abs(by_roi) < 0.1 and by_payoff > 0.7  # the mutation would be visible
+    assert res.status == "no_evidence_beyond_trailing_vol"
+    assert res.p_value is not None and res.p_value > 0.5
+    assert bv.beyond_vol_test(_cost_world(2.0, 0.0)).status == "predicts_beyond_trailing_vol"
+
+
+def test_d3_ranks_roi_not_payoff_and_averages_the_measured_equity_periods(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """N3. D3 is decided on the mean over periods of the equity-only gamma of the
+    ROI rank (ranks recomputed inside the equity names), not of the payoff rank."""
+    world = _cost_world(2.0, 2.0)
+    seen = _spy_equity_bar(monkeypatch)
+    bv.beyond_vol_test(world)
+    equity = [np.array([s not in bv.NON_EQUITY for s in p.symbols]) for p in world]
+    by_roi = np.mean(
+        [_ols_gamma(p, p.payoff / p.cost - 1.0, k) for p, k in zip(world, equity, strict=True)]
+    )
+    by_payoff = np.mean([_ols_gamma(p, p.payoff, k) for p, k in zip(world, equity, strict=True)])
+    assert seen == [pytest.approx(by_roi, abs=1e-9)]
+    assert abs(by_roi) < 0.1 and by_payoff > 0.7
+
+
+def test_equity_only_gamma_bar_is_the_mean_over_the_measured_periods(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """N16. Unmeasurable periods (None) are left out of the mean, not counted as
+    zero: of 30 periods, 10 at +0.2, 10 at -0.05, 10 unmeasured -> 0.075 (zero-fill
+    would give 0.05; a mean over all 30 with NaN would be NaN)."""
+    script = {0: 0.2, 1: None, 2: -0.05}
+    calls = iter(script[i % 3] for i in range(T))
+    monkeypatch.setattr(bv, "_equity_gamma", lambda *_a: next(calls))
+    seen = _spy_equity_bar(monkeypatch)
+    bv.beyond_vol_test(_panel(seed=2, effect=1.5))
+    assert seen == [pytest.approx(0.075)]
+
+
+# ==========================================================================
+# The HAC intercept's standard error, by hand
+# ==========================================================================
+
+
+def _hac_by_loops(g: list[float], z: list[float], bandwidth: int) -> tuple[float, float, float]:
+    """(a, b, t_a) from plain-Python OLS and a Bartlett sandwich with weights
+    ``1 - lag / (bandwidth + 1)`` on lags up to ``min(bandwidth, T - 1)``."""
+    n = len(g)
+    sz, szz = sum(z), sum(x * x for x in z)
+    sg, szg = sum(g), sum(x * y for x, y in zip(z, g, strict=True))
+    det = n * szz - sz * sz
+    a, b = (szz * sg - sz * szg) / det, (n * szg - sz * sg) / det
+    score = [(u, x * u) for x, u in ((x, y - a - b * x) for x, y in zip(z, g, strict=True))]
+    S = [[sum(s[k] * s[ell] for s in score) for ell in range(2)] for k in range(2)]
+    for lag in range(1, min(bandwidth, n - 1) + 1):
+        w = 1.0 - lag / (bandwidth + 1.0)
+        for t in range(lag, n):
+            for k in range(2):
+                for ell in range(2):
+                    S[k][ell] += w * (
+                        score[t][k] * score[t - lag][ell] + score[t - lag][k] * score[t][ell]
+                    )
+    row = (szz / det, -sz / det)  # first row of (Z'Z)^-1
+    var_a = sum(row[k] * S[k][ell] * row[ell] for k in range(2) for ell in range(2))
+    return a, b, a / math.sqrt(var_a)
+
+
+def test_the_hac_intercept_se_matches_a_hand_calculation() -> None:
+    """N11. T = 6, L = 2 (Bartlett weights 2/3 and 1/3), then T = 4 with the
+    fixed L = 16 so lags stop at T - 1 = 3 and the weights are 1 - lag/17. The
+    second case is small enough to check by hand: var(a) = 1/68 and a = 1.5."""
+    g, z = [1.0, -1.0, 2.0, 0.0, 3.0, 1.0], [0.0, 1.0, 0.0, 1.0, 2.0, -1.0]
+    a, b, t = (float(v) for v in bv._hac_intercept(np.array(g), np.array(z), 2))
+    assert (a, b, t) == pytest.approx(_hac_by_loops(g, z, 2))
+    assert t == pytest.approx(4.41797023382637)
+    a, b, t = (float(v) for v in bv._hac_intercept(np.array(g[:4]), np.array(z[:4]), 16))
+    assert (a, b) == (pytest.approx(1.5), pytest.approx(-2.0))
+    assert t == pytest.approx(1.5 / math.sqrt(1.0 / 68.0))
+    assert (a, b, t) == pytest.approx(_hac_by_loops(g[:4], z[:4], 16))

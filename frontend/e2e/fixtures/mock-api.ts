@@ -130,8 +130,18 @@ export async function mockPutLabApi(page: Page, opts: MockOptions = {}): Promise
                 ? SIGNAL_TEST_CRASH_CARRIED
                 : SIGNAL_TEST_BEATS
         const delta = q.get('strike_rule') === 'delta'
+        // The beyond-trailing-vol test is confirmatory at the pre-registered
+        // setting only (0.10 delta, 4w, 4y, top 5; the fixtures are as of the
+        // pre-registered date), as the server decides it.
+        const confirmatory =
+          delta &&
+          Number(q.get('target_delta')) === 0.1 &&
+          Number(q.get('tenor_weeks')) === 4 &&
+          Number(q.get('signal_years')) === 4 &&
+          Number(q.get('top_k')) === 5
         return json(route, {
           ...base,
+          beyond_vol_mode: confirmatory ? 'confirmatory' : 'exploratory',
           strike_rule: delta ? 'delta' : 'moneyness',
           target_delta: delta ? Number(q.get('target_delta')) : null,
           moneyness_pct: delta ? null : Number(q.get('moneyness_pct')),

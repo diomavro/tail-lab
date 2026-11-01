@@ -163,7 +163,9 @@ src/tail_lab/
 │   └── backtest/
 │       ├── engine.py            # Simulation clock; reads ONLY via lake/asof.py.
 │       ├── compare.py           # Cross-metric backtest comparison.
-│       └── walk_forward.py      # Out-of-sample signal test: rank at t, buy at t (docs/adr/0033).
+│       ├── walk_forward.py      # Out-of-sample signal test: rank at t, buy at t (docs/adr/0033). Statistics + collection.
+│       ├── beyond_vol.py        # Fama-MacBeth test of fragility beyond trailing vol (docs/adr/0035). FROZEN; imports walk_forward.
+│       └── signal_test.py       # Top layer: walk_forward() + beyond_vol on the same periods; SignalTestResult (docs/adr/0033, 0035).
 │
 └── api/                       # FastAPI app. The ONLY layer the frontend talks to.
     ├── main.py                 # Composition root: middleware, router includes.

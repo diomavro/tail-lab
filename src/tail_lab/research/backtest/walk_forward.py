@@ -110,7 +110,7 @@ from tail_lab.research.backtest.ranking import (
     _returns,
     composite_scores,
 )
-from tail_lab.research.backtest.strike_rule import ByDelta, ByMoneyness, StrikeRule
+from tail_lab.research.backtest.strike_rule import ByMoneyness, StrikeRule
 from tail_lab.research.dividends import DividendLookup, dividend_lookup
 from tail_lab.research.regimes.timeline import (
     VIX_DATASET,
@@ -348,24 +348,6 @@ class Evaluation(BaseModel):
     caveats: list[str] = Field(default_factory=lambda: list(CAVEATS))
     per_name: list[NameRecord]
     diagnostics: Diagnostics
-
-
-class SignalTestResult(Evaluation):
-    as_of: dt.date
-    moneyness_pct: float | None
-    strike_rule: Literal["moneyness", "delta"]
-    target_delta: float | None
-    tenor_weeks: float
-    signal_years: float
-    top_k: int
-    n_random: int
-    seed: int
-    universe_size: int
-    #: The bronze snapshots read (VIX, SPY, one set per loaded name, the
-    #: dividend snapshot) and the code that computed it; ``code_sha`` is
-    #: filled in by the API route, which may read ``Settings``.
-    snapshot_ids: list[str] = Field(default_factory=list)
-    code_sha: str = "unknown"
 
 
 # --------------------------------------------------------------------------
@@ -1352,56 +1334,3 @@ def collect_periods(
     dividend_ids = [spy_dividends.snapshot_id] if spy_dividends.snapshot_id else []
     ordered = dict.fromkeys([*snapshot_ids, *name_snapshot_ids, *dividend_ids])
     return Collected(periods, diag, tuple(n.symbol for n in names), tuple(ordered))
-
-
-def walk_forward(
-    store: LakeStore,
-    *,
-    symbols: Sequence[str],
-    as_of: dt.date,
-    rule: StrikeRule,
-    tenor_weeks: float,
-    signal_years: float = 4.0,
-    top_k: int = 5,
-    n_random: int = 2000,
-    seed: int = 0,
-) -> SignalTestResult:
-    """The out-of-sample signal test over ``symbols`` as of ``as_of``.
-
-    Point-in-time throughout (see the module docstring); ``rule`` is the
-    strike rule every roll uses (the API defaults to ``ByDelta(0.10)`` -- at
-    realised vol, labelled so). Raises ``LookupError`` if VIX or SPY is
-    missing; a universe too thin for any period returns an
-    ``insufficient_data`` verdict rather than raising."""
-    collected = collect_periods(
-        store,
-        symbols=symbols,
-        as_of=as_of,
-        rule=rule,
-        tenor_weeks=tenor_weeks,
-        signal_years=signal_years,
-        top_k=top_k,
-    )
-    evaluation = evaluate_screens(
-        collected.periods,
-        top_k=top_k,
-        n_random=n_random,
-        seed=seed,
-        diagnostics=collected.diagnostics,
-    )
-    return SignalTestResult.model_validate(
-        {
-            **{f: getattr(evaluation, f) for f in Evaluation.model_fields},
-            "as_of": as_of,
-            "moneyness_pct": rule.pct if isinstance(rule, ByMoneyness) else None,
-            "strike_rule": rule.kind,
-            "target_delta": rule.target if isinstance(rule, ByDelta) else None,
-            "tenor_weeks": tenor_weeks,
-            "signal_years": signal_years,
-            "top_k": top_k,
-            "n_random": n_random,
-            "seed": seed,
-            "universe_size": len(collected.loaded),
-            "snapshot_ids": list(collected.snapshot_ids),
-        }
-    )

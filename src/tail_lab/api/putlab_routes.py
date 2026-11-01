@@ -94,6 +94,11 @@ from tail_lab.research.backtest.quote_fills import panel_snapshot_id
 from tail_lab.research.backtest.ranking import BENCHMARK, UniverseRanking, rank_universe
 from tail_lab.research.backtest.regime_verdict import RegimeVerdict, compute_regime_verdict
 from tail_lab.research.backtest.roll_schedule import RollSchedule, build_roll_schedule
+from tail_lab.research.backtest.signal_test import (
+    CONFIRMATORY_SETTING,
+    SignalTestResult,
+    walk_forward,
+)
 from tail_lab.research.backtest.strike_preview import StrikePreview, preview_strikes
 from tail_lab.research.backtest.strike_rule import (
     MAX_TARGET_DELTA,
@@ -104,7 +109,7 @@ from tail_lab.research.backtest.strike_rule import (
     UnreachableDeltaError,
 )
 from tail_lab.research.backtest.sweep import run_sweep
-from tail_lab.research.backtest.walk_forward import NameRecord, SignalTestResult, walk_forward
+from tail_lab.research.backtest.walk_forward import NameRecord
 from tail_lab.research.cadence import resolve_cadence
 from tail_lab.research.data_quality import DataQualityReport, assess_asset_quality
 from tail_lab.research.dividends import dividend_lookup, dividend_snapshot_id
@@ -163,7 +168,7 @@ _WARM_BAKEOFF: tuple[StrikeRule, float, float, int] = (
     5,
 )
 
-#: The out-of-sample signal test (`research/backtest/walk_forward.py`), keyed
+#: The out-of-sample signal test (`research/backtest/signal_test.py`), keyed
 #: by (rule, tenor, signal years, top_k, as_of) -- no symbol: the per-name
 #: route reads its record out of this same entry. A RefreshingMemo for the
 #: reasons of the two above.
@@ -171,9 +176,10 @@ _SIGNAL_TEST_CACHE: RefreshingMemo[tuple[StrikeRule, float, float, int, str], Si
     RefreshingMemo(name="signal_test", fresh_s=15 * 60.0, serve_stale_s=24 * 3600.0)
 )
 #: The signal test the Workspace's strip reads (`STRIP_SIGNAL_TEST` in the
-#: frontend's putlab/types.ts): 0.10 delta, 4-week puts, 4 years, top 5.
-#: Warmed after the bake-off each day.
-_WARM_SIGNAL_TEST: tuple[StrikeRule, float, float, int] = (ByDelta(0.10), 4.0, 4.0, 5)
+#: frontend's putlab/types.ts): 0.10 delta, 4-week puts, 4 years, top 5 --
+#: the setting the beyond-volatility test was pre-registered at, so it is
+#: `signal_test.CONFIRMATORY_SETTING` itself. Warmed after the bake-off each day.
+_WARM_SIGNAL_TEST: tuple[StrikeRule, float, float, int] = CONFIRMATORY_SETTING
 
 #: Universe-wide screens (the ranking and the bake-off) take one at a time.
 #: Each memo already single-flights its own keys, but two memos -- or two keys
