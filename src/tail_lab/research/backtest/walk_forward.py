@@ -381,7 +381,9 @@ class PeriodInputs:
     collector flips the fragile-when-low metrics and the ``_low`` baselines).
     ``payoff`` and ``cost`` are per name, aligned with ``symbols``, where
     ``cost = notional + spread``. ``spy_payoff`` / ``spy_cost`` are the
-    equal-premium SPY put under the same rule.
+    equal-premium SPY put under the same rule. ``spy_return`` is SPY's own
+    price move over the period (expiry spot / entry spot - 1), which the
+    beyond-volatility test regresses its per-period slope on.
     """
 
     #: Position on the rebalance calendar (0, 1, 2, ...), counting periods that
@@ -396,6 +398,16 @@ class PeriodInputs:
     cost: FloatArray
     spy_payoff: float
     spy_cost: float
+    spy_return: float
+
+
+def _require_finite_outcomes(per: PeriodInputs) -> None:
+    """A NaN payoff ranks as 'paid most' and a NaN spy_payoff reads as 'not
+    stressed': neither may reach the statistics."""
+    if not math.isfinite(per.spy_return):
+        raise ValueError(f"{per.date}: spy_return must be finite")
+    if not np.all(np.isfinite(per.payoff)) or not math.isfinite(per.spy_payoff):
+        raise ValueError(f"{per.date}: payoff and spy_payoff must be finite")
 
 
 def _validate_periods(periods: Sequence[PeriodInputs], top_k: int, n_random: int) -> None:
@@ -407,6 +419,7 @@ def _validate_periods(periods: Sequence[PeriodInputs], top_k: int, n_random: int
             raise ValueError(f"{per.date}: payoff/cost must match symbols")
         if not np.all(per.cost > 0) or per.spy_cost <= 0:
             raise ValueError(f"{per.date}: costs must be positive")
+        _require_finite_outcomes(per)
         for screen in SCREENS:
             sig = per.signals.get(screen)
             if sig is None or sig.shape != (n,) or not np.all(np.isfinite(sig)):
@@ -1056,6 +1069,18 @@ def _prepare_name(
     )
 
 
+def _settle_index(name: _Name, p: int, cal: _Calendar) -> int:
+    """Row of ``name``'s last close on or before the expiry of the roll entered
+    at SPY position ``p``."""
+    expiry = cal.dates[p + cal.tenor_days]
+    return int(name.dates.searchsorted(expiry, side="right")) - 1
+
+
+def _spy_return(spy: _Name, p: int, cal: _Calendar) -> float:
+    """SPY's price move over the roll: settlement close / entry close - 1."""
+    return float(spy.px[_settle_index(spy, p, cal)] / spy.px[int(spy.own_pos[p])] - 1.0)
+
+
 def _roll_for(name: _Name, p: int, cal: _Calendar) -> tuple[CycleFacts, bool]:
     """Price and settle ``name``'s roll entered at SPY position ``p`` with the
     SAME function ``run_put_roll`` prices with, and whether the settlement was
@@ -1063,8 +1088,8 @@ def _roll_for(name: _Name, p: int, cal: _Calendar) -> tuple[CycleFacts, bool]:
     name's last close on or before the expiry date, so a gap is never a reason
     to drop a name after ``t``."""
     pos = int(name.own_pos[p])
+    settle = _settle_index(name, p, cal)
     expiry = cal.dates[p + cal.tenor_days]
-    settle = int(name.dates.searchsorted(expiry, side="right")) - 1
     facts = price_model_roll(
         float(name.px[pos]),
         clamp_realized_vol(float(name.rv20[pos])),
@@ -1204,6 +1229,7 @@ def _collect_period(
         cost=np.array([_NOTIONAL + x.facts.cost for x, _ in kept]),
         spy_payoff=spy_facts.payoff,
         spy_cost=_NOTIONAL + spy_facts.cost,
+        spy_return=_spy_return(spy, p, cal),
     )
 
 

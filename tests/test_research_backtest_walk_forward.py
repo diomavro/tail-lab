@@ -96,6 +96,7 @@ def _make_periods(
                 cost=cost,
                 spy_payoff=3.0 if i in stress else 0.0,
                 spy_cost=1.05,
+                spy_return=0.0,
             )
         )
     return out
@@ -291,6 +292,7 @@ def test_totals_include_the_spread() -> None:
         cost=np.array([1.2, 1.2]),
         spy_payoff=0.0,
         spy_cost=1.2,
+        spy_return=0.0,
     )
     ev = evaluate_screens([p0], top_k=1, n_random=10)
     s = _summary(ev, COMPOSITE)
@@ -321,6 +323,7 @@ def _hand_periods() -> list[PeriodInputs]:
                 cost=np.ones(3),
                 spy_payoff=0.0,
                 spy_cost=1.0,
+                spy_return=0.0,
             )
         )
     return out
@@ -516,6 +519,7 @@ def _name_world() -> list[PeriodInputs]:
                 cost=np.ones(3),
                 spy_payoff=0.0,
                 spy_cost=1.0,
+                spy_return=0.0,
             )
         )
     return out
@@ -599,6 +603,7 @@ def test_paid_means_payoff_above_cost_not_merely_positive_or_equal() -> None:
                 cost=np.ones(2),
                 spy_payoff=0.0,
                 spy_cost=1.0,
+                spy_return=0.0,
             )
         )
     ev = evaluate_screens(out, top_k=1, n_random=10)
@@ -618,6 +623,16 @@ def test_malformed_periods_are_refused() -> None:
     bad_cost = PeriodInputs(**{**good[0].__dict__, "cost": np.zeros(10)})
     with pytest.raises(ValueError, match="costs must be positive"):
         evaluate_screens([bad_cost], top_k=2)
+    no_spy = PeriodInputs(**{**good[0].__dict__, "spy_return": float("nan")})
+    with pytest.raises(ValueError, match="spy_return must be finite"):
+        evaluate_screens([no_spy], top_k=2)
+    for bad in (float("nan"), float("inf")):
+        pay = good[0].payoff.copy()
+        pay[0] = bad
+        with pytest.raises(ValueError, match="payoff and spy_payoff must be finite"):
+            evaluate_screens([PeriodInputs(**{**good[0].__dict__, "payoff": pay})], top_k=2)
+        with pytest.raises(ValueError, match="payoff and spy_payoff must be finite"):
+            evaluate_screens([PeriodInputs(**{**good[0].__dict__, "spy_payoff": bad})], top_k=2)
     short = PeriodInputs(**{**good[0].__dict__, "payoff": np.zeros(3)})
     with pytest.raises(ValueError, match="must match symbols"):
         evaluate_screens([short], top_k=2)
@@ -788,6 +803,19 @@ def test_the_calendar_steps_by_tenor_and_leaves_room_for_a_full_roll(tmp_path: P
     assert pos[-1] + TENOR_DAYS <= len(dates) - 1
     assert col.periods[0].expiry_date == spy_dates[pos[0] + TENOR_DAYS]
     assert col.diagnostics.n_symbols_loaded == 12
+
+
+def test_spy_return_is_the_benchmark_move_from_entry_to_expiry(tmp_path: Path) -> None:
+    """The beyond-vol test regresses its per-period slope on SPY's own move, so
+    ``spy_return`` must be SPY's expiry close over its entry close, minus one --
+    not the put's payoff and not a name's return."""
+    dates, closes = _closes()
+    col = _collect(_store(tmp_path, closes, dates), _names(closes))
+    where = {d.date(): i for i, d in enumerate(dates)}
+    spy = closes["spy"]
+    for per in col.periods:
+        expected = spy[where[per.expiry_date]] / spy[where[per.date]] - 1.0
+        assert per.spy_return == pytest.approx(expected)
 
 
 def test_no_look_ahead_corrupting_prices_after_t_leaves_the_picks_at_t(tmp_path: Path) -> None:
