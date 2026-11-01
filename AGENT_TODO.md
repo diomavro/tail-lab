@@ -18,6 +18,17 @@ a large one strictly in order.
 
 ## Next increments
 
+- [ ] **Re-score the 54 hypothesis-memory records written under the old
+      regime labels** (found 2026-10-31). They were recorded before
+      2026-08-27, when regimes came from VIX alone (hysteresis landed in
+      f8d0403, credit escalation in 4976ba6 on 09-03). The records carry no
+      regime-definition stamp, so prior-art and memory reads treat them as if
+      they used today's labels, which now also draw on the restored
+      1996-onward HY spread history (`docs/adr/0034`).
+      - First, count how many of their regime-conditioned verdicts change
+        under today's labels, and report that number.
+      - Then either re-score them, or mark them as legacy so memory reads
+        under the active definition skip them. Don't silently relabel them.
 - [ ] **Separate fragility from volatility statistically** (`docs/adr/0033`).
       The walk-forward signal test prints the best plain-volatility screen next
       to the composite, but it does not test whether fragility adds anything
