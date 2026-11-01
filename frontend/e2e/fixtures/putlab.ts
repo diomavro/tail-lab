@@ -68,21 +68,21 @@ export function bsPut(S: number, K: number, T: number, r: number, sigma: number,
   return K * Math.exp(-r * T) * normCdf(-d2) - S * Math.exp(-q * T) * normCdf(-d1)
 }
 
-// 12 rolls. `payoff` is the cash the put returned; `cost` is what the contracts
-// actually filled at, which is NOT the per-roll budget (NOTIONAL) -- that gap is
-// the whole reason the ledger prints Fill and Budget as separate columns.
+// 12 rolls, shaped like research/backtest/put_roll.py's: the budget (NOTIONAL)
+// buys `contracts = NOTIONAL / premium` shares of puts, unrounded; `cost` is the
+// entry brokerage (commission plus half-spread) charged ON TOP of the budget;
+// `net = payoff - NOTIONAL - cost`. The ledger prints cost as Fill.
+// 12 x 6.50 is the run's total_brokerage below.
+const BROKERAGE_PER_ROLL = 6.5
 export const CYCLES: PutBacktestCycle[] = Array.from({ length: 12 }, (_, i) => {
   const spot = Number(PRICE_PATH[i * 18]!.price.toFixed(2))
   const strike = Number((spot * 0.95).toFixed(2))
   // roll 3 pays 420 -- real intrinsic value, but under the 1000 budget, so it is
   // NOT a hit; rolls 6 and 9 clear the budget and are.
   const payoff = i === 3 ? 420 : i === 6 ? 2600 : i === 9 ? 3200 : 0
-  // Roll 11 is priced above the budget on purpose: `max(1, floor(notional /
-  // (premium * 100)))` forces at least one contract, so the fill can land
-  // EITHER side of the budget. That is why they are two columns.
   const premium = i === 11 ? 10.28 : Number((8.2 + i * 0.11).toFixed(2))
-  const contracts = Math.max(1, Math.floor(NOTIONAL / (premium * 100)))
-  const cost = Number((contracts * premium * 100).toFixed(2))
+  const contracts = NOTIONAL / premium
+  const cost = BROKERAGE_PER_ROLL
   // Roll 11's vol is solved so its 10.28 premium IS the Black-Scholes price of
   // its displayed inputs (the Workspace prints them for a reader to check).
   const sigma = i === 11 ? 0.38245 : Number((0.17 + i * 0.004).toFixed(4))
@@ -104,13 +104,13 @@ export const CYCLES: PutBacktestCycle[] = Array.from({ length: 12 }, (_, i) => {
     contracts,
     cost,
     payoff,
-    net: Number((payoff - NOTIONAL).toFixed(2)),
+    net: Number((payoff - NOTIONAL - cost).toFixed(2)),
   }
 })
 
 const TOTAL_PAYOFF = CYCLES.reduce((s, c) => s + c.payoff, 0) // 6220
 const TOTAL_PREMIUM = CYCLES.length * NOTIONAL // 12000
-const TOTAL_BROKERAGE = 78
+const TOTAL_BROKERAGE = CYCLES.reduce((s, c) => s + c.cost, 0) // 78
 const NET_PNL = TOTAL_PAYOFF - TOTAL_PREMIUM - TOTAL_BROKERAGE
 
 const MTM_CURVE: EquityPoint[] = PRICE_PATH.map((p, i) => ({
@@ -1779,15 +1779,15 @@ export function backtestByDelta(target: number): PutBacktestResponse {
     const strike = Number(strikeForDelta(c.spot, target, c.sigma, c.t_years!, BACKTEST.rate, c.q).toFixed(2))
     const latest = i === CYCLES.length - 1
     const premium = latest ? Number(bsPut(c.spot, strike, c.t_years!, BACKTEST.rate, c.sigma, c.q).toFixed(2)) : c.premium
-    const contracts = Math.max(1, Math.floor(NOTIONAL / (premium * 100)))
+    // Same budget, brokerage and payoff as the moneyness roll, so `cost` and
+    // `net` carry over; only the share count follows the new premium.
     return {
       ...c,
       strike,
       entry_moneyness_pct: Number(((1 - strike / c.spot) * 100).toFixed(4)),
       entry_delta: -target,
       premium,
-      contracts,
-      cost: Number((contracts * premium * 100).toFixed(2)),
+      contracts: NOTIONAL / premium,
     }
   })
   return {

@@ -57,13 +57,18 @@ a large one strictly in order.
       computes metrics on its own; `metric_screen` and `walk_forward` share
       `fragility_from_returns`. Route `ranking` through it too, if the outputs
       stay identical.
-- [ ] **The Ledger's "Fill" column is described wrongly** (found 2026-11-01
+- [x] **The Ledger's "Fill" column is described wrongly** (found 2026-11-01
       during the tooltip sweep). The real `cost` field is entry brokerage
       (commission plus half-spread), and `net = payoff − budget − cost`. But
       `Ledger.tsx`'s comment, its e2e fixture and `ledger.spec.ts` describe Fill
       as the cash the contracts cost, and reconcile Net as payoff − budget. The
       new `roll_cost` concept describes the backend correctly. Make the comment,
       the fixture and the spec agree with `put_roll.py`.
+      *Done 2026-11-01:* the comment, fixture and spec now follow
+      `put_roll.py` (`contracts = notional / premium`, Fill = brokerage on
+      top, Net = payoff − budget − Fill). The same check found Cts printed
+      the raw float on production (`217.43621599844064` on SPY); it now
+      prints whole shares.
 - [ ] **README:35 ("the page never scrolls") contradicts ADR 0017** ("the page
       scrolls normally"), which is what is implemented. Dio to settle; the
       README is constitutional.
@@ -2647,8 +2652,8 @@ with the evidence — never the implementation.
 
 ## Design-review advisories not yet acted on (logged 2026-10-30)
 
-Advisory notes from the PASS reviews of #171, #172, #175 and #177, which
-automerge landed before anyone read them. None is a bug today.
+Advisory notes from the PASS reviews of #171, #172, #175, #177, #186 and
+#188, which landed before anyone read them. None is a bug today.
 
 - [ ] **Marks (#175):** `quote_coverage.summarise_source` takes `sessions`
       that its one caller derives from `presence` -- derive it inside; the
@@ -2673,6 +2678,17 @@ automerge landed before anyone read them. None is a bug today.
 - [ ] **Image smoke check (#177, needs a human: touches `.github/`):** no CI
       step runs `LOAD delta` offline as the image's runtime user, so the
       prod-only Marks 503 can come back if the `USER` line moves.
+- [ ] **Bake-off costs (#186):** `_COMMISSION_PER_CONTRACT = 0.0` is
+      defined in both `metric_screen.py` and `walk_forward.py` with the same
+      reasoning -- one constant (or one "score-able cycles" helper that also
+      drops floored rolls) should serve both; `regime_verdict.py` still
+      computes ROI on premium inline, a third copy of `metric_screen._roi`.
+- [ ] **Fama-MacBeth (#188):** `beyond_vol.py` (frozen, ADR 0035) imports
+      the private `_episodes` and `_validate_periods` from `walk_forward.py`,
+      so refactoring either changes the frozen test without changing its
+      hash -- mark both in `walk_forward.py` as depended on by ADR 0035; the
+      simulation figures in `concepts.ts`'s `fama_macbeth` entry exist only
+      in prose and go stale silently if `frozen_check.txt` is rerun.
 
 ## Design-review advisories not yet acted on (found 2026-09-07)
 
