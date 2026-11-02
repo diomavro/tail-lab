@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import datetime as dt
 from pathlib import Path
+from typing import Any
 
 import numpy as np
 import pandas as pd
@@ -12,7 +13,6 @@ import pytest
 from tail_lab.contracts.ohlcv import dataset_id
 from tail_lab.lake.store import DeltaLakeStore
 from tail_lab.research.backtest.metric_screen import (
-    _METRIC_FUNCS,
     _unfloored,
     compare_metric_screens,
 )
@@ -23,9 +23,10 @@ from tail_lab.research.backtest.put_roll import (
     load_asof_series,
     run_put_roll,
 )
+from tail_lab.research.backtest.ranking import FRAGILITY_METRIC_FUNCS
 from tail_lab.research.backtest.strike_rule import ByMoneyness
 
-_ALL_SCREENS = {*_METRIC_FUNCS, "vol_beta", "fragility_score"}
+_ALL_SCREENS = {*FRAGILITY_METRIC_FUNCS, "vol_beta", "fragility_score"}
 
 
 def _write_closes(store: DeltaLakeStore, symbol: str, ingest: dt.date, closes: np.ndarray) -> None:
@@ -456,43 +457,38 @@ def test_the_bakeoff_cites_its_benchmark_even_when_it_is_not_scored(tmp_path: Pa
     assert "ohlcv_spy" in [s.split("@")[0] for s in cmp.snapshot_ids]
 
 
-def test_fragility_from_returns_keeps_the_two_pairs_separately_joined() -> None:
-    """Vol beta regresses on VIX changes, whose dates differ from SPY's. If the
-    two pairs shared one inner join, every benchmark metric would silently
-    shrink to the VIX overlap. The wrapper must equal an independent
-    computation that joins each pair on its own."""
-    from tail_lab.research.backtest.metric_screen import _fragility, fragility_from_returns
-    from tail_lab.research.backtest.ranking import _returns
-    from tail_lab.research.metrics.vol_beta import vol_beta
+def test_the_bakeoff_scores_the_fragility_the_screen_ranks_on(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Same names, same as_of, same years: every fragility dict the Bake-off
+    computes equals that name's six columns on the Screen, so the two cannot
+    feed the shared fold a different window or a shifted VIX series."""
+    from tail_lab.research.backtest import metric_screen
+    from tail_lab.research.backtest.ranking import rank_universe
 
-    rng = np.random.default_rng(3)
-    idx = pd.bdate_range("2024-01-02", periods=300)
-    market = pd.Series(rng.normal(0, 0.01, 300), index=idx)
-    asset_px = pd.Series(
-        100 * np.exp(np.cumsum(1.2 * market + rng.normal(0, 0.005, 300))), index=idx
+    ingest = dt.date(2026, 3, 2)
+    store = _seeded_store(tmp_path, ingest)
+    symbols = ("spy", "wild", "mid")
+    seen: list[tuple[pd.Series, dict[str, float | None]]] = []
+    real = metric_screen.trailing_fragility
+
+    def _recording(prices: pd.Series, **kwargs: Any) -> dict[str, float | None]:
+        out = real(prices, **kwargs)
+        seen.append((prices, out))
+        return out
+
+    monkeypatch.setattr(metric_screen, "trailing_fragility", _recording)
+    compare_metric_screens(
+        store, symbols=symbols, as_of=ingest, rule=ByMoneyness(10.0), tenor_weeks=4.0, years=1.0
     )
-    bench_ret = market.iloc[1:]
-    vix_dates = idx[100::2]  # every other date: a different overlap than SPY's
-    vix_chg = pd.Series(rng.normal(0, 0.05, len(vix_dates)), index=vix_dates)
+    screen = rank_universe(
+        store, symbols=symbols, as_of=ingest, moneyness_pct=10.0, tenor_weeks=4.0, years=1.0
+    )
 
-    got = _fragility(asset_px, bench_ret=bench_ret, vol_changes=vix_chg, lookback_days=120)
-
-    a = _returns(asset_px)
-    bench = pd.concat({"a": a, "b": bench_ret}, axis=1).dropna().iloc[-120:]
-    vol = pd.concat({"a": a, "v": vix_chg}, axis=1).dropna().iloc[-120:]
-    expected = {n: fn(bench["a"], bench["b"]) for n, fn in _METRIC_FUNCS.items()}
-    expected["vol_beta"] = vol_beta(vol["a"], vol["v"])
-    assert got == pytest.approx(expected)
-    assert fragility_from_returns(bench, vol) == got
-    assert len(bench) == 120 and len(vol) == 100  # the windows are NOT the same rows
-    assert not bench.index.equals(vol.index)
-
-
-def test_fragility_from_returns_reports_an_unestimable_metric_as_none() -> None:
-    from tail_lab.research.backtest.metric_screen import fragility_from_returns
-
-    empty_b = pd.DataFrame({"a": [0.0], "b": [0.0]})
-    empty_v = pd.DataFrame({"a": [0.0], "v": [0.0]})
-    out = fragility_from_returns(empty_b, empty_v)
-    assert set(out) == {*_METRIC_FUNCS, "vol_beta"}
-    assert all(v is None for v in out.values())
+    rows = {r.asset: r for r in screen.ranked}
+    assert set(rows) == set(symbols) and len(seen) == len(symbols)
+    for symbol in symbols:
+        prices = load_asof_series(store, symbol, ingest)[0]
+        (bakeoff,) = [out for px, out in seen if px.equals(prices)]
+        assert bakeoff == {m: getattr(rows[symbol], m) for m in bakeoff}
+        assert all(v is not None for v in bakeoff.values())
