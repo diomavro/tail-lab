@@ -478,3 +478,113 @@ def test_composite_scores_equals_the_old_fold_and_the_shipped_sort() -> None:
         assert asset.fragility_score == score
     keys = [a.fragility_score if a.fragility_score is not None else -1.0 for a in ordered]
     assert keys == sorted(keys, reverse=True)  # the sort is kept
+
+
+def test_fragility_from_returns_keeps_the_two_pairs_separately_joined() -> None:
+    """Vol beta regresses on VIX changes, whose dates differ from SPY's. If the
+    two pairs shared one inner join, every benchmark metric would silently
+    shrink to the VIX overlap. The wrapper must equal an independent
+    computation that joins each pair on its own."""
+    from tail_lab.research.backtest.ranking import (
+        FRAGILITY_METRIC_FUNCS,
+        _returns,
+        fragility_from_returns,
+        trailing_fragility,
+    )
+    from tail_lab.research.metrics.vol_beta import vol_beta
+
+    rng = np.random.default_rng(3)
+    idx = pd.bdate_range("2024-01-02", periods=300)
+    market = pd.Series(rng.normal(0, 0.01, 300), index=idx)
+    asset_px = pd.Series(
+        100 * np.exp(np.cumsum(1.2 * market + rng.normal(0, 0.005, 300))), index=idx
+    )
+    bench_ret = market.iloc[1:]
+    vix_dates = idx[100::2]  # every other date: a different overlap than SPY's
+    vix_chg = pd.Series(rng.normal(0, 0.05, len(vix_dates)), index=vix_dates)
+
+    got = trailing_fragility(asset_px, bench_ret=bench_ret, vol_changes=vix_chg, lookback_days=120)
+
+    a = _returns(asset_px)
+    bench = pd.concat({"a": a, "b": bench_ret}, axis=1).dropna().iloc[-120:]
+    vol = pd.concat({"a": a, "v": vix_chg}, axis=1).dropna().iloc[-120:]
+    expected = {n: fn(bench["a"], bench["b"]) for n, fn in FRAGILITY_METRIC_FUNCS.items()}
+    expected["vol_beta"] = vol_beta(vol["a"], vol["v"])
+    assert got == pytest.approx(expected)
+    assert fragility_from_returns(bench, vol) == got
+    assert len(bench) == 120 and len(vol) == 100  # the windows are NOT the same rows
+    assert not bench.index.equals(vol.index)
+
+
+def test_fragility_from_returns_reports_an_unestimable_metric_as_none() -> None:
+    from tail_lab.research.backtest.ranking import FRAGILITY_METRIC_FUNCS, fragility_from_returns
+
+    empty_b = pd.DataFrame({"a": [0.0], "b": [0.0]})
+    empty_v = pd.DataFrame({"a": [0.0], "v": [0.0]})
+    out = fragility_from_returns(empty_b, empty_v)
+    assert set(out) == {*FRAGILITY_METRIC_FUNCS, "vol_beta"}
+    assert all(v is None for v in out.values())
+
+
+def _independent_fragility(
+    asset_px: pd.Series, bench_px: pd.Series | None, vix: pd.Series, lookback_days: int
+) -> dict[str, float | None]:
+    """Each metric called directly on its own hand-joined window -- no
+    ranking helper involved, so a key swapped between a metric and its column
+    shows up as a mismatch."""
+    from tail_lab.research.metrics.co_kurtosis import co_kurtosis
+    from tail_lab.research.metrics.co_skewness import co_skewness
+    from tail_lab.research.metrics.downside_beta import downside_beta
+    from tail_lab.research.metrics.downside_capture import downside_capture
+    from tail_lab.research.metrics.tail_beta import tail_beta
+    from tail_lab.research.metrics.vol_beta import vol_beta
+
+    a = asset_px.pct_change().dropna()
+    vol = pd.concat({"a": a, "v": vix.pct_change().dropna()}, axis=1).dropna()
+    vol = vol.iloc[-lookback_days:]
+    out: dict[str, float | None] = {"vol_beta": vol_beta(vol["a"], vol["v"])}
+    funcs = {
+        "downside_beta": downside_beta,
+        "co_skewness": co_skewness,
+        "co_kurtosis": co_kurtosis,
+        "tail_beta": tail_beta,
+        "downside_capture": downside_capture,
+    }
+    if bench_px is None:
+        return out | dict.fromkeys(funcs)
+    bench = pd.concat({"a": a, "b": bench_px.pct_change().dropna()}, axis=1).dropna()
+    bench = bench.iloc[-lookback_days:]
+    return out | {n: fn(bench["a"], bench["b"]) for n, fn in funcs.items()}
+
+
+@pytest.mark.parametrize("with_benchmark", [True, False])
+def test_rank_universe_columns_are_the_shared_fragility_fold(
+    tmp_path: Path, with_benchmark: bool
+) -> None:
+    """The Screen's six metric columns equal each metric computed on its own
+    window, with SPY present and absent. Without SPY the five benchmark
+    metrics are None, but vol beta (VIX only) is still estimated."""
+    from tail_lab.research.backtest.put_roll import load_asof_series
+    from tail_lab.research.regimes.timeline import load_vix_close
+
+    store = DeltaLakeStore(tmp_path)
+    ingest = dt.date(2026, 3, 2)
+    _seed_vix(store, ingest)
+    if with_benchmark:
+        _seed_symbol(store, "spy", ingest, drift=0.1, vol=1.0)
+    _seed_symbol(store, "wild", ingest, drift=-0.1, vol=4.0)
+
+    ranking = rank_universe(
+        store, symbols=("wild",), as_of=ingest, moneyness_pct=5.0, tenor_weeks=4.0, years=1.0
+    )
+
+    (row,) = ranking.ranked
+    asset_px, _ = load_asof_series(store, "wild", ingest)
+    bench_px = load_asof_series(store, "spy", ingest)[0] if with_benchmark else None
+    vix = load_vix_close(store, as_of=ingest)
+    expected = _independent_fragility(asset_px, bench_px, vix, lookback_days=252)
+    got = {m: getattr(row, m) for m in expected}
+    assert got == pytest.approx(expected)
+    assert row.vol_beta is not None
+    if not with_benchmark:
+        assert all(got[m] is None for m in expected if m != "vol_beta")
