@@ -2718,7 +2718,9 @@ was re-checked on main on 2026-11-02 and still holds. None is a bug today.
       `beyond_vol.py` imports `walk_forward._episodes` and
       `_validate_periods`. Refactoring either one changes the frozen test
       without changing its hash. At least add a comment on both saying that
-      `beyond_vol` depends on them; `walk_forward.py` itself is not frozen.
+      `beyond_vol` depends on them. ADR 0035 records `walk_forward.py`'s
+      hash at the freeze, but nothing enforces it, and it has been edited
+      since.
 - [ ] **Prose-only figures (#188):** the `fama_macbeth` concept in
       `frontend/src/content/concepts.ts` hard-codes the simulation figures
       (9.6 pp, 71%/98%, 7.4%, 6.1%, 2.8%, 6.0%). Only `MDE_PAY_RATE_GAP` is

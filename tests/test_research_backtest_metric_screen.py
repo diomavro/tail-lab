@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import datetime as dt
 from pathlib import Path
+from typing import Any
 
 import numpy as np
 import pandas as pd
@@ -454,3 +455,40 @@ def test_the_bakeoff_cites_its_benchmark_even_when_it_is_not_scored(tmp_path: Pa
         top_k=2,
     )
     assert "ohlcv_spy" in [s.split("@")[0] for s in cmp.snapshot_ids]
+
+
+def test_the_bakeoff_scores_the_fragility_the_screen_ranks_on(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Same names, same as_of, same years: every fragility dict the Bake-off
+    computes equals that name's six columns on the Screen, so the two cannot
+    feed the shared fold a different window or a shifted VIX series."""
+    from tail_lab.research.backtest import metric_screen
+    from tail_lab.research.backtest.ranking import rank_universe
+
+    ingest = dt.date(2026, 3, 2)
+    store = _seeded_store(tmp_path, ingest)
+    symbols = ("spy", "wild", "mid")
+    seen: list[tuple[pd.Series, dict[str, float | None]]] = []
+    real = metric_screen.trailing_fragility
+
+    def _recording(prices: pd.Series, **kwargs: Any) -> dict[str, float | None]:
+        out = real(prices, **kwargs)
+        seen.append((prices, out))
+        return out
+
+    monkeypatch.setattr(metric_screen, "trailing_fragility", _recording)
+    compare_metric_screens(
+        store, symbols=symbols, as_of=ingest, rule=ByMoneyness(10.0), tenor_weeks=4.0, years=1.0
+    )
+    screen = rank_universe(
+        store, symbols=symbols, as_of=ingest, moneyness_pct=10.0, tenor_weeks=4.0, years=1.0
+    )
+
+    rows = {r.asset: r for r in screen.ranked}
+    assert set(rows) == set(symbols) and len(seen) == len(symbols)
+    for symbol in symbols:
+        prices = load_asof_series(store, symbol, ingest)[0]
+        (bakeoff,) = [out for px, out in seen if px.equals(prices)]
+        assert bakeoff == {m: getattr(rows[symbol], m) for m in bakeoff}
+        assert all(v is not None for v in bakeoff.values())
