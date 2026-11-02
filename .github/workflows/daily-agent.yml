@@ -126,7 +126,7 @@ jobs:
         # Three or more drafts waiting for Dio means stop adding more.
         if: steps.open.outputs.drafts < 3
         timeout-minutes: 80
-        uses: anthropics/claude-code-action@cab360f6565aa35a51d6ce9e43f1f4287c0a32ea # v1
+        uses: anthropics/claude-code-action@6d5ae526d25ce88daa2200be073e1a373167f064 # v1
         env:
           GH_TOKEN: ${{ github.token }}
           # The action stops reading at the FIRST `result` message

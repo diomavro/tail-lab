@@ -310,7 +310,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
-        uses: anthropics/claude-code-action@cab360f6565aa35a51d6ce9e43f1f4287c0a32ea # v1
+        uses: anthropics/claude-code-action@6d5ae526d25ce88daa2200be073e1a373167f064 # v1
         with:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           allowed_bots: 'claude'
@@ -491,7 +491,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
-        uses: anthropics/claude-code-action@cab360f6565aa35a51d6ce9e43f1f4287c0a32ea # v1
+        uses: anthropics/claude-code-action@6d5ae526d25ce88daa2200be073e1a373167f064 # v1
         with:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           allowed_bots: 'claude'
