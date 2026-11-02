@@ -499,7 +499,8 @@ def test_fragility_from_returns_keeps_the_two_pairs_separately_joined() -> None:
     asset_px = pd.Series(
         100 * np.exp(np.cumsum(1.2 * market + rng.normal(0, 0.005, 300))), index=idx
     )
-    bench_ret = market.iloc[1:]
+    holes = idx[250:255]  # the asset trades, SPY has no row: dropped, never 0-filled
+    bench_ret = market.iloc[1:].drop(holes)
     vix_dates = idx[100::2]  # every other date: a different overlap than SPY's
     vix_chg = pd.Series(rng.normal(0, 0.05, len(vix_dates)), index=vix_dates)
 
@@ -513,6 +514,7 @@ def test_fragility_from_returns_keeps_the_two_pairs_separately_joined() -> None:
     assert got == pytest.approx(expected)
     assert fragility_from_returns(bench, vol) == got
     assert len(bench) == 120 and len(vol) == 100  # the windows are NOT the same rows
+    assert not bench.index.isin(holes).any()
     assert not bench.index.equals(vol.index)
 
 
