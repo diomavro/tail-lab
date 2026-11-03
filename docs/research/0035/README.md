@@ -10,7 +10,7 @@ The evidence behind `docs/adr/0035-*.md`, kept in the repo so every figure the p
 | `src/tail_lab/research/backtest/beyond_vol.py` (frozen) | `6648196d39638cb975fd120cce7153365a88af7f45c2dba81bf600ae6dc4744f` |
 | `src/tail_lab/research/backtest/walk_forward.py` at the freeze commit `ef31431c15c05f95b9b08db41b52997da46ff533` | `704cc2dea6fe74ca50fa3b2f3fd7b461696b5c17972169d2a94e7cdebea270f5` |
 
-Check them with `sha256sum docs/research/0035/PLAN_FM.md src/tail_lab/research/backtest/beyond_vol.py`. (`walk_forward.py` has changed since the freeze, moving `SignalTestResult` out to `signal_test.py`; check the freeze-time hash with `git show ef31431:src/tail_lab/research/backtest/walk_forward.py | sha256sum`.)
+Check them with `sha256sum docs/research/0035/PLAN_FM.md src/tail_lab/research/backtest/beyond_vol.py`. (`walk_forward.py` has changed since the freeze, moving `SignalTestResult` out to `signal_test.py`; check the freeze-time hash with `git show ef31431:src/tail_lab/research/backtest/walk_forward.py | sha256sum`. The freeze commit is not on `main`, because the PR was squash-merged; `git fetch origin refs/pull/188/head` first.) Both are machine-checked: `tests/test_research_backtest_beyond_vol.py` pins `beyond_vol.py`'s sha256, and pins a digest of the `walk_forward.py` code the frozen test runs (what it imports, and what that reaches, without docstrings or comments), which is the same on ef31431 and on `main`.
 
 ## Records
 
