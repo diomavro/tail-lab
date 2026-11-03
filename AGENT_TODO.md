@@ -42,6 +42,17 @@ a large one strictly in order.
       `fama_macbeth` concept. Only that setting on the 2026-10-31 data is
       confirmatory; a later date is a monitoring re-run and other rail settings
       are exploratory, both with γ̄ and the CI but no p or status.
+      *Freeze machine-checked 2026-11-03* (advisory on #188):
+      `tests/test_research_backtest_beyond_vol.py` pins `beyond_vol.py`'s
+      sha256 and a digest of the `walk_forward.py` code it runs (all it
+      imports from there and all that reaches, source plus runtime
+      binding), equal on the
+      freeze commit ef31431 and on main. ef31431 is reachable only through
+      `refs/pull/188/head`. The digest is of `ast.unparse` output, so a
+      Python upgrade can flip it with no behaviour change: re-check on
+      ef31431 before re-pinning. numpy/scipy are not pinned (`FREEZE.txt`
+      records their versions). Draft #196 logs this item as open; drop that
+      entry if it lands.
 - [ ] **Point-in-time universe for the signal test** (`docs/adr/0033`). The
       70-name list was chosen in 2026 with hindsight (MSTR, SMCI, COIN), so
       survivorship flatters any screen. This needs historical membership.
