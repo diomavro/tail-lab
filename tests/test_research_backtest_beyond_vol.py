@@ -881,7 +881,7 @@ def test_the_hac_intercept_se_matches_a_hand_calculation() -> None:
 # fetch it with ``git fetch origin refs/pull/188/head``.
 FROZEN_BEYOND_VOL_SHA256 = "6648196d39638cb975fd120cce7153365a88af7f45c2dba81bf600ae6dc4744f"
 #: The digest of ``_frozen_dependencies()`` on ef31431's ``walk_forward.py``.
-FROZEN_DEPENDENCIES_SHA256 = "bbe467bfc8f70f33c254ea299fbac1dc0c23db70d32649e966150107527a704d"
+FROZEN_DEPENDENCIES_SHA256 = "abf46da75c363af69d378075dec997e189a2d88598c6e147dafe193b5a585c16"
 
 
 def _without_docstring(node: ast.stmt) -> ast.stmt:
@@ -916,11 +916,23 @@ def _module_names(tree: ast.Module) -> tuple[dict[str, ast.stmt], set[str]]:
     return defs, imported
 
 
+def _binding(value: object) -> str:
+    """What a name is bound to once the module has run, so a later rebinding
+    (``SCREENS += ...``, a tuple assignment, ``globals()[...]``) that the first
+    definition's source does not show still changes the digest."""
+    if inspect.isfunction(value) or inspect.isclass(value):
+        return f"{value.__module__}.{value.__qualname__}"
+    if isinstance(value, str | int | float | tuple | frozenset):
+        return repr(value)
+    return ""
+
+
 def _frozen_dependencies() -> dict[str, str]:
     """What ``beyond_vol`` imports from ``walk_forward``, and every module-level
     name those reach there, transitively: a definition as its source without
-    docstrings or comments (so wording and formatting may change), a value
-    ``walk_forward`` imports from another ``tail_lab`` module as its repr."""
+    docstrings or comments (so wording and formatting may change) plus its
+    runtime binding, a value ``walk_forward`` imports from another ``tail_lab``
+    module as its repr."""
     seeds = {
         alias.name
         for node in ast.parse(inspect.getsource(bv)).body
@@ -935,7 +947,8 @@ def _frozen_dependencies() -> dict[str, str]:
         if name in out:
             continue
         if name in defs:
-            out[name] = ast.unparse(_without_docstring(defs[name]))
+            source = ast.unparse(_without_docstring(defs[name]))
+            out[name] = source + "\n" + _binding(getattr(walk_forward, name))
             todo += [n.id for n in ast.walk(defs[name]) if isinstance(n, ast.Name)]
         elif name in imported:
             out[name] = repr(getattr(walk_forward, name))

@@ -44,8 +44,9 @@ a large one strictly in order.
       are exploratory, both with γ̄ and the CI but no p or status.
       *Freeze machine-checked 2026-11-03* (advisory on #188):
       `tests/test_research_backtest_beyond_vol.py` pins `beyond_vol.py`'s
-      sha256 and a digest of the `walk_forward.py` code it runs
-      (`_episodes`, `_validate_periods` and all they reach), equal on the
+      sha256 and a digest of the `walk_forward.py` code it runs (all it
+      imports from there and all that reaches, source plus runtime
+      binding), equal on the
       freeze commit ef31431 and on main. ef31431 is reachable only through
       `refs/pull/188/head`. The digest is of `ast.unparse` output, so a
       Python upgrade can flip it with no behaviour change: re-check on
