@@ -887,16 +887,14 @@ FROZEN_DEPENDENCIES_SHA256 = "abf46da75c363af69d378075dec997e189a2d88598c6e147da
 def _without_docstring(node: ast.stmt) -> ast.stmt:
     node = copy.deepcopy(node)
     for sub in ast.walk(node):
-        body = getattr(sub, "body", None)
         if (
             isinstance(sub, ast.FunctionDef | ast.ClassDef)
-            and isinstance(body, list)
-            and body
-            and isinstance(body[0], ast.Expr)
-            and isinstance(body[0].value, ast.Constant)
-            and isinstance(body[0].value.value, str)
+            and sub.body
+            and isinstance(sub.body[0], ast.Expr)
+            and isinstance(sub.body[0].value, ast.Constant)
+            and isinstance(sub.body[0].value.value, str)
         ):
-            sub.body = body[1:] or [ast.Pass()]
+            sub.body = sub.body[1:] or [ast.Pass()]
     return node
 
 

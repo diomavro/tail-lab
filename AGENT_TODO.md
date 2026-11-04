@@ -18,7 +18,7 @@ a large one strictly in order.
 
 ## Next increments
 
-- [ ] **Re-score the 54 hypothesis-memory records written under the old
+- [x] **Re-score the 54 hypothesis-memory records written under the old
       regime labels** (found 2026-10-31). They were recorded before
       2026-08-27, when regimes came from VIX alone (hysteresis landed in
       f8d0403, credit escalation in 4976ba6 on 09-03). The records carry no
@@ -29,6 +29,32 @@ a large one strictly in order.
         under today's labels, and report that number.
       - Then either re-score them, or mark them as legacy so memory reads
         under the active definition skip them. Don't silently relabel them.
+      *Counted 2026-11-04: **0 verdicts change**, and none need re-scoring;
+      the daily sweep already re-scores them.* `HypothesisMemory.record`
+      is an upsert that overwrites a node's `roi_on_premium`, `n_cycles`,
+      `hit_rate` and `biggest_payoff_mult` on every run, and
+      `daily-verdict-sweep.yml` re-records every universe rule (5% and 10%
+      OOM, 4w, 4y) each day. So an old node keeps only its `first_seen` and
+      its `run_count`; its numbers are from the latest run. Measured through
+      the public `GET /api/putlab/memory`, for 74 of the sweep's 140 rules
+      (37 assets from `spy` to `vlo` in universe order; each read took
+      40–90 s, so the run stopped there):
+      - 222 nodes, every one first seen 2026-08-19..23, i.e. before the
+        2026-08-27 change. So there are more than 54 such nodes.
+      - Every one has `last_seen` 2026-11-04, the day's sweep.
+      - No node is stale, so dropping stale nodes changes 0 of 74 verdicts
+        (36 failed, 31 regime_only, 7 confirmed).
+      - Every record is in the `legacy` (no-dividend) section; the measured
+        section is empty because prod has no `tiingo_eod` snapshot yet.
+      What still mixes definitions, and is left alone:
+      - `run_count` (e.g. 74 for SPY) counts runs under every regime
+        definition since 08-19. ADR 0015 already says it is not
+        independent evidence.
+      - A node whose regime a later run stops hitting keeps the old numbers
+        and is never refreshed. None exists today. If one appears, the stamp
+        the item proposed is the fix.
+      Not covered: the other 66 sweep rules, and any rule hash outside the
+      sweep's grid (a manual seed). No public route lists every hash.
 - [x] **Separate fragility from volatility statistically** (`docs/adr/0033`).
       *Done 2026-11-01 (`docs/adr/0035`):* `research/backtest/beyond_vol.py`
       runs a frozen Fama–MacBeth test on the signal test's own periods and
