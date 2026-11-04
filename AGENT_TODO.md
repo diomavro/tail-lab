@@ -37,7 +37,7 @@ a large one strictly in order.
       OOM, 4w, 4y) each day. So an old node keeps only its `first_seen` and
       its `run_count`; its numbers are from the latest run. Measured through
       the public `GET /api/putlab/memory`, for 74 of the sweep's 140 rules
-      (37 assets from `spy` to `vlo` in universe order; each read took
+      (37 assets from `spy` to `eem` in universe order; each read took
       40–90 s, so the run stopped there):
       - 222 nodes, every one first seen 2026-08-19..23, i.e. before the
         2026-08-27 change. So there are more than 54 such nodes.
