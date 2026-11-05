@@ -152,16 +152,19 @@ def _post_once(
         headers={"Content-Type": "application/json", "Authorization": f"Bearer {token}"},
         method="POST",
     )
-    # The whole round trip -- upload, the app's JSON parse and pydantic
-    # validation, the handler, the answer -- which is exactly what ``timeout``
-    # bounds. The app's own ``duration_s`` covers the handler alone, so it
-    # understates this; widening the sweep is judged on THIS line.
+    # The whole round trip: connect, upload, the app's JSON parse and pydantic
+    # validation, the handler, the answer. ``timeout`` is NOT a cap on this
+    # -- urllib applies it to each socket wait -- and the wait that binds is
+    # the app's think time between the end of the upload and its first byte
+    # back (parse + handler). So this line is an UPPER bound on that wait,
+    # and the app's ``duration_s`` (handler only) a lower bound; widening the
+    # sweep must keep this one well under ``timeout``.
     started = time.monotonic()
     with urllib.request.urlopen(request, timeout=timeout) as response:
         result: object = json.loads(response.read())
     print(
-        f"POST {path}: answered in {time.monotonic() - started:.1f}s of a {timeout}s timeout "
-        f"({len(body) / 1e6:.2f} MB body)"
+        f"POST {path}: answered in {time.monotonic() - started:.1f}s incl. upload "
+        f"({len(body) / 1e6:.2f} MB body; timeout {timeout}s per socket wait)"
     )
     return result
 

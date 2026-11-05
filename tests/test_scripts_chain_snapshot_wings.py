@@ -93,7 +93,7 @@ def test_a_post_goes_to_the_route_it_names(
     # The round-trip time against the timeout gates widening the sweep.
     out = capsys.readouterr().out
     assert "POST /api/ingest/option-chain-calls: answered in" in out
-    assert "of a 1s timeout" in out
+    assert "timeout 1s per socket wait" in out
 
 
 # ---- --post ------------------------------------------------------------------
