@@ -145,14 +145,24 @@ POST_BACKOFF_S = (5, 20, 60)
 def _post_once(
     base_url: str, path: str, token: str, payload: Mapping[str, object], timeout: int
 ) -> object:
+    body = json.dumps(payload).encode()
     request = urllib.request.Request(
         url=f"{base_url.rstrip('/')}{path}",
-        data=json.dumps(payload).encode(),
+        data=body,
         headers={"Content-Type": "application/json", "Authorization": f"Bearer {token}"},
         method="POST",
     )
+    # The whole round trip -- upload, the app's JSON parse and pydantic
+    # validation, the handler, the answer -- which is exactly what ``timeout``
+    # bounds. The app's own ``duration_s`` covers the handler alone, so it
+    # understates this; widening the sweep is judged on THIS line.
+    started = time.monotonic()
     with urllib.request.urlopen(request, timeout=timeout) as response:
         result: object = json.loads(response.read())
+    print(
+        f"POST {path}: answered in {time.monotonic() - started:.1f}s of a {timeout}s timeout "
+        f"({len(body) / 1e6:.2f} MB body)"
+    )
     return result
 
 

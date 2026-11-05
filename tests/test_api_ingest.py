@@ -900,4 +900,6 @@ def test_the_audit_line_carries_the_handler_cost(
     )
     fields = dict(part.split("=", 1) for part in line.split()[1:])
     assert 0.0 <= float(fields["duration_s"]) < 60.0
-    assert int(fields["peak_rss_mb"]) > 0
+    # MB, not KiB or bytes: a pytest process sits in the tens-to-hundreds of
+    # MB, so a dropped /1024 (KiB) reads >= 10_000 and fails here.
+    assert 10 < int(fields["peak_rss_mb"]) < 8_000

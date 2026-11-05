@@ -140,12 +140,12 @@ def _ingest_chain(
     whole (:func:`_split`).
     """
     _require_token(authorization)
-    # Timed from here, so it EXCLUDES FastAPI's parse of the JSON body into
-    # pydantic rows, which happens before this runs. It is the handler's own
-    # cost (frame build, validation, the bronze write) -- the part that grows
-    # with the symbol count and must stay well under the sweep's 300 s POST
-    # timeout (scripts/chain_snapshot.py), because a timeout after the write
-    # lands becomes a retry against an already-claimed partition.
+    # Timed from here, so it EXCLUDES the upload and FastAPI's parse of the
+    # JSON body into pydantic rows, which happen before this runs: a LOWER
+    # BOUND on what the sweep's 300 s POST timeout covers. The sweep script
+    # prints the full round trip (scripts/chain_snapshot.py ``_post_once``);
+    # this splits off the handler's own share (frame build, validation, the
+    # bronze write).
     started = time.monotonic()
     dataset = wing.dataset
 
