@@ -11,6 +11,7 @@ import {
   fetchRegimes,
   fetchRegimeVerdict,
   fetchSurface,
+  fetchVolSurface,
   fetchSweep,
   fetchUniverse,
   fetchVixStretch,
@@ -23,6 +24,7 @@ import {
   type RegimeTimelineView,
   type RegimeVerdictResponse,
   type SurfaceResponse,
+  type VolSurfaceResponse,
   type SweepResponse,
   type UniverseMember,
   type VixStretchResponse,
@@ -157,6 +159,7 @@ const ACCURACY_CACHE = new Map<string, AccuracyResponse>()
 const RANKING_CACHE = new Map<string, PutLabLeaderboardResponse>()
 const SIGNAL_STRIP_CACHE = new Map<string, SignalTestResult>()
 const SURFACE_CACHE = new Map<string, SurfaceResponse>()
+const SMILE_CACHE = new Map<string, VolSurfaceResponse>()
 
 function cachePut<T>(cache: Map<string, T>, key: string, value: T): void {
   // Bounded LRU-ish: evict the oldest inserted key past the cap.
@@ -371,6 +374,8 @@ export function PutLab() {
   // only (the OOM control IS the anchor); the tenor is the rail's weeks in days.
   const surfaceKey =
     tab === 'surface' ? JSON.stringify([controls.asset, controls.moneyness_pct, controls.tenor_weeks]) : null
+  // The Smile is the whole session's smiles, so it keys on the name alone.
+  const smileKey = tab === 'surface' ? controls.asset : null
 
   const btParams = {
     asset: controls.asset,
@@ -452,6 +457,8 @@ export function PutLab() {
       ),
     DEBOUNCE_MS,
   )
+
+  const smile = useCachedResource(SMILE_CACHE, smileKey, (s) => fetchVolSurface(controls.asset, s), DEBOUNCE_MS)
 
   // Prefetch the preset rails after the primary read so a rail click is instant.
   // Bounded: the OOM presets at the current tenor + the tenor presets at the
@@ -646,7 +653,7 @@ export function PutLab() {
             {tab === 'bakeoff' && <BakeOffView controls={controls} headline={signalHeadline} />}
             {tab === 'regime' && <RegimeView regimes={regimes} vix={vix} accuracy={accuracy} />}
             {tab === 'marks' && <MarksView asset={controls.asset} regimes={regimes} />}
-            {tab === 'surface' && <SurfaceView surface={surface} controls={controls} narrow={narrow} />}
+            {tab === 'surface' && <SurfaceView surface={surface} smile={smile} controls={controls} narrow={narrow} />}
             {tab === 'glossary' && <GlossaryView />}
             {tab === 'pitch' && (
               <ChunkBoundary>
