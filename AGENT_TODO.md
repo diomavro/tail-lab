@@ -540,6 +540,42 @@ a large one strictly in order.
       "chunk the realtime window" advice is WRONG — it clips
       `realtime_start` and fabricates revisions (`docs/PRIOR_ART.md` §19).
 
+- [ ] **Pin `CHIP_COHORT_SINCE` once the chip cohort's first sweep has run**
+      (`contracts/option_chain.py`, added 2026-11-05). Read the first session
+      holding any `CHIP_COHORT` name off `GET /api/ingest/option-chain/status`
+      or the lake, set the constant, and drop nothing else. Until it is set,
+      `chip_cohort_start` derives the date from the verifier's 10-partition
+      walk, so a cohort that vanished from all ten would read as "not yet
+      collected" and pass; once pinned, that is a gap.
+
+- [x] **The ten `optionsdx_quotes_*` bronze tables' leaked index column --
+      repaired 2026-11-05.** A scan of all 137 production bronze tables found
+      `optionsdx_quotes_{spy,qqq,nvda,tsla,vix}` and their five `__quarantine`
+      tables carrying a stale `__index_level_0__` column. Reads were
+      unaffected, but any new partition (e.g. the 2024-26 files
+      `HUMAN_TODO.md` plans to buy) would have failed with
+      `SchemaMismatchError`. Same method as below, in Arrow so SPY's 3.3M rows
+      fit in RAM. Each pre-repair version was backed up to
+      `data/backups/optionsdx_quotes*_v<N>_2026-11-05.parquet` (126 MB in
+      all), rewritten without the column (v0 -> v1; VIX v4 -> v5), and
+      verified equal to the backup row for row. A rescan of all 143 tables now
+      finds none. Independently re-verified the same day by time travel: all 16
+      repaired tables (these ten and the six OHLCV ones below) equal their
+      pre-repair versions and backups; the five large quote tables were
+      reordered, but have 0 duplicate (quote_date, expiration, strike) keys,
+      so no reader can see a difference. The writer has not leaked an index
+      since 2026-09-19 (`tests/test_lake_store.py` pins it). (The 2026-09-24 note below says every other table "was
+      scanned and is clean"; these ten and six OHLCV tables were not.)
+
+- [x] **Six OHLCV tables could not take a new partition -- repaired 2026-11-05.**
+      `ohlcv_{dbc,fcx,cvx,oxy,slb,vlo}` were created with a leaked
+      `__index_level_0__` column, so every clean write since failed with
+      `SchemaMismatchError: ... 9 vs 10` and the six froze at 2026-09-18. Same
+      by-hand repair as below: each v1 backed up to
+      `data/backups/ohlcv_<sym>_v1_2026-11-05.parquet`, rewritten to v2 without
+      the column, all 5,024 rows and both partitions verified identical, then
+      today's bars ingested.
+
 - [x] **Repair the `option_chain_snapshot__quarantine` schema.**
       **Done 2026-09-24** (by hand, not in code): rewritten with
       `mode="overwrite", schema_mode="overwrite"` from v11 to v12; all 6,422

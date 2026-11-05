@@ -347,6 +347,13 @@ const SCENES: Record<string, Scene[]> = {
       },
       mounted: ['table[aria-label="Tail ladder rungs"] th', '[data-testid="ladder-readout"] .pl-readout-k'],
     },
+    {
+      name: 'the smile, every expiry',
+      setup: async (page) => {
+        await page.getByText('Every expiry').click()
+      },
+      mounted: ['table[aria-label="Every expiry"] th'],
+    },
   ],
   'Pitch': [
     {

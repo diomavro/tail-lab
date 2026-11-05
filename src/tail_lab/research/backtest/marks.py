@@ -24,8 +24,8 @@ number nobody is offering.
 
 **Pure, like the builder it complements**: the chain arrives as a frame, so the
 lake read stays at the API layer and every case here is testable without a
-store. Coverage is partial by design -- ``DEFAULT_SNAPSHOT_SYMBOLS`` collects 24
-of the 70 screened names -- so an unquoted leg reports *why* in
+store. Coverage is partial by design -- ``DEFAULT_SNAPSHOT_SYMBOLS`` collects a
+subset of the screened names -- so an unquoted leg reports *why* in
 ``quote_status`` rather than silently looking like a quoted one.
 """
 
