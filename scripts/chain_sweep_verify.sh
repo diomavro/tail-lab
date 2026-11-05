@@ -95,14 +95,13 @@ from tail_lab.config import get_lake_store
 import requests
 
 from tail_lab.contracts.option_chain import (
-    DEFAULT_SNAPSHOT_SYMBOLS,
     WHOLE_SESSION,
+    chip_cohort_start,
+    expected_symbols,
     missing_sessions,
 )
 from tail_lab.ingestion.ohlcv import fetch_nasdaq_raw, nasdaq_trading_days
 from tail_lab.ingestion.option_chain import DATASET, fetch_chain_raw, parse_cboe_chain
-
-EXPECTED = {s.lower() for s in DEFAULT_SNAPSHOT_SYMBOLS}
 
 
 def _acknowledged() -> set[tuple[str, str]]:
@@ -150,6 +149,59 @@ def symbols_at(frame, session):
     }
 
 
+# ---- walk: collect the recent partitions first ---------------------------
+# Lake-only, so this runs at ANY hour -- it is what keeps a late resume from
+# leaving a day unverified, and what would have caught the ARKK gap.
+#
+# Walks back over calendar days with the store's own as-of resolution rather
+# than enumerating Delta partitions directly: as-of returns the latest
+# partition on or before a date, so stepping backwards and collecting the
+# distinct sessions it lands on enumerates the recent partitions through the
+# public API, with no private attributes and no second Delta client.
+#
+# Collected BEFORE either check because the names a partition must hold
+# depend on when the chip cohort began (contracts.option_chain
+# .expected_symbols), and until CHIP_COHORT_SINCE is pinned that date is read
+# off these very partitions. Without it every partition older than the cohort
+# reported 14 permanent, unfixable gaps.
+lookback = int(os.environ["CHAIN_VERIFY_LOOKBACK"])
+seen: set[dt.date] = set()
+walked: list[tuple[dt.date, dt.date, set[str]]] = []
+probe = dt.date.today()
+while len(seen) < lookback:
+    # Resolve the PARTITION (ingest_date) and step from that, not from the
+    # session the rows carry. An earlier version stepped by
+    # `session - 1 day`, which is only the same thing while every partition's
+    # ingest_date equals its max quote_date. Give one partition a lagging
+    # session and the next probe jumps BEHIND every partition in between, so
+    # they are never inspected: measured on a synthetic lake of six
+    # partitions -- two of them incomplete -- it examined exactly one and
+    # reported everything healthy.
+    try:
+        snapshot_id = store.bronze_snapshot_id(DATASET, probe)
+    except LookupError:
+        break
+    except OSError as exc:
+        # A transport fault mid-walk is the same class as the DNS gate above:
+        # it means we could not look, not that something is missing.
+        print(f"NOTE: lake unreachable partway through the backward check ({exc.__class__.__name__}).")
+        print("      Stopping the walk; this is not evidence of a gap.")
+        break
+    resolved = dt.date.fromisoformat(snapshot_id.split("@", 1)[1].split("#", 1)[0])
+    if resolved in seen:
+        break
+    seen.add(resolved)
+    frame = store.read_bronze_as_of(DATASET, resolved)
+    session = frame["quote_date"].max().date()
+    walked.append((resolved, session, symbols_at(frame, session)))
+    probe = resolved - dt.timedelta(days=1)
+
+cohort_start = chip_cohort_start({session: names for _, session, names in walked})
+if cohort_start is None:
+    print("NOTE: chip cohort not yet collected in any checked partition; not expected yet.")
+else:
+    print(f"chip cohort expected from {cohort_start}")
+
 # ---- A. forward: is the session Cboe is serving actually captured? --------
 if os.environ["CHAIN_VERIFY_FORWARD"] == "1":
     # The fetch is wrapped because a monitor that DIES on a transient network
@@ -192,55 +244,18 @@ if os.environ["CHAIN_VERIFY_FORWARD"] == "1":
                     f" -- {session} was NOT captured"
                 )
             else:
-                missing = sorted(EXPECTED - symbols_at(have, session))
-                print(f"symbols at {session}: {len(EXPECTED) - len(missing)}/{len(EXPECTED)}")
+                expected = expected_symbols(session, cohort_start)
+                missing = sorted(expected - symbols_at(have, session))
+                print(f"symbols at {session}: {len(expected) - len(missing)}/{len(expected)}")
                 if missing:
                     failures.append(f"no {session} quotes for: {', '.join(missing)}")
 
 # ---- B. backward: are the recent partitions symbol-complete? --------------
-# Lake-only, so this runs at ANY hour -- it is what keeps a late resume from
-# leaving a day unverified, and what would have caught the ARKK gap.
-#
-# Walks back over calendar days with the store's own as-of resolution rather
-# than enumerating Delta partitions directly: as-of returns the latest
-# partition on or before a date, so stepping backwards and collecting the
-# distinct sessions it lands on enumerates the recent partitions through the
-# public API, with no private attributes and no second Delta client.
-lookback = int(os.environ["CHAIN_VERIFY_LOOKBACK"])
-seen: set[dt.date] = set()
-sessions: set[dt.date] = set()
-probe = dt.date.today()
-newest_session: dt.date | None = None
-while len(seen) < lookback:
-    # Resolve the PARTITION (ingest_date) and step from that, not from the
-    # session the rows carry. An earlier version stepped by
-    # `session - 1 day`, which is only the same thing while every partition's
-    # ingest_date equals its max quote_date. Give one partition a lagging
-    # session and the next probe jumps BEHIND every partition in between, so
-    # they are never inspected: measured on a synthetic lake of six
-    # partitions -- two of them incomplete -- it examined exactly one and
-    # reported everything healthy.
-    try:
-        snapshot_id = store.bronze_snapshot_id(DATASET, probe)
-    except LookupError:
-        break
-    except OSError as exc:
-        # A transport fault mid-walk is the same class as the DNS gate above:
-        # it means we could not look, not that something is missing.
-        print(f"NOTE: lake unreachable partway through the backward check ({exc.__class__.__name__}).")
-        print("      Stopping the walk; this is not evidence of a gap.")
-        break
-    resolved = dt.date.fromisoformat(snapshot_id.split("@", 1)[1].split("#", 1)[0])
-    if resolved in seen:
-        break
-    seen.add(resolved)
-    frame = store.read_bronze_as_of(DATASET, resolved)
-    session = frame["quote_date"].max().date()
-    sessions.add(session)
-    if newest_session is None:
-        newest_session = session
-
-    missing = sorted(EXPECTED - symbols_at(frame, session))
+sessions = {session for _, session, _ in walked}
+newest_session = walked[0][1] if walked else None
+for resolved, session, present in walked:
+    expected = expected_symbols(session, cohort_start)
+    missing = sorted(expected - present)
     # Never let an acknowledgement silence the NEWEST session: while Cboe is
     # still serving it a re-run can still capture it, so that gap is not
     # permanent and the file's own header forbids acknowledging it. Nothing
@@ -252,10 +267,9 @@ while len(seen) < lookback:
     mark = "OK " if not missing else ("ack" if not unacked else "GAP")
     note = f"  ({len(missing) - len(unacked)} acknowledged)" if missing and not unacked else ""
     drift = f"  [ingest_date={resolved}]" if resolved != session else ""
-    print(f"  {mark} {session}: {len(EXPECTED) - len(missing)}/{len(EXPECTED)}{note}{drift}")
+    print(f"  {mark} {session}: {len(expected) - len(missing)}/{len(expected)}{note}{drift}")
     if unacked:
         failures.append(f"{session} is missing: {', '.join(unacked)}")
-    probe = resolved - dt.timedelta(days=1)
 
 # ---- C. whole sessions: is any trading day missing a partition entirely? --
 # B only inspects partitions that EXIST, so a session with none was invisible:

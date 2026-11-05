@@ -285,7 +285,13 @@ def option_chain_snapshot_status(
 
 
 def _wing_status(store: LakeStore, dataset: str, today: dt.date) -> OptionChainWingStatus:
-    """One wing's freshness, read from its own dataset (never a union)."""
+    """One wing's freshness, read from its own dataset (never a union).
+
+    Deliberately NOT cohort-aware (unlike the sweep verifier's
+    ``expected_symbols``): between a widening's deploy and its first sweep the
+    new names really are not collected, and this is the primary alert, so it
+    should say so rather than infer from the data that they were never due.
+    """
     expected = tuple(sorted(s.upper() for s in DEFAULT_SNAPSHOT_SYMBOLS))
     try:
         frame = store.read_bronze_as_of(dataset, today)
