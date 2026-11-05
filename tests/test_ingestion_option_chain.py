@@ -1895,16 +1895,6 @@ def test_captured_puts_do_not_make_the_first_call_ingest_a_no_op(tmp_path: Path)
     assert not again.committed
 
 
-def test_fetch_chains_paces_real_fetches_between_symbols() -> None:
-    """Cboe 429'd 9 of 24 names on a 48-request burst (2026-09-19); at 38 names
-    the sweep pauses between symbols. Never before the first, so a one-name
-    hand run pays nothing."""
-    pauses: list[float] = []
-    fetch, _ = _counting(SPY=_both("SPY"), QQQ=_both("QQQ"), IWM=_both("IWM"))
-    fetch_chains(["SPY", "QQQ", "IWM"], fetch=fetch, pause_s=1.0, sleep=pauses.append)
-    assert pauses == [1.0, 1.0]
-
-
 def test_an_injected_fetch_is_not_paced_by_default() -> None:
     """A test or replay has no rate limit; only the real network is paced."""
     pauses: list[float] = []
@@ -1913,10 +1903,14 @@ def test_an_injected_fetch_is_not_paced_by_default() -> None:
     assert pauses == []
 
 
-def test_the_real_network_is_paced_by_default(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_the_real_network_is_paced_between_symbols(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Cboe 429'd 9 of 24 names on a 48-request burst (2026-09-19); at 38 names
+    the sweep pauses between symbols. Never before the first, so a one-name
+    hand run pays nothing."""
     pauses: list[float] = []
     monkeypatch.setattr(
         option_chain_module, "fetch_chain_raw", lambda symbol: _both(symbol.upper())
     )
-    fetch_chains(["SPY", "QQQ"], sleep=pauses.append)
-    assert pauses == [option_chain_module.PER_SYMBOL_PAUSE_S]
+    fetch_chains(["SPY", "QQQ", "IWM"], sleep=pauses.append)
+    pause = option_chain_module.PER_SYMBOL_PAUSE_S
+    assert pauses == [pause, pause]

@@ -333,7 +333,6 @@ def fetch_chains(
     symbols: Iterable[str],
     fetch: Callable[[str], Mapping[str, object]] | None = None,
     *,
-    pause_s: float | None = None,
     sleep: Callable[[float], None] = time.sleep,
 ) -> dict[str, Mapping[str, object]]:
     """Fetch each symbol's chain ONCE, for every wing to parse
@@ -344,13 +343,12 @@ def fetch_chains(
     requests, Cboe 429 on 9 of 24) and could draw the two wings from
     different CDN snapshots.
 
-    ``pause_s`` defaults to :data:`PER_SYMBOL_PAUSE_S` against the real
-    network and to 0 for an injected ``fetch`` (a test or a replay has no
-    rate limit to respect); the pause falls BETWEEN symbols, never before
-    the first.
+    The real network is paced by :data:`PER_SYMBOL_PAUSE_S`; an injected
+    ``fetch`` is not (a test or a replay has no rate limit to respect). The
+    pause falls BETWEEN symbols, never before the first.
     """
     fetcher = fetch or fetch_chain_raw
-    pause = pause_s if pause_s is not None else (PER_SYMBOL_PAUSE_S if fetch is None else 0.0)
+    pause = PER_SYMBOL_PAUSE_S if fetch is None else 0.0
     payloads: dict[str, Mapping[str, object]] = {}
     for index, symbol in enumerate(symbols):
         if index and pause > 0:
