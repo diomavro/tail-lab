@@ -26,6 +26,8 @@ from __future__ import annotations
 
 import datetime as dt
 import logging
+import resource
+import time
 from functools import lru_cache
 
 import pandas as pd
@@ -138,6 +140,13 @@ def _ingest_chain(
     whole (:func:`_split`).
     """
     _require_token(authorization)
+    # Timed from here, so it EXCLUDES FastAPI's parse of the JSON body into
+    # pydantic rows, which happens before this runs. It is the handler's own
+    # cost (frame build, validation, the bronze write) -- the part that grows
+    # with the symbol count and must stay well under the sweep's 300 s POST
+    # timeout (scripts/chain_snapshot.py), because a timeout after the write
+    # lands becomes a retry against an already-claimed partition.
+    started = time.monotonic()
     dataset = wing.dataset
 
     if not body.rows:
@@ -232,6 +241,11 @@ def _ingest_chain(
         symbols_misrouted=",".join(split.misrouted) or None,
         market_session=body.market_session,
         bronze_path=bronze_path,
+        duration_s=round(time.monotonic() - started, 2),
+        # The PROCESS's peak since start (Linux reports KiB), not this
+        # request's: on the 1 GB Fly VM the ranking's memo caches set the
+        # floor, and headroom is what is left above whichever peak was worst.
+        peak_rss_mb=round(resource.getrusage(resource.RUSAGE_SELF).ru_maxrss / 1024),
     )
     return OptionChainSnapshotResponse(
         dataset=dataset,
