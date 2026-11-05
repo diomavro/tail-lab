@@ -2,22 +2,22 @@ import type { PutBacktestCycle } from '../../api/client'
 import { fmtDollar, fmtPrice } from './format'
 import { Th } from './Th'
 
-/* The roll ledger — every cycle the backtest actually placed, columns in the
- * order put_roll.py builds a roll from them.
+/* The roll ledger — every cycle the backtest actually placed.
  *
  * Cts is `budget / premium` shares, not whole 100-share contracts: the backtest
  * spends the budget exactly and never rounds (put_roll.py), so the cash the puts
  * cost IS the Budget column. Brokerage is the roll's `cost` field — commission
- * per real contract plus a modelled half-spread on the budget
- * (brokerage.roll_cost) — and it is charged on top of the budget, so
+ * per real contract plus a modelled half-spread on the budget (brokerage.roll_cost;
+ * no spread on a quote-priced run, whose ask already holds it) — charged on top
+ * of the budget, so
  *
  *     Net = Payoff − Budget − Brokerage
  *
  * is the subtraction a reader can do on screen, right to within the whole-dollar
- * rounding of the printed figures. An earlier
- * version labelled `cost` "Fill" and described it as the cash the contracts
- * cost; the e2e fixture had been built to match that description, so the suite
- * passed while every live row said otherwise.
+ * rounding of the printed figures. An earlier version labelled `cost` "Fill"
+ * and described it as the cash the contracts cost; the e2e fixture had been
+ * built to match that description, so the suite passed while every live row
+ * said otherwise.
  *
  * A dead roll prints $0 rather than an em dash: the em dash reads better, but
  * it breaks the one subtraction this table exists to let a reader perform.

@@ -29,14 +29,19 @@ test('stays collapsed until the reader asks for every roll', async ({ page }) =>
   await expect(page.getByRole('button', { name: `Hide ${CYCLES.length} rolls` })).toBeVisible()
 })
 
-test('prints Budget and Brokerage as separate columns', async ({ page }) => {
+// The reconcile test below reads cells by position, so this is what ties each
+// figure to the header printed above it.
+const HEADERS = ['Entry', 'Expiry', 'Spot', 'Strike', 'σ', 'Premium', 'Cts', 'Budget', 'Brokerage', 'Payoff', 'Net']
+
+test('prints Budget, Brokerage, Payoff and Net in the order Net subtracts them', async ({ page }) => {
   await page.getByRole('button', { name: /^Show all/ }).click()
   const table = page.getByRole('table', { name: 'Roll ledger' })
-  for (const head of ['Budget', 'Brokerage', 'Payoff', 'Net', 'σ', 'Cts', 'Premium']) {
+  const heads = table.getByRole('columnheader')
+  await expect(heads).toHaveCount(HEADERS.length)
+  for (const [i, head] of HEADERS.entries()) {
     // The header's name also carries its ⓘ button's ("What is …?").
-    await expect(table.getByRole('columnheader', { name: new RegExp(`^${head} What is `) })).toBeVisible()
+    await expect(heads.nth(i)).toHaveAccessibleName(new RegExp(`^${head} What is `))
   }
-  await expect(table.getByRole('columnheader', { name: /^Fill/ })).toHaveCount(0)
   await expect(table.locator('tbody tr')).toHaveCount(CYCLES.length)
 })
 

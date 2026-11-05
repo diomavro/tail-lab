@@ -69,10 +69,10 @@ export function bsPut(S: number, K: number, T: number, r: number, sigma: number,
 }
 
 // Entry brokerage as research/backtest/brokerage.py:roll_cost charges it: the
-// commission per real (100-share) contract plus a half-spread on the budget. The
-// half-spread fraction is invented; the shape is not.
+// commission per real (100-share) contract plus a half-spread on the budget, at
+// brokerage.py's SPREAD_BASE_FRAC floor (a real 4-week 5% put pays more).
 const COMMISSION_PER_CONTRACT = 0.65
-const HALF_SPREAD_FRAC = 0.0055
+const HALF_SPREAD_FRAC = 0.01
 const rollCost = (shares: number) =>
   Number((COMMISSION_PER_CONTRACT * (shares / 100) + HALF_SPREAD_FRAC * NOTIONAL).toFixed(2))
 
