@@ -73,3 +73,28 @@ export const SMILE_REFUSED: VolSurfaceResponse = {
   calendar_violations: [],
   refusal: 'no tsla put quotes on or before 2026-11-05',
 }
+
+/** A session captured before the call wing (ADR 0031): puts only, so the
+ * slices are one-wing quadratics -- ATM shape, no SVI, no risk reversal. */
+export const SMILE_ONE_WING: VolSurfaceResponse = {
+  ...SMILE_FITTED,
+  two_wing: false,
+  one_wing_reason: 'no call quotes for the 2026-10-20 session',
+  session: '2026-10-20',
+  calendar_violations: [],
+  slices: [
+    slice('2026-11-20', 31 / 365.25, {
+      fit: 'one_wing_quadratic',
+      svi: null,
+      forward_source: 'carry_q0',
+      rmse_vol_points: null,
+      atm_curvature: 1.1,
+      risk_reversal_25: null,
+      butterfly_ok: null,
+      butterfly_min_g: null,
+      butterfly_n_invalid: null,
+      lee_ok: null,
+      points: [-0.2, -0.1, -0.05, -0.02, 0.01, 0.02].map((k) => ({ k, iv: 0.2 - 0.5 * k, right: 'P' as const })),
+    }),
+  ],
+}

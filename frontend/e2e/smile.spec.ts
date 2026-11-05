@@ -1,5 +1,6 @@
 import { expect, test } from '@playwright/test'
 import { mockPutLabApi } from './fixtures/mock-api'
+import { SMILE_ONE_WING } from './fixtures/smile'
 
 // The Surface tab's Smile section (docs/adr/0036). Guards: a refused slice
 // reads as REFUSED with its reason, never a blank or a zero; a failed
@@ -66,4 +67,30 @@ test('at phone width the opened expiry table does not scroll the page sideways',
   await expect(smile(page).getByRole('table', { name: 'Every expiry' })).toBeVisible()
   const overflow = await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth)
   expect(overflow).toBeLessThanOrEqual(0)
+})
+
+test('the drawn curve is the served SVI: its vol at k = 0 matches the parameters', async ({ page }) => {
+  // Fixture SVI (a, b, rho, m, sigma) = (0.004, 0.05, -0.7, 0.02, 0.1), 30 days:
+  // w(0) = 0.004 + 0.05 * (0.014 + sqrt(0.0004 + 0.01)) = 0.0097990,
+  // sigma = sqrt(w / (30 / 365.25)) = 0.3454.
+  const fits = smile(page).getByTestId('smile-fit')
+  await expect(fits.first()).toHaveAttribute('data-atm-vol', '0.3454')
+})
+
+test('a one-wing session says why, draws no curve, and shows no number it did not measure', async ({ page }) => {
+  await page.route(
+    (url) => url.pathname === '/api/putlab/vol-surface',
+    (route) => route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(SMILE_ONE_WING) }),
+  )
+  await page.reload()
+  await page.getByRole('tab', { name: 'Surface' }).click()
+  const s = smile(page)
+  await expect(s.getByTestId('smile-session')).toContainText('puts only (no call quotes for the 2026-10-20 session)')
+  await expect(s.getByTestId('smile-series')).toHaveCount(1)
+  await expect(s.getByTestId('smile-fit')).toHaveCount(0)
+  await expect(s).toContainText('31 days (2026-11-20), one wing')
+  await s.getByText('Every expiry').click()
+  const row = s.getByRole('table', { name: 'Every expiry' }).getByRole('row').nth(1)
+  await expect(row).toContainText('one wing: shape only')
+  await expect(row.getByRole('cell').nth(5)).toHaveText('—')
 })

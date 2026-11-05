@@ -61,8 +61,15 @@ function SmileChart({ chosen, narrow }: { chosen: SmileSlice[]; narrow: boolean 
   const all = chosen.flatMap((s) => s.points)
   const kLo = Math.min(...all.map((p) => p.k))
   const kHi = Math.max(...all.map((p) => p.k))
-  const vLo = Math.min(...all.map((p) => p.iv))
-  const vHi = Math.max(...all.map((p) => p.iv))
+  // The y-range holds the fitted curves too: an SVI that overshoots the
+  // quotes between strikes must not draw outside the plot box.
+  const curveVols = chosen.flatMap((s) => {
+    const ks = s.points.map((p) => p.k)
+    const [lo, hi] = [Math.min(...ks), Math.max(...ks)]
+    return s.svi ? Array.from({ length: 80 }, (_, j) => sviVol(s.svi!, lo + ((hi - lo) * j) / 79, s.t_years)) : []
+  })
+  const vLo = Math.min(...all.map((p) => p.iv), ...curveVols)
+  const vHi = Math.max(...all.map((p) => p.iv), ...curveVols)
   const W = narrow ? 400 : 860
   const H = 300
   const [X0, X1, Y0, Y1] = [56, W - 12, 14, H - 44]
@@ -110,7 +117,12 @@ function SmileChart({ chosen, narrow }: { chosen: SmileSlice[]; narrow: boolean 
               : []
             return (
               <g key={s.expiration} data-testid="smile-series">
-                {curve.length > 0 && <path d={poly(curve)} className={series.line} data-testid="smile-fit" />}
+                {curve.length > 0 && <path
+                    d={poly(curve)}
+                    className={series.line}
+                    data-testid="smile-fit"
+                    data-atm-vol={sviVol(s.svi!, 0, s.t_years).toFixed(4)}
+                  />}
                 <path d={dots(pts, 2.2)} className={series.dot} />
               </g>
             )
