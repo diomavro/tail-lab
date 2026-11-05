@@ -1,0 +1,29 @@
+# Install: cp docs/systemd/tail-lab-refresh.{service,timer} ~/.config/systemd/user/
+#          systemctl --user daemon-reload && systemctl --user enable --now tail-lab-refresh.timer
+[Unit]
+Description=tail-lab daily refresh of the keyless bronze sources
+Documentation=file:///home/dio/Documents/apps/tail-lab/HUMAN_TODO.md
+OnFailure=tail-lab-alert@refresh.service
+# Never contend with the chain sweep. That one is time-critical and
+# unrecoverable; this one serves history on demand and can always wait.
+After=tail-lab-chain.service tail-lab-chain-verify.service
+
+[Service]
+Type=oneshot
+ExecStart=/home/dio/Documents/apps/tail-lab/scripts/local_daily_refresh.sh
+# Type=oneshot defaults TimeoutStartSec to INFINITY, and a hung refresh would
+# never fail, so OnFailure= would never fire and every later trigger would be
+# coalesced into the stuck job.
+#
+# Sized from the adapters' own timeouts, not from a happy-path measurement.
+# An earlier value of 45min was set against "~30 fetches, 3 minutes" -- but
+# that run still included option-quotes and had neither mpd nor
+# options-expiry. The shipped shape is 54 fetches (measured 3m41s), and the
+# worst case is far longer: ohlcv is 2 asset classes x 30s plus a 15s Yahoo
+# fallback, options-expiry is 2 Cboe candidates x 60s plus 3 x 15s Yahoo, so
+# ~240s per symbol. The OHLCV list is the whole screening universe plus the
+# chain sweep (scripts/ohlcv_freshness.py --list): 70 names, 76 once the chip
+# cohort lands, so the worst case is ~304 minutes before the non-symbol
+# sources. 330min clears that. Happy-path runs at 24 names took 10-12 minutes
+# (2026-11-02..04), one 26 minutes (2026-11-05); expect ~3x that at 76.
+TimeoutStartSec=330min

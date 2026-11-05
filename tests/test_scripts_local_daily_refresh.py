@@ -30,7 +30,8 @@ SCRIPT = Path(__file__).resolve().parents[1] / "scripts" / "local_daily_refresh.
 _STUB_PYTHON = """#!/usr/bin/env bash
 src="$*"
 case "$src" in
-  *DEFAULT_SNAPSHOT_SYMBOLS*) [ "$STUB_SYMBOLS" = "crash" ] && exit 3; echo "$STUB_SYMBOLS" ;;
+  *"ohlcv_freshness.py --list"*)  [ "$STUB_SYMBOLS" = "crash" ] && exit 3; echo "$STUB_SYMBOLS" ;;
+  *"ohlcv_freshness.py --check"*) echo "${STUB_FRESHNESS:-fresh}"; [ "${STUB_FRESHNESS:-fresh}" = "fresh" ] ;;
   *fred_api_key*)             [ "$STUB_FRED" = "crash" ] && exit 3; echo "$STUB_FRED" ;;
   *) exit 0 ;;
 esac
@@ -50,7 +51,7 @@ def _sandbox(tmp_path: Path) -> Path:
     return repo
 
 
-def _run(repo: Path, *, symbols: str, fred: str) -> tuple[int, str]:
+def _run(repo: Path, *, symbols: str, fred: str, freshness: str = "fresh") -> tuple[int, str]:
     result = subprocess.run(
         [str(SCRIPT)],
         env={
@@ -58,6 +59,7 @@ def _run(repo: Path, *, symbols: str, fred: str) -> tuple[int, str]:
             "TAIL_LAB_REPO": str(repo),
             "STUB_SYMBOLS": symbols,
             "STUB_FRED": fred,
+            "STUB_FRESHNESS": freshness,
             "REFRESH_OHLCV_SYMBOLS": "",
         },
         check=False,
@@ -130,3 +132,18 @@ def test_with_a_key_both_fred_sources_are_attempted(tmp_path: Path) -> None:
     assert rc != 0
     assert "rates" in log.split("FAILED SOURCES")[-1]
     assert "skipped" not in log
+
+
+def test_a_stale_name_fails_the_run_by_name(tmp_path: Path) -> None:
+    """Every ingest can succeed while a name the loop never touched sits weeks
+    behind -- the 2026-09 stall exactly. The freshness check runs after the
+    loop and its STALE lines must reach the log, naming the laggard."""
+    rc, log = _run(
+        _sandbox(tmp_path),
+        symbols="spy qqq",
+        fred="NOKEY",
+        freshness="STALE xlk: newest bar 2026-09-17 is 32 sessions behind spy",
+    )
+    assert rc == 1
+    assert "STALE xlk" in log
+    assert "ohlcv:freshness" in log.split("FAILED SOURCES")[-1]
