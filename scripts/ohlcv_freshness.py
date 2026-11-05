@@ -32,6 +32,7 @@ import datetime as dt
 import sys
 from collections.abc import Iterable
 
+import numpy as np
 import pandas as pd
 
 from tail_lab.config import get_lake_store
@@ -47,6 +48,8 @@ from tail_lab.lake.store import LakeStore
 MAX_LAG_SESSIONS = 5
 #: The yardstick. Swept daily, so its bars define the trading calendar here.
 REFERENCE = "spy"
+#: How far SPY may trail Nasdaq's newest session (see the same-day re-run note).
+SPY_SLACK_BUSINESS_DAYS = 1
 
 
 def refresh_symbols() -> tuple[str, ...]:
@@ -78,7 +81,15 @@ def stale_symbols(
         return [f"{REFERENCE}: no OHLCV in bronze -- the yardstick itself is missing"]
     calendar = pd.DatetimeIndex(sorted(reference["trade_date"].unique()))
     failures: list[str] = []
-    if market_session is not None and calendar[-1].date() < market_session:
+    # One business day of slack: bronze is immutable, so a SAME-DAY re-run
+    # after the close keeps the morning's SPY partition (yesterday's bar)
+    # while Nasdaq already reports today -- a false red on exactly the re-run
+    # the failure message asks for. A real freeze grows past one day. (Over
+    # a holiday the slack is calendar business days, so the edge errs red.)
+    if (
+        market_session is not None
+        and int(np.busday_count(calendar[-1].date(), market_session)) > SPY_SLACK_BUSINESS_DAYS
+    ):
         failures.append(
             f"{REFERENCE}: newest bar {calendar[-1].date()} is behind Nasdaq's "
             f"newest session {market_session} -- every comparison below is suspect"

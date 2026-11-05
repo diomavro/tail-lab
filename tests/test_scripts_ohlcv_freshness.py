@@ -113,7 +113,7 @@ def test_a_frozen_yardstick_is_caught_against_nasdaq(lake: DeltaLakeStore) -> No
     """If SPY itself froze, every name would compare as fresh against it. The
     market session from Nasdaq is the witness that SPY is current."""
     _seed(lake, "xlk", SESSIONS)
-    later = (SESSIONS[-1] + pd.offsets.BDay(3)).date()
+    later = (SESSIONS[-1] + pd.offsets.BDay(2)).date()
     failures = fresh.stale_symbols(lake, ["xlk"], as_of=AS_OF, market_session=later)
     assert len(failures) == 1 and failures[0].startswith("spy: newest bar")
 
@@ -123,3 +123,48 @@ def test_a_missing_yardstick_fails_rather_than_passing_everything(tmp_path: Path
         DeltaLakeStore(tmp_path), ["xlk"], as_of=AS_OF, market_session=None
     )
     assert failures and failures[0].startswith("spy: no OHLCV")
+
+
+def test_a_same_day_rerun_after_the_close_is_not_a_false_red(lake: DeltaLakeStore) -> None:
+    """Bronze is immutable: the evening re-run keeps the morning's SPY
+    partition (yesterday's bar) while Nasdaq already reports today. That is
+    one business day, not a freeze."""
+    _seed(lake, "xlk", SESSIONS)
+    today = (SESSIONS[-1] + pd.offsets.BDay(1)).date()
+    assert fresh.stale_symbols(lake, ["xlk"], as_of=AS_OF, market_session=today) == []
+
+
+def _patch_main(
+    monkeypatch: pytest.MonkeyPatch, store: DeltaLakeStore, names: tuple[str, ...]
+) -> None:
+    monkeypatch.setattr(fresh, "get_lake_store", lambda: store)
+    monkeypatch.setattr(fresh, "latest_market_session", lambda: SESSIONS[-1].date())
+    monkeypatch.setattr(fresh, "refresh_symbols", lambda: names)
+
+
+def test_main_check_exits_nonzero_and_names_the_laggard(
+    lake: DeltaLakeStore, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """The exit code IS the alert: the refresh marks the run failed only on it."""
+    _seed(lake, "xlk", SESSIONS[SESSIONS <= "2026-09-17"])
+    _patch_main(monkeypatch, lake, ("spy", "xlk"))
+    assert fresh.main(["--check"]) == 1
+    assert "STALE xlk" in capsys.readouterr().out
+
+
+def test_main_check_covers_the_whole_universe(
+    lake: DeltaLakeStore, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A name present in the universe but never ingested must fail the run --
+    the check reads refresh_symbols(), not whatever the loop iterated."""
+    _patch_main(monkeypatch, lake, ("spy", "vrt"))
+    assert fresh.main(["--check"]) == 1
+    assert "STALE vrt: no OHLCV in bronze" in capsys.readouterr().out
+
+
+def test_main_check_passes_a_current_lake(
+    lake: DeltaLakeStore, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _seed(lake, "xlk", SESSIONS)
+    _patch_main(monkeypatch, lake, ("spy", "xlk"))
+    assert fresh.main(["--check"]) == 0
