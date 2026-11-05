@@ -540,6 +540,14 @@ a large one strictly in order.
       "chunk the realtime window" advice is WRONG — it clips
       `realtime_start` and fabricates revisions (`docs/PRIOR_ART.md` §19).
 
+- [ ] **Pin `CHIP_COHORT_SINCE` once the chip cohort's first sweep has run**
+      (`contracts/option_chain.py`, added 2026-11-05). Read the first session
+      holding any `CHIP_COHORT` name off `GET /api/ingest/option-chain/status`
+      or the lake, set the constant, and drop nothing else. Until it is set,
+      `chip_cohort_start` derives the date from the verifier's 10-partition
+      walk, so a cohort that vanished from all ten would read as "not yet
+      collected" and pass; once pinned, that is a gap.
+
 - [ ] **Repair the ten `optionsdx_quotes_*` bronze tables' leaked index column
       before the next optionsDX ingest.** Measured 2026-11-05 by scanning all
       137 production bronze tables: `optionsdx_quotes_{spy,qqq,nvda,tsla,vix}`

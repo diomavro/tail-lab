@@ -279,10 +279,9 @@ WINGS: dict[Right, Wing] = {
 #: Measured 2026-08-26: these 24 slice to 20,882 PUT rows / 4.68 MB / 25.5s.
 #: The call wing (``docs/adr/0031``) is about 1.35x the put rows again: on
 #: 2026-10-26, 17,330 puts (3.9 MB body) against 23,376 calls (5.2 MB).
-#: Widening toward the full 70 is queued (``AGENT_TODO.md``) and affordable
-#: — the additions are thin chains, and SPY+QQQ+GLD are already a third of
-#: the payload. The constraint that bites first is POST body size, not fetch
-#: time.
+#: The constraint that bites first when widening is the POST, not fetch
+#: time: the 2026-11 chip cohort below was gated on the app logging its
+#: handler time and peak RSS, and the sweep script printing the round trip.
 CORE_SNAPSHOT_SYMBOLS: tuple[str, ...] = (
     "spy",
     "qqq",
