@@ -1175,6 +1175,66 @@ export async function fetchSurface(
   return (await resp.json()) as SurfaceResponse
 }
 
+// ---- Smile (GET /api/putlab/vol-surface) -- mirrors research/vol_surface/read.VolSurface.
+
+export interface SmilePoint {
+  k: number
+  iv: number
+  right: 'P' | 'C'
+}
+
+export interface SviParams {
+  a: number
+  b: number
+  rho: number
+  m: number
+  sigma: number
+}
+
+export interface SmileSlice {
+  expiration: string
+  t_years: number
+  forward: number
+  forward_source: 'parity' | 'carry' | 'carry_q0'
+  parity_refusal: string | null
+  points: SmilePoint[]
+  fit: 'svi' | 'one_wing_quadratic' | null
+  svi: SviParams | null
+  rmse_vol_points: number | null
+  atm_vol: number | null
+  atm_skew: number | null
+  atm_curvature: number | null
+  risk_reversal_25: number | null
+  butterfly_ok: boolean | null
+  butterfly_min_g: number | null
+  butterfly_n_invalid: number | null
+  lee_ok: boolean | null
+  refusal: string | null
+}
+
+export interface VolSurfaceResponse {
+  symbol: string
+  as_of: string
+  session: string | null
+  spot: number | null
+  r: number
+  q: number
+  q_source: string
+  two_wing: boolean
+  one_wing_reason: string | null
+  slices: SmileSlice[]
+  calendar_violations: [number, number][]
+  refusal: string | null
+}
+
+export async function fetchVolSurface(symbol: string, signal?: AbortSignal): Promise<VolSurfaceResponse> {
+  const resp = await fetch(`/api/putlab/vol-surface?${new URLSearchParams({ symbol })}`, { signal })
+  if (!resp.ok) {
+    throw new ApiError(`GET /api/putlab/vol-surface failed: ${resp.status}`, resp.status)
+  }
+  return (await resp.json()) as VolSurfaceResponse
+}
+
 // ---- Book (GET /api/putlab/hedge-overlay) -- mirrors api/schemas.HedgeOverlayResponse.
 
 export interface OverlayWeightPoint {

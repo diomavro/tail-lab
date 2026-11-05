@@ -1241,6 +1241,10 @@
 .pl-c-realised { stroke: var(--ink); stroke-width: 1.5; stroke-dasharray: 4 3; fill: none; }
 .pl-c-ceiling { stroke: var(--ink-70); stroke-width: 1.2; fill: var(--paper); }
 .pl-c-ink { fill: var(--ink); }
+/* Smile series 2 and 3 (views/SmileSection.tsx): the dot colours of the
+   magenta and dashed-muted lines beside them. */
+.pl-c-dot-mag { fill: var(--mag); }
+.pl-c-dot-muted { fill: var(--ink-45); }
 .pl-c-line { stroke: var(--ink); stroke-width: 2; fill: none; }
 .pl-c-loss { stroke: var(--mag); stroke-width: 2; fill: none; }
 .pl-c-bs { stroke: var(--ink-45); stroke-width: 1.5; stroke-dasharray: 5 4; fill: none; }

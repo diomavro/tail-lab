@@ -10,6 +10,7 @@ import { MARKS } from './marks'
 import { coverage, nameRecord } from './name-record'
 import { MODEL_PLAN } from './model-plan'
 import * as fx from './putlab'
+import { SMILE_FITTED, SMILE_REFUSED } from './smile'
 import { SIGNAL_TEST_BEATS, SIGNAL_TEST_CRASH_CARRIED, SIGNAL_TEST_INSUFFICIENT, SIGNAL_TEST_NO_BETTER } from './signal-test'
 
 export interface MockOptions {
@@ -153,6 +154,9 @@ export async function mockPutLabApi(page: Page, opts: MockOptions = {}): Promise
       case '/api/putlab/surface':
         // TSLA is the all-refused payload; every other name is the fitted one.
         return json(route, url.searchParams.get('asset') === 'tsla' ? fx.SURFACE_REFUSED : fx.SURFACE_FITTED)
+      case '/api/putlab/vol-surface':
+        // TSLA is refused here too, matching the Surface payload above.
+        return json(route, url.searchParams.get('symbol') === 'tsla' ? SMILE_REFUSED : SMILE_FITTED)
       case '/api/putlab/hedge-overlay':
         return json(route, HEDGE_OVERLAY)
       case '/api/putlab/book-plan/model':

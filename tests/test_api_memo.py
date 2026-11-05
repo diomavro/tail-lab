@@ -204,6 +204,24 @@ def test_entries_past_the_stale_window_are_pruned() -> None:
     assert len(calls) == 1
 
 
+def test_a_capped_memo_drops_its_oldest_computed_entry() -> None:
+    clock, spawn = Clock(), Spawner()
+    memo: RefreshingMemo[str, int] = RefreshingMemo(
+        name="t", fresh_s=10.0, serve_stale_s=100.0, max_entries=2, clock=clock, spawn=spawn
+    )
+    memo.get("a", lambda: 1)
+    clock.now = 1.0
+    memo.get("b", lambda: 2)
+    clock.now = 20.0
+    assert memo.get("a", lambda: 9) == 1  # stale: served, refresh queued
+    spawn.run_all()  # "a" recomputed, so "b" is now the oldest
+    memo.get("c", lambda: 3)
+    compute, calls = counter([4])
+    assert memo.get("a", compute) == 9
+    assert memo.get("b", compute) == 4  # recomputed: it was evicted
+    assert len(calls) == 1
+
+
 def test_the_stale_window_cannot_be_shorter_than_the_fresh_one() -> None:
     with pytest.raises(ValueError, match="serve_stale_s"):
         RefreshingMemo(name="t", fresh_s=10.0, serve_stale_s=5.0)
