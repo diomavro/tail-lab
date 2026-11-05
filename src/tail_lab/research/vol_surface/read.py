@@ -4,8 +4,12 @@ Reads ``option_chain_snapshot`` and ``option_chain_call_snapshot`` -- one
 session, point-in-time via the store's as-of resolution -- never the optionsDX
 archive (v1 scope, ``docs/adr/0036``). Per expiry:
 
-1. keep quotes a desk could mark at: a positive bid and a relative spread
-   within ``marks.MAX_RELATIVE_SPREAD``; price at the mid;
+1. keep quotes a desk could mark at -- the Book's own bar (``marks._is_liquid``):
+   a positive bid and ask, open interest of at least
+   ``marks.MIN_OPEN_INTEREST`` and a relative spread within
+   ``marks.MAX_RELATIVE_SPREAD``; price at the mid. A locked quote
+   (ask == bid) passes, as it does in the marks: the smile reads near-the-money
+   strikes, not the deep wing where ``implied_alpha`` refuses one as stale;
 2. choose the forward (``coords.choose_forward``: parity, else carry);
 3. keep OUT-of-the-money quotes only -- puts below the forward, calls above --
    and invert each mid to a Black implied vol on the forward;
@@ -30,7 +34,7 @@ from pydantic import BaseModel
 from tail_lab.contracts.option_chain import CALL_DATASET
 from tail_lab.contracts.option_chain import DATASET as PUT_DATASET
 from tail_lab.lake.store import LakeStore
-from tail_lab.research.backtest.marks import MAX_RELATIVE_SPREAD
+from tail_lab.research.backtest.marks import MAX_RELATIVE_SPREAD, MIN_OPEN_INTEREST
 from tail_lab.research.backtest.put_roll import DEFAULT_RATE
 from tail_lab.research.dividends import dividend_lookup
 from tail_lab.research.option_pricer import DAYS_PER_YEAR
@@ -112,7 +116,12 @@ def _usable(frame: pd.DataFrame) -> pd.DataFrame:
         return frame
     mid = (frame["bid"] + frame["ask"]) / 2
     spread = (frame["ask"] - frame["bid"]) / mid
-    keep = (frame["bid"] > 0) & (spread <= MAX_RELATIVE_SPREAD)
+    keep = (
+        (frame["bid"] > 0)
+        & (frame["ask"] > 0)
+        & (frame["open_interest"] >= MIN_OPEN_INTEREST)
+        & (spread <= MAX_RELATIVE_SPREAD)
+    )
     out = frame.loc[keep].copy()
     out["mid"] = mid[keep]
     return out

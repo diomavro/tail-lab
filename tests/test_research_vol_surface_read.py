@@ -19,6 +19,7 @@ import pytest
 
 from tail_lab.contracts.option_chain import CALL_DATASET, DATASET
 from tail_lab.lake.store import DeltaLakeStore
+from tail_lab.research.backtest.marks import MIN_OPEN_INTEREST
 from tail_lab.research.option_pricer import DAYS_PER_YEAR, BlackScholesPricer
 from tail_lab.research.vol_surface import read, svi
 
@@ -153,11 +154,13 @@ def test_an_empty_lake_is_a_refusal_not_an_error(tmp_path: Path) -> None:
 
 
 def test_unmarkable_quotes_never_enter_the_smile() -> None:
-    """The marks bar: bid > 0 and a relative spread within
-    MAX_RELATIVE_SPREAD. A zero bid and a 100%-wide quote must be dropped."""
+    """The marks bar: bid > 0, open interest >= MIN_OPEN_INTEREST and a
+    relative spread within MAX_RELATIVE_SPREAD. A zero bid, a 100%-wide quote
+    and a contract nobody holds must be dropped."""
     puts = _rows(PUT_STRIKES, _put)
-    zero_bid, wide = 0.80 * S, 0.85 * S
+    zero_bid, wide, no_oi = 0.80 * S, 0.85 * S, 0.75 * S
     puts.loc[puts["strike"] == zero_bid, "bid"] = 0.0
+    puts.loc[puts["strike"] == no_oi, "open_interest"] = MIN_OPEN_INTEREST - 1
     wide_mid = puts.loc[puts["strike"] == wide, "ask"].iloc[0] / 1.01
     puts.loc[puts["strike"] == wide, ["bid", "ask"]] = [wide_mid * 0.5, wide_mid * 1.5]
     surface = read.surface_from_frames(
@@ -167,6 +170,7 @@ def test_unmarkable_quotes_never_enter_the_smile() -> None:
     f = surface.slices[0].forward
     assert round(math.log(zero_bid / f), 9) not in ks
     assert round(math.log(wide / f), 9) not in ks
+    assert round(math.log(no_oi / f), 9) not in ks
     assert round(math.log(0.90 * S / f), 9) in ks
 
 
