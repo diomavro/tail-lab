@@ -27,6 +27,9 @@ logger = logging.getLogger("tail_lab.api.vol_surface")
 #: SPY costs ~5 s to fit (22 expiries), which is why it is memoised at all.
 _TTL_S = 600.0
 _CACHE: dict[tuple[str, str], tuple[float, VolSurface]] = {}
+#: ``symbol`` is free text, so the memo is capped: past this, the oldest
+#: entries go first (dicts keep insertion order).
+_CACHE_MAX = 64
 
 
 def get_lake_store() -> LakeStore:
@@ -65,4 +68,6 @@ def putlab_vol_surface(
         duration_s=round(time.monotonic() - started, 2),
     )
     _CACHE[key] = (time.monotonic() + _TTL_S, surface)
+    while len(_CACHE) > _CACHE_MAX:
+        del _CACHE[next(iter(_CACHE))]
     return surface

@@ -61,21 +61,43 @@ def test_carry_forward_is_spot_grown_at_r_minus_q() -> None:
     assert coords.carry_forward(S, t_years=0.5, r=R, q=Q) == pytest.approx(S * math.exp(0.015))
 
 
-def test_parity_on_american_prices_is_biased_low_but_within_tolerance() -> None:
+def _american_pairs(t: float, strikes: tuple[float, ...]) -> list[tuple[float, float, float]]:
+    return [(k, _american(k, t, is_call=True), _american(k, t, is_call=False)) for k in strikes]
+
+
+def _spread(pairs: list[tuple[float, float, float]], t: float) -> float:
+    forwards = sorted(k + math.exp(R * t) * (c - p) for k, c, p in pairs)
+    return (forwards[-1] - forwards[0]) / forwards[1]
+
+
+def test_parity_on_american_prices_is_biased_low_but_accepted() -> None:
     """A European identity on American options: early exercise lifts the put
-    more than the call (r > q), so C - P is too small and F reads LOW. The
-    tolerance must still accept it, or every real slice would fall to carry."""
+    more than the call (r > q), so C - P is too small and F reads LOW."""
     t = 0.5
-    pairs = [
-        (k, _american(k, t, is_call=True), _american(k, t, is_call=False))
-        for k in (98.0, 100.0, 102.0)
-    ]
+    pairs = _american_pairs(t, (98.0, 100.0, 102.0))
     forward, refusal = coords.parity_forward(pairs, t_years=t, r=R, near=S)
-    true = S * math.exp((R - Q) * t)
+    assert refusal is None and forward is not None
+    assert forward < S * math.exp((R - Q) * t)
+
+
+def test_the_per_year_tolerance_is_what_admits_a_one_year_american_slice() -> None:
+    """Measured: on $5 strikes the American forwards disagree by ~0.36% at one
+    year -- past the 0.20% base -- so without the per-year term every long
+    real slice would fall back to carry."""
+    t = 1.0
+    pairs = _american_pairs(t, (95.0, 100.0, 105.0))
+    assert coords.PARITY_TOLERANCE_BASE < _spread(pairs, t) <= coords.parity_tolerance(t)
+    assert coords.parity_forward(pairs, t_years=t, r=R, near=S)[1] is None
+
+
+def test_only_the_strikes_nearest_the_forward_vote() -> None:
+    """A stale far strike must not reach the vote that sets the forward."""
+    t = 0.25
+    pairs = [(k, *_euro(k, t)) for k in (98.0, 100.0, 102.0)]
+    pairs.append((140.0, _euro(140.0, t)[0] + 5.0, _euro(140.0, t)[1]))
+    forward, refusal = coords.parity_forward(pairs, t_years=t, r=R, near=S)
     assert refusal is None
-    assert forward is not None
-    bias = forward / true - 1
-    assert -coords.parity_tolerance(t) < bias < 0
+    assert forward == pytest.approx(S * math.exp((R - Q) * t), abs=1e-9)
 
 
 def test_disagreeing_strikes_fall_back_to_carry_with_the_reason() -> None:

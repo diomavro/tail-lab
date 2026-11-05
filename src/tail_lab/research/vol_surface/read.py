@@ -13,7 +13,8 @@ archive (v1 scope, ``docs/adr/0036``). Per expiry:
    one-wing quadratic, which keeps puts up to the stored band edge so it
    straddles ``k = 0``.
 
-A slice that cannot be fitted is returned with a named ``refusal``, never a 0.
+A slice that cannot be fitted -- including an expiry under ``MIN_TENOR_DAYS`` --
+is returned with a named ``refusal``, never a 0 and never silently dropped.
 """
 
 from __future__ import annotations
@@ -93,6 +94,9 @@ class VolSurface(BaseModel):
     q: float
     q_source: str
     two_wing: bool
+    #: Why the session is one-wing (``None`` when both wings were read): no
+    #: call partition at all, or one from a different session than the puts.
+    one_wing_reason: str | None
     slices: list[SmileSlice]
     #: ``(t_short, t_long)`` year-fractions of adjacent SVI slices whose total
     #: variance falls with tenor somewhere on their shared k-range.
@@ -259,6 +263,7 @@ def surface_from_frames(
             q=q,
             q_source=q_source,
             two_wing=False,
+            one_wing_reason=None,
             slices=[],
             calendar_violations=[],
             refusal=reason,
@@ -274,6 +279,7 @@ def surface_from_frames(
         calls[pd.to_datetime(calls["quote_date"]).dt.date == session] if not calls.empty else calls
     )
     two_wing = not calls.empty
+    one_wing_reason = None if two_wing else f"no call quotes for the {session} session"
     calls = _usable(calls) if two_wing else calls
     spot = float(puts["spot"].median()) if not puts.empty else None
     if spot is None:
@@ -283,6 +289,9 @@ def surface_from_frames(
     for expiry_ts, group in puts.groupby("expiration"):
         expiry = pd.Timestamp(cast("pd.Timestamp", expiry_ts)).date()
         if (expiry - session).days < MIN_TENOR_DAYS:
+            t = (expiry - session).days / DAYS_PER_YEAR
+            carry = coords.Forward(coords.carry_forward(spot, t_years=t, r=r, q=q), "carry", None)
+            slices.append(_empty_slice(expiry, t, carry, [], f"tenor_below_{MIN_TENOR_DAYS}_days"))
             continue
         expiry_calls = calls[calls["expiration"] == expiry_ts] if two_wing else calls
         slices.append(
@@ -317,6 +326,7 @@ def surface_from_frames(
         q=q,
         q_source=q_source,
         two_wing=two_wing,
+        one_wing_reason=one_wing_reason,
         slices=slices,
         calendar_violations=svi.calendar_violations(fitted),
         refusal=None,

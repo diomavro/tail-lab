@@ -33,7 +33,9 @@ The call wing has been collected since ADR 0031 (2026-10-27), so a forward can n
    - **r** is the flat `DEFAULT_RATE`, the same rate every other route uses. The plan had proposed the point-in-time bill rate; near the money the parity forward barely depends on r.
 
 3. **Measured biases are stated, not hidden.**
-   - **Parity is European, the options are American.** An American binomial check (S=100, r=4.3%, q=1.3%, σ=18%) puts the parity forward 1–3 bp low at 30 days and 10–19 bp low at six months, varying by strike. `tests/test_research_vol_surface_coords.py` pins this: biased low, and within tolerance.
+   - **Parity is European, the options are American.** An American binomial check (S=100, r=4.3%, q=1.3%, σ=18%) puts the parity forward 1–3 bp low at 30 days, about 14 bp low at six months, 32 bp at one year and 73 bp at two.
+     - The spread across the three strikes grows with tenor too. On $5 spacing it is 0.13% at three months, 0.36% at one year and 0.61% at two years.
+     - That is why the tolerance has a per-year term: at one year the spread exceeds the 0.20% base but stays under 0.60%. `tests/test_research_vol_surface_coords.py` pins this: biased low, and within tolerance.
    - **Inverting American OTM puts with a European model reads IV slightly high**: +14 to +26 bp of vol at K/S 0.90–0.95, T = 0.5. This is accepted.
 
 4. **Inputs.**
@@ -43,9 +45,9 @@ The call wing has been collected since ADR 0031 (2026-10-27), so a forward can n
 
 5. **Fit: raw SVI with Lee's bound inside the fit.**
    - The slice is fitted by the quasi-explicit method (Zeliade 2009).
-   - The inner problem is solved exactly by enumerating its active faces: `|d| ≤ c` and `c + |d| ≤ 2σ`.
+   - The inner problem is solved exactly over its linear faces, `|d| ≤ c` and `c + |d| ≤ 2σ`, by enumerating the active faces.
    - The bound is Lee's `b(1+|ρ|) ≤ 2`, not Zeliade's looser 4σ. With 4σ, the fit would emit slices our own Lee check refuses.
-   - Minimum variance `a + bσ√(1−ρ²) ≥ 0` is enforced by projection.
+   - Minimum variance `a + bσ√(1−ρ²) ≥ 0` is enforced by projecting `a` up to its bound. This is not the exact constrained optimum: on a smile that wants negative variance it came out about 0.2% worse in squared error than a 60-start SLSQP reference.
 
 6. **A fit is not a certificate.** Each slice reports three diagnostics:
    - **Butterfly:** Durrleman `g(k) ≥ 0` on the *observed* k-range. Non-finite or non-positive points count as `n_invalid` and fail.
@@ -58,6 +60,7 @@ The call wing has been collected since ADR 0031 (2026-10-27), so a forward can n
    - A session without the call wing leaves ρ, b and the right wing unidentified. Freezing ρ from a later fit would leak the future.
    - Such a slice gets a local quadratic in k instead. As the one exception to OTM-only, it keeps puts up to the stored band edge, so the fit straddles k = 0.
    - It refuses with `no_strikes_above_forward` unless at least 2 strikes sit above F.
+   - Its puts above F are in the money, so their European inversion carries more early-exercise bias than the OTM figures above. This is not measured yet.
    - The SVI fields and the risk reversal are reported as not evaluated.
 
 8. **Outputs.** All are in k-units:

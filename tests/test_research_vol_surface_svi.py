@@ -142,3 +142,24 @@ def test_data_demanding_negative_variance_is_fitted_with_non_negative_minimum() 
     minimum = fit.a + fit.b * fit.sigma * math.sqrt(max(1 - fit.rho**2, 0.0))
     assert minimum >= -1e-9
     assert fit.b >= 0 and svi.lee_ok(fit)
+
+
+def test_the_risk_reversal_matches_an_independent_25_delta_solve() -> None:
+    """Sign alone let a flipped d1 (a 33% error) pass. Pin the number."""
+    from scipy.optimize import brentq
+    from scipy.stats import norm
+
+    t = 0.25
+    fit = svi.RawSvi(a=0.004, b=0.04, rho=-0.7, m=0.01, sigma=0.08)
+
+    def vol(k: float) -> float:
+        return math.sqrt(float(fit.w(np.array([k]))[0]) / t)
+
+    def delta(k: float) -> float:
+        total = vol(k) * math.sqrt(t)
+        return float(norm.cdf(-k / total + total / 2))
+
+    k_call = brentq(lambda k: delta(k) - 0.25, 0.0, 0.3)
+    k_put = brentq(lambda k: delta(k) - 0.75, -0.4, 0.0)
+    shape = svi.svi_shape(fit, t, -0.4, 0.3)
+    assert shape.risk_reversal_25 == pytest.approx(vol(k_call) - vol(k_put), abs=1e-6)

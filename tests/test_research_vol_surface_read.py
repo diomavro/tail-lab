@@ -150,3 +150,61 @@ def test_the_read_is_point_in_time(tmp_path: Path) -> None:
 def test_an_empty_lake_is_a_refusal_not_an_error(tmp_path: Path) -> None:
     surface = read.read_vol_surface(DeltaLakeStore(tmp_path), "spy", SESSION)
     assert surface.refusal is not None and surface.slices == []
+
+
+def test_unmarkable_quotes_never_enter_the_smile() -> None:
+    """The marks bar: bid > 0 and a relative spread within
+    MAX_RELATIVE_SPREAD. A zero bid and a 100%-wide quote must be dropped."""
+    puts = _rows(PUT_STRIKES, _put)
+    zero_bid, wide = 0.80 * S, 0.85 * S
+    puts.loc[puts["strike"] == zero_bid, "bid"] = 0.0
+    wide_mid = puts.loc[puts["strike"] == wide, "ask"].iloc[0] / 1.01
+    puts.loc[puts["strike"] == wide, ["bid", "ask"]] = [wide_mid * 0.5, wide_mid * 1.5]
+    surface = read.surface_from_frames(
+        puts, _rows(CALL_STRIKES, _call), symbol="spy", as_of=SESSION, r=R, q=Q, q_source="measured"
+    )
+    ks = {round(p.k, 9) for p in surface.slices[0].points}
+    f = surface.slices[0].forward
+    assert round(math.log(zero_bid / f), 9) not in ks
+    assert round(math.log(wide / f), 9) not in ks
+    assert round(math.log(0.90 * S / f), 9) in ks
+
+
+def test_the_fit_error_is_reported_in_vol_points() -> None:
+    """Recompute the RMSE from the served points and parameters: a units slip
+    (fraction vs points) is a 100x error that a loose bound cannot see."""
+    rng = np.random.default_rng(0)
+    puts = _rows(PUT_STRIKES, _put)
+    calls = _rows(CALL_STRIKES, _call)
+    for frame in (puts, calls):
+        bump = 1 + rng.normal(0, 0.01, len(frame))
+        frame["bid"] *= bump
+        frame["ask"] *= bump
+    (slice_,) = read.surface_from_frames(
+        puts, calls, symbol="spy", as_of=SESSION, r=R, q=Q, q_source="measured"
+    ).slices
+    assert slice_.svi is not None and slice_.rmse_vol_points is not None
+    fit = svi.RawSvi(**slice_.svi.model_dump())
+    ks = np.array([p.k for p in slice_.points])
+    ivs = np.array([p.iv for p in slice_.points])
+    expected = float(np.sqrt(np.mean((np.sqrt(fit.w(ks) / slice_.t_years) - ivs) ** 2))) * 100
+    assert slice_.rmse_vol_points == pytest.approx(expected, rel=1e-9)
+    assert slice_.rmse_vol_points > 0.01
+
+
+def test_a_too_short_expiry_is_reported_not_dropped() -> None:
+    near = SESSION + dt.timedelta(days=1)
+    puts = pd.concat(
+        [_rows(PUT_STRIKES, _put), _rows(PUT_STRIKES, _put).assign(expiration=pd.Timestamp(near))]
+    )
+    surface = read.surface_from_frames(
+        puts, _rows(CALL_STRIKES, _call), symbol="spy", as_of=SESSION, r=R, q=Q, q_source="measured"
+    )
+    short = next(s for s in surface.slices if s.expiration == near)
+    assert short.refusal == f"tenor_below_{read.MIN_TENOR_DAYS}_days" and short.fit is None
+
+
+def test_a_one_wing_session_says_why() -> None:
+    surface = _surface(pd.DataFrame())
+    assert surface.one_wing_reason == f"no call quotes for the {SESSION} session"
+    assert _surface(_rows(CALL_STRIKES, _call)).one_wing_reason is None
