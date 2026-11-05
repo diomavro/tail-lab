@@ -4,11 +4,13 @@ import { mockPutLabApi } from './fixtures/mock-api'
 
 // The roll ledger.
 //
-// The old table showed one "Cost" column holding `contracts x premium x 100` --
-// the cash actually filled -- next to a Net computed as `payoff - notional`, the
-// per-roll premium BUDGET. Those are different numbers, so a reader subtracting
-// the two visible columns got the wrong answer. Fill and Budget are now separate
-// columns and the arithmetic on screen is the arithmetic behind it.
+// put_roll.py spends each roll's budget exactly (`contracts = budget / premium`
+// shares, never rounded) and charges entry brokerage, the roll's `cost`, on top:
+// `net = payoff - budget - cost`. The columns on screen are those three terms,
+// so a reader can do the subtraction and be right. An earlier version called
+// `cost` "Fill", described it as the cash the contracts cost, and had a fixture
+// built to that description -- this suite passed while every live row said
+// otherwise.
 
 const money = (t: string) => Number(t.replace(/[$,]/g, '').replace('−', '-'))
 
@@ -27,17 +29,18 @@ test('stays collapsed until the reader asks for every roll', async ({ page }) =>
   await expect(page.getByRole('button', { name: `Hide ${CYCLES.length} rolls` })).toBeVisible()
 })
 
-test('prints Fill and Budget as separate columns', async ({ page }) => {
+test('prints Budget and Brokerage as separate columns', async ({ page }) => {
   await page.getByRole('button', { name: /^Show all/ }).click()
   const table = page.getByRole('table', { name: 'Roll ledger' })
-  for (const head of ['Fill', 'Budget', 'Payoff', 'Net', 'σ', 'Cts', 'Premium']) {
+  for (const head of ['Budget', 'Brokerage', 'Payoff', 'Net', 'σ', 'Cts', 'Premium']) {
     // The header's name also carries its ⓘ button's ("What is …?").
     await expect(table.getByRole('columnheader', { name: new RegExp(`^${head} What is `) })).toBeVisible()
   }
+  await expect(table.getByRole('columnheader', { name: /^Fill/ })).toHaveCount(0)
   await expect(table.locator('tbody tr')).toHaveCount(CYCLES.length)
 })
 
-test('reconciles Net against Budget on every visible row', async ({ page }) => {
+test('reconciles Net as payoff − budget − brokerage on every row', async ({ page }) => {
   await page.getByRole('button', { name: /^Show all/ }).click()
   const rows = page.getByRole('table', { name: 'Roll ledger' }).locator('tbody tr')
   await expect(rows).toHaveCount(CYCLES.length)
@@ -45,24 +48,26 @@ test('reconciles Net against Budget on every visible row', async ({ page }) => {
   const count = await rows.count()
   for (let i = 0; i < count; i++) {
     const cells = await rows.nth(i).locator('td').allTextContents()
-    // Entry, Expiry, Spot, Strike, sigma, Premium, Cts, Fill, Budget, Payoff, Net
-    const [fill, budget, payoff, net] = cells.slice(7).map(money) as [number, number, number, number]
-    // The reader can do this subtraction on screen and be right.
-    expect(payoff - budget).toBeCloseTo(net, 2)
-    // ...and doing it with Fill instead would be wrong, which is the whole point
-    // of showing both.
-    expect(fill).not.toBeCloseTo(budget, 2)
+    // Entry, Expiry, Spot, Strike, sigma, Premium, Cts, Budget, Brokerage, Payoff, Net
+    const [premium, shares, budget, brokerage, payoff, net] = cells.slice(5).map(money) as [
+      number, number, number, number, number, number,
+    ]
+    expect(budget).toBe(NOTIONAL)
+    // Cts is the budget's worth of shares, so the puts cost the budget itself.
+    expect(Math.abs(shares * premium - budget)).toBeLessThan(premium)
+    // Brokerage is a fee, not a fill: a few dollars, never the budget.
+    expect(brokerage).toBeGreaterThan(0)
+    expect(brokerage).toBeLessThan(budget / 10)
+    // Every printed figure is rounded to the dollar, so allow the three roundings.
+    expect(Math.abs(payoff - budget - brokerage - net)).toBeLessThanOrEqual(1.5)
   }
 })
 
-test('shows a fill on either side of the budget', async ({ page }) => {
-  // `max(1, floor(notional / (premium * 100)))` forces at least one contract, so
-  // an expensive roll fills ABOVE the budget and a cheap one below.
+test('prints the share count rounded, not as a raw float', async ({ page }) => {
+  // The API sends `contracts` unrounded (1000 / 8.2 = 121.95…); live it read
+  // 1383.310233241102 in the cell.
   await page.getByRole('button', { name: /^Show all/ }).click()
-  const cells = page.getByRole('table', { name: 'Roll ledger' }).locator('tbody tr td:nth-child(8)')
+  const cells = page.getByRole('table', { name: 'Roll ledger' }).locator('tbody tr td:nth-child(7)')
   await expect(cells).toHaveCount(CYCLES.length)
-  const fills = await cells.allTextContents()
-  const values = fills.map(money)
-  expect(Math.min(...values)).toBeLessThan(NOTIONAL)
-  expect(Math.max(...values)).toBeGreaterThan(NOTIONAL)
+  expect(await cells.allTextContents()).toEqual(CYCLES.map((c) => String(Math.round(c.contracts))))
 })

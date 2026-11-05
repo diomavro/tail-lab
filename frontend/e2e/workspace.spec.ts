@@ -52,8 +52,9 @@ test('states the hit-rate and ROI bases the numbers actually use', async ({ page
   await expect(roi).toContainText('Model-priced')
 
   const net = stats.locator('div', { hasText: /^Net P&L/ }).first()
-  await expect(net).toContainText('−$5,858')
-  await expect(net).toContainText('$78')
+  // 6,220 payoff − 12,000 budget − 74.80 brokerage (the rolls' summed `cost`).
+  await expect(net).toContainText('−$5,855')
+  await expect(net).toContainText('+ $75 fees')
 
   // biggest_payoff_mult is max(payoff / notional) -- the budget, not the fill.
   await expect(stats.locator('div', { hasText: /^Biggest payoff/ }).first()).toContainText('3.2×')

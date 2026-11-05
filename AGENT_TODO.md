@@ -138,13 +138,29 @@ a large one strictly in order.
       computes metrics on its own; `metric_screen` and `walk_forward` share
       `fragility_from_returns`. Route `ranking` through it too, if the outputs
       stay identical.
-- [ ] **The Ledger's "Fill" column is described wrongly** (found 2026-11-01
+- [x] **The Ledger's "Fill" column is described wrongly** (found 2026-11-01
       during the tooltip sweep). The real `cost` field is entry brokerage
       (commission plus half-spread), and `net = payoff − budget − cost`. But
       `Ledger.tsx`'s comment, its e2e fixture and `ledger.spec.ts` describe Fill
       as the cash the contracts cost, and reconcile Net as payoff − budget. The
       new `roll_cost` concept describes the backend correctly. Make the comment,
       the fixture and the spec agree with `put_roll.py`.
+      *Done 2026-11-05:* the column is now **Brokerage**, after Budget, so the
+      row reads Budget, Brokerage, Payoff, Net in the order Net subtracts them.
+      The Workspace caption said the same wrong thing and is fixed too. The
+      fixture builds `contracts = budget / premium` shares and `cost` as
+      `roll_cost` does, and the spec reconciles Net = payoff − budget −
+      brokerage on every row (the fixture's total brokerage moved from a
+      hard-coded $78 to the rolls' sum, $74.80). Also found: Cts printed the
+      API's raw float (`1383.310233241102` on live SPY); it is rounded to whole
+      shares now.
+- [ ] **Flag memory nodes a sweep stopped refreshing** (advisory on #198).
+      `HypothesisMemory.record` upserts, so a node is current only while the
+      daily sweep still reaches its regime. A node whose regime a later run
+      stops hitting keeps its old numbers forever, and nothing detects it.
+      None exists today (2026-11-04, 74 of 140 rules). Make it a guarded
+      invariant: on the memory read path, mark a node whose `last_seen` is
+      older than its rule's latest run, rather than relying on a one-off count.
 - [ ] **README:35 ("the page never scrolls") contradicts ADR 0017** ("the page
       scrolls normally"), which is what is implemented. Dio to settle; the
       README is constitutional.
