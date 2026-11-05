@@ -65,7 +65,9 @@ def test_the_script_posts_to_routes_the_app_serves() -> None:
     assert "post" in paths[CALLS]
 
 
-def test_a_post_goes_to_the_route_it_names(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_a_post_goes_to_the_route_it_names(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
     """Every other test stubs ``_post_once``, so this is the one seam where a
     call body could silently be sent to the put route (or vice versa)."""
     seen: list[urllib.request.Request] = []
@@ -88,6 +90,10 @@ def test_a_post_goes_to_the_route_it_names(monkeypatch: pytest.MonkeyPatch) -> N
     assert request.full_url == "http://x/api/ingest/option-chain-calls"
     assert request.get_method() == "POST"
     assert request.get_header("Authorization") == "Bearer t"
+    # The round-trip time against the timeout gates widening the sweep.
+    out = capsys.readouterr().out
+    assert "POST /api/ingest/option-chain-calls: answered in" in out
+    assert "timeout 1s per socket wait" in out
 
 
 # ---- --post ------------------------------------------------------------------
