@@ -430,9 +430,10 @@ function Result({
           </button>
         </div>
         <p className="pl-note" style={{ marginBottom: 12 }}>
-          Every roll the backtest actually placed. <strong>Fill</strong> is the cash the contracts
-          cost; <strong>Net</strong> is measured against the per-roll <strong>Budget</strong>, which
-          is the basis every return on this page divides by.
+          Every roll the backtest actually placed. Each roll spends exactly its{' '}
+          <strong>Budget</strong>, the basis every return on this page divides by;{' '}
+          <strong>Brokerage</strong> is charged on top, so <strong>Net</strong> is payoff − budget −
+          brokerage.
         </p>
         {showLedger && <Ledger cycles={bt.cycles} notional={bt.notional} />}
       </section>
