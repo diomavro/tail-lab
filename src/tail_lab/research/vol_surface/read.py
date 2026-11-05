@@ -94,8 +94,9 @@ class VolSurface(BaseModel):
     q: float
     q_source: str
     two_wing: bool
-    #: Why the session is one-wing (``None`` when both wings were read): no
-    #: call partition at all, or one from a different session than the puts.
+    #: Why the session is one-wing: no call quotes for the put session (none
+    #: written, or only an older session's). ``None`` when both wings were
+    #: read, or when the whole surface was refused (see ``refusal``).
     one_wing_reason: str | None
     slices: list[SmileSlice]
     #: ``(t_short, t_long)`` year-fractions of adjacent SVI slices whose total

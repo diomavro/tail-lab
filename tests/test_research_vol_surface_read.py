@@ -202,9 +202,49 @@ def test_a_too_short_expiry_is_reported_not_dropped() -> None:
     )
     short = next(s for s in surface.slices if s.expiration == near)
     assert short.refusal == f"tenor_below_{read.MIN_TENOR_DAYS}_days" and short.fit is None
+    assert short.t_years == pytest.approx(1 / DAYS_PER_YEAR)
+    assert short.forward == pytest.approx(S * math.exp((R - Q) / DAYS_PER_YEAR))
 
 
 def test_a_one_wing_session_says_why() -> None:
     surface = _surface(pd.DataFrame())
     assert surface.one_wing_reason == f"no call quotes for the {SESSION} session"
     assert _surface(_rows(CALL_STRIKES, _call)).one_wing_reason is None
+
+
+def test_a_calendar_arbitrage_between_expiries_reaches_the_response() -> None:
+    """Price a LONGER expiry off a smile with less total variance than the
+    shorter one's: the surface must report the pair."""
+    far = dt.date(2027, 3, 19)
+    t_far = (far - SESSION).days / DAYS_PER_YEAR
+    f_far = S * math.exp((R - Q) * t_far)
+    thin = svi.RawSvi(a=0.001, b=0.02, rho=-0.7, m=0.02, sigma=0.1)
+
+    def vol(strike: float) -> float:
+        return math.sqrt(float(thin.w(np.array([math.log(strike / f_far)]))[0]) / t_far)
+
+    def put(strike: float) -> float:
+        return PRICER.price_put(
+            spot=f_far * math.exp(-R * t_far),
+            strike=strike,
+            t_years=t_far,
+            r=R,
+            sigma=vol(strike),
+            q=0.0,
+        )
+
+    def call(strike: float) -> float:
+        return put(strike) + math.exp(-R * t_far) * (f_far - strike)
+
+    puts = pd.concat(
+        [_rows(PUT_STRIKES, _put), _rows(PUT_STRIKES, put).assign(expiration=pd.Timestamp(far))]
+    )
+    calls = pd.concat(
+        [_rows(CALL_STRIKES, _call), _rows(CALL_STRIKES, call).assign(expiration=pd.Timestamp(far))]
+    )
+    surface = read.surface_from_frames(
+        puts, calls, symbol="spy", as_of=SESSION, r=R, q=Q, q_source="measured"
+    )
+    assert len(surface.calendar_violations) == 1
+    t_short, t_long = surface.calendar_violations[0]
+    assert t_short == pytest.approx(T) and t_long == pytest.approx(t_far)
