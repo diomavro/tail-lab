@@ -1,0 +1,22 @@
+[Unit]
+Description=Refresh the keyless bronze sources daily while Actions is blocked
+
+[Timer]
+# 06:30 UTC = 08:30 CEST. Deliberately between the chain catch-up (05:00 UTC)
+# and the chain verifier (08:00 UTC), so the three never contend, and early
+# enough that a workday starts on a current lake.
+#
+# Mon-Fri: every source here is a market-data feed, so a weekend run would
+# just re-commit Friday's numbers under a Saturday ingest_date -- harmless,
+# since bronze is immutable and nothing reads a weekend partition, but it is
+# noise in the audit trail for no gain.
+OnCalendar=Mon-Fri 06:30 UTC
+# The laptop sleeps through 08:30 CEST often enough that without this the
+# refresh would simply never happen. Unlike the chain sweep there is no
+# recovery deadline: these sources serve history on demand, so a catch-up at
+# any later hour returns the same data.
+Persistent=true
+AccuracySec=5min
+
+[Install]
+WantedBy=timers.target
