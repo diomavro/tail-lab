@@ -43,6 +43,7 @@ from __future__ import annotations
 
 import datetime as dt
 import logging
+import time
 from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
 
@@ -320,9 +321,20 @@ def _fetch_with_retry(
     )
 
 
+#: Seconds between two symbols' fetches when hitting Cboe for real. There was
+#: no pacing at all before the sweep grew from 24 names to 38: retries alone
+#: (``_FETCH_ATTEMPTS`` x ``_FETCH_BACKOFF_S``) absorbed the 2026-09-19 burst
+#: of 48 requests that drew 429s. One second costs ~37 s a sweep, nothing
+#: against the post-close window, and spreads 38 requests over ~40 s.
+PER_SYMBOL_PAUSE_S = 1.0
+
+
 def fetch_chains(
     symbols: Iterable[str],
     fetch: Callable[[str], Mapping[str, object]] | None = None,
+    *,
+    pause_s: float | None = None,
+    sleep: Callable[[float], None] = time.sleep,
 ) -> dict[str, Mapping[str, object]]:
     """Fetch each symbol's chain ONCE, for every wing to parse
     (``docs/adr/0031``). A symbol whose fetch fails is absent from the result,
@@ -331,10 +343,18 @@ def fetch_chains(
     One fetch, not one per wing: a second loop would repeat 2026-09-19 (48
     requests, Cboe 429 on 9 of 24) and could draw the two wings from
     different CDN snapshots.
+
+    ``pause_s`` defaults to :data:`PER_SYMBOL_PAUSE_S` against the real
+    network and to 0 for an injected ``fetch`` (a test or a replay has no
+    rate limit to respect); the pause falls BETWEEN symbols, never before
+    the first.
     """
     fetcher = fetch or fetch_chain_raw
+    pause = pause_s if pause_s is not None else (PER_SYMBOL_PAUSE_S if fetch is None else 0.0)
     payloads: dict[str, Mapping[str, object]] = {}
-    for symbol in symbols:
+    for index, symbol in enumerate(symbols):
+        if index and pause > 0:
+            sleep(pause)
         try:
             payloads[symbol] = _fetch_with_retry(fetcher, symbol)
         except Exception:

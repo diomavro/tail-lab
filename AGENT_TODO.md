@@ -540,6 +540,29 @@ a large one strictly in order.
       "chunk the realtime window" advice is WRONG — it clips
       `realtime_start` and fabricates revisions (`docs/PRIOR_ART.md` §19).
 
+- [ ] **Repair the ten `optionsdx_quotes_*` bronze tables' leaked index column
+      before the next optionsDX ingest.** Measured 2026-11-05 by scanning all
+      137 production bronze tables: `optionsdx_quotes_{spy,qqq,nvda,tsla,vix}`
+      and their five `__quarantine` tables carry a stale `__index_level_0__`
+      column from before `write_bronze` gained `reset_index(drop=True)`. Reads
+      are unaffected (the column rides along), but ANY new partition --
+      e.g. the 2024-01..2026-08 files `HUMAN_TODO.md` plans to buy -- fails
+      with `SchemaMismatchError: number of fields does not match`. Repair by
+      the method below (backup, `mode="overwrite", schema_mode="overwrite"`,
+      verify every row), table by table: these are the largest tables in the
+      lake and the workstation's disk is ~87% full, so size the backup first.
+      (The 2026-09-24 note below says every other table "was scanned and is
+      clean"; these ten and six OHLCV tables were not.)
+
+- [x] **Six OHLCV tables could not take a new partition -- repaired 2026-11-05.**
+      `ohlcv_{dbc,fcx,cvx,oxy,slb,vlo}` were created with a leaked
+      `__index_level_0__` column, so every clean write since failed with
+      `SchemaMismatchError: ... 9 vs 10` and the six froze at 2026-09-18. Same
+      by-hand repair as below: each v1 backed up to
+      `data/backups/ohlcv_<sym>_v1_2026-11-05.parquet`, rewritten to v2 without
+      the column, all 5,024 rows and both partitions verified identical, then
+      today's bars ingested.
+
 - [x] **Repair the `option_chain_snapshot__quarantine` schema.**
       **Done 2026-09-24** (by hand, not in code): rewritten with
       `mode="overwrite", schema_mode="overwrite"` from v11 to v12; all 6,422

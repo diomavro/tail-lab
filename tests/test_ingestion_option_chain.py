@@ -23,6 +23,7 @@ from tail_lab.contracts.option_chain import (
     SessionInProgress,
     session_in_progress,
 )
+from tail_lab.ingestion import option_chain as option_chain_module
 from tail_lab.ingestion.option_chain import (
     _FETCH_ATTEMPTS,
     MIN_SYMBOL_FRACTION,
@@ -482,7 +483,7 @@ def test_one_dead_chain_does_not_cost_the_others_their_snapshot(tmp_path: Path) 
     assert result.committed is True
 
 
-def test_the_floor_tolerates_exactly_two_lost_chains_at_the_real_universe() -> None:
+def test_the_floor_tolerates_exactly_three_lost_chains_at_the_real_universe() -> None:
     """The two tests around this one pull in opposite directions — "one dead
     chain must not abort the sweep" against "a partial sweep must not define
     the session" — and only ``MIN_SYMBOL_FRACTION`` keeps both true at once.
@@ -500,7 +501,11 @@ def test_the_floor_tolerates_exactly_two_lost_chains_at_the_real_universe() -> N
     """
     universe = len(DEFAULT_SNAPSHOT_SYMBOLS)
     tolerated = universe - max(1, math.ceil(universe * MIN_SYMBOL_FRACTION))
-    assert (universe, tolerated) == (24, 2), (
+    # Re-pinned 2026-11-05 from (24, 2) when the chip cohort widened the sweep
+    # to 38. Both invariants still hold there: one dead chain is 2.6% of 38,
+    # and the 2026-09-19 shape -- 9 of 24 lost, 37.5% -- scales to ~14 of 38,
+    # far past 3.
+    assert (universe, tolerated) == (38, 3), (
         f"universe={universe}, fraction={MIN_SYMBOL_FRACTION} tolerates {tolerated} lost "
         "chains. Both invariants below depend on this number: one dead chain must still "
         "commit the rest, and the 15-of-24 sweep Cboe really served must be refused."
@@ -1888,3 +1893,30 @@ def test_captured_puts_do_not_make_the_first_call_ingest_a_no_op(tmp_path: Path)
     assert store.bronze_partition_exists(CALL_DATASET, dt.date.fromisoformat(QUOTE_DAY))
     again = _ingest_with_fetch(store, ["SPY"], payloads=payloads, right="C")
     assert not again.committed
+
+
+def test_fetch_chains_paces_real_fetches_between_symbols() -> None:
+    """Cboe 429'd 9 of 24 names on a 48-request burst (2026-09-19); at 38 names
+    the sweep pauses between symbols. Never before the first, so a one-name
+    hand run pays nothing."""
+    pauses: list[float] = []
+    fetch, _ = _counting(SPY=_both("SPY"), QQQ=_both("QQQ"), IWM=_both("IWM"))
+    fetch_chains(["SPY", "QQQ", "IWM"], fetch=fetch, pause_s=1.0, sleep=pauses.append)
+    assert pauses == [1.0, 1.0]
+
+
+def test_an_injected_fetch_is_not_paced_by_default() -> None:
+    """A test or replay has no rate limit; only the real network is paced."""
+    pauses: list[float] = []
+    fetch, _ = _counting(SPY=_both("SPY"), QQQ=_both("QQQ"))
+    fetch_chains(["SPY", "QQQ"], fetch=fetch, sleep=pauses.append)
+    assert pauses == []
+
+
+def test_the_real_network_is_paced_by_default(monkeypatch: pytest.MonkeyPatch) -> None:
+    pauses: list[float] = []
+    monkeypatch.setattr(
+        option_chain_module, "fetch_chain_raw", lambda symbol: _both(symbol.upper())
+    )
+    fetch_chains(["SPY", "QQQ"], sleep=pauses.append)
+    assert pauses == [option_chain_module.PER_SYMBOL_PAUSE_S]

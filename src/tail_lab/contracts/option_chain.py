@@ -283,7 +283,7 @@ WINGS: dict[Right, Wing] = {
 #: — the additions are thin chains, and SPY+QQQ+GLD are already a third of
 #: the payload. The constraint that bites first is POST body size, not fetch
 #: time.
-DEFAULT_SNAPSHOT_SYMBOLS: tuple[str, ...] = (
+CORE_SNAPSHOT_SYMBOLS: tuple[str, ...] = (
     "spy",
     "qqq",
     "iwm",
@@ -309,6 +309,66 @@ DEFAULT_SNAPSHOT_SYMBOLS: tuple[str, ...] = (
     "mstr",
     "smci",
 )
+
+#: The AI build-out, forward-collected from 2026-11 (Dio, 2026-11-04): the
+#: silicon (AMD, AVGO, MU, TSM, MRVL, ARM), the tools that make it (ASML,
+#: AMAT, LRCX), the semiconductor ETF beside SMH (SOXX), the data-centre
+#: network and power (ANET, VRT, VST, CEG). SMH, NVDA and SMCI were already
+#: swept. Measured live 2026-11-04, unfiltered by tenor: 8.8k puts in
+#: 0.40-1.05 of spot and 15.9k calls in 0.80-2.50 across the 14, from MU's
+#: 1,354 / 3,488 down to VST's 226 / 621. The two pure data-centre ETFs were
+#: rejected for having no tradable chain: SRVR quoted 0 put bids, DTCR 16.
+#:
+#: A NAMED cohort, not just appended, because its start date is not known
+#: when this is written -- the first session with these names is whichever
+#: sweep runs after the merge -- and the sweep verifier must not report every
+#: earlier partition as missing 14 names (``expected_symbols``).
+CHIP_COHORT: tuple[str, ...] = (
+    "amd",
+    "avgo",
+    "mu",
+    "tsm",
+    "mrvl",
+    "arm",
+    "asml",
+    "amat",
+    "lrcx",
+    "soxx",
+    "anet",
+    "vrt",
+    "vst",
+    "ceg",
+)
+
+#: The first session ``CHIP_COHORT`` was collected. ``None`` until it is read
+#: off the first live sweep and pinned here; until then
+#: :func:`expected_symbols` derives it from the partitions themselves.
+CHIP_COHORT_SINCE: dt.date | None = None
+
+DEFAULT_SNAPSHOT_SYMBOLS: tuple[str, ...] = CORE_SNAPSHOT_SYMBOLS + CHIP_COHORT
+
+
+def chip_cohort_start(sessions: dict[dt.date, set[str]]) -> dt.date | None:
+    """When the chip cohort began: pinned, else the earliest session holding ANY of it.
+
+    "Any", not a fraction: a first session that landed 12 of the 14 must
+    start the cohort -- so its two losses are reported -- rather than be
+    skipped as not-yet-started. ``None`` means no partition seen holds a
+    cohort name yet, i.e. the widened sweep has not run.
+    """
+    if CHIP_COHORT_SINCE is not None:
+        return CHIP_COHORT_SINCE
+    cohort = set(CHIP_COHORT)
+    started = [session for session, names in sessions.items() if names & cohort]
+    return min(started) if started else None
+
+
+def expected_symbols(session: dt.date, cohort_start: dt.date | None) -> frozenset[str]:
+    """The names a partition for ``session`` must hold, lower-cased."""
+    names = set(CORE_SNAPSHOT_SYMBOLS)
+    if cohort_start is not None and session >= cohort_start:
+        names |= set(CHIP_COHORT)
+    return frozenset(names)
 
 
 def split_valid_and_quarantined(
@@ -352,17 +412,17 @@ def split_valid_and_quarantined(
 #: tolerated losing 23 of 24 names.
 #:
 #: 0.9 rather than 1.0 deliberately: demanding every symbol would let one
-#: delisted or permanently-dead chain block the other 23 from ever being
+#: delisted or permanently-dead chain block the rest from ever being
 #: captured, which is the same unrecoverable loss in the other direction.
 #:
 #: Note what the ceiling does to that argument on SMALL universes. Tolerated
-#: losses are ``n - ceil(n * 0.9)``: 2 at the production 24, 7 at the 70 the
-#: docstring above imagines -- but **0 for any n below 10**, where this floor
-#: is effectively 1.0 and the paragraph above does not hold. That only
-#: reaches a human running ``make ingest-option-chain CHAIN_SYMBOLS=spy,qqq``
-#: by hand, who gets a loud refusal and can re-run; the scheduled sweep
-#: always passes all 24. It is called out because the rationale reads as
-#: universal and is not.
+#: losses are ``n - ceil(n * 0.9)``: 3 at the production 38 (2 at the
+#: earlier 24), 7 at the 70 the docstring above imagines -- but **0 for any n
+#: below 10**, where this floor is effectively 1.0 and the paragraph above
+#: does not hold. That only reaches a human running ``make
+#: ingest-option-chain CHAIN_SYMBOLS=spy,qqq`` by hand, who gets a loud
+#: refusal and can re-run; the scheduled sweep always passes all 38. It is
+#: called out because the rationale reads as universal and is not.
 MIN_SYMBOL_FRACTION = 0.9
 
 
