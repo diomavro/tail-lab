@@ -645,13 +645,15 @@ do.
       substantive gates passed before the outage; `agent-review` never ran),
       the daily agent cannot open PRs, and no green `main` commit can deploy.
 
-- [ ] **Approve and install the weekly Tiingo timer, then run the first
+- [x] **Done 2026-11-05 (at Dio's request, by Claude):** timer installed
+      (`systemctl --user list-timers` shows Saturdays 10:00 UTC) and the first
+      ingest committed 436,572 rows for 70 symbols (5,318 dividend rows, 92
+      splits, 1993-01-04 .. 2026-11-04). Production now prices with measured
+      yields: HYG reads q = 6.24% (`carried`) where it read 0.
+      Original item: **Approve and install the weekly Tiingo timer, then run the first
       ingest** (added 2026-10-10 with `tiingo_eod`, `docs/DATA_CONTRACTS.md`
       #14). Until it runs, every price in the app is exactly as before: each
-      roll prices at `q = 0` and says `q_source: unknown`. **Still open,
-      measured 2026-11-05:** the production lake has no `tiingo_eod` table at
-      all (`read_bronze_as_of` → "no bronze data"), and the timer is not
-      installed, so every served price is still at `q = 0`. After the PR merges:
+      roll prices at `q = 0` and says `q_source: unknown`. After the PR merges:
 
       ```bash
       cd ~/Documents/apps/tail-lab && git pull --ff-only
