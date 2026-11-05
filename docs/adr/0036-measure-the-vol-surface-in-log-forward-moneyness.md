@@ -40,7 +40,7 @@ The call wing has been collected since ADR 0031 (2026-10-27), so a forward can n
 
 4. **Inputs.**
    - Out-of-the-money mids only: puts below F, calls above.
-   - A quote must meet the marks bar: bid > 0 and relative spread ≤ `marks.MAX_RELATIVE_SPREAD`.
+   - A quote must meet the marks bar: bid > 0, ask > 0, open interest ≥ `marks.MIN_OPEN_INTEREST` and relative spread ≤ `marks.MAX_RELATIVE_SPREAD`.
    - IV is our own Black inversion on the forward. Cboe's `iv` column is never used.
 
 5. **Fit: raw SVI with Lee's bound inside the fit.**
