@@ -33,13 +33,13 @@ def client(tmp_path: Path) -> Iterator[TestClient]:
     store = DeltaLakeStore(tmp_path)
     store.write_bronze(DATASET, SESSION, _rows(PUT_STRIKES, _put))
     store.write_bronze(CALL_DATASET, SESSION, _rows(CALL_STRIKES, _call))
-    vol_surface_routes._CACHE.clear()
+    vol_surface_routes._SURFACE_MEMO.clear()
     app.dependency_overrides[vol_surface_routes.get_lake_store] = lambda: store
     try:
         yield TestClient(app)
     finally:
         app.dependency_overrides.pop(vol_surface_routes.get_lake_store, None)
-        vol_surface_routes._CACHE.clear()
+        vol_surface_routes._SURFACE_MEMO.clear()
 
 
 def test_it_serves_a_fitted_two_wing_surface(

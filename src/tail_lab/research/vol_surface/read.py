@@ -69,19 +69,21 @@ class SmileSlice(BaseModel):
     forward_source: coords.ForwardSource
     parity_refusal: str | None
     points: list[SmilePoint]
-    fit: FitKind | None
+    #: The diagnostics below default to ``None``: each branch of
+    #: :func:`build_slice` names only what it measured.
+    fit: FitKind | None = None
     #: Present only for an SVI fit.
-    svi: SviParams | None
-    rmse_vol_points: float | None
-    atm_vol: float | None
-    atm_skew: float | None
-    atm_curvature: float | None
-    risk_reversal_25: float | None
-    butterfly_ok: bool | None
-    butterfly_min_g: float | None
-    butterfly_n_invalid: int | None
-    lee_ok: bool | None
-    refusal: str | None
+    svi: SviParams | None = None
+    rmse_vol_points: float | None = None
+    atm_vol: float | None = None
+    atm_skew: float | None = None
+    atm_curvature: float | None = None
+    risk_reversal_25: float | None = None
+    butterfly_ok: bool | None = None
+    butterfly_min_g: float | None = None
+    butterfly_n_invalid: int | None = None
+    lee_ok: bool | None = None
+    refusal: str | None = None
 
 
 class VolSurface(BaseModel):
@@ -126,17 +128,6 @@ def _empty_slice(
         forward_source=forward.source,
         parity_refusal=forward.parity_refusal,
         points=points,
-        fit=None,
-        svi=None,
-        rmse_vol_points=None,
-        atm_vol=None,
-        atm_skew=None,
-        atm_curvature=None,
-        risk_reversal_25=None,
-        butterfly_ok=None,
-        butterfly_min_g=None,
-        butterfly_n_invalid=None,
-        lee_ok=None,
         refusal=refusal,
     )
 
@@ -190,17 +181,9 @@ def build_slice(
             parity_refusal=forward.parity_refusal,
             points=points,
             fit="one_wing_quadratic",
-            svi=None,
-            rmse_vol_points=None,
             atm_vol=shape.atm_vol,
             atm_skew=shape.atm_skew,
             atm_curvature=shape.atm_curvature,
-            risk_reversal_25=None,
-            butterfly_ok=None,
-            butterfly_min_g=None,
-            butterfly_n_invalid=None,
-            lee_ok=None,
-            refusal=None,
         )
 
     points = invert(puts[puts["strike"] < f], "P") + invert(calls[calls["strike"] > f], "C")
@@ -235,7 +218,6 @@ def build_slice(
         butterfly_min_g=fly.min_g,
         butterfly_n_invalid=fly.n_invalid,
         lee_ok=svi.lee_ok(fit),
-        refusal=None,
     )
 
 
