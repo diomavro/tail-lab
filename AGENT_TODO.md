@@ -548,19 +548,24 @@ a large one strictly in order.
       walk, so a cohort that vanished from all ten would read as "not yet
       collected" and pass; once pinned, that is a gap.
 
-- [ ] **Repair the ten `optionsdx_quotes_*` bronze tables' leaked index column
-      before the next optionsDX ingest.** Measured 2026-11-05 by scanning all
-      137 production bronze tables: `optionsdx_quotes_{spy,qqq,nvda,tsla,vix}`
-      and their five `__quarantine` tables carry a stale `__index_level_0__`
-      column from before `write_bronze` gained `reset_index(drop=True)`. Reads
-      are unaffected (the column rides along), but ANY new partition --
-      e.g. the 2024-01..2026-08 files `HUMAN_TODO.md` plans to buy -- fails
-      with `SchemaMismatchError: number of fields does not match`. Repair by
-      the method below (backup, `mode="overwrite", schema_mode="overwrite"`,
-      verify every row), table by table: these are the largest tables in the
-      lake and the workstation's disk is ~87% full, so size the backup first.
-      (The 2026-09-24 note below says every other table "was scanned and is
-      clean"; these ten and six OHLCV tables were not.)
+- [x] **The ten `optionsdx_quotes_*` bronze tables' leaked index column --
+      repaired 2026-11-05.** A scan of all 137 production bronze tables found
+      `optionsdx_quotes_{spy,qqq,nvda,tsla,vix}` and their five `__quarantine`
+      tables carrying a stale `__index_level_0__` column. Reads were
+      unaffected, but any new partition (e.g. the 2024-26 files
+      `HUMAN_TODO.md` plans to buy) would have failed with
+      `SchemaMismatchError`. Same method as below, in Arrow so SPY's 3.3M rows
+      fit in RAM. Each pre-repair version was backed up to
+      `data/backups/optionsdx_quotes*_v<N>_2026-11-05.parquet` (126 MB in
+      all), rewritten without the column (v0 -> v1; VIX v4 -> v5), and
+      verified equal to the backup row for row. A rescan of all 143 tables now
+      finds none. Independently re-verified the same day by time travel: all 16
+      repaired tables (these ten and the six OHLCV ones below) equal their
+      pre-repair versions and backups; the five large quote tables were
+      reordered, but have 0 duplicate (quote_date, expiration, strike) keys,
+      so no reader can see a difference. The writer has not leaked an index
+      since 2026-09-19 (`tests/test_lake_store.py` pins it). (The 2026-09-24 note below says every other table "was
+      scanned and is clean"; these ten and six OHLCV tables were not.)
 
 - [x] **Six OHLCV tables could not take a new partition -- repaired 2026-11-05.**
       `ohlcv_{dbc,fcx,cvx,oxy,slb,vlo}` were created with a leaked

@@ -185,10 +185,9 @@ acts on, removes, or reorders anything in this file.**
       crisis-regime quotes, the scarcest kind (SPY has 1.3 crisis-years of
       usable 16%-OOM quotes in total). The Kaggle corpus below covers SPY
       2024-25 but is cross-check-only by licence, so it cannot fill this.
-      Drop the files in `data/vendor/optionsdx/` and run the existing ingest
-      -- **after** the agent repairs the leaked index column in the
-      `optionsdx_quotes_*` tables (`AGENT_TODO.md`, measured 2026-11-05), or
-      the ingest fails with `SchemaMismatchError`.
+      Drop the files in `data/vendor/optionsdx/` and run the existing ingest.
+      (The leaked index column that would have failed that ingest was
+      repaired on 2026-11-05; see `AGENT_TODO.md`.)
 - [ ] **Download and ingest it, ONE YEAR AT A TIME.** Dataset
       `shankerabhigyan/s-and-p500-options-spy-implied-volatility-2019-24`,
       twelve files `spy_options_data_14.json` .. `_25.json`, 0.35-1.06 GB
