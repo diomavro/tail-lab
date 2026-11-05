@@ -27,6 +27,7 @@ from tail_lab.api.putlab_routes import get_lake_store as putlab_lake_store
 from tail_lab.api.putlab_routes import router as putlab_router
 from tail_lab.api.putlab_routes import warm_leaderboard_daily
 from tail_lab.api.schemas import HealthResponse, VixStretchResponse
+from tail_lab.api.vol_surface_routes import router as vol_surface_router
 from tail_lab.config import get_lake_store as _get_configured_lake_store
 from tail_lab.config import get_settings
 from tail_lab.lake.store import LakeStore
@@ -80,6 +81,7 @@ app.include_router(ingest_router)
 app.include_router(marks_router)
 app.include_router(coverage_router)
 app.include_router(deribit_router)
+app.include_router(vol_surface_router)
 
 
 @app.middleware("http")
