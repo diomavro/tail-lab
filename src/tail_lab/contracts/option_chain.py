@@ -318,10 +318,9 @@ CORE_SNAPSHOT_SYMBOLS: tuple[str, ...] = (
 #: 1,354 / 3,488 down to VST's 226 / 621. The two pure data-centre ETFs were
 #: rejected for having no tradable chain: SRVR quoted 0 put bids, DTCR 16.
 #:
-#: A NAMED cohort, not just appended, because its start date is not known
-#: when this is written -- the first session with these names is whichever
-#: sweep runs after the merge -- and the sweep verifier must not report every
-#: earlier partition as missing 14 names (``expected_symbols``).
+#: A NAMED cohort, not just appended, so the sweep verifier does not report
+#: every partition before :data:`CHIP_COHORT_SINCE` as missing 14 names
+#: (``expected_symbols``).
 CHIP_COHORT: tuple[str, ...] = (
     "amd",
     "avgo",
@@ -339,33 +338,22 @@ CHIP_COHORT: tuple[str, ...] = (
     "ceg",
 )
 
-#: The first session ``CHIP_COHORT`` was collected. ``None`` until it is read
-#: off the first live sweep and pinned here; until then
-#: :func:`expected_symbols` derives it from the partitions themselves.
-CHIP_COHORT_SINCE: dt.date | None = None
+#: The first session ``CHIP_COHORT`` is collected in: Fri 2026-11-06, the
+#: first sweep after #202 deployed (2026-11-05's partition was already
+#: written with the 24, and bronze is immutable). Pinned rather than read off
+#: the partitions -- an earlier version derived it from the verifier's
+#: 10-partition walk, under which a cohort that vanished from all ten would
+#: have read as "not yet collected" and passed. From this session on, every
+#: partition must hold all 14.
+CHIP_COHORT_SINCE = dt.date(2026, 11, 6)
 
 DEFAULT_SNAPSHOT_SYMBOLS: tuple[str, ...] = CORE_SNAPSHOT_SYMBOLS + CHIP_COHORT
 
 
-def chip_cohort_start(sessions: dict[dt.date, set[str]]) -> dt.date | None:
-    """When the chip cohort began: pinned, else the earliest session holding ANY of it.
-
-    "Any", not a fraction: a first session that landed 12 of the 14 must
-    start the cohort -- so its two losses are reported -- rather than be
-    skipped as not-yet-started. ``None`` means no partition seen holds a
-    cohort name yet, i.e. the widened sweep has not run.
-    """
-    if CHIP_COHORT_SINCE is not None:
-        return CHIP_COHORT_SINCE
-    cohort = set(CHIP_COHORT)
-    started = [session for session, names in sessions.items() if names & cohort]
-    return min(started) if started else None
-
-
-def expected_symbols(session: dt.date, cohort_start: dt.date | None) -> frozenset[str]:
+def expected_symbols(session: dt.date) -> frozenset[str]:
     """The names a partition for ``session`` must hold, lower-cased."""
     names = set(CORE_SNAPSHOT_SYMBOLS)
-    if cohort_start is not None and session >= cohort_start:
+    if session >= CHIP_COHORT_SINCE:
         names |= set(CHIP_COHORT)
     return frozenset(names)
 

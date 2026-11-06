@@ -27,6 +27,7 @@ import pandas as pd
 
 from tail_lab.contracts.option_chain import (
     CHIP_COHORT,
+    CHIP_COHORT_SINCE,
     CORE_SNAPSHOT_SYMBOLS,
     DEFAULT_SNAPSHOT_SYMBOLS,
 )
@@ -130,47 +131,43 @@ def _partition(store: DeltaLakeStore, day: dt.date, names: list[str]) -> None:
     )
 
 
+# Fixed dates around the pin, not today-relative ones: the expected set is a
+# function of the session date now. The walk counts partitions, not days, so
+# dates in the past are still inspected; the network checks are stubbed dead.
+# (A partition AFTER the pin cannot be tested here until one exists in the
+# past: the walk starts from today. expected_symbols' later-session rule is
+# pinned in tests/test_contracts_option_chain.py instead.)
+PIN = CHIP_COHORT_SINCE
+BEFORE = PIN - dt.timedelta(days=1)
+
+
 def test_partitions_before_the_chip_cohort_are_not_gaps(tmp_path: Path) -> None:
     """Widening the sweep must not make every earlier partition report 14
     permanent, unfixable gaps (bronze is immutable)."""
     store = DeltaLakeStore(tmp_path / "data")
-    today = dt.date.today()
-    before, after = today - dt.timedelta(days=2), today - dt.timedelta(days=1)
-    _partition(store, before, list(CORE_SNAPSHOT_SYMBOLS))
-    _partition(store, after, list(DEFAULT_SNAPSHOT_SYMBOLS))
+    _partition(store, BEFORE, list(CORE_SNAPSHOT_SYMBOLS))
+    _partition(store, PIN, list(DEFAULT_SNAPSHOT_SYMBOLS))
     code, log = _run(tmp_path)
     assert code == 0, log
-    assert f"chip cohort expected from {after}" in log
-    assert f"OK  {before}: 24/24" in log
-    assert f"OK  {after}: 38/38" in log
+    assert f"chip cohort expected from {PIN}" in log
+    assert f"OK  {BEFORE}: 24/24" in log
+    assert f"OK  {PIN}: 38/38" in log
 
 
 def test_a_first_cohort_session_missing_two_names_reports_them(tmp_path: Path) -> None:
-    """12 of 14 on day one starts the cohort -- it is not skipped as
-    "not yet collected", which would hide the two losses forever."""
     store = DeltaLakeStore(tmp_path / "data")
-    today = dt.date.today() - dt.timedelta(days=1)
     lost = list(CHIP_COHORT[-2:])
-    _partition(store, today, [s for s in DEFAULT_SNAPSHOT_SYMBOLS if s not in lost])
+    _partition(store, PIN, [s for s in DEFAULT_SNAPSHOT_SYMBOLS if s not in lost])
     code, log = _run(tmp_path)
     assert code == 1, log
-    assert f"{today} is missing: {', '.join(sorted(lost))}" in log
+    assert f"{PIN} is missing: {', '.join(sorted(lost))}" in log
 
 
-def test_a_cohort_name_dropping_out_later_is_a_gap(tmp_path: Path) -> None:
+def test_a_session_with_no_cohort_at_all_after_the_pin_is_a_gap(tmp_path: Path) -> None:
+    """The case the old derived start passed as "not yet collected": every
+    cohort name gone from a partition the cohort was due in."""
     store = DeltaLakeStore(tmp_path / "data")
-    today = dt.date.today()
-    first, later = today - dt.timedelta(days=2), today - dt.timedelta(days=1)
-    _partition(store, first, list(DEFAULT_SNAPSHOT_SYMBOLS))
-    _partition(store, later, [s for s in DEFAULT_SNAPSHOT_SYMBOLS if s != "anet"])
+    _partition(store, PIN, list(CORE_SNAPSHOT_SYMBOLS))
     code, log = _run(tmp_path)
     assert code == 1, log
-    assert f"{later} is missing: anet" in log
-
-
-def test_no_cohort_yet_is_a_note_not_a_failure(tmp_path: Path) -> None:
-    store = DeltaLakeStore(tmp_path / "data")
-    _partition(store, dt.date.today() - dt.timedelta(days=1), list(CORE_SNAPSHOT_SYMBOLS))
-    code, log = _run(tmp_path)
-    assert code == 0, log
-    assert "chip cohort not yet collected" in log
+    assert f"{PIN} is missing: {', '.join(sorted(CHIP_COHORT))}" in log

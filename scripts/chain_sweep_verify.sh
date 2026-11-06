@@ -95,8 +95,8 @@ from tail_lab.config import get_lake_store
 import requests
 
 from tail_lab.contracts.option_chain import (
+    CHIP_COHORT_SINCE,
     WHOLE_SESSION,
-    chip_cohort_start,
     expected_symbols,
     missing_sessions,
 )
@@ -159,11 +159,9 @@ def symbols_at(frame, session):
 # distinct sessions it lands on enumerates the recent partitions through the
 # public API, with no private attributes and no second Delta client.
 #
-# Collected BEFORE either check because the names a partition must hold
-# depend on when the chip cohort began (contracts.option_chain
-# .expected_symbols), and until CHIP_COHORT_SINCE is pinned that date is read
-# off these very partitions. Without it every partition older than the cohort
-# reported 14 permanent, unfixable gaps.
+# The names a partition must hold depend on its session: the chip cohort is
+# expected from CHIP_COHORT_SINCE on (contracts.option_chain
+# .expected_symbols), so older partitions are not reported as missing it.
 lookback = int(os.environ["CHAIN_VERIFY_LOOKBACK"])
 seen: set[dt.date] = set()
 walked: list[tuple[dt.date, dt.date, set[str]]] = []
@@ -196,11 +194,7 @@ while len(seen) < lookback:
     walked.append((resolved, session, symbols_at(frame, session)))
     probe = resolved - dt.timedelta(days=1)
 
-cohort_start = chip_cohort_start({session: names for _, session, names in walked})
-if cohort_start is None:
-    print("NOTE: chip cohort not yet collected in any checked partition; not expected yet.")
-else:
-    print(f"chip cohort expected from {cohort_start}")
+print(f"chip cohort expected from {CHIP_COHORT_SINCE}")
 
 # ---- A. forward: is the session Cboe is serving actually captured? --------
 if os.environ["CHAIN_VERIFY_FORWARD"] == "1":
@@ -244,7 +238,7 @@ if os.environ["CHAIN_VERIFY_FORWARD"] == "1":
                     f" -- {session} was NOT captured"
                 )
             else:
-                expected = expected_symbols(session, cohort_start)
+                expected = expected_symbols(session)
                 missing = sorted(expected - symbols_at(have, session))
                 print(f"symbols at {session}: {len(expected) - len(missing)}/{len(expected)}")
                 if missing:
@@ -254,7 +248,7 @@ if os.environ["CHAIN_VERIFY_FORWARD"] == "1":
 sessions = {session for _, session, _ in walked}
 newest_session = walked[0][1] if walked else None
 for resolved, session, present in walked:
-    expected = expected_symbols(session, cohort_start)
+    expected = expected_symbols(session)
     missing = sorted(expected - present)
     # Never let an acknowledgement silence the NEWEST session: while Cboe is
     # still serving it a re-run can still capture it, so that gap is not
