@@ -339,8 +339,9 @@ CHIP_COHORT: tuple[str, ...] = (
 )
 
 #: The first session ``CHIP_COHORT`` is collected in: Fri 2026-11-06, the
-#: first sweep after #202 deployed (2026-11-05's partition was already
-#: written with the 24, and bronze is immutable). Pinned rather than read off
+#: first SESSION swept after #202 deployed (the 01:41 UTC run that followed
+#: the deploy found 2026-11-05 already written with the 24 and no-opped;
+#: bronze is immutable). Pinned rather than read off
 #: the partitions -- an earlier version derived it from the verifier's
 #: 10-partition walk, under which a cohort that vanished from all ten would
 #: have read as "not yet collected" and passed. From this session on, every

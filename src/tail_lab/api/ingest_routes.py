@@ -288,9 +288,11 @@ def _wing_status(store: LakeStore, dataset: str, today: dt.date) -> OptionChainW
     """One wing's freshness, read from its own dataset (never a union).
 
     Deliberately NOT cohort-aware (unlike the sweep verifier's
-    ``expected_symbols``): between a widening's deploy and its first sweep the
-    new names really are not collected, and this is the primary alert, so it
-    should say so rather than infer from the data that they were never due.
+    ``expected_symbols``, which judges each past partition by its session
+    date): this reports the NEWEST partition against today's full list, so
+    between a widening's deploy and its first sweep the new names show as
+    missing -- they really are not collected yet, and this is the primary
+    alert.
     """
     expected = tuple(sorted(s.upper() for s in DEFAULT_SNAPSHOT_SYMBOLS))
     try:
