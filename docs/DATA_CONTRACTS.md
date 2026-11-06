@@ -392,8 +392,8 @@ answers **401** without a cookie+crumb pair and is no longer viable.
 **Coverage.** `DEFAULT_SNAPSHOT_SYMBOLS` — 38 options-liquid names, not the
 75-name screening universe. Screen broad, trade narrow (`docs/adr/0008`). The
 original 24 (`CORE_SNAPSHOT_SYMBOLS`) since 2026-08-26, plus the 14-name
-`CHIP_COHORT` (chips, chip tools, data-centre network and power) from its
-first session in 2026-11. A partition before that session is not missing
+`CHIP_COHORT` (chips, chip tools, data-centre network and power) from
+`CHIP_COHORT_SINCE` = 2026-11-06. A partition before that session is not missing
 the cohort: `expected_symbols` says which names a session must hold, and the
 sweep verifier checks against it.
 

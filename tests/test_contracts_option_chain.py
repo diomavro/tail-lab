@@ -13,6 +13,7 @@ from tail_lab.contracts.option_chain import (
     CALL_MONEYNESS_MIN,
     CALL_QUARANTINE_DATASET,
     CHIP_COHORT,
+    CHIP_COHORT_SINCE,
     CORE_SNAPSHOT_SYMBOLS,
     DATASET,
     DEFAULT_SNAPSHOT_SYMBOLS,
@@ -24,7 +25,6 @@ from tail_lab.contracts.option_chain import (
     IncompleteSweepError,
     OptionCallChainSnapshotSchema,
     OptionChainSnapshotSchema,
-    chip_cohort_start,
     expected_symbols,
     missing_sessions,
     require_enough_symbols,
@@ -396,25 +396,13 @@ def test_the_sweep_is_the_core_24_plus_the_chip_cohort() -> None:
     assert all(s == s.lower() for s in DEFAULT_SNAPSHOT_SYMBOLS)
 
 
-def test_the_cohort_starts_at_the_first_session_holding_any_of_it() -> None:
-    """ "Any", so a first session with 12 of 14 starts it and its 2 losses show."""
-    d1, d2, d3 = dt.date(2026, 11, 4), dt.date(2026, 11, 5), dt.date(2026, 11, 6)
-    sessions = {d1: {"spy"}, d2: {"spy", "amd"}, d3: {"spy", *CHIP_COHORT}}
-    assert chip_cohort_start(sessions) == d2
-    assert chip_cohort_start({d1: {"spy"}}) is None
-
-
-def test_a_session_before_the_cohort_does_not_expect_it() -> None:
-    start = dt.date(2026, 11, 5)
-    assert expected_symbols(dt.date(2026, 11, 4), start) == frozenset(CORE_SNAPSHOT_SYMBOLS)
-    assert expected_symbols(start, start) == frozenset(DEFAULT_SNAPSHOT_SYMBOLS)
-    assert expected_symbols(start, None) == frozenset(CORE_SNAPSHOT_SYMBOLS)
-
-
-def test_a_pinned_start_overrides_the_data(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Once CHIP_COHORT_SINCE is pinned, a cohort that vanished from the lake
-    is a gap, not 'not yet collected'."""
-    import tail_lab.contracts.option_chain as oc
-
-    monkeypatch.setattr(oc, "CHIP_COHORT_SINCE", dt.date(2026, 11, 5))
-    assert oc.chip_cohort_start({dt.date(2026, 11, 6): {"spy"}}) == dt.date(2026, 11, 5)
+def test_the_cohort_is_expected_from_its_first_session_on() -> None:
+    """Pinned to the first widened sweep: a partition before it is complete
+    at 24 names, and from it on, a missing cohort name is a gap."""
+    assert dt.date(2026, 11, 6) == CHIP_COHORT_SINCE
+    day_before = CHIP_COHORT_SINCE - dt.timedelta(days=1)
+    assert expected_symbols(day_before) == frozenset(CORE_SNAPSHOT_SYMBOLS)
+    assert expected_symbols(CHIP_COHORT_SINCE) == frozenset(DEFAULT_SNAPSHOT_SYMBOLS)
+    assert expected_symbols(CHIP_COHORT_SINCE + dt.timedelta(days=30)) == frozenset(
+        DEFAULT_SNAPSHOT_SYMBOLS
+    )

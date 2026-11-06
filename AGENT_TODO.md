@@ -540,7 +540,9 @@ a large one strictly in order.
       "chunk the realtime window" advice is WRONG — it clips
       `realtime_start` and fabricates revisions (`docs/PRIOR_ART.md` §19).
 
-- [ ] **Pin `CHIP_COHORT_SINCE` once the chip cohort's first sweep has run**
+- [x] **Done 2026-11-06: `CHIP_COHORT_SINCE` pinned to 2026-11-06** and the
+      derivation removed (a cohort that vanished is now a gap). Original item:
+      **Pin `CHIP_COHORT_SINCE` once the chip cohort's first sweep has run**
       (`contracts/option_chain.py`, added 2026-11-05). Read the first session
       holding any `CHIP_COHORT` name off `GET /api/ingest/option-chain/status`
       or the lake, set the constant, and drop nothing else. Until it is set,
