@@ -65,9 +65,14 @@ a large one strictly in order.
       `paid_off`. Every slice of one `POST /api/putlab/memory/record` shares
       one `run_id`, so a node is stale exactly when its `last_run_id`
       differs from that of the rule's newest node (largest `last_seen`).
-      One limit: a re-record with the same `as_of` and snapshots reuses the
-      `run_id`, so a regime-definition change made under it would go
-      unseen. Before building, decide where the flag is read:
+      One limit: `run_id` is built only from `as_of` and the snapshots. It
+      leaves out the raw request inputs, and the hash rounds some of them
+      (`years=1.6` and `2.4` share a hash). So any same-day,
+      same-snapshot re-record reuses the `run_id`, and two kinds of change
+      go unseen: a change to the regime definition, and a change of inputs
+      inside one rounding bucket. To close that gap, add the raw inputs or
+      a per-call nonce to `run_id`. Before building, decide where the flag
+      is read:
       - The frontend never calls `GET /api/putlab/memory`.
       - `daily-verdict-sweep.yml` only writes, and it is guarded.
       So a flag in that response alone guards nothing. `docs/adr/0015`
