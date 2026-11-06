@@ -54,7 +54,26 @@ a large one strictly in order.
         and is never refreshed. None exists today. If one appears, the stamp
         the item proposed is the fix.
       Not covered: the other 66 sweep rules, and any rule hash outside the
-      sweep's grid (a manual seed). No public route lists every hash.
+      sweep's grid (a manual seed). No public route lists every hash. For
+      those, "0 change" is inferred from the upsert argument and was not
+      measured.
+- [ ] **Make the memory's "no stale node" a check, not a one-off count**
+      (design-review advisory on #198, logged 2026-11-06). The item above
+      measured that no node is stale today. Nothing will notice the first
+      one: a `(rule, regime)` node whose regime a later run stops hitting
+      keeps its old numbers, and `verdict_for_rule` still counts its
+      `paid_off`. Every slice of one `POST /api/putlab/memory/record` shares
+      one `run_id`, so a node is stale exactly when its `last_run_id`
+      differs from that of the rule's newest node (largest `last_seen`).
+      One limit: a re-record with the same `as_of` and snapshots reuses the
+      `run_id`, so a regime-definition change made under it would go
+      unseen. Before building, decide where the flag is read:
+      - The frontend never calls `GET /api/putlab/memory`.
+      - `daily-verdict-sweep.yml` only writes, and it is guarded.
+      So a flag in that response alone guards nothing. `docs/adr/0015`
+      forbids pruning the retrieval path, so flag the node and never drop
+      it. A listing route for every hash (the other half of the same
+      advisory) would also make the 66 unmeasured rules above countable.
 - [x] **Separate fragility from volatility statistically** (`docs/adr/0033`).
       *Done 2026-11-01 (`docs/adr/0035`):* `research/backtest/beyond_vol.py`
       runs a frozen Fama–MacBeth test on the signal test's own periods and
@@ -3662,6 +3681,26 @@ serve; `docs/adr/0021` is why the risk-shaped one comes first.
       correlation short in a sensitivity screen's clothing. Cheap to run
       (both sides are model-priced today), and it is the single most
       decisive test of the thesis currently available.
+      *Checked 2026-11-06: the model-priced version already exists, and it
+      cannot answer this question.* The signal test (`docs/adr/0033`,
+      `research/backtest/walk_forward.py`) holds an equal-premium SPY put
+      beside every basket: `PeriodInputs.spy_cost` is the same
+      `notional + spread` as each name's, and every screen reports
+      `excess_vs_spy` and the run's `spy_total_roi` (shown in the Bake-off's
+      `SignalTest.tsx`). Do not build it a second time. But both legs are
+      priced by `price_model_roll` at each name's own clamped 20-day
+      realised vol (`_roll_for`), so neither carries an implied-vol premium,
+      and the correlation risk premium is what this item asks about. A basket
+      that beats that SPY put has shown nothing about the CRP. The decisive
+      version needs market premiums on both sides:
+      - optionsDX (2010–2023) quotes SPY and QQQ, but its only single names
+        are NVDA and TSLA, so it cannot quote a screened basket.
+      - The forward chain sweep quotes up to 38 names, but only from
+        2026-08, a window with no crash in it.
+      So the market-priced test is limited by data, not by code. Until a
+      crash enters the forward window, the most this item can honestly add is
+      a note under the signal test's SPY figure: both sides are model-priced,
+      so the figure cannot show the correlation risk premium.
 
 ## Metric-library increments (2026-08-24)
 
