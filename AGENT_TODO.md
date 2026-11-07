@@ -3706,6 +3706,9 @@ serve; `docs/adr/0021` is why the risk-shaped one comes first.
       crash enters the forward window, the most this item can honestly add is
       a note under the signal test's SPY figure: both sides are model-priced,
       so the figure cannot show the correlation risk premium.
+      *Note shipped 2026-11-07* (advisory on #206): the Bake-off's
+      `signal-baselines` line now says so, pinned in `e2e/bakeoff.spec.ts`.
+      The item stays open for the market-priced version.
 
 ## Metric-library increments (2026-08-24)
 

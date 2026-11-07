@@ -244,7 +244,9 @@ function SignalTable({ r, label }: { r: SignalTestResult; label: string }) {
       <p className="pl-micro" data-testid="signal-baselines">
         All {r.universe_size} names returned {r.universe_total_roi == null ? '—' : pct1(r.universe_total_roi)} on the
         same periods; an equal-premium SPY put {r.spy_total_roi == null ? '—' : pct1(r.spy_total_roi)}. Return is
-        payoff over premium plus half-spread; commission is excluded.
+        payoff over premium plus half-spread; commission is excluded. Every put here, SPY&rsquo;s included, is model-priced at
+        its own realised vol, so no premium carries implied vol, and the SPY comparison cannot show the correlation
+        risk premium.
       </p>
     </>
   )
