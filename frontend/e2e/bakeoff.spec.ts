@@ -135,6 +135,7 @@ test('states the all-names and SPY levels it compares with, and its provenance',
   await expect(panel.getByTestId('signal-baselines')).toContainText(`All ${SIGNAL_TEST_NO_BETTER.universe_size} names returned`)
   await expect(panel.getByTestId('signal-baselines')).toContainText('commission is excluded')
   // Both legs are model-priced, so the SPY figure says nothing about the correlation risk premium (END_STATE Q7).
+  await expect(panel.getByTestId('signal-baselines')).toContainText('model-priced at its own realised vol')
   await expect(panel.getByTestId('signal-baselines')).toContainText('cannot show the correlation risk premium')
   await expect(panel.getByTestId('signal-provenance')).toContainText('abc1234')
   await expect(panel.getByTestId('signal-provenance')).toContainText('4 bronze snapshots')
