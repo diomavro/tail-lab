@@ -1797,6 +1797,7 @@ export function backtestByDelta(target: number): PutBacktestResponse {
       net: Number((c.payoff - NOTIONAL - cost).toFixed(2)),
     }
   })
+  const total_brokerage = Number(cycles.reduce((s, c) => s + c.cost, 0).toFixed(2))
   return {
     ...BACKTEST,
     moneyness_pct: null,
@@ -1804,6 +1805,10 @@ export function backtestByDelta(target: number): PutBacktestResponse {
     target_delta: target,
     // Computed from the rolls, as the backend does (put_roll._beyond_model_depth_share).
     beyond_model_depth_share: cycles.filter((c) => c.entry_moneyness_pct > MODEL_PRICED_MAX).length / cycles.length,
+    // The totals follow the delta rolls, as put_roll sums them; spreading
+    // BACKTEST's would keep the moneyness run's brokerage and net.
+    total_brokerage,
+    net_pnl: TOTAL_PAYOFF - TOTAL_PREMIUM - total_brokerage,
     cycles,
   }
 }

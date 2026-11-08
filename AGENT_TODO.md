@@ -151,7 +151,7 @@ a large one strictly in order.
       fixture builds `contracts = budget / premium` shares and `cost` as
       `roll_cost` does, and the spec reconciles Net = payoff − budget −
       brokerage on every row (the fixture's total brokerage moved from a
-      hard-coded $78 to the rolls' sum, $74.80). Also found: Cts printed the
+      hard-coded $78 to the rolls' sum, $128.80). Also found: Cts printed the
       API's raw float (`1383.310233241102` on live SPY); it is rounded to whole
       shares now.
 - [ ] **Flag memory nodes a sweep stopped refreshing** (advisory on #198).

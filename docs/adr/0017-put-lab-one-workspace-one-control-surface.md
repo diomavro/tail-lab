@@ -92,6 +92,9 @@ workspace had ever reset it.
 - The roll ledger prints **Fill** and **Budget** as separate columns. The old
   single "Cost" column held the cash filled while `Net` was measured against the
   per-roll budget, so subtracting the two visible columns gave the wrong answer.
+  (Amended 2026-11-08, #199: "Fill" was in fact each roll's entry brokerage,
+  not cash filled; the column is now **Brokerage**, after Budget, and
+  Net = Payoff − Budget − Brokerage on every row.)
 - Tape markers moved to `payoff > notional`, the same basis as `hit_rate`. They
   had been on `payoff > 0`, so the dots disagreed with the stat card above them.
 - Deleted: `QuestionBar`, `ChartCockpit`, `SweepHeatmap`, `StatBand`,
