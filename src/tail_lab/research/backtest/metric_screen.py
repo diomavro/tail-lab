@@ -93,34 +93,19 @@ from tail_lab.research.backtest.put_roll import (
 from tail_lab.research.backtest.ranking import (
     BENCHMARK,
     FRAGILE_HIGH,
+    FRAGILITY_METRIC_FUNCS,
     _returns,
     composite_scores,
     snapshot_ids_for,
+    trailing_fragility,
 )
 from tail_lab.research.backtest.regime_verdict import RegimeSlice, regime_breakdown
 from tail_lab.research.backtest.strike_rule import ByDelta, ByMoneyness, StrikeRule
 from tail_lab.research.dividends import dividend_lookup
-from tail_lab.research.metrics.co_kurtosis import co_kurtosis
-from tail_lab.research.metrics.co_skewness import co_skewness
-from tail_lab.research.metrics.downside_beta import downside_beta
-from tail_lab.research.metrics.downside_capture import downside_capture
-from tail_lab.research.metrics.tail_beta import tail_beta
-from tail_lab.research.metrics.vol_beta import vol_beta
 from tail_lab.research.regimes.timeline import compute_regime_timeline, load_vix_close
 
-#: The five benchmark-regressed raw sensitivity metrics, in stable display
-#: order. Vol beta is NOT here: it regresses against VIX changes, not the SPY
-#: benchmark, so it needs a different aligned pair -- see ``_fragility``'s
-#: separate handling below and ``_ALL_METRIC_NAMES`` for the full screen set.
-_METRIC_FUNCS: dict[str, Callable[[pd.Series, pd.Series], float]] = {
-    "downside_beta": downside_beta,
-    "co_skewness": co_skewness,
-    "co_kurtosis": co_kurtosis,
-    "tail_beta": tail_beta,
-    "downside_capture": downside_capture,
-}
 #: Every raw metric screened in the bake-off, including vol beta.
-_ALL_METRIC_NAMES: tuple[str, ...] = (*_METRIC_FUNCS, "vol_beta")
+_ALL_METRIC_NAMES: tuple[str, ...] = (*FRAGILITY_METRIC_FUNCS, "vol_beta")
 _COMPOSITE = "fragility_score"
 #: FDR level for the Benjamini-Hochberg correction across the seven screens'
 #: Spearman tests (`docs/END_STATE.md` §4 Q1) -- the conventional per-test
@@ -348,54 +333,6 @@ def _run_screen(
     )
 
 
-def _safe_metric(
-    fn: Callable[[pd.Series, pd.Series], float], a: pd.Series, b: pd.Series
-) -> float | None:
-    try:
-        return fn(a, b)
-    except ValueError:
-        return None
-
-
-def fragility_from_returns(
-    bench_pair_window: pd.DataFrame, vol_pair_window: pd.DataFrame
-) -> dict[str, float | None]:
-    """Every raw fragility metric from two ALREADY-windowed return frames:
-    ``bench_pair_window`` (columns ``a`` = the asset, ``b`` = SPY) for the five
-    benchmark-regressed metrics, and ``vol_pair_window`` (``a`` = the asset,
-    ``v`` = VIX changes) for vol beta. They are separately inner-joined
-    windows, never one frame: the VIX pair has its own dates, and sharing a
-    join would shrink one metric's sample to the other's overlap. A metric
-    that cannot be estimated is ``None``."""
-    a, b = bench_pair_window["a"], bench_pair_window["b"]
-    values: dict[str, float | None] = {
-        name: _safe_metric(fn, a, b) for name, fn in _METRIC_FUNCS.items()
-    }
-    try:
-        values["vol_beta"] = vol_beta(vol_pair_window["a"], vol_pair_window["v"])
-    except ValueError:
-        values["vol_beta"] = None
-    return values
-
-
-def _fragility(
-    asset_prices: pd.Series,
-    *,
-    bench_ret: pd.Series,
-    vol_changes: pd.Series,
-    lookback_days: int,
-) -> dict[str, float | None]:
-    """Every raw fragility metric for ``asset_prices`` over the trailing
-    ``lookback_days``, keyed by name: a thin wrapper that inner-joins and
-    windows the two pairs, then defers to :func:`fragility_from_returns`.
-    Un-nested from ``compare_metric_screens`` (``docs/adr/0023``'s
-    max-complexity ratchet), mirroring ``ranking.py:rank_universe``."""
-    asset_ret = _returns(asset_prices)
-    bench = pd.concat({"a": asset_ret, "b": bench_ret}, axis=1).dropna()
-    vol = pd.concat({"a": asset_ret, "v": vol_changes}, axis=1).dropna()
-    return fragility_from_returns(bench.iloc[-lookback_days:], vol.iloc[-lookback_days:])
-
-
 def _score_name(
     store: LakeStore,
     symbol: str,
@@ -483,7 +420,7 @@ def compare_metric_screens(
             rule=rule,
             tenor_weeks=tenor_weeks,
             years=years,
-            fragility=lambda prices: _fragility(
+            fragility=lambda prices: trailing_fragility(
                 prices, bench_ret=bench_ret, vol_changes=vol_changes, lookback_days=lookback_days
             ),
         )

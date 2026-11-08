@@ -266,41 +266,68 @@ class _RankContext:
     lookback_days: int
 
 
-def _fragility(
-    asset_prices: pd.Series, bench_ret: pd.Series | None, lookback_days: int
-) -> tuple[float | None, float | None, float | None, float | None, float | None]:
-    if bench_ret is None:
-        return None, None, None, None, None
-    aligned = pd.concat({"a": _returns(asset_prices), "b": bench_ret}, axis=1).dropna()
-    window = aligned.iloc[-lookback_days:]
-    a, b = window["a"], window["b"]
-
-    def _safe(fn: Callable[[pd.Series, pd.Series], float]) -> float | None:
-        try:
-            return fn(a, b)
-        except ValueError:
-            return None
-
-    return (
-        _safe(downside_beta),
-        _safe(co_skewness),
-        _safe(co_kurtosis),
-        _safe(tail_beta),
-        _safe(downside_capture),
-    )
+#: The five benchmark-regressed raw sensitivity metrics, in stable display
+#: order. Vol beta is NOT here: it regresses against VIX changes, not the SPY
+#: benchmark, so it needs a different aligned pair -- see
+#: :func:`fragility_from_returns`.
+FRAGILITY_METRIC_FUNCS: dict[str, Callable[[pd.Series, pd.Series], float]] = {
+    "downside_beta": downside_beta,
+    "co_skewness": co_skewness,
+    "co_kurtosis": co_kurtosis,
+    "tail_beta": tail_beta,
+    "downside_capture": downside_capture,
+}
 
 
-def _vol_beta_for(
-    asset_prices: pd.Series, vol_changes: pd.Series, lookback_days: int
+def _safe_metric(
+    fn: Callable[[pd.Series, pd.Series], float], a: pd.Series, b: pd.Series
 ) -> float | None:
-    """Unlike ``_fragility``, this needs no SPY benchmark -- the regressor is
-    the VIX change series, always present here."""
-    aligned = pd.concat({"a": _returns(asset_prices), "v": vol_changes}, axis=1).dropna()
-    window = aligned.iloc[-lookback_days:]
     try:
-        return vol_beta(window["a"], window["v"])
+        return fn(a, b)
     except ValueError:
         return None
+
+
+def fragility_from_returns(
+    bench_pair_window: pd.DataFrame, vol_pair_window: pd.DataFrame
+) -> dict[str, float | None]:
+    """Every raw fragility metric from two ALREADY-windowed return frames:
+    ``bench_pair_window`` (columns ``a`` = the asset, ``b`` = SPY) for the five
+    benchmark-regressed metrics, and ``vol_pair_window`` (``a`` = the asset,
+    ``v`` = VIX changes) for vol beta. They are separately inner-joined
+    windows, never one frame: the VIX pair has its own dates, and sharing a
+    join would shrink one metric's sample to the other's overlap. A metric
+    that cannot be estimated is ``None``. The one fold behind the Screen, the
+    in-sample Bake-off and the walk-forward signal test, so the signal the
+    Bake-off judges is the signal the Screen ranks on."""
+    a, b = bench_pair_window["a"], bench_pair_window["b"]
+    values: dict[str, float | None] = {
+        name: _safe_metric(fn, a, b) for name, fn in FRAGILITY_METRIC_FUNCS.items()
+    }
+    try:
+        values["vol_beta"] = vol_beta(vol_pair_window["a"], vol_pair_window["v"])
+    except ValueError:
+        values["vol_beta"] = None
+    return values
+
+
+def trailing_fragility(
+    asset_prices: pd.Series,
+    *,
+    bench_ret: pd.Series | None,
+    vol_changes: pd.Series,
+    lookback_days: int,
+) -> dict[str, float | None]:
+    """Every raw fragility metric for ``asset_prices`` over the trailing
+    ``lookback_days``, keyed by name: inner-joins and windows the two pairs,
+    then defers to :func:`fragility_from_returns`. With no benchmark
+    (``bench_ret is None``) the five benchmark metrics are ``None`` and vol
+    beta, which needs only VIX, is still computed."""
+    asset_ret = _returns(asset_prices)
+    bench_b = bench_ret if bench_ret is not None else pd.Series(dtype=float)
+    bench = pd.concat({"a": asset_ret, "b": bench_b}, axis=1).dropna()
+    vol = pd.concat({"a": asset_ret, "v": vol_changes}, axis=1).dropna()
+    return fragility_from_returns(bench.iloc[-lookback_days:], vol.iloc[-lookback_days:])
 
 
 def _rank_one(symbol: str, ctx: _RankContext) -> RankedAsset | None:
@@ -346,8 +373,12 @@ def _rank_one(symbol: str, ctx: _RankContext) -> RankedAsset | None:
             dividends=dividends,
         )
     )
-    db, cs, ck, tb, dc = _fragility(prices, ctx.bench_ret, ctx.lookback_days)
-    vb = _vol_beta_for(prices, ctx.vol_changes, ctx.lookback_days)
+    fragility = trailing_fragility(
+        prices,
+        bench_ret=ctx.bench_ret,
+        vol_changes=ctx.vol_changes,
+        lookback_days=ctx.lookback_days,
+    )
     _, verdict = regime_breakdown(result.cycles, ctx.timeline)
     # One more roll, at the winning cell, so every ``best_*`` figure comes from
     # the same strategy. ~2% on top of the 55-cell sweep already run.
@@ -374,12 +405,12 @@ def _rank_one(symbol: str, ctx: _RankContext) -> RankedAsset | None:
         asset=symbol,
         name=cadence_for(symbol).name,
         spot=result.spot,
-        downside_beta=db,
-        co_skewness=cs,
-        co_kurtosis=ck,
-        tail_beta=tb,
-        downside_capture=dc,
-        vol_beta=vb,
+        downside_beta=fragility["downside_beta"],
+        co_skewness=fragility["co_skewness"],
+        co_kurtosis=fragility["co_kurtosis"],
+        tail_beta=fragility["tail_beta"],
+        downside_capture=fragility["downside_capture"],
+        vol_beta=fragility["vol_beta"],
         fragility_score=None,  # filled in cross-sectionally below
         roi_on_premium=result.roi_on_premium,
         annualized_return=result.annualized_return,
