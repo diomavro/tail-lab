@@ -146,7 +146,9 @@ jobs:
             echo "::error::HEAD is not a merge commit, so the PR's own changes cannot be isolated."
             exit 1
           fi
-          changed=$(git diff --name-only HEAD^1 HEAD)
+          # --no-renames: a rename would otherwise list only its new path, so
+          # moving an ADR out of docs/adr/ read as an unguarded edit.
+          changed=$(git diff --no-renames --name-only HEAD^1 HEAD)
           echo "Changed files:"; echo "$changed"
           if echo "$changed" | grep -qE '^docs/adr/|^\.github/workflows/|^\.claude/|^CLAUDE\.md$|^ARCHITECTURE\.md$|^docs/STANDARDS\.md$|^README\.md$|^docs/AGENT_MISSION\.md$|^docs/END_STATE\.md$'; then
             echo "::error::This agent PR edits the constitution (docs/adr, ARCHITECTURE.md, STANDARDS.md, README.md, AGENT_MISSION.md, END_STATE.md), .github/workflows (where the agent's own instructions and this guard live) or .claude/ and CLAUDE.md (the agent's own reviewers and the project memory it loads as instructions, docs/adr/0030). A human must review + merge it — auto-merge is blocked."
