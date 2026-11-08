@@ -1246,11 +1246,13 @@ def load_ohlcv_series(store: LakeStore, asset: str, as_of: dt.date) -> tuple[pd.
     :func:`load_asof_series` instead; this is for the routes that must never
     touch the optionsDX panel (the Surface, the strike preview).
     """
-    prices = _ohlcv_prices(store, asset, as_of)
+    prices = load_ohlcv_prices(store, asset, as_of)
     return prices, trailing_realized_vol(prices)
 
 
-def _ohlcv_prices(store: LakeStore, asset: str, as_of: dt.date) -> pd.Series:
+def load_ohlcv_prices(store: LakeStore, asset: str, as_of: dt.date) -> pd.Series:
+    """Point-in-time raw closes (:func:`_close_series`) from the OHLCV snapshot
+    known on or before ``as_of``; ``LookupError`` if there is none, or it is empty."""
     try:
         bronze = store.read_bronze_as_of(dataset_id(asset), as_of)
     except LookupError as exc:
@@ -1279,7 +1281,7 @@ def load_asof_series(store: LakeStore, asset: str, as_of: dt.date) -> tuple[pd.S
     from tail_lab.research.backtest.quote_fills import with_panel_prehistory
 
     prices = with_panel_prehistory(
-        store, _ohlcv_prices(store, asset, as_of), symbol=asset, as_of=as_of
+        store, load_ohlcv_prices(store, asset, as_of), symbol=asset, as_of=as_of
     )
     return prices, trailing_realized_vol(prices)
 
