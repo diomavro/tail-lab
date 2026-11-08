@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import datetime as dt
 from pathlib import Path
-from typing import Any
 
 import numpy as np
 import pandas as pd
@@ -472,8 +471,16 @@ def test_the_bakeoff_scores_the_fragility_the_screen_ranks_on(
     seen: list[tuple[pd.Series, dict[str, float | None]]] = []
     real = metric_screen.trailing_fragility
 
-    def _recording(prices: pd.Series, **kwargs: Any) -> dict[str, float | None]:
-        out = real(prices, **kwargs)
+    def _recording(
+        prices: pd.Series,
+        *,
+        bench_ret: pd.Series | None,
+        vol_changes: pd.Series,
+        lookback_days: int,
+    ) -> dict[str, float | None]:
+        out = real(
+            prices, bench_ret=bench_ret, vol_changes=vol_changes, lookback_days=lookback_days
+        )
         seen.append((prices, out))
         return out
 
