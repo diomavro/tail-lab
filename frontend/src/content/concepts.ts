@@ -957,7 +957,8 @@ export const CONCEPTS = {
       'What one put costs per share today: the Black-Scholes price at realised vol on the backtest row, the listed ask on the market row.',
     intuition:
       'The ask is what a buyer actually pays. The model row is priced at a vol that sits below implied, so it is usually the cheaper of the two.',
-    howToRead: 'The gap between the rows is the part of the backtest’s cost the market does not offer.',
+    howToRead:
+      'The rows are different strikes and expiries, so compare their convexity ratios, not the two prices directly.',
     seeAlso: ['strike_vol', 'convexity_ratio'],
   },
   convexity_ratio: {
