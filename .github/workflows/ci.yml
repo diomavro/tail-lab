@@ -441,7 +441,9 @@ jobs:
                  "repos/${GITHUB_REPOSITORY}/pulls/${PR_NUMBER}/files" \
                  --jq '.[].filename' 2>/dev/null); then
               reason="classify_failed"
-            elif printf '%s\n' "$bot_files" | grep -q '^\.github/'; then
+            # A here-string, not printf | grep -q: under pipefail an early
+            # match closes the pipe and a long list's printf dies of SIGPIPE.
+            elif grep -q '^\.github/' <<<"$bot_files"; then
               reason="bot_guarded_skip"
             else
               reason="bot_unreviewed"
@@ -629,8 +631,8 @@ jobs:
             fi
             if [ "$reason" = "bot_unreviewed" ]; then
               echo "::error::A Dependabot PR that edits nothing under .github/. The reviewer"
-              echo "cannot run on Dependabot PRs, and automerge.yml would merge this one"
-              echo "unreviewed — so it is blocked. A human should read and merge it."
+              echo "cannot run on Dependabot PRs, and nothing else stops automerge.yml"
+              echo "merging it unreviewed — so it is blocked. A human should read and merge it."
               exit 1
             fi
             if [ "$reason" = "stale_branch_skip" ]; then
