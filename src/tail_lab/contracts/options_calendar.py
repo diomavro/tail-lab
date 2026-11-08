@@ -119,6 +119,14 @@ _UNIVERSE: tuple[tuple[str, str, Cadence, float], ...] = (
     ("SMCI", "Super Micro (SMCI)", "weekly", 3.5),
     ("VRT", "Vertiv (VRT)", "weekly", 3.5),
     ("VST", "Vistra (VST)", "weekly", 3.5),
+    # added 2026-11-05 with the chip cohort (contracts/option_chain.py), each
+    # with >= 4.8y of OHLCV for the default 4-year lookback. ARM (listed
+    # 2023-09) is swept but stays out, as above.
+    ("AMAT", "Applied Materials (AMAT)", "weekly", 3.5),
+    ("LRCX", "Lam Research (LRCX)", "weekly", 3.5),
+    ("SOXX", "Semiconductors (SOXX)", "weekly", 3.5),
+    ("ANET", "Arista Networks (ANET)", "weekly", 3.5),
+    ("CEG", "Constellation Energy (CEG)", "weekly", 3.5),
     # high-vol / cyclical single names
     ("JPM", "JPMorgan (JPM)", "weekly", 3.5),
     ("BA", "Boeing (BA)", "weekly", 3.5),

@@ -46,8 +46,10 @@ _REFUSAL = {
 }
 
 
-def _fetch(base: str, params: str, timeout: int) -> dict[str, object]:
-    """The marked schedule, checked to be an object with a list of object legs.
+def _fetch(
+    base: str, params: str, timeout: int
+) -> tuple[dict[str, object], list[dict[str, object]]]:
+    """The marked schedule and its legs, checked to be an object with a list of object legs.
     Stdlib only on purpose (run as plain ``python``), so the shape is checked
     here rather than by importing the API's ``MarkedSchedule`` model."""
     url = f"{base.rstrip('/')}/api/putlab/roll-schedule/marked{params}"
@@ -58,7 +60,7 @@ def _fetch(base: str, params: str, timeout: int) -> dict[str, object]:
     legs = payload.get("legs", [])
     if not isinstance(legs, list) or not all(isinstance(leg, dict) for leg in legs):
         raise ValueError("the schedule's 'legs' is not a list of objects")
-    return payload
+    return payload, legs
 
 
 def _number(leg: Mapping[str, object], key: str) -> float:
@@ -81,30 +83,8 @@ def _describe(leg: Mapping[str, object]) -> str:
     )
 
 
-def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--base", default=DEFAULT_BASE)
-    parser.add_argument("--moneyness-pct", type=float, default=5.0)
-    parser.add_argument("--tenor-weeks", type=float, default=4.0)
-    parser.add_argument("--notional", type=float, default=1000.0)
-    parser.add_argument("--top-k", type=int, default=10)
-    parser.add_argument("--json", dest="json_path", default=None, help="also write the artifact")
-    parser.add_argument("--timeout", type=int, default=180)
-    args = parser.parse_args(argv)
-
-    params = (
-        f"?moneyness_pct={args.moneyness_pct}&tenor_weeks={args.tenor_weeks}"
-        f"&notional={args.notional}&top_k={args.top_k}"
-    )
-    try:
-        schedule = _fetch(args.base, params, args.timeout)
-    except (urllib.error.HTTPError, urllib.error.URLError) as exc:
-        print(f"could not reach {args.base}: {exc}", file=sys.stderr)
-        return 1
-
-    raw_legs = schedule.get("legs", [])
-    # _fetch already refused anything but a list of objects; this narrows it.
-    legs = [leg for leg in raw_legs if isinstance(leg, dict)] if isinstance(raw_legs, list) else []
+def _print_ticket(schedule: Mapping[str, object], legs: list[dict[str, object]]) -> None:
+    """The ticket: placeable legs as orders, the rest with the reason they are not."""
     placeable = [leg for leg in legs if leg.get("quote_status") == "quoted"]
 
     print(f"schedule {schedule['schedule_id']}  screen as-of {schedule['as_of']}")
@@ -135,6 +115,30 @@ def main(argv: list[str] | None = None) -> int:
             status = str(leg.get("quote_status", "?"))
             why = _REFUSAL.get(status, status)
             print(f"  {leg['rank']:>2}. {str(leg['asset']).upper():<6} {why}")
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--base", default=DEFAULT_BASE)
+    parser.add_argument("--moneyness-pct", type=float, default=5.0)
+    parser.add_argument("--tenor-weeks", type=float, default=4.0)
+    parser.add_argument("--notional", type=float, default=1000.0)
+    parser.add_argument("--top-k", type=int, default=10)
+    parser.add_argument("--json", dest="json_path", default=None, help="also write the artifact")
+    parser.add_argument("--timeout", type=int, default=180)
+    args = parser.parse_args(argv)
+
+    params = (
+        f"?moneyness_pct={args.moneyness_pct}&tenor_weeks={args.tenor_weeks}"
+        f"&notional={args.notional}&top_k={args.top_k}"
+    )
+    try:
+        schedule, legs = _fetch(args.base, params, args.timeout)
+    except (urllib.error.HTTPError, urllib.error.URLError) as exc:
+        print(f"could not reach {args.base}: {exc}", file=sys.stderr)
+        return 1
+
+    _print_ticket(schedule, legs)
 
     if args.json_path:
         path = Path(args.json_path)

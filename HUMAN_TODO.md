@@ -186,6 +186,8 @@ acts on, removes, or reorders anything in this file.**
       usable 16%-OOM quotes in total). The Kaggle corpus below covers SPY
       2024-25 but is cross-check-only by licence, so it cannot fill this.
       Drop the files in `data/vendor/optionsdx/` and run the existing ingest.
+      (The leaked index column that would have failed that ingest was
+      repaired on 2026-11-05; see `AGENT_TODO.md`.)
 - [ ] **Download and ingest it, ONE YEAR AT A TIME.** Dataset
       `shankerabhigyan/s-and-p500-options-spy-implied-volatility-2019-24`,
       twelve files `spy_options_data_14.json` .. `_25.json`, 0.35-1.06 GB
@@ -643,7 +645,12 @@ do.
       substantive gates passed before the outage; `agent-review` never ran),
       the daily agent cannot open PRs, and no green `main` commit can deploy.
 
-- [ ] **Approve and install the weekly Tiingo timer, then run the first
+- [x] **Done 2026-11-05 (at Dio's request, by Claude):** timer installed
+      (`systemctl --user list-timers` shows Saturdays 10:00 UTC) and the first
+      ingest committed 436,572 rows for 70 symbols (5,318 dividend rows, 92
+      splits, 1993-01-04 .. 2026-11-04). Production now prices with measured
+      yields: HYG reads q = 6.24% (`carried`) where it read 0.
+      Original item: **Approve and install the weekly Tiingo timer, then run the first
       ingest** (added 2026-10-10 with `tiingo_eod`, `docs/DATA_CONTRACTS.md`
       #14). Until it runs, every price in the app is exactly as before: each
       roll prices at `q = 0` and says `q_source: unknown`. After the PR merges:
@@ -689,7 +696,12 @@ do.
 
 ## FRED credit spreads — found 2026-10-31
 
-- [ ] **FRED's high-yield spread (`BAMLH0A0HYM2`) now serves only 3 years.**
+- [x] **Done 2026-10-31: option 1.** `make ingest-credit-archive` ran against the
+      production lake: bronze `credit_archive` has one partition (ingest_date
+      2026-10-31), 7,530 rows, 1996-12-31 to 2025-11-03 (checked 2026-11-08).
+      Original item:
+
+- [x] **FRED's high-yield spread (`BAMLH0A0HYM2`) now serves only 3 years.**
       Since April 2026, FRED keeps a rolling 3-year window; the API's first
       observation is 2023-10-31. The credit regime (`contracts/regime.py`)
       is built on this series, so any backfill from FRED can no longer

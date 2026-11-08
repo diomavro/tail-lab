@@ -61,6 +61,7 @@ class RefreshingMemo[K: Hashable, V]:
         name: str,
         fresh_s: float,
         serve_stale_s: float,
+        max_entries: int | None = None,
         clock: Callable[[], float] = time.monotonic,
         spawn: Callable[[Callable[[], None]], None] = _spawn_thread,
     ) -> None:
@@ -69,6 +70,9 @@ class RefreshingMemo[K: Hashable, V]:
         self._name = name
         self._fresh_s = fresh_s
         self._serve_stale_s = serve_stale_s
+        #: A cap for memos keyed on free text (a typed ticker): past it, the
+        #: oldest-computed entries go first. ``None`` for parameter-keyed memos.
+        self._max_entries = max_entries
         self._clock = clock
         self._spawn = spawn
         self._lock = threading.Lock()
@@ -183,7 +187,13 @@ class RefreshingMemo[K: Hashable, V]:
                 k for k, e in self._entries.items() if now - e.computed_at >= self._serve_stale_s
             ]:
                 del self._entries[old]
+            self._entries.pop(key, None)
             self._entries[key] = _Entry(value=value, computed_at=now)
+            if self._max_entries is not None:
+                # Dicts keep insertion order and a store re-inserts at the
+                # end, so the first key is the oldest computed.
+                while len(self._entries) > self._max_entries:
+                    del self._entries[next(iter(self._entries))]
             self._inflight.pop(key, None)
         event.set()
         log_event(

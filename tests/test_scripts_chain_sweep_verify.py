@@ -25,6 +25,12 @@ from pathlib import Path
 
 import pandas as pd
 
+from tail_lab.contracts.option_chain import (
+    CHIP_COHORT,
+    CHIP_COHORT_SINCE,
+    CORE_SNAPSHOT_SYMBOLS,
+    DEFAULT_SNAPSHOT_SYMBOLS,
+)
 from tail_lab.lake.store import DeltaLakeStore
 
 SCRIPT = Path(__file__).resolve().parents[1] / "scripts" / "chain_sweep_verify.sh"
@@ -109,3 +115,59 @@ def test_an_unreachable_cboe_still_lets_the_lake_check_find_a_gap(tmp_path: Path
     assert "could not reach Cboe" in log
     assert f"GAP {today}" in log
     assert "FAIL:" in log
+
+
+def _partition(store: DeltaLakeStore, day: dt.date, names: list[str]) -> None:
+    store.write_bronze(
+        "option_chain_snapshot",
+        day,
+        pd.DataFrame(
+            {
+                "underlying": names,
+                "quote_date": [pd.Timestamp(day)] * len(names),
+                "strike": [1.0] * len(names),
+            }
+        ),
+    )
+
+
+# Fixed dates around the pin, not today-relative ones: the expected set is a
+# function of the session date now. The walk counts partitions, not days, so
+# dates in the past are still inspected; the network checks are stubbed dead.
+# (A partition AFTER the pin cannot be tested here until one exists in the
+# past: the walk starts from today. expected_symbols' later-session rule is
+# pinned in tests/test_contracts_option_chain.py instead.)
+PIN = CHIP_COHORT_SINCE
+BEFORE = PIN - dt.timedelta(days=1)
+
+
+def test_partitions_before_the_chip_cohort_are_not_gaps(tmp_path: Path) -> None:
+    """Widening the sweep must not make every earlier partition report 14
+    permanent, unfixable gaps (bronze is immutable)."""
+    store = DeltaLakeStore(tmp_path / "data")
+    _partition(store, BEFORE, list(CORE_SNAPSHOT_SYMBOLS))
+    _partition(store, PIN, list(DEFAULT_SNAPSHOT_SYMBOLS))
+    code, log = _run(tmp_path)
+    assert code == 0, log
+    assert f"chip cohort expected from {PIN}" in log
+    assert f"OK  {BEFORE}: 24/24" in log
+    assert f"OK  {PIN}: 38/38" in log
+
+
+def test_a_first_cohort_session_missing_two_names_reports_them(tmp_path: Path) -> None:
+    store = DeltaLakeStore(tmp_path / "data")
+    lost = list(CHIP_COHORT[-2:])
+    _partition(store, PIN, [s for s in DEFAULT_SNAPSHOT_SYMBOLS if s not in lost])
+    code, log = _run(tmp_path)
+    assert code == 1, log
+    assert f"{PIN} is missing: {', '.join(sorted(lost))}" in log
+
+
+def test_a_session_with_no_cohort_at_all_after_the_pin_is_a_gap(tmp_path: Path) -> None:
+    """The case the old derived start passed as "not yet collected": every
+    cohort name gone from a partition the cohort was due in."""
+    store = DeltaLakeStore(tmp_path / "data")
+    _partition(store, PIN, list(CORE_SNAPSHOT_SYMBOLS))
+    code, log = _run(tmp_path)
+    assert code == 1, log
+    assert f"{PIN} is missing: {', '.join(sorted(CHIP_COHORT))}" in log

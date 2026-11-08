@@ -10,7 +10,12 @@ is simulated once per ``(T, L)`` and memoised across the module.
 
 from __future__ import annotations
 
+import ast
+import copy
 import datetime as dt
+import hashlib
+import inspect
+import json
 import math
 from collections.abc import Callable
 from dataclasses import replace
@@ -21,6 +26,7 @@ import pytest
 from scipy import stats
 
 from tail_lab.research.backtest import beyond_vol as bv
+from tail_lab.research.backtest import walk_forward
 from tail_lab.research.backtest.walk_forward import SCREENS, PeriodInputs
 
 FloatArray = npt.NDArray[np.float64]
@@ -867,3 +873,104 @@ def test_the_hac_intercept_se_matches_a_hand_calculation() -> None:
     assert (a, b) == (pytest.approx(1.5), pytest.approx(-2.0))
     assert t == pytest.approx(1.5 / math.sqrt(1.0 / 68.0))
     assert (a, b, t) == pytest.approx(_hac_by_loops(g[:4], z[:4], 16))
+
+
+# ADR 0035 froze ``beyond_vol.py`` by its sha256, but the test also runs code it
+# imports from ``walk_forward.py`` (the episodes, the validation), and nothing
+# checked either. The freeze commit ef31431 is not on main (the PR was squashed);
+# fetch it with ``git fetch origin refs/pull/188/head``.
+FROZEN_BEYOND_VOL_SHA256 = "6648196d39638cb975fd120cce7153365a88af7f45c2dba81bf600ae6dc4744f"
+#: The digest of ``_frozen_dependencies()`` on ef31431's ``walk_forward.py``.
+FROZEN_DEPENDENCIES_SHA256 = "abf46da75c363af69d378075dec997e189a2d88598c6e147dafe193b5a585c16"
+
+
+def _without_docstring(node: ast.stmt) -> ast.stmt:
+    node = copy.deepcopy(node)
+    for sub in ast.walk(node):
+        if (
+            isinstance(sub, ast.FunctionDef | ast.ClassDef)
+            and sub.body
+            and isinstance(sub.body[0], ast.Expr)
+            and isinstance(sub.body[0].value, ast.Constant)
+            and isinstance(sub.body[0].value.value, str)
+        ):
+            sub.body = sub.body[1:] or [ast.Pass()]
+    return node
+
+
+def _module_names(tree: ast.Module) -> tuple[dict[str, ast.stmt], set[str]]:
+    """A module's top-level definitions by name, and the names it imports from
+    other ``tail_lab`` modules."""
+    defs: dict[str, ast.stmt] = {}
+    imported: set[str] = set()
+    for node in tree.body:
+        if isinstance(node, ast.FunctionDef | ast.ClassDef):
+            defs[node.name] = node
+        elif isinstance(node, ast.Assign | ast.AnnAssign):
+            targets = node.targets if isinstance(node, ast.Assign) else [node.target]
+            defs.update({t.id: node for t in targets if isinstance(t, ast.Name)})
+        elif isinstance(node, ast.ImportFrom) and (node.module or "").startswith("tail_lab."):
+            imported.update(alias.asname or alias.name for alias in node.names)
+    return defs, imported
+
+
+def _binding(value: object) -> str:
+    """What a name is bound to once the module has run, so a later rebinding
+    (``SCREENS += ...``, a tuple assignment, ``globals()[...]``) that the first
+    definition's source does not show still changes the digest."""
+    if inspect.isfunction(value) or inspect.isclass(value):
+        return f"{value.__module__}.{value.__qualname__}"
+    if isinstance(value, str | int | float | tuple | frozenset):
+        return repr(value)
+    return ""
+
+
+def _frozen_dependencies() -> dict[str, str]:
+    """What ``beyond_vol`` imports from ``walk_forward``, and every module-level
+    name those reach there, transitively: a definition as its source without
+    docstrings or comments (so wording and formatting may change) plus its
+    runtime binding, a value ``walk_forward`` imports from another ``tail_lab``
+    module as its repr."""
+    seeds = {
+        alias.name
+        for node in ast.parse(inspect.getsource(bv)).body
+        if isinstance(node, ast.ImportFrom) and node.module == walk_forward.__name__
+        for alias in node.names
+    }
+    defs, imported = _module_names(ast.parse(inspect.getsource(walk_forward)))
+    out: dict[str, str] = {}
+    todo = sorted(seeds)
+    while todo:
+        name = todo.pop()
+        if name in out:
+            continue
+        if name in defs:
+            source = ast.unparse(_without_docstring(defs[name]))
+            out[name] = source + "\n" + _binding(getattr(walk_forward, name))
+            todo += [n.id for n in ast.walk(defs[name]) if isinstance(n, ast.Name)]
+        elif name in imported:
+            out[name] = repr(getattr(walk_forward, name))
+    return out
+
+
+def test_the_frozen_file_is_byte_identical_to_the_one_adr_0035_hashed() -> None:
+    """Any edit to ``beyond_vol.py`` changes the pre-registered test: it needs a
+    new freeze under a new ADR, not a quiet re-pin here."""
+    path = inspect.getsourcefile(bv)
+    assert path is not None
+    with open(path, "rb") as f:
+        assert hashlib.sha256(f.read()).hexdigest() == FROZEN_BEYOND_VOL_SHA256
+
+
+def test_the_walk_forward_code_the_frozen_test_runs_is_unchanged_since_the_freeze() -> None:
+    """A refactor of ``_episodes``, ``_validate_periods`` or anything they reach
+    changes what ADR 0035's frozen test computes while ``beyond_vol.py``'s hash
+    stays the same. If this fails, put the old behaviour back or re-freeze
+    under a new ADR; do not re-pin the digest. (A new Python can change
+    ``ast.unparse``'s output: re-pin then only if ef31431's ``walk_forward.py``
+    gives the same new digest.)"""
+    deps = _frozen_dependencies()
+    # The walk is transitive and crosses into other tail_lab modules' values.
+    assert {"_episode", "_require_finite_outcomes", "SCREENS", "RegimeLabel"} <= deps.keys()
+    digest = hashlib.sha256(json.dumps(sorted(deps.items())).encode()).hexdigest()
+    assert digest == FROZEN_DEPENDENCIES_SHA256

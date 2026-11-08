@@ -882,3 +882,24 @@ def test_a_failed_call_quarantine_write_logs_the_call_event(
     assert failure.getMessage().startswith(
         f"event=api.ingest.option_chain.quarantine_write_failed dataset={CALL_QUARANTINE_DATASET} "
     )
+
+
+def test_the_audit_line_carries_the_handler_cost(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    """Widening the sweep is gated on these two numbers from the live app:
+    handler time against the script's 300 s POST timeout, and peak RSS
+    against the 1 GB VM. Without them the gate is a guess."""
+    _set_token(monkeypatch, TOKEN)
+    with caplog.at_level("INFO"):
+        _post(client, _body())
+    line = next(
+        r.getMessage()
+        for r in caplog.records
+        if r.getMessage().startswith("event=api.ingest.option_chain ")
+    )
+    fields = dict(part.split("=", 1) for part in line.split()[1:])
+    assert 0.0 <= float(fields["duration_s"]) < 60.0
+    # MB, not KiB or bytes: a pytest process sits in the tens-to-hundreds of
+    # MB, so a dropped /1024 (KiB) reads >= 10_000 and fails here.
+    assert 10 < int(fields["peak_rss_mb"]) < 8_000

@@ -392,6 +392,8 @@ def _require_finite_outcomes(per: PeriodInputs) -> None:
         raise ValueError(f"{per.date}: payoff and spy_payoff must be finite")
 
 
+# ADR 0035's frozen beyond_vol runs this and what it calls; a behaviour change
+# fails test_the_walk_forward_code_the_frozen_test_runs_is_unchanged_since_the_freeze.
 def _validate_periods(periods: Sequence[PeriodInputs], top_k: int, n_random: int) -> None:
     if top_k < 1 or n_random < 1:
         raise ValueError("top_k and n_random must be >= 1")
@@ -627,6 +629,8 @@ def _episode(run: Sequence[PeriodInputs]) -> Episode:
     return Episode(start=run[0].date, end=run[-1].expiry_date, n_periods=len(run))
 
 
+# ADR 0035's frozen beyond_vol runs this and what it calls; a behaviour change
+# fails test_the_walk_forward_code_the_frozen_test_runs_is_unchanged_since_the_freeze.
 def _episodes(periods: Sequence[PeriodInputs]) -> list[Episode]:
     """Maximal runs of periods in which the SPY put paid and whose slots on the
     REBALANCE calendar are consecutive. A period that sat out between two
