@@ -393,6 +393,7 @@ jobs:
           REVIEW_OUTCOME: ${{ steps.review.outcome }}
           GH_TOKEN: ${{ github.token }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
+          PR_AUTHOR: ${{ github.event.pull_request.user.login }}
         run: |
           raw="$(tr -d '[:space:]' < /tmp/verdict 2>/dev/null || true)"
           # Normalise before matching. The reviewer is an LLM told to write one
@@ -428,6 +429,23 @@ jobs:
           # implied unmergeable, which holds only for the first case.
           if [ -f /tmp/claude-review-ran ]; then
             reason="ran"
+          elif [ "${PR_AUTHOR}" = "dependabot[bot]" ]; then
+            # A Dependabot PR can never be reviewed: claude-code-action refuses
+            # a bot actor ("Workflow initiated by non-human actor"), and GitHub
+            # withholds Actions secrets from Dependabot-triggered runs anyway.
+            # Until 2026-11-08 this fell through to "outage" and blamed an
+            # expired token (#192, #194). Whether that is safe turns on the
+            # same question as a workflow edit: a PR touching .github/ is one
+            # automerge.yml refuses, so a human merges it regardless.
+            if ! bot_files=$(gh api --paginate \
+                 "repos/${GITHUB_REPOSITORY}/pulls/${PR_NUMBER}/files" \
+                 --jq '.[].filename' 2>/dev/null); then
+              reason="classify_failed"
+            elif printf '%s\n' "$bot_files" | grep -q '^\.github/'; then
+              reason="bot_guarded_skip"
+            else
+              reason="bot_unreviewed"
+            fi
           elif [ "${REVIEW_OUTCOME}" = "success" ]; then
             # The action exits 0 when it self-skips on workflow validation:
             # "the workflow file must ... have identical content to the version
@@ -601,6 +619,19 @@ jobs:
               echo "regardless, so this check passes rather than blocking every"
               echo "workflow change. See docs/adr/0025."
               exit 0
+            fi
+            if [ "$reason" = "bot_guarded_skip" ]; then
+              echo "::warning::reviewer skipped: Dependabot PRs cannot be reviewed"
+              echo "(the action refuses bot actors, and Dependabot runs get no secrets)."
+              echo "This one edits .github/, so automerge.yml will not merge it — a"
+              echo "human reads it regardless."
+              exit 0
+            fi
+            if [ "$reason" = "bot_unreviewed" ]; then
+              echo "::error::A Dependabot PR that edits nothing under .github/. The reviewer"
+              echo "cannot run on Dependabot PRs, and automerge.yml would merge this one"
+              echo "unreviewed — so it is blocked. A human should read and merge it."
+              exit 1
             fi
             if [ "$reason" = "stale_branch_skip" ]; then
               echo "::error::The design reviewer did not run because this BRANCH IS STALE."

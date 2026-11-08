@@ -67,8 +67,13 @@ jobs:
       # (2026-10-12: the weekly agent opened the same refactor three times).
       # Title, draft flag, files, and the two fixed body lines every agent PR
       # carries — nothing else from the body. Only the agent's own PRs (author
-      # `claude`, same repo): this repo is public, and a fork PR named
+      # `app/claude`, same repo): this repo is public, and a fork PR named
       # `agent/*` must not be able to stall the agent or put text in its prompt.
+      # `app/claude`, not `claude`: gh prints a GitHub App author's login with
+      # an `app/` prefix (gh api/queries_issue.go, Author.MarshalJSON). The bare
+      # form matched nothing, so until 2026-11-08 this list was always empty
+      # and the draft count always 0 -- #199 redid open draft #190, and the
+      # agent ran on 11-07 with three drafts open.
       - name: List open agent PRs
         env:
           GH_TOKEN: ${{ github.token }}
@@ -79,7 +84,7 @@ jobs:
           out="${{ runner.temp }}/open-prs.txt"
           gh pr list --repo "$GITHUB_REPOSITORY" --state open --limit 100 \
             --json number,title,headRefName,isDraft,files,body,isCrossRepository,author \
-            --jq '.[] | select(.isCrossRepository | not) | select(.author.login == "claude")
+            --jq '.[] | select(.isCrossRepository | not) | select(.author.login == "app/claude")
                       | select(.headRefName | startswith("agent/"))
                       | select(.headRefName | startswith("agent/cleanup-") | not)
                       | "#\(.number) \(.headRefName) draft=\(.isDraft)\n  title: \(.title)\n  "
@@ -93,14 +98,14 @@ jobs:
             gh pr list --repo "$GITHUB_REPOSITORY" --state merged --limit 200 \
               --search "merged:>=$(date -u -d '-60 days' +%F)" \
               --json number,headRefName,body,isCrossRepository,author \
-              --jq '.[] | select(.isCrossRepository | not) | select(.author.login == "claude")
+              --jq '.[] | select(.isCrossRepository | not) | select(.author.login == "app/claude")
                         | select(.headRefName | startswith("agent/"))
                         | {n: .number, l: [.body | splits("\n") | select(test("^\\s*Feedback-issues:"))]}
                         | select(.l | length > 0) | "#\(.n) " + (.l | join(" "))'
           } >> "$out"
           drafts=$(gh pr list --repo "$GITHUB_REPOSITORY" --state open --limit 100 \
             --json headRefName,isDraft,isCrossRepository,author \
-            --jq '[.[] | select(.isCrossRepository | not) | select(.author.login == "claude")
+            --jq '[.[] | select(.isCrossRepository | not) | select(.author.login == "app/claude")
                        | select(.headRefName | startswith("agent/"))
                        | select(.headRefName | startswith("agent/cleanup-") | not)
                        | select(.isDraft)] | length')
