@@ -80,7 +80,6 @@ from tail_lab.research.backtest.metric_screen import (
     _ALL_METRIC_NAMES,
     _COMPOSITE,
     _spearman,
-    fragility_from_returns,
 )
 from tail_lab.research.backtest.metric_screen import (
     _LABELS as _METRIC_LABELS,
@@ -109,6 +108,7 @@ from tail_lab.research.backtest.ranking import (
     FRAGILE_HIGH,
     _returns,
     composite_scores,
+    fragility_from_returns,
 )
 from tail_lab.research.backtest.strike_rule import ByMoneyness, StrikeRule
 from tail_lab.research.dividends import DividendLookup, dividend_lookup

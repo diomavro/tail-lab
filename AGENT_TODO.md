@@ -158,10 +158,16 @@ a large one strictly in order.
       floored rolls (a name with only floored rolls is not scored), and reports
       both counts. The Bake-off says so under the rule line. The rail's
       moneyness rule stays selectable.
-- [ ] **Three copies of the fragility fold.** `ranking._fragility` still
+- [x] **Three copies of the fragility fold.** `ranking._fragility` still
       computes metrics on its own; `metric_screen` and `walk_forward` share
       `fragility_from_returns`. Route `ranking` through it too, if the outputs
       stay identical.
+      *Done 2026-11-02:* the fold (`FRAGILITY_METRIC_FUNCS`,
+      `fragility_from_returns`, `trailing_fragility`) now lives in
+      `ranking.py`, the module `metric_screen` already imports, and the
+      Screen, the Bake-off and the signal test all call it. No value changed:
+      the Screen's six columns are pinned to an independent per-metric
+      computation, with SPY and without it (vol beta is still estimated).
 - [ ] **The Ledger's "Fill" column is described wrongly** (found 2026-11-01
       during the tooltip sweep). The real `cost` field is entry brokerage
       (commission plus half-spread), and `net = payoff − budget − cost`. But
@@ -2787,6 +2793,51 @@ with the evidence — never the implementation.
       `PortfolioResult`'s precedent) and stamp `code_sha` on at the route via
       `model_copy`. Left as follow-ups rather than one large PR across six
       endpoints and their frontend surfaces.
+
+## Design-review advisories not yet acted on (logged 2026-11-02)
+
+Advisory notes from the PASS reviews of #185, #186, #188 and #191. Each one
+was re-checked on main on 2026-11-02 and still holds. None is a bug today.
+
+- [ ] **One realised-vol helper (#185):** `walk_forward._long_vol` repeats
+      `np.log1p(r).std(ddof=1) * sqrt(252)`, the same annualised sample std
+      that `put_roll.trailing_realized_vol` computes. Share one helper. The
+      reviewer also named `research/vrp.py`, but that one is deliberately
+      zero-mean (its docstring), so it is a different estimator and stays.
+- [ ] **One `as_of` default (#185):** `_resolve_as_of` is defined twice
+      (`putlab_routes.py`, `putlab_memory_routes.py`), and
+      `coverage_routes.py`, `marks_routes.py` and `main.py` inline the same
+      `as_of or now(UTC).date()`.
+- [ ] **Private names used across modules (#185):** `walk_forward` imports
+      `_ALL_METRIC_NAMES`, `_COMPOSITE`, `_LABELS` and `_spearman` from
+      `metric_screen`, and `_returns` from `ranking`. Make them public.
+      `walk_forward.py` is 1,336 lines: if it grows, split it between
+      `collect_periods` (I/O) and `evaluate_screens` (pure).
+- [ ] **The frozen test's private dependencies (#188):** ADR 0035's frozen
+      `beyond_vol.py` imports `walk_forward._episodes` and
+      `_validate_periods`. Refactoring either one changes the frozen test
+      without changing its hash. At least add a comment on both saying that
+      `beyond_vol` depends on them. ADR 0035 records `walk_forward.py`'s
+      hash at the freeze, but nothing enforces it, and it has been edited
+      since.
+- [ ] **Prose-only figures (#188):** the `fama_macbeth` concept in
+      `frontend/src/content/concepts.ts` hard-codes the simulation figures
+      (9.6 pp, 71%/98%, 7.4%, 6.1%, 2.8%, 6.0%). Only `MDE_PAY_RATE_GAP` is
+      served, so a rerun of `frozen_check.txt` would leave the others stale.
+- [ ] **ROI and cost rules copied (#186):** `_COMMISSION_PER_CONTRACT = 0.0`
+      is defined in both `metric_screen.py` and `walk_forward.py`.
+      `regime_verdict.py:93` computes `payoff - net - cost` itself, a third
+      copy of `metric_screen._roi`. Put both in `put_roll` next to
+      `PREMIUM_FLOOR_FRAC`. The noise test's seed was moved from 12 to 9: a
+      property checked over N seeds (BH never declares more winners than the
+      raw hurdle) would last longer. The docstring's floored-roll counts are
+      a one-day measurement that nothing reproduces.
+- [ ] **For whoever builds the PIT universe (#191):** pass `universe` to the
+      signal test as an already-resolved list of permatickers per rebalance
+      date, not a string enum `walk_forward` branches on. Resolve membership
+      through the lake store's as-of read, with a
+      `test_point_in_time_clock.py`-style test that a future membership change
+      stays invisible. The key goes in `config.py` as `sharadar_api_key`.
 
 ## Design-review advisories not yet acted on (logged 2026-10-30)
 
