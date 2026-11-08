@@ -21,6 +21,13 @@ chain's session, T = days/365). A 4-week tenor is 20/252 = 0.079 on one side
 and at least 28/365 = 0.077 on the other. A zero-filled IV is already null in
 bronze (``contracts/option_chain.py``) and is skipped.
 
+Each side also carries what holding it costs against what it pays
+(``docs/PRIOR_ART.md`` §11): ``convexity_ratio`` is the put's intrinsic value
+at expiry after a :data:`TAIL_DROP` fall, divided by a year of rolling it
+(``premium / t_years`` -- rolls per year on the side's own clock, never a fixed
+twelve). The model side's premium is the Black-Scholes price at realised vol;
+the market side's is the listed ask, what a buyer pays.
+
 Pure: the chain and the price path arrive as frames.
 """
 
@@ -40,8 +47,32 @@ from tail_lab.research.backtest.put_roll import (
     TRADING_DAYS_PER_WEEK,
 )
 from tail_lab.research.backtest.strike_rule import ByDelta, put_delta
+from tail_lab.research.option_pricer import BlackScholesPricer
 
-__all__ = ["MarketStrike", "ModelStrike", "StrikePreview", "preview_strikes"]
+__all__ = [
+    "TAIL_DROP",
+    "MarketStrike",
+    "ModelStrike",
+    "StrikePreview",
+    "convexity_ratio",
+    "preview_strikes",
+]
+
+#: The fall ``convexity_ratio`` is scored on: 20%, ``options_portfolio_
+#: backtester``'s ``tail_drop`` (``docs/PRIOR_ART.md`` §11).
+TAIL_DROP = 0.20
+
+
+def convexity_ratio(*, spot: float, strike: float, premium: float, t_years: float) -> float | None:
+    """Intrinsic value after a :data:`TAIL_DROP` fall over a year of premium.
+
+    3.0 means one such fall, held to expiry, repays three years of rolling this
+    put; 0.0 means the strike sits below the fallen spot and the fall pays
+    nothing. ``None`` when there is no premium to divide by."""
+    if premium <= 0.0:
+        return None
+    payoff = max(strike - (1.0 - TAIL_DROP) * spot, 0.0)
+    return payoff / (premium / t_years)
 
 
 class ModelStrike(BaseModel):
@@ -53,6 +84,9 @@ class ModelStrike(BaseModel):
     t_years: float
     strike: float
     moneyness_pct: float
+    #: Black-Scholes price at ``sigma``, per share.
+    premium: float
+    convexity_ratio: float | None
 
 
 class MarketStrike(BaseModel):
@@ -66,6 +100,9 @@ class MarketStrike(BaseModel):
     iv: float
     delta: float
     moneyness_pct: float
+    #: The listed ask, per share: what a buyer pays.
+    premium: float
+    convexity_ratio: float | None
 
 
 class StrikePreview(BaseModel):
@@ -98,6 +135,9 @@ def _model_side(
     day = vol.index[-1]
     spot = float(prices.loc[day])
     strike = rule.strike(spot=spot, sigma=sigma, t_years=t_years, r=r, q=q)
+    premium = BlackScholesPricer().price_put(
+        spot=spot, strike=strike, t_years=t_years, r=r, sigma=sigma, q=q
+    )
     return ModelStrike(
         vol_date=pd.Timestamp(day).date(),
         spot=spot,
@@ -105,6 +145,8 @@ def _model_side(
         t_years=t_years,
         strike=strike,
         moneyness_pct=(1.0 - strike / spot) * 100.0,
+        premium=premium,
+        convexity_ratio=convexity_ratio(spot=spot, strike=strike, premium=premium, t_years=t_years),
     )
 
 
@@ -129,16 +171,19 @@ def _market_side(
     )
     pos = int(np.abs(deltas + target).argmin())
     row = at.iloc[pos]
+    strike, ask = float(row["strike"]), float(row["ask"])
     return (
         MarketStrike(
             session=session.date(),
             expiration=expiry.date(),
             spot=spot,
             t_years=t_years,
-            strike=float(row["strike"]),
+            strike=strike,
             iv=float(row["iv"]),
             delta=float(deltas[pos]),
-            moneyness_pct=(1.0 - float(row["strike"]) / spot) * 100.0,
+            moneyness_pct=(1.0 - strike / spot) * 100.0,
+            premium=ask,
+            convexity_ratio=convexity_ratio(spot=spot, strike=strike, premium=ask, t_years=t_years),
         ),
         "quoted",
     )

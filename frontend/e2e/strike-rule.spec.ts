@@ -310,6 +310,10 @@ test.describe('How the strike is chosen', () => {
     await expect(model).toContainText('$497.33')
     await expect(model).toContainText('2.9% below spot')
     await expect(section.getByTestId('strike-preview-market')).toContainText('$481.00')
+    // What each costs and what a 20% fall repays (fixture: K - 0.8 S over a
+    // year of premium): the model's BS price at 9% vol, the market's ask.
+    await expect(section.getByTestId('strike-carry-model')).toHaveText(/\$0\.62\s*11\.2 yrs/)
+    await expect(section.getByTestId('strike-carry-market')).toHaveText(/\$2\.31\s*2\.4 yrs/)
     // The q and r both rows were struck with, and whose q it is: today's, not
     // necessarily the latest roll's in the price build.
     await expect(section.getByTestId('strike-preview-inputs')).toHaveText(
@@ -403,7 +407,7 @@ test.describe('How the strike is chosen', () => {
     await expect(model).not.toContainText('$497.33')
     await presets.getByText('0.10').click()
     await expect(page.getByTestId('hero-sentence')).toContainText('0.10Δ')
-    await expect(section.locator('thead')).toContainText('−0.10')
+    await expect(section.getByTestId('strike-preview').locator('thead')).toContainText('−0.10')
     await expect(model).toContainText('$497.33')
   })
 
@@ -446,6 +450,8 @@ test.describe('on a phone-width page', () => {
     await expect(section.getByTestId('strike-preview-model')).toContainText('$497.33')
     const [t, s] = await Promise.all([table.boundingBox(), section.boundingBox()])
     expect(t!.width).toBeLessThanOrEqual(s!.width + 1)
+    const carry = await section.getByTestId('strike-carry').boundingBox()
+    expect(carry!.width).toBeLessThanOrEqual(s!.width + 1)
   })
 })
 

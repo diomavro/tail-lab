@@ -8,7 +8,7 @@ than a measurement. ``ingestion/options_expiry.py`` + ``transforms/
 options_expiry.classify_cadence`` derive the same two fields (cadence,
 avg_gap_days) from what a chain actually lists. This module is the
 orchestrator that was missing: read the bronze snapshot as-of a date, mirroring
-``research/data_quality.py``'s point-in-time read shape, and classify it --
+``put_roll.load_ohlcv_prices``'s point-in-time read shape, and classify it --
 falling back to the static table whenever there isn't yet a usable snapshot,
 so a symbol with no ``options_expiry_*`` partition (every symbol, until
 ``make ingest-options-expiry`` runs against prod) reads exactly as it did

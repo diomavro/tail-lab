@@ -274,7 +274,10 @@ const SCENES: Record<string, Scene[]> = {
         await openDetails(page)
         await expect(page.getByTestId('strike-preview')).toBeVisible()
       },
-      mounted: ['table[aria-label="Today\'s strike two ways"] th'],
+      mounted: [
+        'table[aria-label="Today\'s strike two ways"] th',
+        'table[aria-label="Today\'s strike, cost and payoff"] th',
+      ],
     },
   ],
   'Portfolio': [

@@ -27,6 +27,8 @@ const pct = (x: number, digits = 1) => `${x.toFixed(digits)}%`
 /** A distance from spot in words: a strike near 0.50 delta sits ABOVE spot. */
 const fromSpot = (x: number, digits = 1) =>
   x >= 0 ? `${x.toFixed(digits)}% below spot` : `${(-x).toFixed(digits)}% above spot`
+/** A convexity ratio, in years of premium. */
+const years = (x: number | null | undefined) => (x == null ? '—' : `${x.toFixed(1)} yrs`)
 
 /* Previews keyed by what they depend on, kept across re-runs (the section
  * remounts on every one) so a tab of "Rolled over" changes refetches nothing. */
@@ -169,6 +171,34 @@ export function StrikeBuild({
               <td className="num">{preview?.market ? pct(preview.market.iv * 100) : '—'}</td>
               <td className="num">{preview?.market ? fmtPrice(preview.market.strike) : '—'}</td>
               <td className="num">{preview?.market ? fromSpot(preview.market.moneyness_pct) : '—'}</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+      <p>What each costs today, and how many years of that premium one 20% fall repays:</p>
+      <div className="pl-scroll">
+        <table className="pl-table" aria-label="Today's strike, cost and payoff" data-testid="strike-carry">
+          <thead>
+            <tr>
+              <td />
+              <Th concept="strike_premium" className="num">Premium</Th>
+              <Th concept="convexity_ratio" className="num">20% fall repays</Th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr data-testid="strike-carry-model">
+              <th scope="row" className="pl-explain-rowhead" data-noexplain="row-label">
+                Backtest, realised vol
+              </th>
+              <td className="num">{preview?.model ? fmtPrice(preview.model.premium) : '—'}</td>
+              <td className="num">{years(preview?.model?.convexity_ratio)}</td>
+            </tr>
+            <tr data-testid="strike-carry-market">
+              <th scope="row" className="pl-explain-rowhead" data-noexplain="row-label">
+                Market ask
+              </th>
+              <td className="num">{preview?.market ? fmtPrice(preview.market.premium) : '—'}</td>
+              <td className="num">{years(preview?.market?.convexity_ratio)}</td>
             </tr>
           </tbody>
         </table>

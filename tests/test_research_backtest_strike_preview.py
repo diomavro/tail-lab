@@ -10,13 +10,19 @@ silent blank would each undo that.
 from __future__ import annotations
 
 import datetime as dt
+from statistics import NormalDist
 
 import numpy as np
 import pandas as pd
 import pytest
 
 from tail_lab.research.backtest.put_roll import trailing_realized_vol
-from tail_lab.research.backtest.strike_preview import StrikePreview, preview_strikes
+from tail_lab.research.backtest.strike_preview import (
+    TAIL_DROP,
+    StrikePreview,
+    convexity_ratio,
+    preview_strikes,
+)
 from tail_lab.research.backtest.strike_rule import put_delta
 
 SESSION = dt.date(2026, 10, 9)
@@ -29,7 +35,9 @@ def _prices(end: dt.date = SESSION, n: int = 60) -> tuple[pd.Series, pd.Series]:
     return prices, trailing_realized_vol(prices)
 
 
-def _chain(iv: float | None = 0.22, days: int = 30, session: dt.date = SESSION) -> pd.DataFrame:
+def _chain(
+    iv: float | None = 0.22, days: int = 30, session: dt.date = SESSION, ask: float = 2.0
+) -> pd.DataFrame:
     rows = [
         {
             "underlying": "SPY",
@@ -38,6 +46,7 @@ def _chain(iv: float | None = 0.22, days: int = 30, session: dt.date = SESSION) 
             "strike": float(k),
             "spot": 500.0,
             "iv": iv,
+            "ask": ask,
             # A vendor delta that is deliberately wrong: it must never be read.
             "delta": -0.5,
         }
@@ -175,3 +184,34 @@ def test_a_fractional_tenor_is_rounded_up_not_to_nearest() -> None:
     # 2.2 weeks = 15.4 days: rounding to nearest would admit a 15-day option.
     assert _preview(_chain(days=15), tenor_weeks=2.2).market_status == "no_expiry"
     assert _preview(_chain(days=16), tenor_weeks=2.2).market_status == "quoted"
+
+
+def test_convexity_ratio_is_the_fall_payoff_over_a_year_of_premium() -> None:
+    # K 95 on S 100: a 20% fall leaves 80, so the put is worth 15 at expiry.
+    # A 3-month put at 1.00 rolls 4 times a year: 4.00 of carry. 15 / 4 = 3.75.
+    assert TAIL_DROP == 0.20
+    assert convexity_ratio(spot=100.0, strike=95.0, premium=1.0, t_years=0.25) == pytest.approx(
+        3.75
+    )
+    # A strike below the fallen spot pays nothing in that fall.
+    assert convexity_ratio(spot=100.0, strike=75.0, premium=0.1, t_years=0.25) == 0.0
+    assert convexity_ratio(spot=100.0, strike=95.0, premium=0.0, t_years=0.25) is None
+
+
+def test_the_market_side_scores_the_ask_on_its_own_calendar_clock() -> None:
+    m = _preview(_chain(ask=2.5)).market
+    assert m.premium == 2.5
+    # Spot 500 falls to 400; one 30-calendar-day roll costs 2.5, 365/30 a year.
+    assert m.convexity_ratio == pytest.approx((m.strike - 400.0) / (2.5 * 365 / 30))
+
+
+def test_the_model_side_scores_the_black_scholes_price_on_the_backtests_clock() -> None:
+    model = _preview(_chain()).model
+    # Independent closed form: K e^{-rT} N(-d2) - S e^{-qT} N(-d1).
+    s, k, t, v = model.spot, model.strike, model.t_years, model.sigma
+    d1 = (np.log(s / k) + (0.04 - 0.012 + v * v / 2) * t) / (v * np.sqrt(t))
+    n = NormalDist().cdf
+    bs = k * np.exp(-0.04 * t) * n(-(d1 - v * np.sqrt(t))) - s * np.exp(-0.012 * t) * n(-d1)
+    assert model.premium == pytest.approx(bs, rel=1e-9)
+    # 20 trading days of 252: the roll count is the backtest's, not twelve.
+    assert model.convexity_ratio == pytest.approx(max(k - 0.8 * s, 0.0) / (bs * 252 / 20), rel=1e-9)
