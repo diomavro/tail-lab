@@ -71,7 +71,7 @@ jobs:
 
       - name: Run the cleanup agent
         if: steps.open.outputs.count == '0'
-        uses: anthropics/claude-code-action@cab360f6565aa35a51d6ce9e43f1f4287c0a32ea # v1
+        uses: anthropics/claude-code-action@6d5ae526d25ce88daa2200be073e1a373167f064 # v1
         env:
           GH_TOKEN: ${{ github.token }}
         with:
