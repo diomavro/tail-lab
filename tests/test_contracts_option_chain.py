@@ -12,7 +12,11 @@ from tail_lab.contracts.option_chain import (
     CALL_MONEYNESS_MAX,
     CALL_MONEYNESS_MIN,
     CALL_QUARANTINE_DATASET,
+    CHIP_COHORT,
+    CHIP_COHORT_SINCE,
+    CORE_SNAPSHOT_SYMBOLS,
     DATASET,
+    DEFAULT_SNAPSHOT_SYMBOLS,
     MAX_TENOR_DAYS,
     MONEYNESS_MAX,
     MONEYNESS_MIN,
@@ -21,6 +25,7 @@ from tail_lab.contracts.option_chain import (
     IncompleteSweepError,
     OptionCallChainSnapshotSchema,
     OptionChainSnapshotSchema,
+    expected_symbols,
     missing_sessions,
     require_enough_symbols,
     split_valid_and_quarantined,
@@ -382,3 +387,22 @@ def test_a_mixed_refusal_keeps_the_rerun_advice_for_the_recoverable_names() -> N
     assert "Misrouted, not missing: GLD" in message
     missing_part = message.split("Missing:", 1)[1].split(".", 1)[0]
     assert "GLD" not in missing_part
+
+
+def test_the_sweep_is_the_core_24_plus_the_chip_cohort() -> None:
+    assert DEFAULT_SNAPSHOT_SYMBOLS == CORE_SNAPSHOT_SYMBOLS + CHIP_COHORT
+    assert len(CORE_SNAPSHOT_SYMBOLS) == 24 and len(CHIP_COHORT) == 14
+    assert len(set(DEFAULT_SNAPSHOT_SYMBOLS)) == len(DEFAULT_SNAPSHOT_SYMBOLS)
+    assert all(s == s.lower() for s in DEFAULT_SNAPSHOT_SYMBOLS)
+
+
+def test_the_cohort_is_expected_from_its_first_session_on() -> None:
+    """Pinned to the first widened sweep: a partition before it is complete
+    at 24 names, and from it on, a missing cohort name is a gap."""
+    assert dt.date(2026, 11, 6) == CHIP_COHORT_SINCE
+    day_before = CHIP_COHORT_SINCE - dt.timedelta(days=1)
+    assert expected_symbols(day_before) == frozenset(CORE_SNAPSHOT_SYMBOLS)
+    assert expected_symbols(CHIP_COHORT_SINCE) == frozenset(DEFAULT_SNAPSHOT_SYMBOLS)
+    assert expected_symbols(CHIP_COHORT_SINCE + dt.timedelta(days=30)) == frozenset(
+        DEFAULT_SNAPSHOT_SYMBOLS
+    )

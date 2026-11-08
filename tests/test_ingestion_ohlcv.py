@@ -536,8 +536,9 @@ def test_a_nasdaq_refusal_is_not_retried(monkeypatch: pytest.MonkeyPatch) -> Non
 
 def test_the_ingest_path_does_not_retry_by_default(monkeypatch: pytest.MonkeyPatch) -> None:
     """At the ingest path's 30s timeout, retrying would raise its hang worst
-    case from 60s to 220s per symbol -- ~64 extra minutes across the daily
-    refresh's 24 symbols, past the unit's 120-minute budget."""
+    case from 60s to 220s per symbol -- ~187 extra minutes across the daily
+    refresh's 70 symbols (scripts/ohlcv_freshness.py --list), past the unit's
+    330-minute budget (docs/systemd/tail-lab-refresh.service)."""
     calls = _scripted_get(monkeypatch, [_Resp(503), _Resp(503)])
 
     with pytest.raises(ValueError, match="no usable data"):

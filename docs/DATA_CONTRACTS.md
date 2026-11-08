@@ -389,8 +389,13 @@ indices take an underscore prefix (`_SPX`, `_VIX`); equities and ETFs use the
 bare root. Yahoo's `/v7/finance/options`, the originally-planned source, now
 answers **401** without a cookie+crumb pair and is no longer viable.
 
-**Coverage.** `DEFAULT_SNAPSHOT_SYMBOLS` — 24 options-liquid names, not the
-70-name screening universe. Screen broad, trade narrow (`docs/adr/0008`).
+**Coverage.** `DEFAULT_SNAPSHOT_SYMBOLS` — 38 options-liquid names, not the
+75-name screening universe. Screen broad, trade narrow (`docs/adr/0008`). The
+original 24 (`CORE_SNAPSHOT_SYMBOLS`) since 2026-08-26, plus the 14-name
+`CHIP_COHORT` (chips, chip tools, data-centre network and power) from
+`CHIP_COHORT_SINCE` = 2026-11-06. A partition before that session is not missing
+the cohort: `expected_symbols` says which names a session must hold, and the
+sweep verifier checks against it.
 
 **Cadence.** Weekdays at 21:30 UTC, after the 16:00 ET close in both DST
 regimes (`.github/workflows/daily-chain-snapshot.yml`). An empty sweep exits
@@ -466,7 +471,7 @@ deployed.** Every earlier session is put-only for good.
 Dataset `option_chain_call_snapshot` (quarantine
 `option_chain_call_snapshot__quarantine`), sliced from the SAME Cboe fetch as
 the puts. Calls with strikes within **0.80-2.50** of spot, tenors 0-180 days,
-the same 24 symbols. Schema `OptionCallChainSnapshotSchema` is the table above
+the same symbols. Schema `OptionCallChainSnapshotSchema` is the table above
 with one change: `delta` is **0 to 1** when present. Same key, same one
 partition per session, same zero-fill rule, same session plan and floor. It
 is written by `POST /api/ingest/option-chain-calls` or by the `--local` sweep.
@@ -1201,8 +1206,9 @@ gaps).
 
 ## 15. `options_expiry_<symbol>` — listed expiration dates
 
-**Status: built 2026-08-30; populated by the daily refresh for the 24
-chain-sweep symbols.** One row per `(symbol, expiration_date)` the underlying's
+**Status: built 2026-08-30; populated by the daily refresh for every
+name it refreshes OHLCV for (`scripts/ohlcv_freshness.py --list`: the
+screening universe plus the chain sweep).** One row per `(symbol, expiration_date)` the underlying's
 chain lists as of the ingest date (`contracts/options_expiry.py`), one dataset
 per symbol like `ohlcv_<sym>`. Fetched from Cboe's delayed-quote chain with a
 Yahoo fallback (`ingestion/options_expiry.py`, `make ingest-options-expiry

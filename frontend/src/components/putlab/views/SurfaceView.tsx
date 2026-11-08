@@ -1,5 +1,6 @@
 import { useState, type ReactNode } from 'react'
 import type {
+  VolSurfaceResponse,
   SurfaceAnchorReading,
   SurfaceReading,
   SurfaceRealised,
@@ -9,6 +10,7 @@ import type {
 import { dots, logTicks, poly, tickText, type Label, type Pt } from '../chart'
 import { ChartLabels } from '../ChartLabels'
 import { fmtFixed } from '../format'
+import { SmileSection } from './SmileSection'
 import type { ResourceState } from '../PutLab'
 import type { PutLabControls } from '../types'
 import { StatK } from '../StatK'
@@ -619,10 +621,12 @@ function SurfaceCaveat({ s }: { s: SurfaceReading }) {
 
 export function SurfaceView({
   surface,
+  smile,
   controls,
   narrow,
 }: {
   surface: ResourceState<SurfaceResponse>
+  smile: ResourceState<VolSurfaceResponse>
   controls: PutLabControls
   narrow: boolean
 }) {
@@ -657,6 +661,7 @@ export function SurfaceView({
         <p className="pl-status" role="status">
           No option chain is known for {controls.asset.toUpperCase()} yet, so there is no Surface to read.
         </p>
+        <SmileSection smile={smile} narrow={narrow} />
       </div>
     )
   }
@@ -696,6 +701,7 @@ export function SurfaceView({
           <SurvivalChart s={s} />
         </section>
       </div>
+      <SmileSection smile={smile} narrow={narrow} />
       <div className="pl-surface-disclosures">
         {s.ladder.length > 0 && (
           <details>

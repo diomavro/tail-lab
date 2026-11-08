@@ -54,7 +54,31 @@ a large one strictly in order.
         and is never refreshed. None exists today. If one appears, the stamp
         the item proposed is the fix.
       Not covered: the other 66 sweep rules, and any rule hash outside the
-      sweep's grid (a manual seed). No public route lists every hash.
+      sweep's grid (a manual seed). No public route lists every hash. For
+      those, "0 change" is inferred from the upsert argument and was not
+      measured.
+- [ ] **Make the memory's "no stale node" a check, not a one-off count**
+      (design-review advisory on #198, logged 2026-11-06). The item above
+      measured that no node is stale today. Nothing will notice the first
+      one: a `(rule, regime)` node whose regime a later run stops hitting
+      keeps its old numbers, and `verdict_for_rule` still counts its
+      `paid_off`. Every slice of one `POST /api/putlab/memory/record` shares
+      one `run_id`, so a node is stale exactly when its `last_run_id`
+      differs from that of the rule's newest node (largest `last_seen`).
+      One limit: `run_id` is built only from `as_of` and the snapshots. It
+      leaves out the raw request inputs, and the hash rounds some of them
+      (`years=1.6` and `2.4` share a hash). So any same-day,
+      same-snapshot re-record reuses the `run_id`, and two kinds of change
+      go unseen: a change to the regime definition, and a change of inputs
+      inside one rounding bucket. To close that gap, add the raw inputs or
+      a per-call nonce to `run_id`. Before building, decide where the flag
+      is read:
+      - The frontend never calls `GET /api/putlab/memory`.
+      - `daily-verdict-sweep.yml` only writes, and it is guarded.
+      So a flag in that response alone guards nothing. `docs/adr/0015`
+      forbids pruning the retrieval path, so flag the node and never drop
+      it. A listing route for every hash (the other half of the same
+      advisory) would also make the 66 unmeasured rules above countable.
 - [x] **Separate fragility from volatility statistically** (`docs/adr/0033`).
       *Done 2026-11-01 (`docs/adr/0035`):* `research/backtest/beyond_vol.py`
       runs a frozen Fama–MacBeth test on the signal test's own periods and
@@ -555,6 +579,44 @@ a large one strictly in order.
       **Superseded 2026-10-06** by the paging item above (now done): its
       "chunk the realtime window" advice is WRONG — it clips
       `realtime_start` and fabricates revisions (`docs/PRIOR_ART.md` §19).
+
+- [x] **Done 2026-11-06: `CHIP_COHORT_SINCE` pinned to 2026-11-06** and the
+      derivation removed (a cohort that vanished is now a gap). Original item:
+      **Pin `CHIP_COHORT_SINCE` once the chip cohort's first sweep has run**
+      (`contracts/option_chain.py`, added 2026-11-05). Read the first session
+      holding any `CHIP_COHORT` name off `GET /api/ingest/option-chain/status`
+      or the lake, set the constant, and drop nothing else. Until it is set,
+      `chip_cohort_start` derives the date from the verifier's 10-partition
+      walk, so a cohort that vanished from all ten would read as "not yet
+      collected" and pass; once pinned, that is a gap.
+
+- [x] **The ten `optionsdx_quotes_*` bronze tables' leaked index column --
+      repaired 2026-11-05.** A scan of all 137 production bronze tables found
+      `optionsdx_quotes_{spy,qqq,nvda,tsla,vix}` and their five `__quarantine`
+      tables carrying a stale `__index_level_0__` column. Reads were
+      unaffected, but any new partition (e.g. the 2024-26 files
+      `HUMAN_TODO.md` plans to buy) would have failed with
+      `SchemaMismatchError`. Same method as below, in Arrow so SPY's 3.3M rows
+      fit in RAM. Each pre-repair version was backed up to
+      `data/backups/optionsdx_quotes*_v<N>_2026-11-05.parquet` (126 MB in
+      all), rewritten without the column (v0 -> v1; VIX v4 -> v5), and
+      verified equal to the backup row for row. A rescan of all 143 tables now
+      finds none. Independently re-verified the same day by time travel: all 16
+      repaired tables (these ten and the six OHLCV ones below) equal their
+      pre-repair versions and backups; the five large quote tables were
+      reordered, but have 0 duplicate (quote_date, expiration, strike) keys,
+      so no reader can see a difference. The writer has not leaked an index
+      since 2026-09-19 (`tests/test_lake_store.py` pins it). (The 2026-09-24 note below says every other table "was
+      scanned and is clean"; these ten and six OHLCV tables were not.)
+
+- [x] **Six OHLCV tables could not take a new partition -- repaired 2026-11-05.**
+      `ohlcv_{dbc,fcx,cvx,oxy,slb,vlo}` were created with a leaked
+      `__index_level_0__` column, so every clean write since failed with
+      `SchemaMismatchError: ... 9 vs 10` and the six froze at 2026-09-18. Same
+      by-hand repair as below: each v1 backed up to
+      `data/backups/ohlcv_<sym>_v1_2026-11-05.parquet`, rewritten to v2 without
+      the column, all 5,024 rows and both partitions verified identical, then
+      today's bars ingested.
 
 - [x] **Repair the `option_chain_snapshot__quarantine` schema.**
       **Done 2026-09-24** (by hand, not in code): rewritten with
@@ -3640,6 +3702,29 @@ serve; `docs/adr/0021` is why the risk-shaped one comes first.
       correlation short in a sensitivity screen's clothing. Cheap to run
       (both sides are model-priced today), and it is the single most
       decisive test of the thesis currently available.
+      *Checked 2026-11-06: the model-priced version already exists, and it
+      cannot answer this question.* The signal test (`docs/adr/0033`,
+      `research/backtest/walk_forward.py`) holds an equal-premium SPY put
+      beside every basket: `PeriodInputs.spy_cost` is the same
+      `notional + spread` as each name's, and every screen reports
+      `excess_vs_spy` and the run's `spy_total_roi` (shown in the Bake-off's
+      `SignalTest.tsx`). Do not build it a second time. But both legs are
+      priced by `price_model_roll` at each name's own clamped 20-day
+      realised vol (`_roll_for`), so neither carries an implied-vol premium,
+      and the correlation risk premium is what this item asks about. A basket
+      that beats that SPY put has shown nothing about the CRP. The decisive
+      version needs market premiums on both sides:
+      - optionsDX (2010–2023) quotes SPY and QQQ, but its only single names
+        are NVDA and TSLA, so it cannot quote a screened basket.
+      - The forward chain sweep quotes up to 38 names, but only from
+        2026-08, a window with no crash in it.
+      So the market-priced test is limited by data, not by code. Until a
+      crash enters the forward window, the most this item can honestly add is
+      a note under the signal test's SPY figure: both sides are model-priced,
+      so the figure cannot show the correlation risk premium.
+      *Note shipped 2026-11-07* (advisory on #206): the Bake-off's
+      `signal-baselines` line now says so, pinned in `e2e/bakeoff.spec.ts`.
+      The item stays open for the market-priced version.
 
 ## Metric-library increments (2026-08-24)
 

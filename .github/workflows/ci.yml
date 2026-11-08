@@ -132,13 +132,23 @@ jobs:
       - name: Block autonomous edits to the constitution
         env:
           HEAD_REF: ${{ github.head_ref }}
-          BASE_SHA: ${{ github.event.pull_request.base.sha }}
         run: |
           if [[ "$HEAD_REF" != agent/* ]]; then
             echo "Not an agent PR (head='$HEAD_REF') — constitution guard N/A."
             exit 0
           fi
-          changed=$(git diff --name-only "$BASE_SHA...HEAD")
+          # HEAD is GitHub's merge of this PR into the CURRENT base, so its
+          # first parent is that base. NOT `$BASE_SHA...HEAD`: on a push to an
+          # older PR, pull_request.base.sha is still the base it was opened on,
+          # and the diff then sweeps in every file main changed since -- #196
+          # (2026-11-08) failed here over main's own .github and ADR edits.
+          if ! git rev-parse -q --verify HEAD^2 >/dev/null; then
+            echo "::error::HEAD is not a merge commit, so the PR's own changes cannot be isolated."
+            exit 1
+          fi
+          # --no-renames: a rename would otherwise list only its new path, so
+          # moving an ADR out of docs/adr/ read as an unguarded edit.
+          changed=$(git diff --no-renames --name-only HEAD^1 HEAD)
           echo "Changed files:"; echo "$changed"
           if echo "$changed" | grep -qE '^docs/adr/|^\.github/workflows/|^\.claude/|^CLAUDE\.md$|^ARCHITECTURE\.md$|^docs/STANDARDS\.md$|^README\.md$|^docs/AGENT_MISSION\.md$|^docs/END_STATE\.md$'; then
             echo "::error::This agent PR edits the constitution (docs/adr, ARCHITECTURE.md, STANDARDS.md, README.md, AGENT_MISSION.md, END_STATE.md), .github/workflows (where the agent's own instructions and this guard live) or .claude/ and CLAUDE.md (the agent's own reviewers and the project memory it loads as instructions, docs/adr/0030). A human must review + merge it — auto-merge is blocked."
@@ -203,7 +213,7 @@ jobs:
       # report, so this is the artifact worth keeping.
       - name: Upload failure traces
         if: failure()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: playwright-traces
           path: frontend/test-results/
@@ -310,7 +320,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
-        uses: anthropics/claude-code-action@cab360f6565aa35a51d6ce9e43f1f4287c0a32ea # v1
+        uses: anthropics/claude-code-action@6d5ae526d25ce88daa2200be073e1a373167f064 # v1
         with:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           allowed_bots: 'claude'
@@ -393,6 +403,7 @@ jobs:
           REVIEW_OUTCOME: ${{ steps.review.outcome }}
           GH_TOKEN: ${{ github.token }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
+          PR_AUTHOR: ${{ github.event.pull_request.user.login }}
         run: |
           raw="$(tr -d '[:space:]' < /tmp/verdict 2>/dev/null || true)"
           # Normalise before matching. The reviewer is an LLM told to write one
@@ -428,6 +439,26 @@ jobs:
           # implied unmergeable, which holds only for the first case.
           if [ -f /tmp/claude-review-ran ]; then
             reason="ran"
+          elif [ "${PR_AUTHOR}" = "dependabot[bot]" ]; then
+            # A Dependabot PR can never be reviewed: claude-code-action refuses
+            # a bot actor ("Workflow initiated by non-human actor"), and GitHub
+            # withholds Actions secrets from Dependabot-triggered runs anyway.
+            # Until 2026-11-08 this fell through to "outage" and blamed an
+            # expired token (#192, #194). Whether that is safe turns on the
+            # same question as a workflow edit: a PR touching .github/ is one
+            # automerge.yml refuses, so a human merges it regardless.
+            if ! bot_files=$(gh api --paginate \
+                 "repos/${GITHUB_REPOSITORY}/pulls/${PR_NUMBER}/files" \
+                 --jq '.[].filename' 2>/dev/null); then
+              reason="classify_failed"
+            # A here-string, not printf | grep -q: this step runs `bash -e`
+            # without pipefail, where the pipe is fine, but under pipefail an
+            # early match would kill a long list's printf with SIGPIPE.
+            elif grep -q '^\.github/' <<<"$bot_files"; then
+              reason="bot_guarded_skip"
+            else
+              reason="bot_unreviewed"
+            fi
           elif [ "${REVIEW_OUTCOME}" = "success" ]; then
             # The action exits 0 when it self-skips on workflow validation:
             # "the workflow file must ... have identical content to the version
@@ -491,7 +522,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
-        uses: anthropics/claude-code-action@cab360f6565aa35a51d6ce9e43f1f4287c0a32ea # v1
+        uses: anthropics/claude-code-action@6d5ae526d25ce88daa2200be073e1a373167f064 # v1
         with:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           allowed_bots: 'claude'
@@ -601,6 +632,19 @@ jobs:
               echo "regardless, so this check passes rather than blocking every"
               echo "workflow change. See docs/adr/0025."
               exit 0
+            fi
+            if [ "$reason" = "bot_guarded_skip" ]; then
+              echo "::warning::reviewer skipped: Dependabot PRs cannot be reviewed"
+              echo "(the action refuses bot actors, and Dependabot runs get no secrets)."
+              echo "This one edits .github/, so automerge.yml will not merge it — a"
+              echo "human reads it regardless."
+              exit 0
+            fi
+            if [ "$reason" = "bot_unreviewed" ]; then
+              echo "::error::A Dependabot PR that edits nothing under .github/. The reviewer"
+              echo "cannot run on Dependabot PRs, and nothing else stops automerge.yml"
+              echo "merging it unreviewed — so it is blocked. A human should read and merge it."
+              exit 1
             fi
             if [ "$reason" = "stale_branch_skip" ]; then
               echo "::error::The design reviewer did not run because this BRANCH IS STALE."

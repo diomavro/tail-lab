@@ -53,6 +53,8 @@ jobs:
       # One cleanup PR at a time. Ratchet PRs touch pyproject.toml, so they
       # wait for Dio; without this the agent re-proposed the same refactor
       # every Sunday while the last one sat open (#126, #135, #160).
+      # The author is `app/claude` -- gh's form for a GitHub App; see the same
+      # filter in daily-agent.yml.
       - name: Count open cleanup PRs
         id: open
         env:
@@ -61,7 +63,7 @@ jobs:
           set -euo pipefail
           n=$(gh pr list --repo "$GITHUB_REPOSITORY" --state open --limit 100 \
                 --json headRefName,isCrossRepository,author \
-                --jq '[.[] | select(.isCrossRepository | not) | select(.author.login == "claude")
+                --jq '[.[] | select(.isCrossRepository | not) | select(.author.login == "app/claude")
                            | select(.headRefName | startswith("agent/cleanup-"))] | length')
           echo "count=$n"
           echo "count=$n" >> "$GITHUB_OUTPUT"
@@ -71,7 +73,7 @@ jobs:
 
       - name: Run the cleanup agent
         if: steps.open.outputs.count == '0'
-        uses: anthropics/claude-code-action@cab360f6565aa35a51d6ce9e43f1f4287c0a32ea # v1
+        uses: anthropics/claude-code-action@6d5ae526d25ce88daa2200be073e1a373167f064 # v1
         env:
           GH_TOKEN: ${{ github.token }}
         with:

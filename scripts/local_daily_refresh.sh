@@ -105,12 +105,13 @@ fi
     run_one "$target" make "ingest-$target" || failed+=("$target")
   done
 
-  # OHLCV is per-symbol. Default to the chain universe so the two stay in
-  # step and the request volume stays comparable to the sweep's.
+  # OHLCV is per-symbol. Default to the WHOLE screening universe plus the
+  # chain sweep (scripts/ohlcv_freshness.py --list). This used to default to
+  # the 24 chain names alone, and the other 46 screening names froze for ~32
+  # sessions (measured 2026-11-04) -- unnoticed, because a stale name still
+  # clears the ranking's coverage floor and is ranked on stale prices.
   if [ -z "$SYMBOLS" ]; then
-    SYMBOLS=$(env -u PYTHONPATH .venv/bin/python -c \
-      "from tail_lab.contracts.option_chain import DEFAULT_SNAPSHOT_SYMBOLS as D; print(' '.join(D))" \
-      2>/dev/null)
+    SYMBOLS=$(env -u PYTHONPATH .venv/bin/python scripts/ohlcv_freshness.py --list 2>/dev/null)
   fi
   # An empty list here would make the loop below a no-op and the whole script
   # exit 0 having refreshed no OHLCV at all -- a silent success, which is the
@@ -125,6 +126,10 @@ fi
     run_one "ohlcv:$sym" make ingest-ohlcv "SYMBOL=$sym" || failed+=("ohlcv:$sym")
     run_one "expiry:$sym" make ingest-options-expiry "SYMBOL=$sym" || failed+=("expiry:$sym")
   done
+  # After the loop, over the whole universe whatever $SYMBOLS held: a name
+  # that fell behind fails the run by name instead of going quietly stale.
+  run_one "ohlcv:freshness" env -u PYTHONPATH .venv/bin/python scripts/ohlcv_freshness.py --check \
+    || failed+=("ohlcv:freshness")
 
   # FRED-backed sources. Free, but keyed, and the key lives as a GitHub repo
   # secret rather than in .env -- so locally they are not broken, they are
