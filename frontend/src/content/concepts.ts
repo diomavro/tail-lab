@@ -823,7 +823,7 @@ export const CONCEPTS = {
   },
   roll_cost: {
     id: 'roll_cost',
-    term: 'Fill (entry brokerage)',
+    term: 'Brokerage (at entry)',
     category: 'result',
     short: 'The brokerage paid to buy the put: a per-contract commission plus the bid-ask half-spread on the budget.',
     intuition:

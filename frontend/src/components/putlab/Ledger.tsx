@@ -4,20 +4,20 @@ import { Th } from './Th'
 
 /* The roll ledger — every cycle the backtest actually placed.
  *
- * The change worth reading: Fill and Budget are separate columns.
+ * Cts is `budget / premium` shares, not whole 100-share contracts: the backtest
+ * spends the budget exactly and never rounds (put_roll.py), so the cash the puts
+ * cost IS the Budget column. Brokerage is the roll's `cost` field — commission
+ * per real contract plus a modelled half-spread on the budget (brokerage.roll_cost;
+ * no spread on a quote-priced run, whose ask already holds it) — charged on top
+ * of the budget, so
  *
- * The old table showed one "Cost" column holding `contracts x premium x 100` —
- * the cash actually filled — next to a Net computed as `payoff - notional`, the
- * per-roll premium BUDGET. Those are different numbers, so a reader subtracting
- * the two visible columns got the wrong answer. `max(1, floor(notional /
- * (premium * 100)))` forces at least one contract, so the fill can land either
- * side of the budget: at a $1,000 budget an $8.27 premium fills at $827, a
- * $10.28 premium fills at $1,028.
+ *     Net = Payoff − Budget − Brokerage
  *
- * Every return on the page divides by the budget (concepts.ts roi_on_premium:
- * `total_premium = n_cycles x notional`), so Budget is the column Net
- * reconciles against, and Fill is shown because what the contracts really cost
- * is still worth knowing.
+ * is the subtraction a reader can do on screen, right to within the whole-dollar
+ * rounding of the printed figures. An earlier version labelled `cost` "Fill"
+ * and described it as the cash the contracts cost; the e2e fixture had been
+ * built to match that description, so the suite passed while every live row
+ * said otherwise.
  *
  * A dead roll prints $0 rather than an em dash: the em dash reads better, but
  * it breaks the one subtraction this table exists to let a reader perform.
@@ -38,8 +38,8 @@ export function Ledger({ cycles, notional }: { cycles: PutBacktestCycle[]; notio
             <Th concept="roll_sigma" className="num">&sigma;</Th>
             <Th concept="roll_premium" className="num">Premium</Th>
             <Th concept="roll_contracts" className="num">Cts</Th>
-            <Th concept="roll_cost" className="num">Fill</Th>
             <Th concept="roll_budget" className="num">Budget</Th>
+            <Th concept="roll_cost" className="num">Brokerage</Th>
             <Th concept="roll_payoff" className="num">Payoff</Th>
             <Th concept="roll_net" className="num">Net</Th>
           </tr>
@@ -53,11 +53,12 @@ export function Ledger({ cycles, notional }: { cycles: PutBacktestCycle[]; notio
               <td className="num dim">{fmtPrice(c.strike)}</td>
               <td className="num dim">{(c.sigma * 100).toFixed(1)}%</td>
               <td className="num dim">{fmtPrice(c.premium)}</td>
-              <td className="num dim">{c.contracts}</td>
-              {/* the cash the contracts really cost */}
-              <td className="num dim">{fmtDollar(c.cost)}</td>
-              {/* the basis Net is measured against */}
+              {/* fractional shares: whole ones are enough to read and check budget / premium */}
+              <td className="num dim">{Math.round(c.contracts).toLocaleString('en-US')}</td>
+              {/* the cash the puts cost, and the basis every return divides by */}
               <td className="num dimmer">{fmtDollar(notional)}</td>
+              {/* charged on top of the budget */}
+              <td className="num dim">{fmtDollar(c.cost)}</td>
               <td className="num dim">{fmtDollar(c.payoff)}</td>
               <td className={`num bold ${c.net >= 0 ? 'pl-pos' : 'pl-neg'}`}>{fmtDollar(c.net)}</td>
             </tr>

@@ -68,21 +68,26 @@ export function bsPut(S: number, K: number, T: number, r: number, sigma: number,
   return K * Math.exp(-r * T) * normCdf(-d2) - S * Math.exp(-q * T) * normCdf(-d1)
 }
 
-// 12 rolls. `payoff` is the cash the put returned; `cost` is what the contracts
-// actually filled at, which is NOT the per-roll budget (NOTIONAL) -- that gap is
-// the whole reason the ledger prints Fill and Budget as separate columns.
+// Entry brokerage as research/backtest/brokerage.py:roll_cost charges it: the
+// commission per real (100-share) contract plus a half-spread on the budget, at
+// brokerage.py's SPREAD_BASE_FRAC floor (a real 4-week 5% put pays more).
+const COMMISSION_PER_CONTRACT = 0.65
+const HALF_SPREAD_FRAC = 0.01
+const rollCost = (shares: number) =>
+  Number((COMMISSION_PER_CONTRACT * (shares / 100) + HALF_SPREAD_FRAC * NOTIONAL).toFixed(2))
+
+// 12 rolls, shaped as put_roll.py builds them: `contracts` is `budget / premium`
+// SHARES (never rounded, so the puts cost exactly the budget), `cost` is the
+// entry brokerage charged on top, and `net = payoff - budget - cost`.
 export const CYCLES: PutBacktestCycle[] = Array.from({ length: 12 }, (_, i) => {
   const spot = Number(PRICE_PATH[i * 18]!.price.toFixed(2))
   const strike = Number((spot * 0.95).toFixed(2))
   // roll 3 pays 420 -- real intrinsic value, but under the 1000 budget, so it is
   // NOT a hit; rolls 6 and 9 clear the budget and are.
   const payoff = i === 3 ? 420 : i === 6 ? 2600 : i === 9 ? 3200 : 0
-  // Roll 11 is priced above the budget on purpose: `max(1, floor(notional /
-  // (premium * 100)))` forces at least one contract, so the fill can land
-  // EITHER side of the budget. That is why they are two columns.
   const premium = i === 11 ? 10.28 : Number((8.2 + i * 0.11).toFixed(2))
-  const contracts = Math.max(1, Math.floor(NOTIONAL / (premium * 100)))
-  const cost = Number((contracts * premium * 100).toFixed(2))
+  const contracts = NOTIONAL / premium
+  const cost = rollCost(contracts)
   // Roll 11's vol is solved so its 10.28 premium IS the Black-Scholes price of
   // its displayed inputs (the Workspace prints them for a reader to check).
   const sigma = i === 11 ? 0.38245 : Number((0.17 + i * 0.004).toFixed(4))
@@ -104,13 +109,13 @@ export const CYCLES: PutBacktestCycle[] = Array.from({ length: 12 }, (_, i) => {
     contracts,
     cost,
     payoff,
-    net: Number((payoff - NOTIONAL).toFixed(2)),
+    net: Number((payoff - NOTIONAL - cost).toFixed(2)),
   }
 })
 
 const TOTAL_PAYOFF = CYCLES.reduce((s, c) => s + c.payoff, 0) // 6220
 const TOTAL_PREMIUM = CYCLES.length * NOTIONAL // 12000
-const TOTAL_BROKERAGE = 78
+const TOTAL_BROKERAGE = Number(CYCLES.reduce((s, c) => s + c.cost, 0).toFixed(2))
 const NET_PNL = TOTAL_PAYOFF - TOTAL_PREMIUM - TOTAL_BROKERAGE
 
 const MTM_CURVE: EquityPoint[] = PRICE_PATH.map((p, i) => ({
@@ -1779,7 +1784,8 @@ export function backtestByDelta(target: number): PutBacktestResponse {
     const strike = Number(strikeForDelta(c.spot, target, c.sigma, c.t_years!, BACKTEST.rate, c.q).toFixed(2))
     const latest = i === CYCLES.length - 1
     const premium = latest ? Number(bsPut(c.spot, strike, c.t_years!, BACKTEST.rate, c.sigma, c.q).toFixed(2)) : c.premium
-    const contracts = Math.max(1, Math.floor(NOTIONAL / (premium * 100)))
+    const contracts = NOTIONAL / premium
+    const cost = rollCost(contracts)
     return {
       ...c,
       strike,
@@ -1787,9 +1793,11 @@ export function backtestByDelta(target: number): PutBacktestResponse {
       entry_delta: -target,
       premium,
       contracts,
-      cost: Number((contracts * premium * 100).toFixed(2)),
+      cost,
+      net: Number((c.payoff - NOTIONAL - cost).toFixed(2)),
     }
   })
+  const total_brokerage = Number(cycles.reduce((s, c) => s + c.cost, 0).toFixed(2))
   return {
     ...BACKTEST,
     moneyness_pct: null,
@@ -1797,6 +1805,11 @@ export function backtestByDelta(target: number): PutBacktestResponse {
     target_delta: target,
     // Computed from the rolls, as the backend does (put_roll._beyond_model_depth_share).
     beyond_model_depth_share: cycles.filter((c) => c.entry_moneyness_pct > MODEL_PRICED_MAX).length / cycles.length,
+    // Brokerage and net follow the delta rolls, as put_roll sums them;
+    // spreading BACKTEST's would keep the moneyness run's. (ROI and the
+    // annualised figures are still BACKTEST's -- no spec reads them here.)
+    total_brokerage,
+    net_pnl: TOTAL_PAYOFF - TOTAL_PREMIUM - total_brokerage,
     cycles,
   }
 }
