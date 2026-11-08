@@ -1819,10 +1819,15 @@ export function backtestByDelta(target: number): PutBacktestResponse {
  *  whole-dollar strike whose delta at a 19.1% implied vol is nearest. */
 export function strikePreview(target: number): StrikePreview {
   const spot = 512.4
+  // The convexity ratio as strike_preview.convexity_ratio scores it.
+  const ratio = (k: number, premium: number, t: number) => Math.max(k - 0.8 * spot, 0) / (premium / t)
   const r = 0.0421
   const q = 0.01307
   const model = Number(strikeForDelta(spot, target, 0.09, 20 / 252, r, q).toFixed(2))
+  const tModel = 20 / 252
+  const modelPremium = bsPut(spot, model, tModel, r, 0.09, q)
   const tMarket = 28 / 365
+  const ask = 2.31
   let best = 400
   for (let k = 400; k <= 512; k++) {
     if (Math.abs(putDelta(spot, k, 0.191, tMarket, r, q) + target) < Math.abs(putDelta(spot, best, 0.191, tMarket, r, q) + target)) best = k
@@ -1839,9 +1844,11 @@ export function strikePreview(target: number): StrikePreview {
       vol_date: '2026-08-21',
       spot,
       sigma: 0.09,
-      t_years: 20 / 252,
+      t_years: tModel,
       strike: model,
       moneyness_pct: Number(((1 - model / spot) * 100).toFixed(4)),
+      premium: modelPremium,
+      convexity_ratio: ratio(model, modelPremium, tModel),
     },
     market: {
       session: '2026-08-21',
@@ -1852,6 +1859,8 @@ export function strikePreview(target: number): StrikePreview {
       iv: 0.191,
       delta: Number(putDelta(spot, best, 0.191, tMarket, r, q).toFixed(4)),
       moneyness_pct: Number(((1 - best / spot) * 100).toFixed(4)),
+      premium: ask,
+      convexity_ratio: ratio(best, ask, tMarket),
     },
     market_status: 'quoted',
     market_is_older: false,

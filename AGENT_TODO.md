@@ -472,6 +472,21 @@ a large one strictly in order.
       realised vol in the served backtest and to the vendor's IV for any
       market strike. The vendor's own `delta` column is deliberately NOT used
       (ADR 0029 says why); do not rebuild a selector on it.
+      **Today's strike done 2026-11-08** (Workspace, delta rule only):
+      `strike_preview.convexity_ratio` scores both rows of "Today's strike two
+      ways": `max(K - 0.8 S, 0) / (premium / T)`, with rolls per year = 1/T
+      on each row's own clock. The backtest row's premium is the BS price
+      at realised vol; the market row's is the listed ask. The fixture shows
+      the gap they open: 11.2 years at realised vol against 2.4 at the ask.
+      Still OPEN: the `RankedAsset` field and Screen column. The model-priced
+      ratio rises as realised vol falls, so ranking on it alone has the
+      same pull toward untradeable contracts as `best_annualized` (see the
+      Execution-path item). Use the market row where a chain exists. Two
+      limits to keep in mind: the payoff is intrinsic at expiry (no
+      remaining time value, so an early fall is understated), and the
+      market strike is still picked by delta alone. No liquidity filter
+      applies, so a wide stale ask on a thin strike goes straight into
+      the ratio.
 
 - [ ] **Add a walk-forward split to the Bake-off, and test the 45-50% cliff.**
       `docs/PRIOR_ART.md` §12. Every Bake-off verdict here is in-sample.

@@ -889,6 +889,10 @@ export interface ModelStrike {
   t_years: number
   strike: number
   moneyness_pct: number
+  /** Black-Scholes price at sigma, per share. */
+  premium: number
+  /** Intrinsic value after a 20% fall over a year of premium; null when unpriced. */
+  convexity_ratio: number | null
 }
 
 /** The listed put whose delta, on its own implied vol, is nearest the target. */
@@ -901,6 +905,9 @@ export interface MarketStrike {
   iv: number
   delta: number
   moneyness_pct: number
+  /** The listed ask, per share: what a buyer pays. */
+  premium: number
+  convexity_ratio: number | null
 }
 
 export interface StrikePreview {

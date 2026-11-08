@@ -949,6 +949,31 @@ export const CONCEPTS = {
     howToRead: 'Compare the two rows: the market’s strike for the same delta is further out.',
     seeAlso: ['strike_rule', 'strike_price'],
   },
+  strike_premium: {
+    id: 'strike_premium',
+    term: 'Premium for today’s strike',
+    category: 'option',
+    short:
+      'What one put costs per share today: the Black-Scholes price at realised vol on the backtest row, the listed ask on the market row.',
+    intuition:
+      'The ask is what a buyer actually pays. The model row is priced at a vol that sits below implied, so it is usually the cheaper of the two.',
+    howToRead:
+      'The rows are different strikes and expiries, so compare their convexity ratios, not the two prices directly.',
+    seeAlso: ['strike_vol', 'convexity_ratio'],
+  },
+  convexity_ratio: {
+    id: 'convexity_ratio',
+    term: 'Convexity ratio (a 20% fall repays)',
+    category: 'option',
+    short:
+      'How many years of rolling this put one 20% fall, held to expiry, pays back: the put’s value after the fall divided by a year of premium.',
+    formula: 'ratio = max(K − 0.8 S, 0) / (premium × rolls per year), rolls per year = 1 / T',
+    intuition:
+      'It sets the cost of holding against the payoff in a crash. Rolls per year comes from the option’s own tenor rather than a fixed twelve.',
+    howToRead:
+      'Higher is cheaper insurance against a 20% fall. 0 means the strike sits below the fallen price, so that fall pays nothing. It values the put at expiry and ignores any implied vol left in it, so it understates a fall that comes early.',
+    seeAlso: ['strike_premium', 'strike_from_spot'],
+  },
 
   // ------------------------------------------------ hold size and the lump book
   hold_window: {
