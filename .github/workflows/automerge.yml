@@ -115,7 +115,14 @@ jobs:
           # the list because it holds the mypy strictness, the ruff rule set,
           # the import-linter contracts and the coverage floor -- flipping
           # `strict = false` turns three gates green by removing them.
-          if printf '%s\n' "$files" | grep -qiE '^docs/adr/|^\.github/|^\.claude/|^ARCHITECTURE\.md$|^docs/STANDARDS\.md$|^README\.md$|^docs/AGENT_MISSION\.md$|^docs/END_STATE\.md$|^pyproject\.toml$'; then
+          # A rename lists only its NEW path in .filename; the old one is in
+          # .previous_filename. Without it, `git mv docs/adr/x.md notes.md`
+          # read as an edit to notes.md and would have merged (found in review,
+          # 2026-11-08). Read separately so the count check above still counts
+          # files, not names.
+          old_names=$(gh api --paginate "repos/$REPO/pulls/$pr/files" \
+                        --jq '.[] | .previous_filename // empty')
+          if printf '%s\n' "$files" "$old_names" | grep -qiE '^docs/adr/|^\.github/|^\.claude/|^ARCHITECTURE\.md$|^docs/STANDARDS\.md$|^README\.md$|^docs/AGENT_MISSION\.md$|^docs/END_STATE\.md$|^pyproject\.toml$'; then
             echo "PR #$pr edits the constitution — leaving it for a human."
             exit 0
           fi

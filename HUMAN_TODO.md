@@ -696,7 +696,12 @@ do.
 
 ## FRED credit spreads — found 2026-10-31
 
-- [ ] **FRED's high-yield spread (`BAMLH0A0HYM2`) now serves only 3 years.**
+- [x] **Done 2026-10-31: option 1.** `make ingest-credit-archive` ran against the
+      production lake: bronze `credit_archive` has one partition (ingest_date
+      2026-10-31), 7,530 rows, 1996-12-31 to 2025-11-03 (checked 2026-11-08).
+      Original item:
+
+- [x] **FRED's high-yield spread (`BAMLH0A0HYM2`) now serves only 3 years.**
       Since April 2026, FRED keeps a rolling 3-year window; the API's first
       observation is 2023-10-31. The credit regime (`contracts/regime.py`)
       is built on this series, so any backfill from FRED can no longer
