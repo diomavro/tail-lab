@@ -441,8 +441,9 @@ jobs:
                  "repos/${GITHUB_REPOSITORY}/pulls/${PR_NUMBER}/files" \
                  --jq '.[].filename' 2>/dev/null); then
               reason="classify_failed"
-            # A here-string, not printf | grep -q: under pipefail an early
-            # match closes the pipe and a long list's printf dies of SIGPIPE.
+            # A here-string, not printf | grep -q: this step runs `bash -e`
+            # without pipefail, where the pipe is fine, but under pipefail an
+            # early match would kill a long list's printf with SIGPIPE.
             elif grep -q '^\.github/' <<<"$bot_files"; then
               reason="bot_guarded_skip"
             else
