@@ -1805,8 +1805,9 @@ export function backtestByDelta(target: number): PutBacktestResponse {
     target_delta: target,
     // Computed from the rolls, as the backend does (put_roll._beyond_model_depth_share).
     beyond_model_depth_share: cycles.filter((c) => c.entry_moneyness_pct > MODEL_PRICED_MAX).length / cycles.length,
-    // The totals follow the delta rolls, as put_roll sums them; spreading
-    // BACKTEST's would keep the moneyness run's brokerage and net.
+    // Brokerage and net follow the delta rolls, as put_roll sums them;
+    // spreading BACKTEST's would keep the moneyness run's. (ROI and the
+    // annualised figures are still BACKTEST's -- no spec reads them here.)
     total_brokerage,
     net_pnl: TOTAL_PAYOFF - TOTAL_PREMIUM - total_brokerage,
     cycles,
