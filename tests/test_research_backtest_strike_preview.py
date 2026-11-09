@@ -122,8 +122,9 @@ def test_no_expiry_long_enough_is_named() -> None:
     assert (p.market, p.market_status) == (None, "no_expiry")
 
 
-def test_zero_filled_iv_is_never_priced() -> None:
-    p = _preview(_chain(iv=None))
+@pytest.mark.parametrize("iv", [None, 0.0])
+def test_zero_filled_iv_is_never_priced(iv: float | None) -> None:
+    p = _preview(_chain(iv=iv))
     assert (p.market, p.market_status) == (None, "no_iv")
 
 
@@ -278,20 +279,28 @@ def test_a_distance_the_chain_does_not_list_is_refused_not_substituted() -> None
     )
     assert (market, status) == (None, "no_strike")
     assert model is not None
-    # Just inside the tolerance (402.5 asked, 2.5 = 0.5% of spot from 400): taken.
-    _, near, _ = today_strikes(
-        _chain(), prices, rv, asset="spy", rule=ByMoneyness(19.5), tenor_weeks=4.0, r=0.04, q=0.012
-    )
-    assert near is not None and near.strike in {402.0, 403.0}
+    # At the edge: only 400 and 450 listed; 2.5% of spot 500 is 12.5. Asking
+    # 412 (17.6%) misses 400 by 12, taken; asking 413 (17.4%) misses by 13,
+    # refused -- the tolerance is in percent of spot.
+    sparse = _chain()[lambda c: c["strike"].isin([400.0, 450.0])]
+    for pct, expected in ((17.6, 400.0), (17.4, None)):
+        _, near, _ = today_strikes(
+            sparse, prices, rv, asset="spy", rule=ByMoneyness(pct), tenor_weeks=4.0, r=0.04, q=0.012
+        )
+        assert (near.strike if near else None) == expected
     assert MAX_STRIKE_MISS_PCT == 2.5
 
 
-def test_a_distance_pick_scores_the_ask_even_where_the_iv_is_null() -> None:
-    # The deep wing is where Cboe zero-fills IV (null in bronze). A distance
-    # rule needs only the ask, so the 425 strike is scored -- not the nearest
-    # strike that happens to carry an IV.
+@pytest.mark.parametrize("missing_iv", [None, 0.0])
+def test_a_distance_pick_scores_the_ask_even_where_the_iv_is_missing(
+    missing_iv: float | None,
+) -> None:
+    # The deep wing is where Cboe zero-fills IV (null in bronze; the contract
+    # also admits 0.0). A distance rule needs only the ask, so the 425 strike
+    # is scored -- not the nearest strike that happens to carry an IV -- and a
+    # 0.0 IV never reaches the delta formula.
     chain = _chain()
-    chain.loc[chain["strike"] < 450, "iv"] = None
+    chain.loc[chain["strike"] < 450, "iv"] = missing_iv
     prices, rv = _prices()
     _, market, status = today_strikes(
         chain, prices, rv, asset="spy", rule=ByMoneyness(15.0), tenor_weeks=4.0, r=0.04, q=0.012

@@ -134,7 +134,8 @@ class StrikePreview(BaseModel):
     model: ModelStrike | None
     market: MarketStrike | None
     #: Why ``market`` is absent: the asset is not in the collected chain, no
-    #: listed expiry reaches the tenor, or no put there has a usable IV.
+    #: listed expiry reaches the tenor, no put there has a usable IV (a delta
+    #: pick), or no listed strike is near the distance (a distance pick).
     market_status: MarketStatus
     #: The chain's session is older than the realised-vol date: the two sides
     #: are not the same day, and the page says so.

@@ -482,8 +482,9 @@ export interface RankedAsset {
   /** Years of today's screened put that one 20% fall repays
    *  (research/backtest/strike_preview.py `convexity_ratio`): at the model
    *  price on realised vol, and at the listed ask of the nearest strike in the
-   *  latest collected chain (`null` when the name is not collected). Two
-   *  fields, never pooled. */
+   *  latest collected chain (`null` when the name is not collected, no
+   *  expiry reaches the tenor, or no strike is within 2.5% of spot of the
+   *  distance). Two fields, never pooled. */
   convexity_ratio: number | null
   market_convexity_ratio: number | null
   /** The best this name gets when its parameters are chosen well: the argmax
