@@ -491,12 +491,17 @@ a large one strictly in order.
       `convexity_ratio` (model) and `market_convexity_ratio` (ask). Both
       are for the screened distance and tenor, today: the model one is
       priced at the latest realised vol, and the ask is the listed strike
-      nearest that distance in the latest collected chain. Both come from
+      nearest that distance in the latest collected chain. It is taken
+      whatever its IV, and refused (`no_strike`) when the nearest listed
+      strike misses by more than 2.5% of spot. So on the Screen the market
+      strike is picked by distance; the Workspace preview still picks by
+      delta alone. Both come from
       `strike_preview.today_strikes`, the helper the Workspace preview
       uses, so the ratio is computed in one place. The Screen shows them
       stacked in one "Repays" column, under a "Today" group placed after
       the backtest groups because they are today's prices, not backtest
-      results. The two are never pooled. The chain snapshot is cited, and
+      results. The two are never pooled. The column is in the fragility
+      table only, not the best-return order. The chain snapshot is cited, and
       `chain_session` is served and logged. Still open:
       - The ratio is displayed, not sorted on. Neither strip order uses it.
       - The ask has no liquidity filter. A wide or stale ask on a thin

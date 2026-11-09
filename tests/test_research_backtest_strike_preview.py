@@ -18,6 +18,7 @@ import pytest
 
 from tail_lab.research.backtest.put_roll import trailing_realized_vol
 from tail_lab.research.backtest.strike_preview import (
+    MAX_STRIKE_MISS_PCT,
     TAIL_DROP,
     StrikePreview,
     convexity_ratio,
@@ -258,3 +259,44 @@ def test_a_moneyness_rule_between_listed_strikes_takes_the_nearer() -> None:
             q=0.012,
         )
         assert market.strike == expected
+
+
+def test_a_distance_the_chain_does_not_list_is_refused_not_substituted() -> None:
+    # 30% below 500 is 350; the chain lists 400..499, so the nearest (400) is
+    # 10% of spot away -- far past MAX_STRIKE_MISS_PCT. Scoring 400 would
+    # serve a 20%-OOM put's ratio as the 30% one's.
+    prices, rv = _prices()
+    model, market, status = today_strikes(
+        _chain(),
+        prices,
+        rv,
+        asset="spy",
+        rule=ByMoneyness(30.0),
+        tenor_weeks=4.0,
+        r=0.04,
+        q=0.012,
+    )
+    assert (market, status) == (None, "no_strike")
+    assert model is not None
+    # Just inside the tolerance (402.5 asked, 2.5 = 0.5% of spot from 400): taken.
+    _, near, _ = today_strikes(
+        _chain(), prices, rv, asset="spy", rule=ByMoneyness(19.5), tenor_weeks=4.0, r=0.04, q=0.012
+    )
+    assert near is not None and near.strike in {402.0, 403.0}
+    assert MAX_STRIKE_MISS_PCT == 2.5
+
+
+def test_a_distance_pick_scores_the_ask_even_where_the_iv_is_null() -> None:
+    # The deep wing is where Cboe zero-fills IV (null in bronze). A distance
+    # rule needs only the ask, so the 425 strike is scored -- not the nearest
+    # strike that happens to carry an IV.
+    chain = _chain()
+    chain.loc[chain["strike"] < 450, "iv"] = None
+    prices, rv = _prices()
+    _, market, status = today_strikes(
+        chain, prices, rv, asset="spy", rule=ByMoneyness(15.0), tenor_weeks=4.0, r=0.04, q=0.012
+    )
+    assert status == "quoted"
+    assert market.strike == 425.0
+    assert (market.iv, market.delta) == (None, None)
+    assert market.convexity_ratio == pytest.approx(25.0 / (2.0 * 365 / 30))

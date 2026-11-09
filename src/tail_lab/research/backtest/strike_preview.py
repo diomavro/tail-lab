@@ -52,7 +52,9 @@ from tail_lab.research.backtest.strike_rule import ByDelta, ByMoneyness, StrikeR
 from tail_lab.research.option_pricer import BlackScholesPricer
 
 __all__ = [
+    "MAX_STRIKE_MISS_PCT",
     "TAIL_DROP",
+    "MarketStatus",
     "MarketStrike",
     "ModelStrike",
     "StrikePreview",
@@ -60,6 +62,14 @@ __all__ = [
     "preview_strikes",
     "today_strikes",
 ]
+
+#: Why a market side is or is not quoted (see :class:`StrikePreview`).
+MarketStatus = Literal["quoted", "not_collected", "no_expiry", "no_iv", "no_strike"]
+
+#: How far, in percent of spot, the listed strike a distance rule takes may sit
+#: from that distance. Beyond it the chain does not list the strike asked
+#: about, and scoring a nearer one would pass a different put off as it.
+MAX_STRIKE_MISS_PCT = 2.5
 
 #: The fall ``convexity_ratio`` is scored on: 20%, ``options_portfolio_
 #: backtester``'s ``tail_drop`` (``docs/PRIOR_ART.md`` §11).
@@ -93,15 +103,18 @@ class ModelStrike(BaseModel):
 
 
 class MarketStrike(BaseModel):
-    """The listed put whose delta, on its own implied vol, is nearest the target."""
+    """The listed put nearest the rule: by delta on its own implied vol, or by
+    distance below the chain's spot."""
 
     session: dt.date
     expiration: dt.date
     spot: float
     t_years: float
     strike: float
-    iv: float
-    delta: float
+    #: ``None`` only on a distance pick the exchange published no IV for; a
+    #: delta pick always has both.
+    iv: float | None
+    delta: float | None
     moneyness_pct: float
     #: The listed ask, per share: what a buyer pays.
     premium: float
@@ -122,7 +135,7 @@ class StrikePreview(BaseModel):
     market: MarketStrike | None
     #: Why ``market`` is absent: the asset is not in the collected chain, no
     #: listed expiry reaches the tenor, or no put there has a usable IV.
-    market_status: Literal["quoted", "not_collected", "no_expiry", "no_iv"]
+    market_status: MarketStatus
     #: The chain's session is older than the realised-vol date: the two sides
     #: are not the same day, and the page says so.
     market_is_older: bool
@@ -153,32 +166,53 @@ def _model_side(
     )
 
 
+def _nearest_delta(
+    at: pd.DataFrame, target: float, t_years: float, r: float, q: float
+) -> pd.Series | None:
+    """The put whose delta on its own IV is nearest ``-target``; zero-filled
+    (null) IVs cannot be priced and are skipped."""
+    priced = at[at["iv"] > 0]
+    if priced.empty:
+        return None
+    spot = float(priced["spot"].iloc[0])
+    deltas = [
+        put_delta(spot=spot, strike=float(k), sigma=float(v), t_years=t_years, r=r, q=q)
+        for k, v in zip(priced["strike"], priced["iv"], strict=True)
+    ]
+    return priced.iloc[int(np.abs(np.array(deltas) + target).argmin())]
+
+
+def _nearest_distance(at: pd.DataFrame, rule: ByMoneyness) -> pd.Series | None:
+    """The listed strike nearest ``rule``'s distance below the chain's spot,
+    whatever its IV (the ask is what is scored), or ``None`` when the nearest
+    misses by more than :data:`MAX_STRIKE_MISS_PCT`."""
+    spot = float(at["spot"].iloc[0])
+    target = spot * (1.0 - rule.pct / 100.0)
+    miss = np.abs(at["strike"].to_numpy(dtype=float) - target)
+    pos = int(miss.argmin())
+    return None if miss[pos] > spot * MAX_STRIKE_MISS_PCT / 100.0 else at.iloc[pos]
+
+
 def _market_side(
     puts: pd.DataFrame, rule: StrikeRule, after: dt.date, r: float, q: float
-) -> tuple[MarketStrike | None, Literal["quoted", "no_expiry", "no_iv"]]:
+) -> tuple[MarketStrike | None, MarketStatus]:
     eligible = puts.loc[puts["expiration"] >= pd.Timestamp(after), "expiration"]
     if eligible.empty:
         return None, "no_expiry"
     expiry = pd.Timestamp(eligible.min())
-    at = puts[(puts["expiration"] == expiry) & (puts["iv"] > 0)]
-    if at.empty:
-        return None, "no_iv"
+    at = puts[puts["expiration"] == expiry]
     session = pd.Timestamp(at["quote_date"].iloc[0])
     t_years = (expiry - session).days / 365.0
-    spot = float(at["spot"].iloc[0])
-    deltas = np.array(
-        [
-            put_delta(spot=spot, strike=float(k), sigma=float(v), t_years=t_years, r=r, q=q)
-            for k, v in zip(at["strike"], at["iv"], strict=True)
-        ]
-    )
     if isinstance(rule, ByMoneyness):
-        target_strike = rule.strike(spot=spot, sigma=0.0, t_years=t_years, r=r, q=q)
-        pos = int(np.abs(at["strike"].to_numpy(dtype=float) - target_strike).argmin())
+        row = _nearest_distance(at, rule)
+        if row is None:
+            return None, "no_strike"
     else:
-        pos = int(np.abs(deltas + rule.target).argmin())
-    row = at.iloc[pos]
-    strike, ask = float(row["strike"]), float(row["ask"])
+        row = _nearest_delta(at, rule.target, t_years, r, q)
+        if row is None:
+            return None, "no_iv"
+    spot, strike, ask = float(row["spot"]), float(row["strike"]), float(row["ask"])
+    iv = float(row["iv"]) if pd.notna(row["iv"]) and row["iv"] > 0 else None
     return (
         MarketStrike(
             session=session.date(),
@@ -186,8 +220,10 @@ def _market_side(
             spot=spot,
             t_years=t_years,
             strike=strike,
-            iv=float(row["iv"]),
-            delta=float(deltas[pos]),
+            iv=iv,
+            delta=None
+            if iv is None
+            else put_delta(spot=spot, strike=strike, sigma=iv, t_years=t_years, r=r, q=q),
             moneyness_pct=(1.0 - strike / spot) * 100.0,
             premium=ask,
             convexity_ratio=convexity_ratio(spot=spot, strike=strike, premium=ask, t_years=t_years),
@@ -206,16 +242,13 @@ def today_strikes(
     tenor_weeks: float,
     r: float,
     q: float,
-) -> tuple[
-    ModelStrike | None,
-    MarketStrike | None,
-    Literal["quoted", "not_collected", "no_expiry", "no_iv"],
-]:
+) -> tuple[ModelStrike | None, MarketStrike | None, MarketStatus]:
     """Today's strike under ``rule``, both sides, and why the market side is absent.
 
     A :class:`ByMoneyness` rule takes the listed strike nearest its distance
-    below the chain's spot; a :class:`ByDelta` rule the one nearest its delta.
-    Only the chain's latest session is read."""
+    below the chain's spot, IV or not, and none if that misses by more than
+    :data:`MAX_STRIKE_MISS_PCT`; a :class:`ByDelta` rule the one nearest its
+    delta. Only the chain's latest session is read."""
     tenor_days = max(round(tenor_weeks * TRADING_DAYS_PER_WEEK), 1)
     model = _model_side(prices, realized_vol, rule, tenor_days / 252.0, r, q)
     puts = chain[chain["underlying"].str.lower() == asset.lower()] if not chain.empty else chain

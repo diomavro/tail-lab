@@ -592,12 +592,18 @@ def test_rank_universe_columns_are_the_shared_fragility_fold(
         assert all(got[m] is None for m in expected if m != "vol_beta")
 
 
-def _seed_chain(store: DeltaLakeStore, session: dt.date, underlying: str, spot: float) -> None:
-    """One listed 30-day expiry, whole-dollar strikes, a flat 1.25 ask."""
+def _seed_chain(
+    store: DeltaLakeStore,
+    ingest: dt.date,
+    underlying: str,
+    spot: float,
+    *,
+    sessions: tuple[tuple[dt.date, float], ...] | None = None,
+) -> None:
+    """One listed 30-day expiry per ``(session, ask)``, whole-dollar strikes,
+    a flat ask; by default one session on ``ingest`` at 1.25."""
     strikes = np.arange(np.floor(spot * 0.7), np.ceil(spot), 1.0)
-    store.write_bronze(
-        "option_chain_snapshot",
-        session,
+    frames = [
         pd.DataFrame(
             {
                 "underlying": underlying,
@@ -606,30 +612,38 @@ def _seed_chain(store: DeltaLakeStore, session: dt.date, underlying: str, spot: 
                 "strike": strikes,
                 "spot": spot,
                 "iv": 0.3,
-                "ask": 1.25,
+                "ask": ask,
             }
-        ),
-    )
+        )
+        for session, ask in (sessions or ((ingest, 1.25),))
+    ]
+    store.write_bronze("option_chain_snapshot", ingest, pd.concat(frames, ignore_index=True))
 
 
 def test_the_screen_scores_its_strike_by_convexity_both_ways(tmp_path: Path) -> None:
     """Each row's two convexity ratios are today's screened strike, against an
-    independent Black-Scholes price (model) and the listed ask (market); a
-    name outside the chain has no market ratio, and the chain is cited."""
+    independent Black-Scholes price at the name's measured yield (model) and
+    the listed ask (market); a name outside the chain has no market ratio,
+    and the chain is cited."""
     from statistics import NormalDist
 
+    from tail_lab.research import dividends
     from tail_lab.research.backtest.put_roll import load_asof_series
+    from tests.test_research_dividends import seed_tiingo_eod
 
+    dividends._memo.clear()
     store = DeltaLakeStore(tmp_path)
     ingest = dt.date(2026, 3, 2)
     _seed_vix(store, ingest)
     _seed_symbol(store, "spy", ingest, drift=0.1, vol=1.0)
     _seed_symbol(store, "wild", ingest, drift=-0.1, vol=4.0)
     _seed_chain(store, ingest, "SPY", spot=200.0)
+    seed_tiingo_eod(store, ["wild"], ingest, annual_yield=0.06)
 
     ranking = rank_universe(
         store, symbols=("spy", "wild"), as_of=ingest, moneyness_pct=5.0, tenor_weeks=4.0, years=1.0
     )
+    dividends._memo.clear()
     rows = {r.asset: r for r in ranking.ranked}
 
     # Market: 5% below the chain's 200 is 190, listed; a 20% fall leaves 160,
@@ -640,14 +654,15 @@ def test_the_screen_scores_its_strike_by_convexity_both_ways(tmp_path: Path) -> 
     assert store.bronze_snapshot_id("option_chain_snapshot", ingest) in ranking.snapshot_ids
 
     # Model: K = 0.95 S on the latest close, the latest realised vol clamped to
-    # [0.06, 2.0], 20/252 of a year, r = 4%, q = 0 (no dividend snapshot).
+    # [0.06, 2.0], 20/252 of a year, r = 4%, and q the continuous form of a
+    # 6% indicated yield.
     prices, rv = load_asof_series(store, "wild", ingest)
-    s, t, r = float(prices.iloc[-1]), 20 / 252, 0.04
+    s, t, r, q = float(prices.iloc[-1]), 20 / 252, 0.04, -np.log1p(-0.06)
     v = min(max(float(rv.iloc[-1]), 0.06), 2.0)
     k = 0.95 * s
     n = NormalDist().cdf
-    d1 = (np.log(s / k) + (r + v * v / 2) * t) / (v * np.sqrt(t))
-    bs = k * np.exp(-r * t) * n(-(d1 - v * np.sqrt(t))) - s * n(-d1)
+    d1 = (np.log(s / k) + (r - q + v * v / 2) * t) / (v * np.sqrt(t))
+    bs = k * np.exp(-r * t) * n(-(d1 - v * np.sqrt(t))) - s * np.exp(-q * t) * n(-d1)
     assert rows["wild"].convexity_ratio == pytest.approx((k - 0.8 * s) / (bs / t), rel=1e-9)
 
 
@@ -665,3 +680,52 @@ def test_no_collected_chain_leaves_every_market_ratio_empty(tmp_path: Path) -> N
     assert row.market_convexity_ratio is None and row.convexity_ratio is not None
     assert ranking.chain_session is None
     assert not any("option_chain" in snap for snap in ranking.snapshot_ids)
+
+
+def test_a_chain_collected_after_as_of_is_never_read(tmp_path: Path) -> None:
+    store = DeltaLakeStore(tmp_path)
+    ingest = dt.date(2026, 3, 2)
+    _seed_vix(store, ingest)
+    _seed_symbol(store, "spy", ingest, drift=0.1, vol=1.0)
+    later = ingest + dt.timedelta(days=5)
+    _seed_chain(store, later, "SPY", spot=200.0)
+
+    ranking = rank_universe(
+        store, symbols=("spy",), as_of=ingest, moneyness_pct=5.0, tenor_weeks=4.0, years=1.0
+    )
+
+    (row,) = ranking.ranked
+    assert row.market_convexity_ratio is None
+    assert ranking.chain_session is None
+    assert not any("option_chain" in snap for snap in ranking.snapshot_ids)
+
+
+def test_a_chain_no_ranked_name_used_is_not_cited(tmp_path: Path) -> None:
+    store = DeltaLakeStore(tmp_path)
+    ingest = dt.date(2026, 3, 2)
+    _seed_vix(store, ingest)
+    _seed_symbol(store, "wild", ingest, drift=-0.1, vol=4.0)
+    _seed_chain(store, ingest, "SPY", spot=200.0)
+
+    ranking = rank_universe(
+        store, symbols=("wild",), as_of=ingest, moneyness_pct=5.0, tenor_weeks=4.0, years=1.0
+    )
+
+    assert ranking.ranked[0].market_convexity_ratio is None
+    assert not any("option_chain" in snap for snap in ranking.snapshot_ids)
+
+
+def test_the_chain_session_is_the_latest_one_and_its_ask_is_scored(tmp_path: Path) -> None:
+    store = DeltaLakeStore(tmp_path)
+    ingest = dt.date(2026, 3, 2)
+    _seed_vix(store, ingest)
+    _seed_symbol(store, "spy", ingest, drift=0.1, vol=1.0)
+    earlier = ingest - dt.timedelta(days=3)
+    _seed_chain(store, ingest, "SPY", spot=200.0, sessions=((earlier, 5.0), (ingest, 1.25)))
+
+    ranking = rank_universe(
+        store, symbols=("spy",), as_of=ingest, moneyness_pct=5.0, tenor_weeks=4.0, years=1.0
+    )
+
+    assert ranking.chain_session == ingest
+    assert ranking.ranked[0].market_convexity_ratio == pytest.approx(30.0 / (1.25 * 365 / 30))

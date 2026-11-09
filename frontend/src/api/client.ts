@@ -905,15 +905,18 @@ export interface ModelStrike {
   convexity_ratio: number | null
 }
 
-/** The listed put whose delta, on its own implied vol, is nearest the target. */
+/** The listed put nearest the rule: by delta on its own implied vol, or by
+ *  distance below the chain's spot. */
 export interface MarketStrike {
   session: string
   expiration: string
   spot: number
   t_years: number
   strike: number
-  iv: number
-  delta: number
+  /** null only on a distance pick with no published IV; a delta pick (all
+   *  the preview serves) always has both. */
+  iv: number | null
+  delta: number | null
   moneyness_pct: number
   /** The listed ask, per share: what a buyer pays. */
   premium: number
@@ -931,7 +934,7 @@ export interface StrikePreview {
   q_source: string
   model: ModelStrike | null
   market: MarketStrike | null
-  market_status: 'quoted' | 'not_collected' | 'no_expiry' | 'no_iv'
+  market_status: 'quoted' | 'not_collected' | 'no_expiry' | 'no_iv' | 'no_strike'
   market_is_older: boolean
 }
 

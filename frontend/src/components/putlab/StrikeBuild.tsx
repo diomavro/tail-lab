@@ -37,6 +37,7 @@ const STATUS_TEXT: Record<Exclude<StrikePreview['market_status'], 'quoted'>, str
   not_collected: 'not collected: the daily chain sweep does not cover this name',
   no_expiry: 'no listed expiry reaches this tenor in the latest chain',
   no_iv: 'the exchange published no implied vol at that expiry',
+  no_strike: 'no listed strike near that distance below spot',
 }
 
 function regimeOn(date: string, segments: RegimeSegment[]): RegimeLabel | null {
@@ -166,7 +167,7 @@ export function StrikeBuild({
               <th scope="row" className="pl-explain-rowhead" data-noexplain="row-label">
                 Market, implied vol
               </th>
-              <td className="num">{preview?.market ? pct(preview.market.iv * 100) : '—'}</td>
+              <td className="num">{preview?.market?.iv != null ? pct(preview.market.iv * 100) : '—'}</td>
               <td className="num">{preview?.market ? fmtPrice(preview.market.strike) : '—'}</td>
               <td className="num">{preview?.market ? fromSpot(preview.market.moneyness_pct) : '—'}</td>
             </tr>
@@ -225,7 +226,7 @@ export function StrikeBuild({
           {preview.model?.vol_date}): the two rows are not the same day.
         </p>
       )}
-      {preview?.market && (
+      {preview?.market?.delta != null && (
         <p className="pl-note">
           The market row is the listed put whose delta &mdash; this formula on its own implied vol &mdash; is
           nearest the target, at the first expiry {bt.tenor_weeks} week{bt.tenor_weeks === 1 ? '' : 's'} or more

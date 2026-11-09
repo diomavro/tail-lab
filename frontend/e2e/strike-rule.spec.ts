@@ -329,7 +329,7 @@ test.describe('How the strike is chosen', () => {
     const m = STRIKE_PREVIEW.model!
     const k = STRIKE_PREVIEW.market!
     expect(putDelta(m.spot, m.strike, m.sigma, m.t_years, STRIKE_PREVIEW.r, STRIKE_PREVIEW.q)).toBeCloseTo(-0.1, 3)
-    expect(putDelta(k.spot, k.strike, k.iv, k.t_years, STRIKE_PREVIEW.r, STRIKE_PREVIEW.q)).toBeCloseTo(k.delta, 3)
+    expect(putDelta(k.spot, k.strike, k.iv!, k.t_years, STRIKE_PREVIEW.r, STRIKE_PREVIEW.q)).toBeCloseTo(k.delta!, 3)
   })
 
   test('under a delta rule it shows the distance moving and counts rolls past the model’s depth', async ({ page }) => {
