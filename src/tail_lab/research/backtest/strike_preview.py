@@ -12,7 +12,9 @@ The market side is the platform's ONE delta convention (dividend-adjusted
 Black-Scholes spot delta, :mod:`.strike_rule`) evaluated on each listed put's
 own implied vol -- never the vendor's ``delta`` column, whose convention is not
 ours. It returns the listed strike whose delta is nearest the target, at the
-nearest listed expiry on or after the tenor.
+nearest listed expiry on or after the tenor. The Screen asks the same question
+for its fixed-distance strike (:func:`today_strikes` with a ``ByMoneyness``
+rule): the listed strike nearest that distance below the chain's spot.
 
 The two sides keep their own clocks, on purpose: the model side is the
 backtest's (tenor in trading days, T = days/252, exactly what a roll uses); the
@@ -46,7 +48,7 @@ from tail_lab.research.backtest.put_roll import (
     REALIZED_VOL_FLOOR,
     TRADING_DAYS_PER_WEEK,
 )
-from tail_lab.research.backtest.strike_rule import ByDelta, put_delta
+from tail_lab.research.backtest.strike_rule import ByDelta, ByMoneyness, StrikeRule, put_delta
 from tail_lab.research.option_pricer import BlackScholesPricer
 
 __all__ = [
@@ -56,6 +58,7 @@ __all__ = [
     "StrikePreview",
     "convexity_ratio",
     "preview_strikes",
+    "today_strikes",
 ]
 
 #: The fall ``convexity_ratio`` is scored on: 20%, ``options_portfolio_
@@ -126,7 +129,7 @@ class StrikePreview(BaseModel):
 
 
 def _model_side(
-    prices: pd.Series, realized_vol: pd.Series, rule: ByDelta, t_years: float, r: float, q: float
+    prices: pd.Series, realized_vol: pd.Series, rule: StrikeRule, t_years: float, r: float, q: float
 ) -> ModelStrike | None:
     vol = realized_vol.dropna()
     if vol.empty:
@@ -151,7 +154,7 @@ def _model_side(
 
 
 def _market_side(
-    puts: pd.DataFrame, target: float, after: dt.date, r: float, q: float
+    puts: pd.DataFrame, rule: StrikeRule, after: dt.date, r: float, q: float
 ) -> tuple[MarketStrike | None, Literal["quoted", "no_expiry", "no_iv"]]:
     eligible = puts.loc[puts["expiration"] >= pd.Timestamp(after), "expiration"]
     if eligible.empty:
@@ -169,7 +172,11 @@ def _market_side(
             for k, v in zip(at["strike"], at["iv"], strict=True)
         ]
     )
-    pos = int(np.abs(deltas + target).argmin())
+    if isinstance(rule, ByMoneyness):
+        target_strike = rule.strike(spot=spot, sigma=0.0, t_years=t_years, r=r, q=q)
+        pos = int(np.abs(at["strike"].to_numpy(dtype=float) - target_strike).argmin())
+    else:
+        pos = int(np.abs(deltas + rule.target).argmin())
     row = at.iloc[pos]
     strike, ask = float(row["strike"]), float(row["ask"])
     return (
@@ -189,6 +196,39 @@ def _market_side(
     )
 
 
+def today_strikes(
+    chain: pd.DataFrame,
+    prices: pd.Series,
+    realized_vol: pd.Series,
+    *,
+    asset: str,
+    rule: StrikeRule,
+    tenor_weeks: float,
+    r: float,
+    q: float,
+) -> tuple[
+    ModelStrike | None,
+    MarketStrike | None,
+    Literal["quoted", "not_collected", "no_expiry", "no_iv"],
+]:
+    """Today's strike under ``rule``, both sides, and why the market side is absent.
+
+    A :class:`ByMoneyness` rule takes the listed strike nearest its distance
+    below the chain's spot; a :class:`ByDelta` rule the one nearest its delta.
+    Only the chain's latest session is read."""
+    tenor_days = max(round(tenor_weeks * TRADING_DAYS_PER_WEEK), 1)
+    model = _model_side(prices, realized_vol, rule, tenor_days / 252.0, r, q)
+    puts = chain[chain["underlying"].str.lower() == asset.lower()] if not chain.empty else chain
+    if puts.empty:
+        return model, None, "not_collected"
+    session = pd.Timestamp(puts["quote_date"].max())
+    latest = puts[puts["quote_date"] == session]
+    # The tenor in calendar days from the chain's own session (7 per week).
+    after = (session + pd.Timedelta(days=math.ceil(tenor_weeks * 7))).date()
+    market, status = _market_side(latest, rule, after, r, q)
+    return model, market, status
+
+
 def preview_strikes(
     chain: pd.DataFrame,
     prices: pd.Series,
@@ -203,18 +243,16 @@ def preview_strikes(
     q_source: str,
 ) -> StrikePreview:
     """Model strike (realised vol) and market strike (listed IV) for one target."""
-    rule = ByDelta(target_delta)
-    tenor_days = max(round(tenor_weeks * TRADING_DAYS_PER_WEEK), 1)
-    model = _model_side(prices, realized_vol, rule, tenor_days / 252.0, r, q)
-    puts = chain[chain["underlying"].str.lower() == asset.lower()] if not chain.empty else chain
-    market: MarketStrike | None = None
-    status: Literal["quoted", "not_collected", "no_expiry", "no_iv"] = "not_collected"
-    if not puts.empty:
-        session = pd.Timestamp(puts["quote_date"].max())
-        today = puts[puts["quote_date"] == session]
-        # The tenor in calendar days from the chain's own session (7 per week).
-        after = (session + pd.Timedelta(days=math.ceil(tenor_weeks * 7))).date()
-        market, status = _market_side(today, target_delta, after, r, q)
+    model, market, status = today_strikes(
+        chain,
+        prices,
+        realized_vol,
+        asset=asset,
+        rule=ByDelta(target_delta),
+        tenor_weeks=tenor_weeks,
+        r=r,
+        q=q,
+    )
     return StrikePreview(
         asset=asset,
         target_delta=target_delta,

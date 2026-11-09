@@ -7,7 +7,7 @@ import {
   type StrikePreview,
 } from '../../api/client'
 import { ConceptInfo } from './ConceptInfo'
-import { fmtPrice } from './format'
+import { fmtPrice, fmtYears as years } from './format'
 import { deltaLabel } from './types'
 import { Th } from './Th'
 
@@ -27,8 +27,6 @@ const pct = (x: number, digits = 1) => `${x.toFixed(digits)}%`
 /** A distance from spot in words: a strike near 0.50 delta sits ABOVE spot. */
 const fromSpot = (x: number, digits = 1) =>
   x >= 0 ? `${x.toFixed(digits)}% below spot` : `${(-x).toFixed(digits)}% above spot`
-/** A convexity ratio, in years of premium. */
-const years = (x: number | null | undefined) => (x == null ? '—' : `${x.toFixed(1)} yrs`)
 
 /* Previews keyed by what they depend on, kept across re-runs (the section
  * remounts on every one) so a tab of "Rolled over" changes refetches nothing. */

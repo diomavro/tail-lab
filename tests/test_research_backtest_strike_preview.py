@@ -22,8 +22,9 @@ from tail_lab.research.backtest.strike_preview import (
     StrikePreview,
     convexity_ratio,
     preview_strikes,
+    today_strikes,
 )
-from tail_lab.research.backtest.strike_rule import put_delta
+from tail_lab.research.backtest.strike_rule import ByMoneyness, put_delta
 
 SESSION = dt.date(2026, 10, 9)
 
@@ -215,3 +216,45 @@ def test_the_model_side_scores_the_black_scholes_price_on_the_backtests_clock() 
     assert model.premium == pytest.approx(bs, rel=1e-9)
     # 20 trading days of 252: the roll count is the backtest's, not twelve.
     assert model.convexity_ratio == pytest.approx(max(k - 0.8 * s, 0.0) / (bs * 252 / 20), rel=1e-9)
+
+
+def test_a_moneyness_rule_takes_the_listed_strike_nearest_its_distance() -> None:
+    # 7% below the chain's 500 spot is 465: listed (400..499 step 1), so the
+    # market strike is exactly 465 whatever its delta; the model strike is 7%
+    # below the latest close, independent of vol.
+    prices, rv = _prices()
+    model, market, status = today_strikes(
+        _chain(ask=1.6),
+        prices,
+        rv,
+        asset="spy",
+        rule=ByMoneyness(7.0),
+        tenor_weeks=4.0,
+        r=0.04,
+        q=0.012,
+    )
+    assert status == "quoted"
+    assert market.strike == 465.0
+    assert market.moneyness_pct == pytest.approx(7.0)
+    # Spot 500 falls to 400: 65 of intrinsic over 1.6 x 365/30 a year.
+    assert market.convexity_ratio == pytest.approx(65.0 / (1.6 * 365 / 30))
+    assert model.strike == pytest.approx(prices.iloc[-1] * 0.93)
+
+
+def test_a_moneyness_rule_between_listed_strikes_takes_the_nearer() -> None:
+    # 2.34% below 500 is 488.3 and 7.66% is 461.7 -- neither is listed (whole
+    # dollars). Nearest is 488 for one and 462 for the other: one rounds down,
+    # one up, so neither a floor nor a ceiling passes.
+    prices, rv = _prices()
+    for pct, expected in ((2.34, 488.0), (7.66, 462.0)):
+        _, market, _ = today_strikes(
+            _chain(),
+            prices,
+            rv,
+            asset="spy",
+            rule=ByMoneyness(pct),
+            tenor_weeks=4.0,
+            r=0.04,
+            q=0.012,
+        )
+        assert market.strike == expected

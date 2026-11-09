@@ -1134,6 +1134,8 @@ def putlab_leaderboard(
         years=years,
         code_sha=code_sha,
         n_ranked=len(ranking.ranked),
+        chain_session=ranking.chain_session,
+        n_market_convexity=sum(r.market_convexity_ratio is not None for r in ranking.ranked),
     )
     return ranking
 
