@@ -72,4 +72,9 @@ test('splits the verdict by the regime each roll was entered in', async ({ page 
   await expect(mem.locator('.pl-mem-card', { hasText: 'calm' })).toContainText('−72%')
   await expect(mem.locator('.pl-mem-card', { hasText: 'crisis' })).toContainText('+186%')
   await expect(mem.locator('.pl-mem-card')).toHaveCount(3)
+  // Each % names its denominator and its basis: −72% is on eight $1,000 rolls,
+  // +186% on one, and both are model premiums.
+  await expect(mem.locator('.pl-mem-card', { hasText: 'calm' })).toContainText('bled here on $8,000 premium')
+  await expect(mem.locator('.pl-mem-card', { hasText: 'crisis' })).toContainText('net-paid here on $1,000 premium')
+  await expect(mem.getByTestId('verdict-rule')).toContainText('model-priced')
 })

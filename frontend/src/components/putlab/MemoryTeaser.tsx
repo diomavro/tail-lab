@@ -1,5 +1,5 @@
 import type { RegimeVerdictResponse, Verdict } from '../../api/client'
-import { fmtMult } from './format'
+import { fmtDollar, fmtMult } from './format'
 import type { ResourceState } from './PutLab'
 import { StatK } from './StatK'
 
@@ -80,7 +80,7 @@ export function MemoryTeaser({
             Split by the regime each roll was <em>entered</em> in — {copy.note}
           </p>
           <p className="pl-note" style={{ marginBottom: 14 }} data-testid="verdict-rule">
-            Source: this page&rsquo;s own backtest, {rule}.
+            Source: this page&rsquo;s own backtest, {rule}, {data.priced_from}-priced.
           </p>
           <div className="pl-mem">
             {data.slices.length === 0 && (
@@ -97,7 +97,9 @@ export function MemoryTeaser({
                 <div className={`pl-mem-v ${s.paid_off ? 'pl-pos' : 'pl-neg'}`}>
                   {pct(s.roi_on_premium)}
                 </div>
-                <div className="pl-micro">{s.paid_off ? 'net-paid here' : 'bled here'}</div>
+                <div className="pl-micro">
+                  {s.paid_off ? 'net-paid here' : 'bled here'} on {fmtDollar(s.total_premium)} premium
+                </div>
                 <div className="pl-readout" style={{ marginTop: 6 }}>
                   <span>
                     <StatK variant="readout" concept="hit_rate">

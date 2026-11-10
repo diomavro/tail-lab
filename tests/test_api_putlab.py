@@ -273,18 +273,29 @@ def test_sweep_404_unknown_asset(client: TestClient) -> None:
 def test_regime_verdict_returns_breakdown(client: TestClient) -> None:
     resp = client.get(
         "/api/putlab/regime-verdict",
-        params={"asset": "spy", "moneyness_pct": 5, "tenor_weeks": 4, "years": 1},
+        params={
+            "asset": "spy",
+            "moneyness_pct": 5,
+            "tenor_weeks": 4,
+            "years": 1,
+            "notional": 2500,
+        },
     )
     assert resp.status_code == 200
     body = resp.json()
     assert body["asset"] == "spy"
     assert body["verdict"] in {"confirmed", "regime_only", "failed", "untested"}
     assert body["rule_hash"].startswith("h-")
+    assert body["priced_from"] == "model"
     assert body["slices"]
+    # Each slice names its ROI's denominator: the requested budget per roll.
+    for s in body["slices"]:
+        assert s["total_premium"] == pytest.approx(2500 * s["n_cycles"])
     slice0 = body["slices"][0]
     assert {
         "regime",
         "n_cycles",
+        "total_premium",
         "roi_on_premium",
         "paid_off",
         "hit_rate",

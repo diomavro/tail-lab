@@ -415,6 +415,8 @@ export type Verdict = 'confirmed' | 'regime_only' | 'failed' | 'untested'
 export interface RegimeSlice {
   regime: 'calm' | 'elevated' | 'crisis'
   n_cycles: number
+  /** Premium paid across this regime's rolls: roi_on_premium's denominator. */
+  total_premium: number
   roi_on_premium: number
   paid_off: boolean
   /** Share of this regime's rolls whose payoff cleared the premium budget. */
@@ -429,6 +431,8 @@ export interface RegimeVerdictResponse {
   /** Null under a delta rule: hypothesis memory records moneyness rules only
    *  (docs/adr/0029), so a delta verdict has no stored identity. */
   rule_hash: string | null
+  /** The backtest's pricing basis; every slice ROI is on this basis. */
+  priced_from: 'model' | 'market'
   verdict: Verdict
   slices: RegimeSlice[]
 }
