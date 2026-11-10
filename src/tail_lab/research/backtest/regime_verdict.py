@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import datetime as dt
 from collections import defaultdict
+from typing import Literal
 
 import pandas as pd
 from pydantic import BaseModel
@@ -37,6 +38,9 @@ class RegimeSlice(BaseModel):
 
     regime: RegimeLabel
     n_cycles: int
+    #: Premium paid across this slice's rolls -- ``roi_on_premium``'s
+    #: denominator, so a reader can tell a % on one roll from one on forty.
+    total_premium: float
     roi_on_premium: float
     paid_off: bool
     hit_rate: float
@@ -58,6 +62,8 @@ class RegimeVerdict(BaseModel):
     #: recorder cites the one it used, never a re-read that a weekly ingest
     #: landing mid-request could change.
     dividend_snapshot: str | None = None
+    #: The backtest's pricing basis, echoed so every slice ROI can name it.
+    priced_from: Literal["model", "market"]
     verdict: Verdict
     slices: list[RegimeSlice]
 
@@ -108,6 +114,7 @@ def regime_breakdown(
             RegimeSlice(
                 regime=regime,
                 n_cycles=len(group),
+                total_premium=total_premium,
                 roi_on_premium=roi,
                 paid_off=paid,
                 hit_rate=wins / len(group),
@@ -160,6 +167,7 @@ def compute_regime_verdict(
         rule_spec=spec,
         rule_hash=None if spec is None else spec.rule_hash(),
         dividend_snapshot=result.dividend_snapshot,
+        priced_from=result.priced_from,
         verdict=verdict,
         slices=slices,
     )

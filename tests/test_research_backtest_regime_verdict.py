@@ -21,10 +21,10 @@ from tail_lab.research.backtest.regime_verdict import (
 from tail_lab.research.backtest.strike_rule import ByMoneyness
 
 
-def _cycle(entry: dt.date, net: float, notional: float = 1000.0) -> PutRollCycle:
-    # premium recovered by the breakdown as payoff - net - cost; with cost=0 here,
-    # payoff = notional + net.
-    payoff = notional + net
+def _cycle(entry: dt.date, net: float, notional: float = 1000.0, cost: float = 0.0) -> PutRollCycle:
+    # premium recovered by the breakdown as payoff - net - cost, so
+    # payoff = notional + net + cost.
+    payoff = notional + net + cost
     return PutRollCycle(
         entry_date=entry,
         expiry_date=entry,
@@ -33,7 +33,7 @@ def _cycle(entry: dt.date, net: float, notional: float = 1000.0) -> PutRollCycle
         sigma=0.3,
         premium=10.0,
         contracts=100.0,
-        cost=0.0,
+        cost=cost,
         payoff=payoff,
         net=net,
     )
@@ -57,6 +57,19 @@ def test_regime_only_when_paid_in_one_regime() -> None:
     assert by["calm"].paid_off is False
     # premium per cycle is the notional (1000); crisis roi = +800/1000.
     assert by["crisis"].roi_on_premium == pytest.approx(0.8)
+
+
+def test_slice_premium_is_the_budget_spent_excluding_brokerage() -> None:
+    # Two crisis rolls on $1,000 and $2,500 budgets, each paying $40 brokerage
+    # on top: the premium is $3,500 (not $3,580), and ROI is net / that.
+    timeline = _timeline({"2022-01-03": "crisis"})
+    cycles = [
+        _cycle(dt.date(2022, 1, 3), net=+700, cost=40.0),
+        _cycle(dt.date(2022, 1, 4), net=-2540, notional=2500.0, cost=40.0),
+    ]
+    (crisis,), _ = regime_breakdown(cycles, timeline)
+    assert crisis.total_premium == pytest.approx(3500.0)
+    assert crisis.roi_on_premium == pytest.approx(-1840.0 / 3500.0)
 
 
 def test_confirmed_when_paid_across_two_regimes() -> None:
@@ -138,6 +151,9 @@ def test_compute_regime_verdict_end_to_end(tmp_path: Path) -> None:
     # Cycles span multiple regimes given the oscillating VIX, so we get slices.
     assert rv.slices
     assert {s.regime for s in rv.slices} <= {"calm", "elevated", "crisis"}
+    assert rv.priced_from == "model"
+    for s in rv.slices:
+        assert s.total_premium == pytest.approx(1000.0 * s.n_cycles)
 
 
 def test_compute_regime_verdict_missing_vix_raises(tmp_path: Path) -> None:

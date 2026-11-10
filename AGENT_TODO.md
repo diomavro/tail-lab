@@ -1845,7 +1845,7 @@ wrong side of the join.
       its own item below rather than folded into this one, since it is a
       different shape of change.
 
-- [ ] **Thread `notional`/`total_premium` through the Bake-off and the
+- [~] **Thread `notional`/`total_premium` through the Bake-off and the
       regime-verdict slices, so their `roi_on_premium` figures can name a
       denominator too.** Carved out of the item above. `MetricScreenEntry`
       (`api/schemas.py` / `research/backtest/metric_screen.py`) aggregates
@@ -1857,6 +1857,21 @@ wrong side of the join.
       once at `RegimeVerdictResponse` level (mirroring
       `PutLabLeaderboardResponse.notional`) is enough for the frontend to
       compute `notional × n_cycles` per slice, no per-slice field needed.
+      **Regime-verdict half done 2026-11-10**, with a per-slice field after
+      all: `RegimeSlice.total_premium` is the premium `regime_breakdown`
+      already summed as the ROI's denominator (brokerage excluded), so it
+      needs no browser-side reconstruction and stays correct if a roll's
+      premium ever differs from the budget. `RegimeVerdict` also echoes the
+      backtest's `priced_from`. The Workspace's regime cards now read "bled
+      here on $8,000 premium", and the source line ends "model-priced".
+      The Bake-off's `regime_slices` carry the field too: there it is each
+      regime's share of the pooled basket, whose rolls `metric_screen`
+      rescales so the basket's premium is one `notional`. The Bake-off does
+      not render them.
+      **Still OPEN**: the Bake-off's entry-level `roi_on_premium`
+      (`MetricScreenEntry`) shows no denominator. By that rescaling it is
+      the request's `notional`, so echoing it is likely enough; check the
+      pooling before relying on that.
 
 **Why this is worth a slot despite being mostly known.** The platform's own
 specification already concludes that "the standalone answer is zero" and that
