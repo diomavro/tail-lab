@@ -1,0 +1,177 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Coverage network – client view</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&amp;display=swap">
+<style>
+body{margin:0;background:#F1F4F8;font-family:'IBM Plex Sans',system-ui,sans-serif;color:#121826}
+a{color:#1D4ED8}a:hover{color:#1E3A8A}
+button{font-family:inherit}
+</style>
+</head>
+<body>
+<div style="min-height: 1160px; background: #F1F4F8; font-family: 'IBM Plex Sans', system-ui, sans-serif; color: #121826">
+
+<header style="background: #0F1B33; color: #FFFFFF; padding: 0 32px; min-height: 64px; display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 16px">
+<div style="display: flex; align-items: center; gap: 24px; flex-wrap: wrap">
+<span style="font-weight: 700; font-size: 16px; letter-spacing: 0.02em">COVERAGE</span>
+<nav aria-label="Main" style="display: flex; gap: 4px; flex-wrap: wrap">
+<a href="#" style="color: #CBD5E1; text-decoration: none; font-size: 14px; padding: 10px 12px; border-radius: 6px">Clients</a>
+<a href="#" style="color: #FFFFFF; text-decoration: none; font-size: 14px; padding: 10px 12px; border-radius: 6px; background: #1E2D4D; font-weight: 500">Network</a>
+<a href="#" style="color: #CBD5E1; text-decoration: none; font-size: 14px; padding: 10px 12px; border-radius: 6px">Activity log</a>
+<a href="#" style="color: #CBD5E1; text-decoration: none; font-size: 14px; padding: 10px 12px; border-radius: 6px">Reports</a>
+</nav>
+</div>
+<span style="font-size: 12px; color: #CBD5E1; border: 1px solid #334155; border-radius: 999px; padding: 4px 10px">Sample data</span>
+</header>
+
+<main style="max-width: 1376px; margin: 0 auto; padding: 24px 32px 48px; display: flex; flex-direction: column; gap: 20px">
+
+<div style="display: flex; flex-wrap: wrap; align-items: flex-end; justify-content: space-between; gap: 16px">
+<div style="display: flex; flex-direction: column; gap: 4px">
+<span style="font-size: 13px; color: #475569">Clients / Industrials / Nordics</span>
+<h1 style="margin: 0; font-size: 28px; line-height: 36px; font-weight: 600">Halvorsen Industrial Group</h1>
+</div>
+<div style="display: flex; gap: 8px; flex-wrap: wrap">
+<button type="button" style="height: 44px; padding: 0 16px; border-radius: 8px; border: 1px solid #CBD5E1; background: #FFFFFF; color: #121826; font-size: 14px; font-weight: 500; cursor: pointer">Export</button>
+<button type="button" style="height: 44px; padding: 0 16px; border-radius: 8px; border: 1px solid #1E3A8A; background: #1E3A8A; color: #FFFFFF; font-size: 14px; font-weight: 500; cursor: pointer">Log interaction</button>
+</div>
+</div>
+
+<div style="background: #FFFFFF; border: 1px solid #E2E8F0; border-radius: 12px; padding: 12px 16px; display: flex; flex-wrap: wrap; align-items: center; gap: 16px">
+<label style="display: flex; align-items: center; gap: 8px; font-size: 13px; color: #475569">Period
+<select style="height: 40px; border-radius: 8px; border: 1px solid #CBD5E1; padding: 0 10px; font-family: inherit; font-size: 14px; color: #121826; background: #FFFFFF"><option>Last 90 days</option><option>Last 30 days</option><option>Last 12 months</option></select>
+</label>
+<div role="group" aria-label="Channels" style="display: flex; gap: 6px; flex-wrap: wrap">
+<button type="button" aria-pressed="true" style="height: 40px; padding: 0 14px; border-radius: 999px; border: 1px solid #1E3A8A; background: #EEF2FF; color: #1E3A8A; font-size: 13px; font-weight: 500">In person</button>
+<button type="button" aria-pressed="true" style="height: 40px; padding: 0 14px; border-radius: 999px; border: 1px solid #1E3A8A; background: #EEF2FF; color: #1E3A8A; font-size: 13px; font-weight: 500">Calls</button>
+<button type="button" aria-pressed="true" style="height: 40px; padding: 0 14px; border-radius: 999px; border: 1px solid #1E3A8A; background: #EEF2FF; color: #1E3A8A; font-size: 13px; font-weight: 500">Emails</button>
+</div>
+<label style="display: flex; align-items: center; gap: 8px; font-size: 14px; color: #121826; min-height: 44px"><input type="checkbox" style="width: 18px; height: 18px; accent-color: #C2410C">Key decision makers only</label>
+<label style="display: flex; align-items: center; gap: 8px; font-size: 13px; color: #475569; flex: 1 1 220px; justify-content: flex-end">
+<span>Find contact</span>
+<input type="search" placeholder="Name or title" style="height: 40px; width: 220px; max-width: 100%; border-radius: 8px; border: 1px solid #CBD5E1; padding: 0 12px; font-family: inherit; font-size: 14px">
+</label>
+</div>
+
+<div style="display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px">
+<div style="background: #FFFFFF; border: 1px solid #E2E8F0; border-radius: 12px; padding: 16px; display: flex; flex-direction: column; gap: 4px"><span style="font-size: 13px; color: #475569">Client contacts</span><span style="font-size: 26px; font-weight: 600">8</span></div>
+<div style="background: #FFFFFF; border: 1px solid #E2E8F0; border-radius: 12px; padding: 16px; display: flex; flex-direction: column; gap: 4px"><span style="font-size: 13px; color: #475569">Key decision makers</span><span style="font-size: 26px; font-weight: 600; color: #C2410C">3</span></div>
+<div style="background: #FFFFFF; border: 1px solid #E2E8F0; border-radius: 12px; padding: 16px; display: flex; flex-direction: column; gap: 4px"><span style="font-size: 13px; color: #475569">Touchpoints, last 90 days</span><span style="font-size: 26px; font-weight: 600">39</span></div>
+<div style="background: #FFFFFF; border: 1px solid #E2E8F0; border-radius: 12px; padding: 16px; display: flex; flex-direction: column; gap: 4px"><span style="font-size: 13px; color: #475569">Contacts with no touchpoint</span><span style="font-size: 26px; font-weight: 600; color: #B91C1C">1</span></div>
+</div>
+
+<div style="display: flex; flex-wrap: wrap; gap: 20px; align-items: flex-start">
+
+<section aria-label="Relationship network" style="flex: 999 1 560px; min-width: 0; background: #FFFFFF; border: 1px solid #E2E8F0; border-radius: 12px; padding: 20px; display: flex; flex-direction: column; gap: 16px">
+<div style="display: flex; flex-direction: column; gap: 2px">
+<h2 style="margin: 0; font-size: 18px; font-weight: 600">Relationship network</h2>
+<p style="margin: 0; font-size: 13px; color: #475569">Each line joins a banker to a client contact. Line style shows the strongest channel used in the period; thickness shows how many touchpoints.</p>
+</div>
+
+<div style="overflow-x: auto; border-radius: 10px">
+<div style="position: relative; width: 900px; height: 680px; margin: 0 auto">
+
+<div style="position: absolute; left: 24px; top: 24px; width: 200px; height: 632px; box-sizing: border-box; background: #F8FAFC; border: 1px solid #E2E8F0; border-radius: 16px"></div>
+<div style="position: absolute; left: 380px; top: 24px; width: 496px; height: 632px; box-sizing: border-box; background: #F8FAFC; border: 1px solid #E2E8F0; border-radius: 16px"></div>
+<div style="position: absolute; left: 40px; top: 38px; font-size: 12px; font-weight: 600; letter-spacing: 0.06em; color: #475569">OUR COVERAGE TEAM</div>
+<div style="position: absolute; left: 396px; top: 38px; font-size: 12px; font-weight: 600; letter-spacing: 0.06em; color: #475569">CLIENT CONTACTS</div>
+
+<svg role="img" aria-label="Interaction lines between bankers and client contacts" width="900" height="680" viewBox="0 0 900 680" style="position: absolute; left: 0; top: 0; width: 900px; height: 680px; overflow: visible; fill: none; stroke-linecap: round">
+<line x1="120" y1="120" x2="600" y2="90" stroke="#1E3A8A" stroke-width="4.5"></line>
+<line x1="120" y1="120" x2="520" y2="300" stroke="#1E3A8A" stroke-width="2.5"></line>
+<line x1="120" y1="250" x2="520" y2="300" stroke="#2563EB" stroke-width="4.5" stroke-dasharray="12 7" stroke-linecap="butt"></line>
+<line x1="120" y1="250" x2="800" y2="240" stroke="#1E3A8A" stroke-width="2.5"></line>
+<line x1="120" y1="250" x2="680" y2="490" stroke="#64748B" stroke-width="2.5" stroke-dasharray="1 6"></line>
+<line x1="120" y1="380" x2="480" y2="440" stroke="#2563EB" stroke-width="2.5" stroke-dasharray="12 7" stroke-linecap="butt"></line>
+<line x1="120" y1="380" x2="800" y2="420" stroke="#64748B" stroke-width="4.5" stroke-dasharray="1 8"></line>
+<line x1="120" y1="380" x2="520" y2="560" stroke="#64748B" stroke-width="1.5" stroke-dasharray="1 5"></line>
+<line x1="120" y1="510" x2="480" y2="440" stroke="#64748B" stroke-width="1.5" stroke-dasharray="1 5"></line>
+<line x1="120" y1="510" x2="520" y2="560" stroke="#64748B" stroke-width="2.5" stroke-dasharray="1 6"></line>
+</svg>
+
+<div style="position: absolute; left: 45px; top: 92px; width: 150px; display: flex; flex-direction: column; align-items: center; gap: 4px; text-align: center"><span style="width: 56px; height: 56px; border-radius: 50%; background: #1E3A8A; color: #FFFFFF; display: flex; align-items: center; justify-content: center; font-weight: 600; font-size: 15px; margin-bottom: 2px">MK</span><span style="font-size: 13px; font-weight: 600; line-height: 16px; background: #F8FAFC; padding: 0 4px">Marta Kovács</span><span style="font-size: 12px; line-height: 14px; color: #475569; background: #F8FAFC; padding: 0 4px">Managing Director</span></div>
+<div style="position: absolute; left: 45px; top: 222px; width: 150px; display: flex; flex-direction: column; align-items: center; gap: 4px; text-align: center"><span style="width: 56px; height: 56px; border-radius: 50%; background: #1E3A8A; color: #FFFFFF; display: flex; align-items: center; justify-content: center; font-weight: 600; font-size: 15px; margin-bottom: 2px">LB</span><span style="font-size: 13px; font-weight: 600; line-height: 16px; background: #F8FAFC; padding: 0 4px">Luc Bernard</span><span style="font-size: 12px; line-height: 14px; color: #475569; background: #F8FAFC; padding: 0 4px">Director</span></div>
+<div style="position: absolute; left: 45px; top: 352px; width: 150px; display: flex; flex-direction: column; align-items: center; gap: 4px; text-align: center"><span style="width: 56px; height: 56px; border-radius: 50%; background: #1E3A8A; color: #FFFFFF; display: flex; align-items: center; justify-content: center; font-weight: 600; font-size: 15px; margin-bottom: 2px">AW</span><span style="font-size: 13px; font-weight: 600; line-height: 16px; background: #F8FAFC; padding: 0 4px">Anna Weiss</span><span style="font-size: 12px; line-height: 14px; color: #475569; background: #F8FAFC; padding: 0 4px">Vice President</span></div>
+<div style="position: absolute; left: 45px; top: 482px; width: 150px; display: flex; flex-direction: column; align-items: center; gap: 4px; text-align: center"><span style="width: 56px; height: 56px; border-radius: 50%; background: #1E3A8A; color: #FFFFFF; display: flex; align-items: center; justify-content: center; font-weight: 600; font-size: 15px; margin-bottom: 2px">TR</span><span style="font-size: 13px; font-weight: 600; line-height: 16px; background: #F8FAFC; padding: 0 4px">Tomás Reyes</span><span style="font-size: 12px; line-height: 14px; color: #475569; background: #F8FAFC; padding: 0 4px">Associate, DCM</span></div>
+
+<div style="position: absolute; left: 525px; top: 58px; width: 150px; display: flex; flex-direction: column; align-items: center; gap: 4px; text-align: center"><span style="width: 64px; height: 64px; box-sizing: border-box; border-radius: 50%; border: 3px solid #C2410C; background: #FFF7ED; display: flex; align-items: center; justify-content: center; font-weight: 600; font-size: 16px; margin-bottom: 2px">IH</span><span style="font-size: 13px; font-weight: 600; line-height: 16px; background: #F8FAFC; padding: 0 4px">Ingrid Halvorsen</span><span style="font-size: 12px; line-height: 14px; color: #475569; background: #F8FAFC; padding: 0 4px">Chief Executive</span><span style="font-size: 11px; line-height: 13px; font-weight: 700; letter-spacing: 0.06em; color: #C2410C; background: #F8FAFC; padding: 0 4px">KEY DM</span></div>
+<div style="position: absolute; left: 445px; top: 268px; width: 150px; display: flex; flex-direction: column; align-items: center; gap: 4px; text-align: center"><span style="width: 64px; height: 64px; box-sizing: border-box; border-radius: 50%; border: 3px solid #C2410C; background: #FFF7ED; display: flex; align-items: center; justify-content: center; font-weight: 600; font-size: 16px; margin-bottom: 2px; box-shadow: 0 0 0 4px #FFFFFF, 0 0 0 7px #2563EB">PL</span><span style="font-size: 13px; font-weight: 600; line-height: 16px; background: #F8FAFC; padding: 0 4px">Peter Lund</span><span style="font-size: 12px; line-height: 14px; color: #475569; background: #F8FAFC; padding: 0 4px">Chief Financial Officer</span><span style="font-size: 11px; line-height: 13px; font-weight: 700; letter-spacing: 0.06em; color: #C2410C; background: #F8FAFC; padding: 0 4px">KEY DM</span></div>
+<div style="position: absolute; left: 725px; top: 208px; width: 150px; display: flex; flex-direction: column; align-items: center; gap: 4px; text-align: center"><span style="width: 64px; height: 64px; box-sizing: border-box; border-radius: 50%; border: 3px solid #C2410C; background: #FFF7ED; display: flex; align-items: center; justify-content: center; font-weight: 600; font-size: 16px; margin-bottom: 2px">SB</span><span style="font-size: 13px; font-weight: 600; line-height: 16px; background: #F8FAFC; padding: 0 4px">Sofia Berg</span><span style="font-size: 12px; line-height: 14px; color: #475569; background: #F8FAFC; padding: 0 4px">Group Treasurer</span><span style="font-size: 11px; line-height: 13px; font-weight: 700; letter-spacing: 0.06em; color: #C2410C; background: #F8FAFC; padding: 0 4px">KEY DM</span></div>
+
+<div style="position: absolute; left: 405px; top: 416px; width: 150px; display: flex; flex-direction: column; align-items: center; gap: 4px; text-align: center"><span style="width: 48px; height: 48px; box-sizing: border-box; border-radius: 50%; border: 1.5px solid #94A3B8; background: #FFFFFF; display: flex; align-items: center; justify-content: center; font-weight: 600; font-size: 14px; margin-bottom: 2px">JE</span><span style="font-size: 13px; font-weight: 600; line-height: 16px; background: #F8FAFC; padding: 0 4px">Jonas Ek</span><span style="font-size: 12px; line-height: 14px; color: #475569; background: #F8FAFC; padding: 0 4px">Head of FP&amp;A</span></div>
+<div style="position: absolute; left: 725px; top: 396px; width: 150px; display: flex; flex-direction: column; align-items: center; gap: 4px; text-align: center"><span style="width: 48px; height: 48px; box-sizing: border-box; border-radius: 50%; border: 1.5px solid #94A3B8; background: #FFFFFF; display: flex; align-items: center; justify-content: center; font-weight: 600; font-size: 14px; margin-bottom: 2px">ED</span><span style="font-size: 13px; font-weight: 600; line-height: 16px; background: #F8FAFC; padding: 0 4px">Elin Dahl</span><span style="font-size: 12px; line-height: 14px; color: #475569; background: #F8FAFC; padding: 0 4px">Deputy Treasurer</span></div>
+<div style="position: absolute; left: 605px; top: 466px; width: 150px; display: flex; flex-direction: column; align-items: center; gap: 4px; text-align: center"><span style="width: 48px; height: 48px; box-sizing: border-box; border-radius: 50%; border: 1.5px solid #94A3B8; background: #FFFFFF; display: flex; align-items: center; justify-content: center; font-weight: 600; font-size: 14px; margin-bottom: 2px">MN</span><span style="font-size: 13px; font-weight: 600; line-height: 16px; background: #F8FAFC; padding: 0 4px">Mats Nord</span><span style="font-size: 12px; line-height: 14px; color: #475569; background: #F8FAFC; padding: 0 4px">Head of M&amp;A</span></div>
+<div style="position: absolute; left: 445px; top: 536px; width: 150px; display: flex; flex-direction: column; align-items: center; gap: 4px; text-align: center"><span style="width: 48px; height: 48px; box-sizing: border-box; border-radius: 50%; border: 1.5px solid #94A3B8; background: #FFFFFF; display: flex; align-items: center; justify-content: center; font-weight: 600; font-size: 14px; margin-bottom: 2px">KL</span><span style="font-size: 13px; font-weight: 600; line-height: 16px; background: #F8FAFC; padding: 0 4px">Karin Lie</span><span style="font-size: 12px; line-height: 14px; color: #475569; background: #F8FAFC; padding: 0 4px">Investor Relations</span></div>
+<div style="position: absolute; left: 725px; top: 566px; width: 150px; display: flex; flex-direction: column; align-items: center; gap: 4px; text-align: center"><span style="width: 48px; height: 48px; box-sizing: border-box; border-radius: 50%; border: 2px dashed #B91C1C; background: #FFFFFF; color: #B91C1C; display: flex; align-items: center; justify-content: center; font-weight: 600; font-size: 14px; margin-bottom: 2px">OS</span><span style="font-size: 13px; font-weight: 600; line-height: 16px; background: #F8FAFC; padding: 0 4px">Olof Sand</span><span style="font-size: 12px; line-height: 14px; color: #B91C1C; background: #F8FAFC; padding: 0 4px">General Counsel · no contact</span></div>
+
+</div>
+</div>
+
+<div style="display: flex; flex-wrap: wrap; gap: 12px 28px; align-items: center; border-top: 1px solid #E2E8F0; padding-top: 14px; font-size: 13px; color: #334155">
+<span style="display: flex; align-items: center; gap: 8px"><span style="width: 16px; height: 16px; border-radius: 50%; background: #1E3A8A"></span>Banker</span>
+<span style="display: flex; align-items: center; gap: 8px"><span style="width: 16px; height: 16px; box-sizing: border-box; border-radius: 50%; border: 1.5px solid #94A3B8; background: #FFFFFF"></span>Contact</span>
+<span style="display: flex; align-items: center; gap: 8px"><span style="width: 18px; height: 18px; box-sizing: border-box; border-radius: 50%; border: 3px solid #C2410C; background: #FFF7ED"></span>Key decision maker</span>
+<span style="display: flex; align-items: center; gap: 8px"><span style="width: 16px; height: 16px; box-sizing: border-box; border-radius: 50%; border: 2px dashed #B91C1C"></span>No touchpoint in period</span>
+<span style="width: 1px; height: 20px; background: #E2E8F0"></span>
+<span style="display: flex; align-items: center; gap: 8px"><svg aria-hidden="true" width="36" height="8" viewBox="0 0 36 8"><line x1="2" y1="4" x2="34" y2="4" stroke="#1E3A8A" stroke-width="3" stroke-linecap="round"></line></svg>In person</span>
+<span style="display: flex; align-items: center; gap: 8px"><svg aria-hidden="true" width="36" height="8" viewBox="0 0 36 8"><line x1="0" y1="4" x2="36" y2="4" stroke="#2563EB" stroke-width="3" stroke-dasharray="10 6"></line></svg>Call</span>
+<span style="display: flex; align-items: center; gap: 8px"><svg aria-hidden="true" width="36" height="8" viewBox="0 0 36 8"><line x1="2" y1="4" x2="34" y2="4" stroke="#64748B" stroke-width="3" stroke-dasharray="1 6" stroke-linecap="round"></line></svg>Email</span>
+<span style="color: #475569">Thickness: thin 1–2 · medium 3–5 · thick 6+ touchpoints</span>
+</div>
+</section>
+
+<aside aria-label="Selected contact" style="flex: 1 1 340px; max-width: 420px; display: flex; flex-direction: column; gap: 20px">
+
+<section style="background: #FFFFFF; border: 1px solid #E2E8F0; border-radius: 12px; padding: 20px; display: flex; flex-direction: column; gap: 18px">
+<div style="display: flex; gap: 14px; align-items: center">
+<span style="width: 56px; height: 56px; flex: none; box-sizing: border-box; border-radius: 50%; border: 3px solid #C2410C; background: #FFF7ED; display: flex; align-items: center; justify-content: center; font-weight: 600; font-size: 16px">PL</span>
+<div style="display: flex; flex-direction: column; gap: 2px">
+<h2 style="margin: 0; font-size: 18px; font-weight: 600">Peter Lund</h2>
+<span style="font-size: 13px; color: #475569">Chief Financial Officer</span>
+<span style="align-self: flex-start; margin-top: 4px; font-size: 11px; font-weight: 700; letter-spacing: 0.06em; color: #9A3412; background: #FFEDD5; border-radius: 4px; padding: 2px 6px">KEY DECISION MAKER</span>
+</div>
+</div>
+
+<div style="display: flex; flex-direction: column; gap: 10px">
+<div style="display: flex; justify-content: space-between; align-items: baseline"><span style="font-size: 13px; color: #475569">Touchpoints, last 90 days</span><span style="font-size: 20px; font-weight: 600">9</span></div>
+<div style="display: grid; grid-template-columns: 72px minmax(0, 1fr) 20px; gap: 8px 10px; align-items: center; font-size: 13px">
+<span>In person</span><span style="height: 8px; border-radius: 4px; background: #E2E8F0; display: block"><span style="display: block; height: 8px; width: 33%; border-radius: 4px; background: #1E3A8A"></span></span><span style="text-align: right">3</span>
+<span>Calls</span><span style="height: 8px; border-radius: 4px; background: #E2E8F0; display: block"><span style="display: block; height: 8px; width: 44%; border-radius: 4px; background: #2563EB"></span></span><span style="text-align: right">4</span>
+<span>Emails</span><span style="height: 8px; border-radius: 4px; background: #E2E8F0; display: block"><span style="display: block; height: 8px; width: 22%; border-radius: 4px; background: #64748B"></span></span><span style="text-align: right">2</span>
+</div>
+</div>
+
+<div style="display: flex; flex-direction: column; gap: 8px">
+<span style="font-size: 12px; font-weight: 600; letter-spacing: 0.06em; color: #475569">COVERED BY</span>
+<div style="display: flex; justify-content: space-between; gap: 8px; font-size: 14px"><span><b style="font-weight: 600">Marta Kovács</b> · MD</span><span style="color: #475569">3 in person</span></div>
+<div style="display: flex; justify-content: space-between; gap: 8px; font-size: 14px"><span><b style="font-weight: 600">Luc Bernard</b> · Director</span><span style="color: #475569">4 calls, 2 emails</span></div>
+</div>
+
+<div style="display: flex; flex-direction: column; gap: 10px">
+<span style="font-size: 12px; font-weight: 600; letter-spacing: 0.06em; color: #475569">RECENT ACTIVITY</span>
+<ol style="margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 12px">
+<li style="display: grid; grid-template-columns: 52px minmax(0, 1fr); gap: 10px; font-size: 13px"><span style="color: #475569">12 Nov</span><span><b style="font-weight: 600">Lunch</b> with Marta Kovács · <span style="color: #1D4ED8">scheduled</span></span></li>
+<li style="display: grid; grid-template-columns: 52px minmax(0, 1fr); gap: 10px; font-size: 13px"><span style="color: #475569">28 Oct</span><span><b style="font-weight: 600">Call</b> with Luc Bernard · [TOPIC]</span></li>
+<li style="display: grid; grid-template-columns: 52px minmax(0, 1fr); gap: 10px; font-size: 13px"><span style="color: #475569">21 Oct</span><span><b style="font-weight: 600">Email</b> from Luc Bernard · [TOPIC]</span></li>
+<li style="display: grid; grid-template-columns: 52px minmax(0, 1fr); gap: 10px; font-size: 13px"><span style="color: #475569">14 Oct</span><span><b style="font-weight: 600">Meeting</b> with Marta Kovács · [TOPIC]</span></li>
+</ol>
+<a href="#" style="font-size: 14px; font-weight: 500; min-height: 44px; display: flex; align-items: center">View full history</a>
+</div>
+</section>
+
+<section style="background: #FFFFFF; border: 1px solid #E2E8F0; border-radius: 12px; padding: 20px; display: flex; flex-direction: column; gap: 14px">
+<h2 style="margin: 0; font-size: 16px; font-weight: 600">Coverage gaps</h2>
+<div style="display: flex; flex-direction: column; gap: 4px; padding: 12px; border-radius: 8px; background: #FEF2F2"><span style="font-size: 14px; font-weight: 600; color: #991B1B">No touchpoint in 90 days</span><span style="font-size: 13px; color: #334155">Olof Sand, General Counsel</span></div>
+<div style="display: flex; flex-direction: column; gap: 4px; padding: 12px; border-radius: 8px; background: #FFF7ED"><span style="font-size: 14px; font-weight: 600; color: #9A3412">Decision makers covered by one banker</span><span style="font-size: 13px; color: #334155">Ingrid Halvorsen (Marta Kovács only) · Sofia Berg (Luc Bernard only)</span></div>
+<div style="display: flex; flex-direction: column; gap: 4px; padding: 12px; border-radius: 8px; background: #F1F5F9"><span style="font-size: 14px; font-weight: 600; color: #1E293B">Email only</span><span style="font-size: 13px; color: #334155">Elin Dahl · Mats Nord · Karin Lie</span></div>
+</section>
+
+</aside>
+</div>
+</main>
+</div>
+</body>
+</html>
