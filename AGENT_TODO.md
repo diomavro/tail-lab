@@ -1883,7 +1883,11 @@ wrong side of the join.
       advisory: `regime_verdict.roll_premium` is the one definition of
       `payoff − net − cost`, used by `regime_breakdown` and
       `metric_screen._roi`. The baseline ROI is a mean of per-name ROIs and
-      has no single denominator, so it names none.
+      has no single denominator, so it names none. Still not handled: a screen
+      whose metric is undefined on every name picks nobody, scores ROI 0 and
+      tops the table and the verdict as the "winner". The sentence reads its
+      premium past it, but the ranking itself predates this change and is
+      unfixed.
 
 **Why this is worth a slot despite being mostly known.** The platform's own
 specification already concludes that "the standalone answer is zero" and that

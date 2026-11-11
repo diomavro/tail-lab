@@ -679,7 +679,7 @@ test('reads the winner as a screen chooser when lift is positive', async ({ page
 test('names the premium each basket spent, which ROI divides by and Bleed is in', async ({ page }) => {
   await runInSample(page)
   await expect(page.getByTestId('bake-rule')).toContainText(
-    'Each basket spends $1,000 of premium over the window, split equally across its top 5 names: ROI divides by it, and Bleed is in the same dollars.',
+    'Each basket spends $1,000 of premium over the window, split equally across the names it holds: ROI divides by it, and Bleed is in the same dollars.',
   )
 })
 
@@ -693,7 +693,32 @@ test('reads the basket premium from the response, not the default budget', async
     }),
   )
   await runInSample(page)
-  await expect(page.getByTestId('bake-rule')).toContainText('spends $2,500 of premium over the window, split equally across its top 3 names')
+  await expect(page.getByTestId('bake-rule')).toContainText('Each basket spends $2,500 of premium')
+})
+
+test('an empty basket tops the table on ROI 0 without its $0 becoming every basket’s premium', async ({ page }) => {
+  // A metric undefined on every name picks nobody: ROI 0 beats every real
+  // (negative) basket and sorts first, but it spent nothing.
+  const empty = { ...METRIC_SCREEN_WINNER.entries[6], top_k_assets: [], total_premium: 0, roi_on_premium: 0 }
+  await page.route((url) => url.pathname === '/api/putlab/metric-screen', (route) =>
+    route.fulfill({ json: { ...METRIC_SCREEN_WINNER, entries: [...METRIC_SCREEN_WINNER.entries.slice(0, 6), empty] } }),
+  )
+  await runInSample(page)
+  await expect(page.getByTestId('bake-rule')).toContainText('Each basket spends $1,000 of premium')
+})
+
+test('names no premium when no basket bought a put', async ({ page }) => {
+  await page.route((url) => url.pathname === '/api/putlab/metric-screen', (route) =>
+    route.fulfill({
+      json: {
+        ...METRIC_SCREEN_WINNER,
+        entries: METRIC_SCREEN_WINNER.entries.map((e) => ({ ...e, top_k_assets: [], total_premium: 0 })),
+      },
+    }),
+  )
+  await runInSample(page)
+  await expect(page.getByTestId('bake-rule')).toContainText('Screened at')
+  await expect(page.getByTestId('bake-rule')).not.toContainText('Each basket spends')
 })
 
 test('says it charges no commission and how many floored rolls it left out', async ({ page }) => {

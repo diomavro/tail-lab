@@ -12,6 +12,8 @@ import pytest
 from tail_lab.contracts.ohlcv import dataset_id
 from tail_lab.lake.store import DeltaLakeStore
 from tail_lab.research.backtest.metric_screen import (
+    _run_screen,
+    _Scored,
     _unfloored,
     compare_metric_screens,
 )
@@ -157,6 +159,26 @@ def test_each_basket_names_the_premium_its_roi_divides_by(tmp_path: Path) -> Non
         assert sum(sl.total_premium for sl in e.regime_slices) == pytest.approx(2500.0)
         net = sum(sl.roi_on_premium * sl.total_premium for sl in e.regime_slices)
         assert e.roi_on_premium * e.total_premium == pytest.approx(net)
+
+
+def test_a_basket_with_no_names_spent_no_premium() -> None:
+    """A metric undefined on every scored name picks nobody: its basket spent
+    nothing, so it names no premium rather than echoing the notional."""
+    name = _Scored("spy", {}, None, [_roll(0, floored=False, payoff=3.0)], 0.97, 0)
+    entry = _run_screen(
+        "downside_beta",
+        [None],
+        fragile_high=True,
+        scored=[name],
+        timeline=pd.Series(dtype=object),
+        notional=1000.0,
+        top_k=2,
+        baseline_roi=0.0,
+        years=1.0,
+    )
+    assert entry.top_k_assets == []
+    assert entry.total_premium == 0.0
+    assert entry.roi_on_premium == 0.0
 
 
 def test_downside_beta_basket_holds_the_wild_name(tmp_path: Path) -> None:

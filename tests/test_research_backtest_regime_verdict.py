@@ -72,6 +72,20 @@ def test_slice_premium_is_the_budget_spent_excluding_brokerage() -> None:
     assert crisis.roi_on_premium == pytest.approx(-1840.0 / 3500.0)
 
 
+def test_biggest_payoff_multiple_is_on_the_premium_not_the_brokerage() -> None:
+    # Three crisis rolls, each paying $40 brokerage on top of its budget:
+    # payoffs 0, 5,000 on $1,000 and 5,080 on $2,500. The biggest multiple is
+    # the middle roll's 5.0x (not 5,000 / 1,040), and it is not the first.
+    timeline = _timeline({"2022-01-03": "crisis"})
+    cycles = [
+        _cycle(dt.date(2022, 1, 3), net=-1040, cost=40.0),
+        _cycle(dt.date(2022, 1, 4), net=+3960, cost=40.0),
+        _cycle(dt.date(2022, 1, 5), net=+2540, notional=2500.0, cost=40.0),
+    ]
+    (crisis,), _ = regime_breakdown(cycles, timeline)
+    assert crisis.biggest_payoff_mult == pytest.approx(5.0)
+
+
 def test_confirmed_when_paid_across_two_regimes() -> None:
     timeline = _timeline({"2022-01-03": "crisis", "2022-01-04": "elevated"})
     cycles = [_cycle(dt.date(2022, 1, 3), +500), _cycle(dt.date(2022, 1, 4), +100)]
