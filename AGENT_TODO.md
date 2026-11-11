@@ -1845,7 +1845,7 @@ wrong side of the join.
       its own item below rather than folded into this one, since it is a
       different shape of change.
 
-- [~] **Thread `notional`/`total_premium` through the Bake-off and the
+- [x] **Thread `notional`/`total_premium` through the Bake-off and the
       regime-verdict slices, so their `roi_on_premium` figures can name a
       denominator too.** Carved out of the item above. `MetricScreenEntry`
       (`api/schemas.py` / `research/backtest/metric_screen.py`) aggregates
@@ -1872,6 +1872,18 @@ wrong side of the join.
       (`MetricScreenEntry`) shows no denominator. By that rescaling it is
       the request's `notional`, so echoing it is likely enough; check the
       pooling before relying on that.
+      **Bake-off half done 2026-11-11**: `MetricScreenEntry.total_premium`
+      is summed from the pooled rolls, not echoed. Checked the pooling: each
+      pick's unit rolls are rescaled so its premium is `notional / len(picks)`,
+      so the basket's is `notional` (0 with no picks), pinned at 2,500 by
+      `test_each_basket_names_the_premium_its_roi_divides_by`. The Bake-off's
+      rule line now says what each basket spent and that Bleed is in those
+      dollars. The e2e fixture's Bleed (−$4,216 on a $1,000 basket, which no
+      commission-free run can reach) is now −$436. Also folded in #213's
+      advisory: `regime_verdict.roll_premium` is the one definition of
+      `payoff − net − cost`, used by `regime_breakdown` and
+      `metric_screen._roi`. The baseline ROI is a mean of per-name ROIs and
+      has no single denominator, so it names none.
 
 **Why this is worth a slot despite being mostly known.** The platform's own
 specification already concludes that "the standalone answer is zero" and that

@@ -1,7 +1,7 @@
 import { expect, test, type Locator, type Page } from '@playwright/test'
 import { CONCEPTS } from '../src/content/concepts'
 import { apiRequests, mockPutLabApi } from './fixtures/mock-api'
-import { METRIC_SCREEN_WINNER } from './fixtures/putlab'
+import { METRIC_SCREEN_NO_WINNER, METRIC_SCREEN_WINNER } from './fixtures/putlab'
 import {
   BEYOND_VOL_NO_EVIDENCE,
   SIGNAL_TEST_BEATS,
@@ -641,7 +641,7 @@ test('carries the three fields the app was fetching and discarding', async ({ pa
   const winner = table.locator('tbody tr').first()
   await expect(winner).toContainText('0.34') // spearman_vs_payoff
   await expect(winner).toContainText('+1.6') // lift_vs_baseline, in points
-  await expect(winner).toContainText('−$4,216') // combined_max_drawdown
+  await expect(winner).toContainText('−$436') // combined_max_drawdown
 })
 
 test('distinguishes FDR-corrected significance from the uncorrected reading', async ({ page }) => {
@@ -674,6 +674,26 @@ test('reads the winner as a screen chooser when lift is positive', async ({ page
   await expect(verdict).toContainText('+1.6 points above')
   await expect(verdict).toContainText('all 35 names')
   await expect(verdict).toContainText('in sample')
+})
+
+test('names the premium each basket spent, which ROI divides by and Bleed is in', async ({ page }) => {
+  await runInSample(page)
+  await expect(page.getByTestId('bake-rule')).toContainText(
+    'Each basket spends $1,000 of premium over the window, split equally across its top 5 names: ROI divides by it, and Bleed is in the same dollars.',
+  )
+})
+
+test('reads the basket premium from the response, not the default budget', async ({ page }) => {
+  await page.route((url) => url.pathname === '/api/putlab/metric-screen', (route) =>
+    route.fulfill({
+      json: {
+        ...METRIC_SCREEN_NO_WINNER,
+        entries: METRIC_SCREEN_NO_WINNER.entries.map((e) => ({ ...e, total_premium: 2500 })),
+      },
+    }),
+  )
+  await runInSample(page)
+  await expect(page.getByTestId('bake-rule')).toContainText('spends $2,500 of premium over the window, split equally across its top 3 names')
 })
 
 test('says it charges no commission and how many floored rolls it left out', async ({ page }) => {

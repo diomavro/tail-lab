@@ -432,14 +432,17 @@ const screenEntry = (
   metric,
   label,
   top_k_assets: assets,
+  total_premium: NOTIONAL,
   roi_on_premium: roi,
   annualized_return: roi / 3.1,
   hit_rate: 0.1 + Math.abs(lift),
-  combined_max_drawdown: -4200 - Math.round(lift * 1000),
+  // No commission is charged, so the bleed cannot exceed the premium spent.
+  combined_max_drawdown: -420 - Math.round(lift * 1000),
   verdict,
   regime_slices: [
-    { regime: 'calm', n_cycles: 31, total_premium: 31 * NOTIONAL, roi_on_premium: roi - 0.08, paid_off: roi > 0.08, hit_rate: 0.1, biggest_payoff_mult: 6.2 },
-    { regime: 'crisis', n_cycles: 7, total_premium: 7 * NOTIONAL, roi_on_premium: roi + 0.31, paid_off: true, hit_rate: 0.43, biggest_payoff_mult: 14.8 },
+    // The pooled basket's premium is one NOTIONAL, so the slices split it.
+    { regime: 'calm', n_cycles: 31, total_premium: (31 / 38) * NOTIONAL, roi_on_premium: roi - 0.08, paid_off: roi > 0.08, hit_rate: 0.1, biggest_payoff_mult: 6.2 },
+    { regime: 'crisis', n_cycles: 7, total_premium: (7 / 38) * NOTIONAL, roi_on_premium: roi + 0.31, paid_off: true, hit_rate: 0.43, biggest_payoff_mult: 14.8 },
   ],
   spearman_vs_payoff: spearman,
   spearman_pvalue: pvalue,

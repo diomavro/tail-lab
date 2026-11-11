@@ -133,6 +133,32 @@ def test_bakeoff_covers_all_screens_and_is_sorted(tmp_path: Path) -> None:
         )
 
 
+def test_each_basket_names_the_premium_its_roi_divides_by(tmp_path: Path) -> None:
+    """Each pick's rolls are rescaled to an equal share of ``notional``, so a
+    basket's premium is the request's notional whatever its names or roll
+    counts: 2,500 here, not the default 1,000. Its regime slices split that
+    same premium, and ROI times it is the basket's net P&L."""
+    ingest = dt.date(2026, 3, 2)
+    store = _seeded_store(tmp_path, ingest)
+
+    cmp = compare_metric_screens(
+        store,
+        symbols=("spy", "wild", "calm", "mid"),
+        as_of=ingest,
+        rule=ByMoneyness(10.0),
+        tenor_weeks=4.0,
+        years=1.0,
+        top_k=2,
+        notional=2500.0,
+    )
+
+    for e in cmp.entries:
+        assert e.total_premium == pytest.approx(2500.0)
+        assert sum(sl.total_premium for sl in e.regime_slices) == pytest.approx(2500.0)
+        net = sum(sl.roi_on_premium * sl.total_premium for sl in e.regime_slices)
+        assert e.roi_on_premium * e.total_premium == pytest.approx(net)
+
+
 def test_downside_beta_basket_holds_the_wild_name(tmp_path: Path) -> None:
     """A magnitude metric like downside beta should rank the high-vol 'wild'
     name as fragile and put it in its top-k basket."""
