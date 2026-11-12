@@ -148,6 +148,8 @@ def test_backtest_cites_its_snapshots_and_the_running_code(
         store.bronze_snapshot_id(dataset_id("spy"), today),
     ]
     assert body["code_sha"] == "abc1234"
+    # A cache hit serves the stamped result, not the engine's bare one.
+    assert client.get("/api/putlab/backtest", params={"asset": "qqq", **params}).json() == body
     # SPY is its own benchmark: one read, cited once.
     spy = client.get("/api/putlab/backtest", params={"asset": "spy", **params}).json()
     assert spy["snapshot_ids"] == [store.bronze_snapshot_id(dataset_id("spy"), today)]

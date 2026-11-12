@@ -13,6 +13,7 @@ from __future__ import annotations
 import datetime as dt
 import itertools
 from pathlib import Path
+from typing import Any
 
 import numpy as np
 import pandas as pd
@@ -20,6 +21,7 @@ import pytest
 
 from tail_lab.contracts.ohlcv import dataset_id
 from tail_lab.lake.store import DeltaLakeStore
+from tail_lab.research.backtest import put_roll
 from tail_lab.research.backtest.brokerage import roll_cost
 from tail_lab.research.backtest.growth import time_average_growth
 from tail_lab.research.backtest.put_roll import (
@@ -27,6 +29,7 @@ from tail_lab.research.backtest.put_roll import (
     MIN_YEARS_FOR_ANNUALIZED,
     PREMIUM_FLOOR_FRAC,
     REALIZED_VOL_WINDOW,
+    PutBacktestResult,
     annualized_return,
     annualized_sharpe,
     annualized_so_far_curve,
@@ -731,7 +734,9 @@ def test_compute_put_backtest_merges_dividends_into_the_callers_basis(tmp_path: 
     assert result.dividend_snapshot is not None
 
 
-def test_compute_put_backtest_cites_the_snapshots_it_read(tmp_path: Path) -> None:
+def test_compute_put_backtest_cites_the_snapshots_it_read(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """docs/STANDARDS.md: the result carries the snapshot ids it read -- the
     as-of OHLCV snapshot (not a later one), then the dividend snapshot once
     one exists. ``code_sha`` stays the honest default: the route stamps it."""
@@ -760,6 +765,19 @@ def test_compute_put_backtest_cites_the_snapshots_it_read(tmp_path: Path) -> Non
     assert ohlcv2 != ohlcv1
     assert after.dividend_snapshot is not None
     assert after.snapshot_ids == [ohlcv2, after.dividend_snapshot]
+
+    # A market-priced run cites no dividend BASIS, but the snapshot was still
+    # read (the lookup runs before the roll), so it stays cited.
+    real_roll = put_roll.run_put_roll
+
+    def as_market(*args: Any, **kwargs: Any) -> PutBacktestResult:
+        res = real_roll(*args, **kwargs)
+        return res.model_copy(update={"priced_from": "market"})
+
+    monkeypatch.setattr(put_roll, "run_put_roll", as_market)
+    market = compute_put_backtest(store, as_of=day2, **kw)  # type: ignore[arg-type]
+    assert market.dividend_snapshot is None
+    assert market.snapshot_ids == after.snapshot_ids
 
 
 def test_each_roll_reports_the_time_it_was_priced_with() -> None:

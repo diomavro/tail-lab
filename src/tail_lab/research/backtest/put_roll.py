@@ -316,7 +316,9 @@ class PutBacktestResult(BaseModel):
     dividend_snapshot: str | None = None
     #: Every bronze snapshot the run read (the asset's price path, its panel
     #: prehistory when consulted, the dividend snapshot when one exists, and
-    #: the benchmark the API route adds), and the code that computed it.
+    #: the benchmark the API route adds), and the code that computed it. A
+    #: caller's quote source is not cited: no route passes one yet, and the
+    #: caller holds its snapshot.
     #: `docs/STANDARDS.md`: "a result without both is not trustworthy and
     #: should not be surfaced". ``code_sha`` is stamped on by the route, as
     #: for `ranking.UniverseRanking`, since ``research/`` may not read config.
