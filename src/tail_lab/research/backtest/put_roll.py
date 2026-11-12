@@ -36,7 +36,7 @@ from typing import TYPE_CHECKING, Literal
 
 import numpy as np
 import pandas as pd
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from tail_lab.contracts.ohlcv import dataset_id
 from tail_lab.lake.store import LakeStore
@@ -314,6 +314,14 @@ class PutBacktestResult(BaseModel):
     q_source: Literal["measured", "none"] | None = None
     #: The ``tiingo_eod`` snapshot the yields came from (``None`` without one).
     dividend_snapshot: str | None = None
+    #: Every bronze snapshot the run read (the asset's price path, its panel
+    #: prehistory when consulted, the dividend snapshot when one exists, and
+    #: the benchmark the API route adds), and the code that computed it.
+    #: `docs/STANDARDS.md`: "a result without both is not trustworthy and
+    #: should not be surfaced". ``code_sha`` is stamped on by the route, as
+    #: for `ranking.UniverseRanking`, since ``research/`` may not read config.
+    snapshot_ids: list[str] = Field(default_factory=list)
+    code_sha: str = "unknown"
     #: Share of model-priced rolls whose strike landed deeper than
     #: MODEL_PRICED_MAX_MONEYNESS_PCT -- where the premium is not a price
     #: (docs/adr/0018). A delta rule can land there in high vol without asking
@@ -1377,5 +1385,9 @@ def compute_put_backtest(
         update={
             "dividend_snapshot": None if market else dividends.snapshot_id,
             "dividend_basis": None if market else basis_view,
+            "snapshot_ids": [
+                *price_snapshot_ids(store, asset, as_of),
+                *([dividends.snapshot_id] if dividends.snapshot_id else []),
+            ],
         }
     )

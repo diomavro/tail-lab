@@ -11,6 +11,7 @@ import { useState } from 'react'
 import type { ConceptId } from '../../../content/concepts'
 import { AccuracyPanel } from '../AccuracyPanel'
 import { fmtDollar, fmtFixed, fmtMult, fmtPct, fmtPrice, signedPts } from '../format'
+import { provenanceLine } from '../provenance'
 import { Ledger } from '../Ledger'
 import { MemoryTeaser } from '../MemoryTeaser'
 import { NameCoverage } from '../NameCoverage'
@@ -260,6 +261,9 @@ function Result({
               inflated (see &ldquo;How the strike is chosen&rdquo;).
             </p>
           )}
+          <p className="pl-micro" data-testid="hero-provenance">
+            {provenanceLine(bt)}
+          </p>
         </div>
         <dl className="pl-brokenout">
           <div className="pl-kicker">Broken out</div>

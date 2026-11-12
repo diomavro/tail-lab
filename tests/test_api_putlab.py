@@ -128,6 +128,43 @@ def test_backtest_returns_full_result(client: TestClient) -> None:
     assert first["strike"] == pytest.approx(first["spot"] * 0.95)
 
 
+def test_backtest_cites_its_snapshots_and_the_running_code(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """docs/STANDARDS.md: the Workspace's headline result carries the bronze
+    snapshots it read -- the asset's own, then the SPY benchmark the route
+    reads for the hurdle -- and the deploy's code sha, in the payload."""
+    from tail_lab.config import Settings
+
+    store = app.dependency_overrides[putlab_get_lake_store]()
+    today = dt.datetime.now(dt.UTC).date()
+    _seed_ohlcv(store, "qqq", today)
+    monkeypatch.setattr(putlab_routes, "get_settings", lambda: Settings(code_sha="abc1234"))
+    params = {"notional": 1000, "moneyness_pct": 5, "tenor_weeks": 4, "years": 1}
+
+    body = client.get("/api/putlab/backtest", params={"asset": "qqq", **params}).json()
+    assert body["snapshot_ids"] == [
+        store.bronze_snapshot_id(dataset_id("qqq"), today),
+        store.bronze_snapshot_id(dataset_id("spy"), today),
+    ]
+    assert body["code_sha"] == "abc1234"
+    # SPY is its own benchmark: one read, cited once.
+    spy = client.get("/api/putlab/backtest", params={"asset": "spy", **params}).json()
+    assert spy["snapshot_ids"] == [store.bronze_snapshot_id(dataset_id("spy"), today)]
+
+
+def test_backtest_without_a_benchmark_cites_only_the_asset(client: TestClient) -> None:
+    """No SPY snapshot as of the date: no hurdle was read, so none is cited."""
+    store = app.dependency_overrides[putlab_get_lake_store]()
+    day = dt.datetime.now(dt.UTC).date() - dt.timedelta(days=30)
+    _seed_ohlcv(store, "qqq", day)  # the fixture's spy snapshot is dated today
+    body = client.get(
+        "/api/putlab/backtest", params={"asset": "qqq", "years": 1, "as_of": day.isoformat()}
+    ).json()
+    assert body["benchmark_annualized"] is None
+    assert body["snapshot_ids"] == [store.bronze_snapshot_id(dataset_id("qqq"), day)]
+
+
 def test_backtest_404_unknown_asset(client: TestClient) -> None:
     resp = client.get("/api/putlab/backtest", params={"asset": "nope"})
     assert resp.status_code == 404

@@ -148,6 +148,9 @@ export const BACKTEST: PutBacktestResponse = {
   priced_from: 'model',
   q_source: 'measured',
   dividend_snapshot: 'tiingo_eod@2026-08-15#3c9a1f0e5d7b2a64',
+  // SPY is its own benchmark, so its prices are cited once, then the yields.
+  snapshot_ids: ['ohlcv_spy@2026-08-21#7d41c09a2e6b5f13', 'tiingo_eod@2026-08-15#3c9a1f0e5d7b2a64'],
+  code_sha: 'ws12345abcdef',
   // The latest roll's yield, laid out to be redone by hand at that roll's
   // entry (2025-04-05, spot 494.40), from the four payments before it:
   // q = -ln(1 - 6.42 / 494.40) = 0.01307.

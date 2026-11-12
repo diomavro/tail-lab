@@ -89,6 +89,7 @@ from tail_lab.research.backtest.put_roll import (
     compute_put_backtest,
     load_asof_series,
     load_ohlcv_series,
+    price_snapshot_ids,
 )
 from tail_lab.research.backtest.quote_fills import panel_snapshot_id
 from tail_lab.research.backtest.ranking import BENCHMARK, UniverseRanking, rank_universe
@@ -432,8 +433,20 @@ def putlab_backtest(
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     # The S&P 500 buy-and-hold hurdle over the same window, so the tape can draw
     # the horizon at which the annualized-so-far line crossed the market. The
-    # pure engine has no benchmark; the route fills it before caching.
-    _, result.benchmark_annualized = _benchmark_buy_and_hold(store, resolved, years)
+    # pure engine has no benchmark; the route fills it before caching, and
+    # cites the benchmark's snapshots beside the asset's whenever it read them.
+    _, benchmark_annualized = _benchmark_buy_and_hold(store, resolved, years)
+    try:
+        benchmark_ids = price_snapshot_ids(store, BENCHMARK, resolved)
+    except LookupError:
+        benchmark_ids = []  # no benchmark read, so none to cite
+    result = result.model_copy(
+        update={
+            "benchmark_annualized": benchmark_annualized,
+            "snapshot_ids": list(dict.fromkeys([*result.snapshot_ids, *benchmark_ids])),
+            "code_sha": get_settings().code_sha,
+        }
+    )
     _BACKTEST_CACHE[cache_key] = (time.monotonic() + _BACKTEST_TTL_S, result)
     _log_run(
         store,

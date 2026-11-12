@@ -4,6 +4,7 @@ import { CONCEPTS, isConceptId } from '../../content/concepts'
 import { BeyondVolSentence, GammaChart } from './BeyondVol'
 import { ConceptInfo } from './ConceptInfo'
 import { fmtFixed, fmtP, fmtPct } from './format'
+import { provenanceLine } from './provenance'
 import { exBestText, pct1, sentenceText, STATUS_LABEL, STATUS_TAG, windowText } from './signalWording'
 import { Th } from './Th'
 
@@ -295,8 +296,7 @@ export function SignalPanel({
       {result.beyond_vol_mode === 'confirmatory' && result.beyond_vol != null && <GammaChart bv={result.beyond_vol} />}
       <SignalTable r={result} label={tableLabel} />
       <p className="pl-micro" data-testid="signal-provenance">
-        As of {result.as_of} · {result.snapshot_ids.length} bronze snapshot{result.snapshot_ids.length === 1 ? '' : 's'}{' '}
-        · {result.code_sha === 'unknown' ? 'code sha unknown' : result.code_sha.slice(0, 7)}
+        {provenanceLine(result)}
       </p>
     </div>
   )

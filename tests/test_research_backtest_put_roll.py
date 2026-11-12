@@ -731,6 +731,37 @@ def test_compute_put_backtest_merges_dividends_into_the_callers_basis(tmp_path: 
     assert result.dividend_snapshot is not None
 
 
+def test_compute_put_backtest_cites_the_snapshots_it_read(tmp_path: Path) -> None:
+    """docs/STANDARDS.md: the result carries the snapshot ids it read -- the
+    as-of OHLCV snapshot (not a later one), then the dividend snapshot once
+    one exists. ``code_sha`` stays the honest default: the route stamps it."""
+    from tail_lab.research import dividends
+    from tests.test_research_dividends import seed_tiingo_eod
+
+    dividends._memo.clear()
+    store = DeltaLakeStore(tmp_path)
+    day1, day2 = dt.date(2026, 10, 8), dt.date(2026, 10, 9)
+    _write_ohlcv(store, day1, np.linspace(100.0, 120.0, 400))
+    kw = dict(
+        asset="spy", notional=1000.0, rule=ByMoneyness(5.0), tenor_weeks=4.0, lookback_years=1.0
+    )
+    ohlcv1 = store.bronze_snapshot_id(dataset_id("spy"), day1)
+    before = compute_put_backtest(store, as_of=day1, **kw)  # type: ignore[arg-type]
+    assert before.snapshot_ids == [ohlcv1]
+    assert before.code_sha == "unknown"
+
+    _write_ohlcv(store, day2, np.linspace(100.0, 125.0, 401))
+    seed_tiingo_eod(store, ["spy"], day2, annual_yield=0.06)
+    dividends._memo.clear()
+    # As of day1 the later partitions are invisible, so they are not cited.
+    assert compute_put_backtest(store, as_of=day1, **kw).snapshot_ids == [ohlcv1]  # type: ignore[arg-type]
+    after = compute_put_backtest(store, as_of=day2, **kw)  # type: ignore[arg-type]
+    ohlcv2 = store.bronze_snapshot_id(dataset_id("spy"), day2)
+    assert ohlcv2 != ohlcv1
+    assert after.dividend_snapshot is not None
+    assert after.snapshot_ids == [ohlcv2, after.dividend_snapshot]
+
+
 def test_each_roll_reports_the_time_it_was_priced_with() -> None:
     # The Workspace prints T beside the premium; it must be the T the model
     # used (trading days / 252), or a reader repricing by hand is ~10% off.
