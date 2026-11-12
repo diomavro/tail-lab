@@ -13,6 +13,7 @@ from __future__ import annotations
 import datetime as dt
 import itertools
 from pathlib import Path
+from typing import Any
 
 import numpy as np
 import pandas as pd
@@ -20,6 +21,7 @@ import pytest
 
 from tail_lab.contracts.ohlcv import dataset_id
 from tail_lab.lake.store import DeltaLakeStore
+from tail_lab.research.backtest import put_roll
 from tail_lab.research.backtest.brokerage import roll_cost
 from tail_lab.research.backtest.growth import time_average_growth
 from tail_lab.research.backtest.put_roll import (
@@ -27,6 +29,7 @@ from tail_lab.research.backtest.put_roll import (
     MIN_YEARS_FOR_ANNUALIZED,
     PREMIUM_FLOOR_FRAC,
     REALIZED_VOL_WINDOW,
+    PutBacktestResult,
     annualized_return,
     annualized_sharpe,
     annualized_so_far_curve,
@@ -729,6 +732,52 @@ def test_compute_put_backtest_merges_dividends_into_the_callers_basis(tmp_path: 
     assert seen_q and all(q > 0.05 for q in seen_q)  # the caller's pricer, with q
     assert result.q_source == "measured"
     assert result.dividend_snapshot is not None
+
+
+def test_compute_put_backtest_cites_the_snapshots_it_read(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """docs/STANDARDS.md: the result carries the snapshot ids it read -- the
+    as-of OHLCV snapshot (not a later one), then the dividend snapshot once
+    one exists. ``code_sha`` stays the honest default: the route stamps it."""
+    from tail_lab.research import dividends
+    from tests.test_research_dividends import seed_tiingo_eod
+
+    dividends._memo.clear()
+    store = DeltaLakeStore(tmp_path)
+    day1, day2 = dt.date(2026, 10, 8), dt.date(2026, 10, 9)
+    _write_ohlcv(store, day1, np.linspace(100.0, 120.0, 400))
+    kw = dict(
+        asset="spy", notional=1000.0, rule=ByMoneyness(5.0), tenor_weeks=4.0, lookback_years=1.0
+    )
+    ohlcv1 = store.bronze_snapshot_id(dataset_id("spy"), day1)
+    before = compute_put_backtest(store, as_of=day1, **kw)  # type: ignore[arg-type]
+    assert before.snapshot_ids == [ohlcv1]
+    assert before.code_sha == "unknown"
+
+    _write_ohlcv(store, day2, np.linspace(100.0, 125.0, 401))
+    seed_tiingo_eod(store, ["spy"], day2, annual_yield=0.06)
+    dividends._memo.clear()
+    # As of day1 the later partitions are invisible, so they are not cited.
+    assert compute_put_backtest(store, as_of=day1, **kw).snapshot_ids == [ohlcv1]  # type: ignore[arg-type]
+    after = compute_put_backtest(store, as_of=day2, **kw)  # type: ignore[arg-type]
+    ohlcv2 = store.bronze_snapshot_id(dataset_id("spy"), day2)
+    assert ohlcv2 != ohlcv1
+    assert after.dividend_snapshot is not None
+    assert after.snapshot_ids == [ohlcv2, after.dividend_snapshot]
+
+    # A market-priced run cites no dividend BASIS, but the snapshot was still
+    # read (the lookup runs before the roll), so it stays cited.
+    real_roll = put_roll.run_put_roll
+
+    def as_market(*args: Any, **kwargs: Any) -> PutBacktestResult:
+        res = real_roll(*args, **kwargs)
+        return res.model_copy(update={"priced_from": "market"})
+
+    monkeypatch.setattr(put_roll, "run_put_roll", as_market)
+    market = compute_put_backtest(store, as_of=day2, **kw)  # type: ignore[arg-type]
+    assert market.dividend_snapshot is None
+    assert market.snapshot_ids == after.snapshot_ids
 
 
 def test_each_roll_reports_the_time_it_was_priced_with() -> None:

@@ -21,6 +21,14 @@ test('leads with the spread against the benchmark, not return on premium', async
   await expect(page.locator('.pl-hero-num')).not.toHaveText('−48%')
 })
 
+test('cites the snapshots and the code behind the headline', async ({ page }) => {
+  // docs/STANDARDS.md: a result without its snapshot ids and code sha should
+  // not be surfaced. The sha is cut to seven characters, as on the Screen.
+  await expect(page.getByTestId('hero-provenance')).toHaveText(
+    'As of 2026-08-21 · 2 bronze snapshots · ws12345',
+  )
+})
+
 test('breaks the spread into its two terms and its error bar', async ({ page }) => {
   const broken = page.locator('.pl-brokenout')
   await expect(broken.locator('.pl-brokenout-row', { hasText: 'This hedge' })).toContainText('−15.5%')

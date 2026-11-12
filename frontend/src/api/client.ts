@@ -177,6 +177,12 @@ export interface PutBacktestResponse {
   q_source: 'measured' | 'none' | null
   /** The tiingo_eod snapshot the yields came from; null without one. */
   dividend_snapshot: string | null
+  /** Every bronze snapshot the run read: the asset's prices (and its optionsDX
+   *  prehistory when consulted), the dividend snapshot when one exists, and
+   *  the benchmark's prices behind benchmark_annualized. */
+  snapshot_ids: string[]
+  /** The deploy's code sha; "unknown" off a deploy. */
+  code_sha: string
   dividend_basis: DividendBasis | null
   equity_curve: EquityPoint[]
   mtm_curve: EquityPoint[]

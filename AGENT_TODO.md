@@ -184,13 +184,6 @@ a large one strictly in order.
       hard-coded $78 to the rolls' sum, $128.80). Also found: Cts printed the
       API's raw float (`1383.310233241102` on live SPY); it is rounded to whole
       shares now.
-- [ ] **Flag memory nodes a sweep stopped refreshing** (advisory on #198).
-      `HypothesisMemory.record` upserts, so a node is current only while the
-      daily sweep still reaches its regime. A node whose regime a later run
-      stops hitting keeps its old numbers forever, and nothing detects it.
-      None exists today (2026-11-04, 74 of 140 rules). Make it a guarded
-      invariant: on the memory read path, mark a node whose `last_seen` is
-      older than its rule's latest run, rather than relying on a one-off count.
 - [ ] **README:35 ("the page never scrolls") contradicts ADR 0017** ("the page
       scrolls normally"), which is what is implemented. Dio to settle; the
       README is constitutional.
@@ -2839,6 +2832,52 @@ with the evidence — never the implementation.
       `PortfolioResult`'s precedent) and stamp `code_sha` on at the route via
       `model_copy`. Left as follow-ups rather than one large PR across six
       endpoints and their frontend surfaces.
+      **Re-checked 2026-11-12:** `/api/putlab/metric-screen` and the signal
+      test already carry both (`MetricScreenComparison`, `SignalTestResult`).
+      **`/api/putlab/backtest` done 2026-11-12**, the Workspace's headline:
+      `compute_put_backtest` fills `PutBacktestResult.snapshot_ids` from
+      `put_roll.price_snapshot_ids` plus the dividend snapshot, the route
+      appends the SPY benchmark's snapshots when it read them (deduplicated:
+      SPY is its own benchmark) and stamps `code_sha`. The hero prints
+      "As of … · N bronze snapshots · <sha>" (`hero-provenance`) through
+      a new shared `frontend/src/components/putlab/provenance.ts`, which the
+      signal test's line now uses too. **Still open:** `/api/putlab/accuracy`,
+      `/api/putlab/sweep`, `/api/putlab/regime-verdict`,
+      `/api/putlab/roll-schedule`, and `code_sha` on `PortfolioResult`. Also
+      move the Screen's two captions (`RankingStrip.tsx`, `rank-provenance`
+      and `rank-signal`) and the Bake-off's (`BakeOff.tsx`,
+      `bake-provenance`) onto `provenanceLine`. They were left alone here
+      because open PRs #212 and #214 edit those files.
+
+## Design-review advisories not yet acted on (logged 2026-11-12)
+
+Advisory notes from the PASS reviews of #207, #209, #210 and #213, re-checked
+on main on 2026-11-12. #209's `cadence.py` pointer and #206's notes are
+already handled. The duplicate "Flag memory nodes a sweep stopped
+refreshing" item was folded into "Make the memory's 'no stale node' a
+check", which already covered it.
+
+- [ ] **One premium definition (#213):** `regime_verdict.regime_breakdown`
+      writes `c.payoff - c.net - c.cost` three times in one loop (the sum,
+      the `mults` guard, the divisor). Fold it into the single helper the
+      #186 entry below asks for, so "premium excludes brokerage" is defined
+      once. Open PR #214 edits this file: wait for it to land.
+- [ ] **Bake-off `regime_slices.total_premium` has no reader (#213):** decide
+      whether the Bake-off ever shows per-regime slices when the
+      `MetricScreenEntry` denominator half is picked up (open PR #214). If it
+      never will, the field there is payload only.
+- [ ] **For the Screen's convexity column (#210; draft #212 is building it):**
+      call `strike_preview.convexity_ratio`, never re-derive it in
+      `ranking.py`. Keep `TAIL_DROP` a constant until a second caller needs
+      another drop. Trim the long "Today's strike done" note under "Score
+      strikes by convexity ratio" when that item closes.
+- [ ] **`data_quality` reads through `put_roll` (#209):** if
+      `load_ohlcv_prices`/`_close_series` gain more callers outside
+      `backtest/`, move them into a small shared reader module.
+- [ ] **Signal-test copy (#207):** "at its own realised vol" leaves out the
+      floor/cap clamp ("realised vol (clamped)" is exact). When the SPY leg
+      is market-priced, delete that sentence and its two `bakeoff.spec.ts`
+      assertions together.
 
 ## Design-review advisories not yet acted on (logged 2026-11-02)
 
