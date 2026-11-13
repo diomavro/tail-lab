@@ -2849,6 +2849,23 @@ with the evidence — never the implementation.
       `bake-provenance`) onto `provenanceLine`. They were left alone here
       because open PRs #212 and #214 edit those files.
 
+## Design-review advisories not yet acted on (logged 2026-11-13)
+
+Advisory notes from the PASS review of #215, re-checked on main on 2026-11-13.
+
+- [ ] **One benchmark read, cited where it is read (#215):** the backtest
+      route asks the lake about the benchmark twice. `_benchmark_buy_and_hold`
+      catches `LookupError` from `load_asof_series`, then the route catches it
+      again from `price_snapshot_ids` for the same `(BENCHMARK, resolved)`.
+      `walk_forward.py` cites the benchmark too. When a third caller needs
+      "benchmark hurdle plus its citations", have one research-layer function
+      return the ids with the numbers, so what was read and what is cited
+      cannot drift.
+- [ ] **Cite the quote snapshot when a route passes `quotes=` (#215):**
+      `PutBacktestResult`'s comment says a caller's quote source is not cited
+      because no route passes one. The route that first does must add the
+      quote snapshot to `snapshot_ids` in the same change.
+
 ## Design-review advisories not yet acted on (logged 2026-11-12)
 
 Advisory notes from the PASS reviews of #207, #209, #210 and #213, re-checked
@@ -3797,10 +3814,26 @@ serve; `docs/adr/0021` is why the risk-shaped one comes first.
       measurement on the forward `option_chain_snapshot` (Cboe `iv`,
       zero-fill already null), which needs a partition walk rather than one
       as-of read; (b) the VRP-adjusted Screen column above. The column needs
-      a per-name VRP that is current as of today. Of the Screen's 66 names
-      outside optionsDX, (a) covers the 20 in `DEFAULT_SNAPSHOT_SYMBOLS`; the
-      other 46 have no implied-vol source today, and the column must say so
-      rather than show a number.
+      a per-name VRP that is current as of today. Re-counted 2026-11-13: of the
+      Screen's 71 names outside optionsDX (`options_calendar.universe_symbols`,
+      75 in all), (a) covers the 33 in `DEFAULT_SNAPSHOT_SYMBOLS` (38 names).
+      The other 38 have no implied-vol source today, and the column must say
+      so rather than show a number.
+      **(a) done 2026-11-13:** `research/vrp.compute_chain_vrp` takes the
+      same measurement on the forward `option_chain_snapshot`. It walks every
+      session partition up to `as_of` (`read_bronze_history_as_of`, filtered
+      to the one name) and uses Cboe's `iv`, whose zero-fill is already null.
+      Each source checks the target against its own band: the chain keeps
+      0.40-1.05 x spot and up to 180 days, the panel 0.60-1.02 and up to 120.
+      Run it with `make vrp VRP_SOURCE=chain VRP_SYMBOLS='spy qqq ...'`. It has
+      not been run here (no lake on the runner), so **run it and record the
+      numbers in `docs/DISCOVERIES.md`**, next to the optionsDX ones. As of
+      2026-11-13 a 30-day target has closed windows only for sessions up to
+      about 2026-10-14, about 35 sessions per name. Those windows overlap
+      heavily and contain no crash, so the result is a level, not a test. The
+      14 names added in 2026-11 have no closed window yet. Still OPEN: (b) the
+      Screen column, which needs a VRP that is current today (the implied leg
+      from the newest session, and a realised estimate from before it).
 - [ ] **Put ratio backspread as a second structure** (§2.37, §4 Q8). Short
       one near-ATM put, long two further-OTM, often at zero or negative net
       debit — convexity kept, carry financed. It is the textbook answer to
