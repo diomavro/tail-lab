@@ -268,6 +268,9 @@ function InSampleBakeOff({ controls, topK }: { controls: PutLabControls; topK: n
 
   const winner = rows[0]
   const data = state.status === 'ready' ? state.data : null
+  // A screen whose metric is undefined on every name holds nobody and spent $0,
+  // so the premium is read off one that bought puts.
+  const basketPremium = rows.find((e) => e.top_k_assets.length > 0)?.total_premium
 
   return (
     <div>
@@ -323,6 +326,8 @@ function InSampleBakeOff({ controls, topK }: { controls: PutLabControls; topK: n
               ? `${deltaLabel(data.target_delta)}: every roll's strike is solved from its own 20-day realised vol, so the distance below spot moves with the market`
               : `${data.moneyness_pct}% below spot on every roll`}
             .
+            {basketPremium != null &&
+              ` Each basket spends ${fmtDollar(basketPremium)} of premium over the window, split equally across the names it holds: ROI divides by it, and Bleed is in the same dollars.`}
           </p>
           <p className="pl-note" data-testid="bake-costs">
             No commission is charged, and a roll whose model price fell under the premium floor is

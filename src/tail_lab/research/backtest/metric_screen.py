@@ -99,7 +99,7 @@ from tail_lab.research.backtest.ranking import (
     snapshot_ids_for,
     trailing_fragility,
 )
-from tail_lab.research.backtest.regime_verdict import RegimeSlice, regime_breakdown
+from tail_lab.research.backtest.regime_verdict import RegimeSlice, regime_breakdown, roll_premium
 from tail_lab.research.backtest.strike_rule import ByDelta, ByMoneyness, StrikeRule
 from tail_lab.research.dividends import dividend_lookup
 from tail_lab.research.regimes.timeline import compute_regime_timeline, load_vix_close
@@ -133,6 +133,11 @@ class MetricScreenEntry(BaseModel):
     metric: str
     label: str
     top_k_assets: list[str]
+    #: Premium the basket spent over the window, brokerage excluded:
+    #: ``roi_on_premium``'s denominator and the dollars ``combined_max_drawdown``
+    #: is in. Each pick's rolls are rescaled to an equal share of the
+    #: request's ``notional``, so this is that ``notional`` (0 with no picks).
+    total_premium: float
     roi_on_premium: float
     annualized_return: float  # geometric annualization of roi_on_premium over `years`
     hit_rate: float
@@ -220,9 +225,9 @@ class _Scored:
 
 
 def _roi(cycles: list[PutRollCycle]) -> float:
-    """Net ROI on premium over ``cycles``, net of brokerage: payoff - net -
-    cost is each roll's premium budget, so this is sum(net) / sum(budget)."""
-    total_premium = sum(c.payoff - c.net - c.cost for c in cycles)
+    """Net ROI on premium over ``cycles``, net of brokerage:
+    sum(net) / sum(roll_premium)."""
+    total_premium = sum(roll_premium(c) for c in cycles)
     return sum(c.net for c in cycles) / total_premium if total_premium > 0 else 0.0
 
 
@@ -293,8 +298,6 @@ def _run_screen(
 
     slices, verdict = regime_breakdown(pooled, timeline)
 
-    # payoff - net - cost == budget (net is net of brokerage); ROI is on that
-    # premium budget and net of brokerage (== sum(net)/budget).
     roi = _roi(pooled)
     hit_rate = sum(1 for c in pooled if c.net > 0.0) / len(pooled) if pooled else 0.0
 
@@ -317,6 +320,7 @@ def _run_screen(
         metric=metric,
         label=_LABELS[metric],
         top_k_assets=[p.symbol for p in picks],
+        total_premium=sum(roll_premium(c) for c in pooled),
         roi_on_premium=roi,
         annualized_return=annualized_return(roi, years),
         hit_rate=hit_rate,
