@@ -426,8 +426,10 @@ def test_the_summary_does_not_depend_on_row_order(ivs: list[float], seed: int) -
 # ---- the lake ---------------------------------------------------------------
 
 
-def _write_ohlcv(store: DeltaLakeStore, ingest: dt.date, prices: pd.DatetimeIndex) -> None:
-    closes = _zigzag(prices)
+def _write_ohlcv(
+    store: DeltaLakeStore, ingest: dt.date, prices: pd.DatetimeIndex, step: float = STEP
+) -> None:
+    closes = _zigzag(prices, step=step)
     store.write_bronze(
         "ohlcv_spy",
         ingest,
@@ -546,7 +548,9 @@ def test_compute_chain_vrp_never_reads_a_session_ingested_after_as_of(tmp_path: 
     counted, even though its option's window closes before ``as_of``-- the
     quote did not exist yet, as far as ``as_of`` knows. The as-of read, not
     the quote_date filter, is what excludes it here: the later partition
-    carries an EARLIER quote date (a late catch-up of a missed session)."""
+    carries an EARLIER quote date (a partition whose ingest date is later
+    than its quote date; the sweep's writer refuses one, the reader must not
+    rely on that)."""
     store = DeltaLakeStore(tmp_path)
     as_of = dt.date(2020, 4, 1)
     _write_ohlcv(store, dt.date(2020, 1, 1), DAYS)
@@ -570,3 +574,22 @@ def test_compute_chain_vrp_for_a_name_the_sweep_never_quoted_is_a_lookup_error(
     _write_session(store, DAYS[0], [{**_quote(DAYS[0], 28), "underlying": "QQQ"}])
     with pytest.raises(LookupError, match="no SPY put"):
         compute_chain_vrp(store, underlying="spy", as_of=as_of)
+
+
+def test_compute_chain_vrp_reads_ohlcv_as_of_and_waits_for_the_window(tmp_path: Path) -> None:
+    """The realised leg is point-in-time too. A later OHLCV partition with
+    twice the step is invisible, so the premium is ``iv - RV`` from the
+    earlier closes, not ``iv - 2 RV``. And a put whose window closes after
+    ``as_of`` is not measured, even though the partition read as of then
+    already runs past ``as_of`` (a vendor file dated ahead of its stamp)."""
+    store = DeltaLakeStore(tmp_path)
+    as_of = DAYS[60].date()
+    _write_ohlcv(store, DAYS[0].date(), DAYS)
+    _write_ohlcv(store, DAYS[-1].date(), DAYS, step=2 * STEP)
+    _write_session(store, DAYS[0], [{**_quote(DAYS[0], 28, iv=0.25), "underlying": "SPY"}])
+    _write_session(store, DAYS[50], [{**_quote(DAYS[50], 28, iv=0.90), "underlying": "SPY"}])
+
+    summary = compute_chain_vrp(store, underlying="spy", as_of=as_of)
+
+    assert [o.quote_date for o in summary.observations] == [DAYS[0].date()]
+    assert summary.mean_vrp == pytest.approx(0.25 - RV, rel=1e-12)
