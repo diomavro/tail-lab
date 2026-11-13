@@ -33,10 +33,16 @@ shares ~29 days with the next. The mean and median are fine; a t-statistic
 over these observations would understate its standard error by roughly the
 square root of the window length, so none is reported.
 
-**A target the panel cannot hold is refused, not approximated.** The panel
+**Two quote sources, one measurement.** :func:`compute_vrp` reads the
+optionsDX panel (2010-2023, vendor IV); :func:`compute_chain_vrp` reads the
+forward ``option_chain_snapshot`` (2026-08-26 onward, Cboe's own IV, its
+zero-fills already null). Both hand :func:`measure_vrp` the same five columns.
+
+**A target the source cannot hold is refused, not approximated.** The panel
 keeps strikes of 0.60-1.02 x spot and expiries up to 120 days
-(``contracts.optionsdx``). A target outside that is a ``ValueError``, and a
-quote date whose nearest put sits more than ``STRIKE_TOLERANCE`` from the
+(``contracts.optionsdx``); the chain 0.40-1.05 x spot and up to 180 days
+(``contracts.option_chain``). A target outside its source's band is a
+``ValueError``, and a quote date whose nearest put sits more than ``STRIKE_TOLERANCE`` from the
 target strike or ``TENOR_TOLERANCE_DAYS`` from the target tenor yields no
 observation -- otherwise a deep-OTM put's vol would be averaged into an
 "at-the-money" premium under the target's label.
@@ -51,8 +57,8 @@ import numpy as np
 import pandas as pd
 from pydantic import BaseModel
 
-from tail_lab.contracts.optionsdx import DATASET as OPTIONSDX_DATASET
-from tail_lab.contracts.optionsdx import MAX_DTE_DAYS, MONEYNESS_MAX, MONEYNESS_MIN, month_coverage
+from tail_lab.contracts import option_chain, optionsdx
+from tail_lab.contracts.optionsdx import month_coverage
 from tail_lab.lake.store import LakeStore
 from tail_lab.research.backtest.put_roll import load_asof_series
 
@@ -121,7 +127,7 @@ class VrpSummary(BaseModel):
     share_positive: float
     #: ``YYYYMM`` months inside the input quotes' span (after the ``as_of``
     #: cut) that hold no quote at all (``contracts.optionsdx.month_coverage``):
-    #: a gap in the vendor's coverage, never a calm month. A month whose quotes
+    #: a gap in the source's coverage, never a calm month. A month whose quotes
     #: all lacked an IV is NOT listed here; it shows as fewer observations.
     missing_months: list[str]
     observations: list[VrpObservation]
@@ -186,14 +192,9 @@ def measure_vrp(
 
     ``quotes`` carries ``QUOTE_COLUMNS``; ``closes`` is a date-indexed close
     series of the same underlying. Raises ``LookupError`` when no observation's
-    window has closed by ``as_of``, and ``ValueError`` for a target outside
-    what the panel holds.
+    window has closed by ``as_of``. Which targets a source can hold is the
+    caller's check (:func:`_require_target`).
     """
-    if not (MONEYNESS_MIN <= moneyness <= MONEYNESS_MAX and 0 < target_days <= MAX_DTE_DAYS):
-        raise ValueError(
-            f"target {moneyness} x spot, {target_days}d is outside the panel's "
-            f"{MONEYNESS_MIN}-{MONEYNESS_MAX} x spot, 1-{MAX_DTE_DAYS}d"
-        )
     cutoff = pd.Timestamp(as_of)
     known = closes[closes.index <= cutoff].sort_index()
     last_close = known.index.max() if len(known) else None
@@ -255,30 +256,39 @@ def measure_vrp(
     )
 
 
-def compute_vrp(
+def _require_target(
+    moneyness: float, target_days: int, *, source: str, lo: float, hi: float, max_days: int
+) -> None:
+    """``ValueError`` unless ``source`` retains strikes at ``moneyness x spot``
+    and expiries ``target_days`` out."""
+    if not (lo <= moneyness <= hi and 0 < target_days <= max_days):
+        raise ValueError(
+            f"target {moneyness} x spot, {target_days}d is outside the {source}'s "
+            f"{lo}-{hi} x spot, 1-{max_days}d"
+        )
+
+
+def _measure_against_ohlcv(
     store: LakeStore,
+    quotes: pd.DataFrame,
     *,
-    underlying: str,
+    name: str,
     as_of: dt.date,
-    moneyness: float = 1.0,
-    target_days: int = 30,
+    moneyness: float,
+    target_days: int,
 ) -> VrpSummary:
-    """:func:`measure_vrp` on the optionsDX panel and the name's OHLCV, both
-    read as of ``as_of``.
+    """:func:`measure_vrp` on ``quotes`` and the name's OHLCV, read as of
+    ``as_of``.
 
     The realised leg uses OHLCV ``close`` through the backtest's own price
     chokepoint (``put_roll.load_asof_series``), which is split-adjusted
     (``docs/DATA_CONTRACTS.md`` #12): returns are what a split must not break,
-    and the panel's as-traded ``spot`` would read NVDA's and TSLA's splits as
-    crashes. So the span is the two datasets' overlap (SPY: 2016-10 onward),
-    reported in the summary's ``start``/``end``; quotes before the first
-    close are cut here, so ``missing_months`` describes that span and not the
-    panel's earlier years. Raises ``LookupError`` when
-    either dataset is absent -- this is a hand-run measurement, not a surface
-    that must never go silent.
+    and a quote source's as-traded ``spot`` would read NVDA's and TSLA's
+    splits as crashes. So the span is the two datasets' overlap, reported in
+    the summary's ``start``/``end``; quotes before the first close are cut
+    here, so ``missing_months`` describes that span and not the quotes'
+    earlier years.
     """
-    name = underlying.lower()
-    quotes = store.read_bronze_columns_as_of(f"{OPTIONSDX_DATASET}_{name}", as_of, QUOTE_COLUMNS)
     closes, _ = load_asof_series(store, name, as_of)
     first_close = closes.index.min()
     overlapping = quotes[pd.to_datetime(quotes["quote_date"]) >= first_close]
@@ -289,4 +299,73 @@ def compute_vrp(
         as_of=as_of,
         moneyness=moneyness,
         target_days=target_days,
+    )
+
+
+def compute_vrp(
+    store: LakeStore,
+    *,
+    underlying: str,
+    as_of: dt.date,
+    moneyness: float = 1.0,
+    target_days: int = 30,
+) -> VrpSummary:
+    """:func:`measure_vrp` on the optionsDX panel and the name's OHLCV, both
+    read as of ``as_of`` (:func:`_measure_against_ohlcv`). SPY's overlap starts
+    2016-10. Raises ``LookupError`` when either dataset is absent -- this is a
+    hand-run measurement, not a surface that must never go silent.
+    """
+    _require_target(
+        moneyness,
+        target_days,
+        source="optionsDX panel",
+        lo=optionsdx.MONEYNESS_MIN,
+        hi=optionsdx.MONEYNESS_MAX,
+        max_days=optionsdx.MAX_DTE_DAYS,
+    )
+    name = underlying.lower()
+    quotes = store.read_bronze_columns_as_of(f"{optionsdx.DATASET}_{name}", as_of, QUOTE_COLUMNS)
+    return _measure_against_ohlcv(
+        store, quotes, name=name, as_of=as_of, moneyness=moneyness, target_days=target_days
+    )
+
+
+def compute_chain_vrp(
+    store: LakeStore,
+    *,
+    underlying: str,
+    as_of: dt.date,
+    moneyness: float = 1.0,
+    target_days: int = 30,
+) -> VrpSummary:
+    """:func:`measure_vrp` on the forward-collected put chain and the name's
+    OHLCV, both read as of ``as_of``.
+
+    The chain is one partition per session, so this reads EVERY partition
+    ingested on or before ``as_of`` (``read_bronze_history_as_of``) -- the
+    newest alone holds one day. The implied leg is Cboe's own ``iv``; the
+    adapter maps its zero-fill to null, so :func:`select_puts` skips it the
+    way it skips a blank vendor IV. The first session is 2026-08-26, so a
+    30-day target has its first closed window in late September, and a name
+    added to the sweep later starts later. Raises ``LookupError`` when the
+    chain holds no partition yet, when no session quoted ``underlying`` (or
+    no window has closed), or when its OHLCV is absent.
+    """
+    _require_target(
+        moneyness,
+        target_days,
+        source="option chain",
+        lo=option_chain.MONEYNESS_MIN,
+        hi=option_chain.MONEYNESS_MAX,
+        max_days=option_chain.MAX_TENOR_DAYS,
+    )
+    name = underlying.lower()
+    quotes = store.read_bronze_history_as_of(
+        option_chain.DATASET,
+        as_of,
+        columns=QUOTE_COLUMNS,
+        equals={"underlying": name.upper()},
+    )
+    return _measure_against_ohlcv(
+        store, quotes, name=name, as_of=as_of, moneyness=moneyness, target_days=target_days
     )

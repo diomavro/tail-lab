@@ -42,7 +42,7 @@ help:
 	@echo "  ingest-kaggle-spy  Hand-downloaded Kaggle SPY year -> data/vendor parquet (YEAR=2023; OFFLINE cross-check, never served)"
 	@echo "  kaggle-spy-vs-optionsdx  2023 vendor-disagreement report, Kaggle vs optionsDX (read-only; skips if either is absent)"
 	@echo "  delta-strike-gap  Model (realised-vol) vs market (implied-vol) delta strikes from the optionsDX corpus (SYMBOLS='spy qqq' by default; read-only, offline; docs/adr/0029)"
-	@echo "  vrp          Implied minus subsequently realised vol per name and year, optionsDX x OHLCV (read-only; VRP_SYMBOLS='spy qqq nvda tsla', VRP_MONEYNESS=1.0, VRP_DAYS=30)"
+	@echo "  vrp          Implied minus subsequently realised vol per name and year, optionsDX or forward chain x OHLCV (read-only; VRP_SYMBOLS='spy qqq nvda tsla', VRP_MONEYNESS=1.0, VRP_DAYS=30, VRP_SOURCE=optionsdx|chain)"
 	@echo "  pitch-evidence-current  Fail unless HEAD contains origin/main and pitch_evidence.json names its src/ tree and script blob (run before merge)"
 	@echo "  pitch-evidence  Real-quote put study -> frontend/src/content/pitch_evidence.json, the Pitch tab's figures (reads the lake; AS_OF=YYYY-MM-DD)"
 	@echo "  api          Run FastAPI on :8000 with auto-reload"
@@ -209,8 +209,9 @@ delta-strike-gap:
 VRP_SYMBOLS ?= spy qqq nvda tsla
 VRP_MONEYNESS ?= 1.0
 VRP_DAYS ?= 30
+VRP_SOURCE ?= optionsdx
 vrp:
-	env -u PYTHONPATH $(VENV)/bin/python scripts/vrp.py $(VRP_SYMBOLS) --moneyness $(VRP_MONEYNESS) --days $(VRP_DAYS)
+	env -u PYTHONPATH $(VENV)/bin/python scripts/vrp.py $(VRP_SYMBOLS) --moneyness $(VRP_MONEYNESS) --days $(VRP_DAYS) --source $(VRP_SOURCE)
 
 # Reads the lake (the optionsDX panels, VIX, rates, Cboe indices) as of AS_OF and
 # rewrites the Pitch tab's aggregate figures. Never writes to the lake; commit
