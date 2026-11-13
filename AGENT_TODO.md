@@ -3814,10 +3814,11 @@ serve; `docs/adr/0021` is why the risk-shaped one comes first.
       measurement on the forward `option_chain_snapshot` (Cboe `iv`,
       zero-fill already null), which needs a partition walk rather than one
       as-of read; (b) the VRP-adjusted Screen column above. The column needs
-      a per-name VRP that is current as of today. Of the Screen's 66 names
-      outside optionsDX, (a) covers the 20 in `DEFAULT_SNAPSHOT_SYMBOLS`; the
-      other 46 have no implied-vol source today, and the column must say so
-      rather than show a number.
+      a per-name VRP that is current as of today. Re-counted 2026-11-13: of the
+      Screen's 71 names outside optionsDX (`options_calendar.universe_symbols`,
+      75 in all), (a) covers the 33 in `DEFAULT_SNAPSHOT_SYMBOLS` (38 names).
+      The other 38 have no implied-vol source today, and the column must say
+      so rather than show a number.
       **(a) done 2026-11-13:** `research/vrp.compute_chain_vrp` takes the
       same measurement on the forward `option_chain_snapshot`. It walks every
       session partition up to `as_of` (`read_bronze_history_as_of`, filtered

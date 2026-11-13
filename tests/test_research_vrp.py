@@ -518,6 +518,29 @@ def test_compute_chain_vrp_walks_every_session_partition(tmp_path: Path) -> None
     assert summary.underlying == "SPY"
 
 
+def test_compute_chain_vrp_measures_the_requested_target(tmp_path: Path) -> None:
+    """A 0.5 x spot, 60-day target -- outside the panel's band, inside the
+    chain's -- picks that put over an at-the-money 28-day decoy, and the
+    summary is labelled with the target asked for."""
+    store = DeltaLakeStore(tmp_path)
+    as_of = dt.date(2020, 7, 1)
+    _write_ohlcv(store, as_of, DAYS)
+    _write_session(
+        store,
+        DAYS[0],
+        [
+            {**_quote(DAYS[0], 28, iv=0.20), "underlying": "SPY"},
+            {**_quote(DAYS[0], 60, strike=50.0, iv=0.70), "underlying": "SPY"},
+        ],
+    )
+
+    summary = compute_chain_vrp(store, underlying="spy", as_of=as_of, moneyness=0.5, target_days=60)
+
+    assert [o.implied_vol for o in summary.observations] == [0.70]
+    assert (summary.moneyness, summary.target_days) == (0.5, 60)
+    assert summary.mean_vrp == pytest.approx(0.70 - RV, rel=1e-12)
+
+
 def test_compute_chain_vrp_never_reads_a_session_ingested_after_as_of(tmp_path: Path) -> None:
     """A partition written after ``as_of`` is invisible: its session is not
     counted, even though its option's window closes before ``as_of``-- the
