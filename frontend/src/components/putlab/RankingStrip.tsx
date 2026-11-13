@@ -4,7 +4,7 @@ import { UNKNOWN_Q_CAUSES } from '../../content/concepts'
 import { BestReturnTable } from './BestReturnTable'
 import { type BestRow, bestReturnRows, VERDICT_TITLE } from './rankOrder'
 import { ConceptInfo } from './ConceptInfo'
-import { fmtFixed, fmtMult, fmtPct, fmtPrice } from './format'
+import { fmtFixed, fmtMult, fmtPct, fmtPrice, fmtYears } from './format'
 import type { ResourceState } from './PutLab'
 import { biggestBarWidth, fragilityRank, lossHeat } from './rankShade'
 import { cadenceText, sentenceText, STATUS_LABEL } from './signalWording'
@@ -339,6 +339,8 @@ function FragilityTable({
   // and the column appears the day a row is market-priced.
   const anyMarket = ranked.some((r) => r.priced_from === 'market')
   const anyBestMarket = ranked.some((r) => r.best_priced_from === 'market')
+  // The ask column is the one screened figure a listed quote can set today.
+  const anyAsk = ranked.some((r) => r.market_convexity_ratio != null)
   const screened = `At ${data.moneyness_pct}% · ${data.tenor_weeks}w`
   const shade = Object.fromEntries(
     METRICS.map((m) => [m.key, fragilityRank(ranked.map((r) => r[m.key]), data.fragile_high[m.key] ?? true)]),
@@ -359,6 +361,11 @@ function FragilityTable({
             </Th>
             <Th concept="strike_rule" colSpan={anyMarket ? 6 : 5} className="pl-rank-group">
               {screened}
+            </Th>
+            {/* Today's price of the screened strike, not a backtest figure:
+                its own group, after the strategies. */}
+            <Th concept="convexity_ratio" className="pl-rank-group">
+              Today
             </Th>
             <Th concept="fragility_score" colSpan={6} className="pl-rank-group">
               Fragility measures
@@ -403,6 +410,9 @@ function FragilityTable({
                 Basis
               </Th>
             )}
+            <Th concept="convexity_ratio" className="num pl-rank-group-start">
+              Repays
+            </Th>
             {METRICS.map((m) => (
               <Th key={m.key} concept={m.key} className="num">
                 {m.head}
@@ -503,6 +513,13 @@ function FragilityTable({
                   <span className={BASIS_TAG[r.priced_from]}>{BASIS_LABEL[r.priced_from]}</span>
                 </td>
               )}
+              {/* Two figures, never pooled: the ask on top, the model beneath. */}
+              <td className="num nowrap pl-rank-group-start">
+                <span data-testid={`ask-repays-${r.asset}`}>{fmtYears(r.market_convexity_ratio)}</span>
+                <div className="pl-micro dim" data-testid={`model-repays-${r.asset}`}>
+                  {fmtYears(r.convexity_ratio)}
+                </div>
+              </td>
               {METRICS.map((m) => {
                 const rank = shade[m.key][i]
                 return (
@@ -531,7 +548,17 @@ function FragilityTable({
         Stronger shade = more fragile on that measure (each column ranked on its own
         {fragileLow.length > 0 && `; ${fragileLow.join(' and ')} ${fragileLow.length === 1 ? 'is' : 'are'} fragile when low`}). Magenta = a loss, deeper for a larger one. Biggest-payoff bars are on a log scale.
         {!anyMarket && !anyBestMarket && (
-          <span data-testid="rank-model-priced"> Every figure is model-priced, not quoted.</span>
+          <span data-testid="rank-model-priced">
+            {anyAsk ? ' Every figure but the ask in Repays is model-priced.' : ' Every figure is model-priced, not quoted.'}
+          </span>
+        )}
+        {anyAsk && data.chain_session != null && (
+          <span data-testid="rank-ask-source">
+            {' '}
+            Repays: years of premium one 20% fall repays, at the listed ask of the strike nearest{' '}
+            {data.moneyness_pct}% below spot in the {data.chain_session} chain (a dash: no usable quote), and beneath it
+            at the model price.
+          </span>
         )}
         {METRICS.map((m) => (
           <span key={m.key} className="pl-rank-legend-item">

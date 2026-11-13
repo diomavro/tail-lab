@@ -7,7 +7,7 @@ import {
   type StrikePreview,
 } from '../../api/client'
 import { ConceptInfo } from './ConceptInfo'
-import { fmtPrice } from './format'
+import { fmtPrice, fmtYears as years } from './format'
 import { deltaLabel } from './types'
 import { Th } from './Th'
 
@@ -27,8 +27,6 @@ const pct = (x: number, digits = 1) => `${x.toFixed(digits)}%`
 /** A distance from spot in words: a strike near 0.50 delta sits ABOVE spot. */
 const fromSpot = (x: number, digits = 1) =>
   x >= 0 ? `${x.toFixed(digits)}% below spot` : `${(-x).toFixed(digits)}% above spot`
-/** A convexity ratio, in years of premium. */
-const years = (x: number | null | undefined) => (x == null ? '—' : `${x.toFixed(1)} yrs`)
 
 /* Previews keyed by what they depend on, kept across re-runs (the section
  * remounts on every one) so a tab of "Rolled over" changes refetches nothing. */
@@ -39,6 +37,7 @@ const STATUS_TEXT: Record<Exclude<StrikePreview['market_status'], 'quoted'>, str
   not_collected: 'not collected: the daily chain sweep does not cover this name',
   no_expiry: 'no listed expiry reaches this tenor in the latest chain',
   no_iv: 'the exchange published no implied vol at that expiry',
+  no_strike: 'no listed strike near that distance below spot',
 }
 
 function regimeOn(date: string, segments: RegimeSegment[]): RegimeLabel | null {
@@ -168,7 +167,7 @@ export function StrikeBuild({
               <th scope="row" className="pl-explain-rowhead" data-noexplain="row-label">
                 Market, implied vol
               </th>
-              <td className="num">{preview?.market ? pct(preview.market.iv * 100) : '—'}</td>
+              <td className="num">{preview?.market?.iv != null ? pct(preview.market.iv * 100) : '—'}</td>
               <td className="num">{preview?.market ? fmtPrice(preview.market.strike) : '—'}</td>
               <td className="num">{preview?.market ? fromSpot(preview.market.moneyness_pct) : '—'}</td>
             </tr>
@@ -227,7 +226,7 @@ export function StrikeBuild({
           {preview.model?.vol_date}): the two rows are not the same day.
         </p>
       )}
-      {preview?.market && (
+      {preview?.market?.delta != null && (
         <p className="pl-note">
           The market row is the listed put whose delta &mdash; this formula on its own implied vol &mdash; is
           nearest the target, at the first expiry {bt.tenor_weeks} week{bt.tenor_weeks === 1 ? '' : 's'} or more

@@ -18,12 +18,14 @@ import pytest
 
 from tail_lab.research.backtest.put_roll import trailing_realized_vol
 from tail_lab.research.backtest.strike_preview import (
+    MAX_STRIKE_MISS_PCT,
     TAIL_DROP,
     StrikePreview,
     convexity_ratio,
     preview_strikes,
+    today_strikes,
 )
-from tail_lab.research.backtest.strike_rule import put_delta
+from tail_lab.research.backtest.strike_rule import ByMoneyness, put_delta
 
 SESSION = dt.date(2026, 10, 9)
 
@@ -120,8 +122,9 @@ def test_no_expiry_long_enough_is_named() -> None:
     assert (p.market, p.market_status) == (None, "no_expiry")
 
 
-def test_zero_filled_iv_is_never_priced() -> None:
-    p = _preview(_chain(iv=None))
+@pytest.mark.parametrize("iv", [None, 0.0])
+def test_zero_filled_iv_is_never_priced(iv: float | None) -> None:
+    p = _preview(_chain(iv=iv))
     assert (p.market, p.market_status) == (None, "no_iv")
 
 
@@ -215,3 +218,94 @@ def test_the_model_side_scores_the_black_scholes_price_on_the_backtests_clock() 
     assert model.premium == pytest.approx(bs, rel=1e-9)
     # 20 trading days of 252: the roll count is the backtest's, not twelve.
     assert model.convexity_ratio == pytest.approx(max(k - 0.8 * s, 0.0) / (bs * 252 / 20), rel=1e-9)
+
+
+def test_a_moneyness_rule_takes_the_listed_strike_nearest_its_distance() -> None:
+    # 7% below the chain's 500 spot is 465: listed (400..499 step 1), so the
+    # market strike is exactly 465 whatever its delta; the model strike is 7%
+    # below the latest close, independent of vol.
+    prices, rv = _prices()
+    model, market, status = today_strikes(
+        _chain(ask=1.6),
+        prices,
+        rv,
+        asset="spy",
+        rule=ByMoneyness(7.0),
+        tenor_weeks=4.0,
+        r=0.04,
+        q=0.012,
+    )
+    assert status == "quoted"
+    assert market.strike == 465.0
+    assert market.moneyness_pct == pytest.approx(7.0)
+    # Spot 500 falls to 400: 65 of intrinsic over 1.6 x 365/30 a year.
+    assert market.convexity_ratio == pytest.approx(65.0 / (1.6 * 365 / 30))
+    assert model.strike == pytest.approx(prices.iloc[-1] * 0.93)
+
+
+def test_a_moneyness_rule_between_listed_strikes_takes_the_nearer() -> None:
+    # 2.34% below 500 is 488.3 and 7.66% is 461.7 -- neither is listed (whole
+    # dollars). Nearest is 488 for one and 462 for the other: one rounds down,
+    # one up, so neither a floor nor a ceiling passes.
+    prices, rv = _prices()
+    for pct, expected in ((2.34, 488.0), (7.66, 462.0)):
+        _, market, _ = today_strikes(
+            _chain(),
+            prices,
+            rv,
+            asset="spy",
+            rule=ByMoneyness(pct),
+            tenor_weeks=4.0,
+            r=0.04,
+            q=0.012,
+        )
+        assert market.strike == expected
+
+
+def test_a_distance_the_chain_does_not_list_is_refused_not_substituted() -> None:
+    # 30% below 500 is 350; the chain lists 400..499, so the nearest (400) is
+    # 10% of spot away -- far past MAX_STRIKE_MISS_PCT. Scoring 400 would
+    # serve a 20%-OOM put's ratio as the 30% one's.
+    prices, rv = _prices()
+    model, market, status = today_strikes(
+        _chain(),
+        prices,
+        rv,
+        asset="spy",
+        rule=ByMoneyness(30.0),
+        tenor_weeks=4.0,
+        r=0.04,
+        q=0.012,
+    )
+    assert (market, status) == (None, "no_strike")
+    assert model is not None
+    # At the edge: only 400 and 450 listed; 2.5% of spot 500 is 12.5. Asking
+    # 412 (17.6%) misses 400 by 12, taken; asking 413 (17.4%) misses by 13,
+    # refused -- the tolerance is in percent of spot.
+    sparse = _chain()[lambda c: c["strike"].isin([400.0, 450.0])]
+    for pct, expected in ((17.6, 400.0), (17.4, None)):
+        _, near, _ = today_strikes(
+            sparse, prices, rv, asset="spy", rule=ByMoneyness(pct), tenor_weeks=4.0, r=0.04, q=0.012
+        )
+        assert (near.strike if near else None) == expected
+    assert MAX_STRIKE_MISS_PCT == 2.5
+
+
+@pytest.mark.parametrize("missing_iv", [None, 0.0])
+def test_a_distance_pick_scores_the_ask_even_where_the_iv_is_missing(
+    missing_iv: float | None,
+) -> None:
+    # The deep wing is where Cboe zero-fills IV (null in bronze; the contract
+    # also admits 0.0). A distance rule needs only the ask, so the 425 strike
+    # is scored -- not the nearest strike that happens to carry an IV -- and a
+    # 0.0 IV never reaches the delta formula.
+    chain = _chain()
+    chain.loc[chain["strike"] < 450, "iv"] = missing_iv
+    prices, rv = _prices()
+    _, market, status = today_strikes(
+        chain, prices, rv, asset="spy", rule=ByMoneyness(15.0), tenor_weeks=4.0, r=0.04, q=0.012
+    )
+    assert status == "quoted"
+    assert market.strike == 425.0
+    assert (market.iv, market.delta) == (None, None)
+    assert market.convexity_ratio == pytest.approx(25.0 / (2.0 * 365 / 30))

@@ -161,8 +161,39 @@ test.describe('with the shared fixture', () => {
     // One printed line rather than a column repeating "Model" seven times.
     await expand(page)
     for (const r of LEADERBOARD.ranked) expect(r.priced_from).toBe('model')
-    await expect(page.getByTestId('rank-model-priced')).toHaveText(' Every figure is model-priced, not quoted.')
+    // ...except the ask column, which the legend names.
+    await expect(page.getByTestId('rank-model-priced')).toHaveText(' Every figure but the ask in Repays is model-priced.')
     await expect(fragTable(page).getByRole('columnheader', { name: 'Basis' })).toHaveCount(0)
+  })
+
+  test('scores the screened strike by convexity at the ask and at the model, never pooled', async ({ page }) => {
+    await expand(page)
+    const gld = LEADERBOARD.ranked.find((r) => r.asset === 'gld')!
+    const tsla = LEADERBOARD.ranked.find((r) => r.asset === 'tsla')!
+    // GLD tops the model ratio (calm vol, cheap model price) but not the ask.
+    expect(gld.convexity_ratio!).toBeGreaterThan(tsla.convexity_ratio!)
+    expect(gld.market_convexity_ratio!).toBeLessThan(tsla.market_convexity_ratio!)
+    await expect(page.getByTestId('ask-repays-gld')).toHaveText(`${gld.market_convexity_ratio!.toFixed(1)} yrs`)
+    await expect(page.getByTestId('model-repays-gld')).toHaveText(`${gld.convexity_ratio!.toFixed(1)} yrs`)
+    await expect(page.getByTestId('ask-repays-tsla')).toHaveText(`${tsla.market_convexity_ratio!.toFixed(1)} yrs`)
+    // EEM is not in the collected chain: a dash, never its model figure.
+    await expect(page.getByTestId('ask-repays-eem')).toHaveText('—')
+    await expect(page.getByTestId('model-repays-eem')).not.toHaveText('—')
+    await expect(page.getByTestId('rank-ask-source')).toContainText('the strike nearest 5% below spot in the 2026-08-21 chain')
+  })
+
+  test('with no collected chain the ask column is all dashes and every figure is model-priced', async ({ page }) => {
+    await mockPutLabApi(page)
+    await serveLeaderboard(page, () => ({
+      ...LEADERBOARD,
+      chain_session: null,
+      ranked: LEADERBOARD.ranked.map((r) => ({ ...r, market_convexity_ratio: null })),
+    }))
+    await page.goto('/')
+    await expand(page)
+    await expect(page.getByTestId('ask-repays-tsla')).toHaveText('—')
+    await expect(page.getByTestId('rank-model-priced')).toHaveText(' Every figure is model-priced, not quoted.')
+    await expect(page.getByTestId('rank-ask-source')).toHaveCount(0)
   })
 
   test('the screened cells are on screen at 1280px, the metrics after them', async ({ page }) => {

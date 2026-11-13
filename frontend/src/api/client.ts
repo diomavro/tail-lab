@@ -489,6 +489,14 @@ export interface RankedAsset {
    *  this is always "model"; surfaced so a model-priced ROI never looks
    *  identical to a market-priced one once it can be either. */
   priced_from: 'model' | 'market'
+  /** Years of today's screened put that one 20% fall repays
+   *  (research/backtest/strike_preview.py `convexity_ratio`): at the model
+   *  price on realised vol, and at the listed ask of the nearest strike in the
+   *  latest collected chain (`null` when the name is not collected, no
+   *  expiry reaches the tenor, or no strike is within 2.5% of spot of the
+   *  distance). Two fields, never pooled. */
+  convexity_ratio: number | null
+  market_convexity_ratio: number | null
   /** The best this name gets when its parameters are chosen well: the argmax
    *  of its own strike x tenor sweep, bounded to the strikes the model can
    *  actually price. This is the headline the compact ranking shows, and the
@@ -526,6 +534,9 @@ export interface PutLabLeaderboardResponse {
    *  trustworthy and should not be surfaced." */
   snapshot_ids: string[]
   code_sha: string
+  /** The chain session every `market_convexity_ratio` was read from, or null
+   *  when no collected chain was known as of `as_of`. */
+  chain_session: string | null
   /** Per metric, whether a higher raw value is more fragile (co-skewness and
    *  vol beta are fragile when low). The server's one table of directions
    *  (ranking.FRAGILE_HIGH); the strip shades by it rather than keeping a copy. */
@@ -905,15 +916,18 @@ export interface ModelStrike {
   convexity_ratio: number | null
 }
 
-/** The listed put whose delta, on its own implied vol, is nearest the target. */
+/** The listed put nearest the rule: by delta on its own implied vol, or by
+ *  distance below the chain's spot. */
 export interface MarketStrike {
   session: string
   expiration: string
   spot: number
   t_years: number
   strike: number
-  iv: number
-  delta: number
+  /** null only on a distance pick with no published IV; a delta pick (all
+   *  the preview serves) always has both. */
+  iv: number | null
+  delta: number | null
   moneyness_pct: number
   /** The listed ask, per share: what a buyer pays. */
   premium: number
@@ -931,7 +945,7 @@ export interface StrikePreview {
   q_source: string
   model: ModelStrike | null
   market: MarketStrike | null
-  market_status: 'quoted' | 'not_collected' | 'no_expiry' | 'no_iv'
+  market_status: 'quoted' | 'not_collected' | 'no_expiry' | 'no_iv' | 'no_strike'
   market_is_older: boolean
 }
 

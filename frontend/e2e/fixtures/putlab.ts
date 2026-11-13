@@ -386,6 +386,10 @@ export const LEADERBOARD: PutLabLeaderboardResponse = {
       // The screen never passes real quotes in today (AGENT_TODO.md, "the
       // ranked screen is still model-priced"), so every row is "model".
       priced_from: 'model',
+      // The model ratio rises as realised vol falls, so calm GLD scores best
+      // on it; at the ask it does not. EEM is not in the collected chain.
+      convexity_ratio: Number((2 + (1 - frag) * 9).toFixed(2)),
+      market_convexity_ratio: asset === 'eem' ? null : Number((0.6 + frag * 2).toFixed(2)),
       // EEM has no measured dividends here, so its row says it priced at q = 0.
       q_source: asset === 'eem' ? ('none' as const) : ('measured' as const),
       best_annualized: bestAnn,
@@ -410,6 +414,7 @@ export const LEADERBOARD: PutLabLeaderboardResponse = {
   }),
   snapshot_ids: ['vix@2026-08-21', 'ohlcv_tsla@2026-08-21', 'ohlcv_iwm@2026-08-21'],
   code_sha: 'e2e0000',
+  chain_session: '2026-08-21',
   // ranking.FRAGILE_HIGH, as the server serves it.
   fragile_high: {
     downside_beta: true,
