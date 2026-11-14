@@ -1,6 +1,9 @@
 # Acknowledged, PERMANENT gaps in the option-chain bronze table.
 #
 # Read by scripts/chain_sweep_verify.sh. One "session<TAB>symbol" per line.
+# A call-wing gap (option_chain_call_snapshot, docs/adr/0031) is written
+# "session<TAB>calls:symbol", and a whole lost call session "calls:*"; an
+# unlabelled line acknowledges the puts only.
 #
 # A gap belongs here only when it can never be filled: bronze is immutable and
 # nobody sells a retroactive option chain, so once a session is written without
