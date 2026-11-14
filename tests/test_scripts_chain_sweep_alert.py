@@ -163,3 +163,4 @@ def test_the_chain_toast_does_not_claim_the_puts_were_lost(tmp_path: Path) -> No
     assert FORBIDDEN in body
     marker = (tmp_path / ".chain-sweep-FAILED").read_text()
     assert "calls only; puts landed" in marker
+    assert "Neither proves" in marker  # a calls-only log is never an all-clear for the puts

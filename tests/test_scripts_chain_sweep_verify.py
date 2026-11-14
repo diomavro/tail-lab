@@ -273,7 +273,7 @@ def test_the_forward_check_fails_when_cboes_session_has_no_calls(tmp_path: Path)
     _partition(store, PIN, full, CALLS)
     code, log = _run(tmp_path, CBOE_SERVES_AFTER)
     assert code == 1, log
-    assert f"symbols at {AFTER}: 38/38" in log
+    assert f"\nsymbols at {AFTER}: 38/38" in log
     assert (
         f"FAIL: calls: newest captured session is {PIN} but Cboe is serving {AFTER}"
         f" -- {AFTER} was NOT captured"
@@ -328,3 +328,27 @@ def test_a_stray_whole_session_label_acknowledges_nothing(tmp_path: Path) -> Non
     assert "Traceback" not in log
     assert f"GAP {middle}: no partition at all" in log
     assert f"GAP calls: {middle}: no partition at all" in log
+
+
+def test_the_forward_check_names_calls_missing_from_cboes_session(tmp_path: Path) -> None:
+    store = DeltaLakeStore(tmp_path / "data")
+    full = list(DEFAULT_SNAPSHOT_SYMBOLS)
+    lost = sorted(full)[0]
+    _partition(store, AFTER, full)
+    _partition(store, AFTER, [s for s in full if s != lost], CALLS)
+    code, log = _run(tmp_path, CBOE_SERVES_AFTER)
+    assert code == 1, log
+    assert f"\nsymbols at {AFTER}: 38/38" in log
+    assert f"calls: symbols at {AFTER}: 37/38" in log
+    assert f"FAIL: calls: no {AFTER} quotes for: {lost}" in log
+
+
+def test_the_forward_check_judges_the_calls_when_the_puts_have_no_partition(
+    tmp_path: Path,
+) -> None:
+    store = DeltaLakeStore(tmp_path / "data")
+    _partition(store, PIN, list(DEFAULT_SNAPSHOT_SYMBOLS), CALLS)
+    code, log = _run(tmp_path, CBOE_SERVES_AFTER)
+    assert code == 1, log
+    assert f"FAIL: bronze has NO partition at or before {AFTER}" in log
+    assert f"FAIL: calls: newest captured session is {PIN} but Cboe is serving {AFTER}" in log

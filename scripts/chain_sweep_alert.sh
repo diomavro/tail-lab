@@ -122,7 +122,7 @@ case "$CONTEXT" in
     # "puts, calls or both": since docs/adr/0031 either wing can fail alone,
     # and a calls-only loss is not a lost put chain. The marker's log tails
     # say which wing.
-    TOAST_BODY="Today's option chain (puts, calls or both) was NOT fully captured and cannot be back-filled. The marker explains how to tell. Run: make ingest-option-chain"
+    TOAST_BODY="Today's option chain (puts, calls or both) was NOT fully captured and cannot be back-filled. The marker shows which. Run: make ingest-option-chain"
     LOGS="$REPO/.chain-sweep-manual.log $REPO/.chain-sweep-verify.log"
     ;;
   *)
@@ -186,9 +186,11 @@ render() {
       echo "serves a retroactive chain (docs/adr/0020). Re-run TODAY, BEFORE the"
       echo "13:30 UTC open -- after it Cboe serves the new session and the missed"
       echo "one is gone (a re-run then refuses or skips; it cannot write intraday)."
-      echo "Either wing can fail alone (docs/adr/0031): \"calls only; puts landed\""
-      echo "in the sweep log, or only \"calls:\" lines in the verifier's, means the"
-      echo "put chain is in the lake and the call wing is what was lost:"
+      echo "Either wing can fail alone (docs/adr/0031): a \"FAIL: calls:\" line or"
+      echo "\"calls only; puts landed\" below names a lost call wing. Neither proves"
+      echo "the puts are safe -- the verifier does not check the session Cboe is"
+      echo "still serving when it cannot reach Cboe or runs after 12:00 UTC -- so"
+      echo "re-run either way:"
       ;;
     *)
       echo "A tail-lab unit failed but did not identify which job it was, so"
