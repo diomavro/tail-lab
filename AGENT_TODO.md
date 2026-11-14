@@ -3417,10 +3417,9 @@ the number to move.
       **Status route done 2026-10-28:** `GET /api/ingest/option-chain/status`
       now carries the call wing under `calls` (same fields, read from
       `option_chain_call_snapshot` alone); the put fields stay at the top
-      level, so existing readers are unchanged. Still OPEN below: the
-      verifier and the toast; and (guarded, human) ADR 0031 §7 still says
-      there is no call freshness route, while the daily-agent prompt and
-      `AGENT_MISSION.md` do not yet check `calls.stale_days`.
+      level, so existing readers are unchanged. (Guarded, human:) ADR 0031
+      §7 still says there is no call freshness route, and the daily-agent
+      prompt and `AGENT_MISSION.md` do not yet check `calls.stale_days`.
       **Verifier and toast done 2026-11-14:** `chain_sweep_verify.sh` walks
       `option_chain_call_snapshot` beside the puts through checks A, B and C,
       each wing judged on its own partitions, the calls' lines and failures

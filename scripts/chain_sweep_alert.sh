@@ -122,7 +122,7 @@ case "$CONTEXT" in
     # "puts, calls or both": since docs/adr/0031 either wing can fail alone,
     # and a calls-only loss is not a lost put chain. The marker's log tails
     # say which wing.
-    TOAST_BODY="Today's option chain (puts, calls or both) was NOT fully captured and cannot be back-filled. The marker says which. Run: make ingest-option-chain"
+    TOAST_BODY="Today's option chain (puts, calls or both) was NOT fully captured and cannot be back-filled. The marker explains how to tell. Run: make ingest-option-chain"
     LOGS="$REPO/.chain-sweep-manual.log $REPO/.chain-sweep-verify.log"
     ;;
   *)

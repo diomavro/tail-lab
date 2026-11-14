@@ -317,13 +317,15 @@ if trading_days is not None and not trading_days:
     # unreachable Nasdaq is noted in the except above instead. Either way C
     # cannot look, and silence would switch the check off invisibly.
     print("NOTE: no usable trading days; whole-session check skipped.")
+# Matched whole ("*" or "calls:*"), so a stray label such as ":*" or "put:*"
+# acknowledges nothing rather than being read as some wing's.
+whole_label = {ack_symbol(label, WHOLE_SESSION): label for label in WINGS}
 whole_ack: dict[str, set[dt.date]] = {label: set() for label in WINGS}
 for day, symbol in ACKNOWLEDGED:
-    label, _, rest = symbol.rpartition(":")
-    if rest != WHOLE_SESSION or label not in whole_ack:
+    if symbol not in whole_label:
         continue
     try:
-        whole_ack[label].add(dt.date.fromisoformat(day))
+        whole_ack[whole_label[symbol]].add(dt.date.fromisoformat(day))
     except ValueError:
         # Same degrade-don't-die rule as _acknowledged(): over-report, never crash.
         print(f"NOTE: ignoring malformed .chain-known-gaps session {day!r}")
