@@ -42,9 +42,8 @@ import pandas as pd
 from pydantic import BaseModel
 
 from tail_lab.research.backtest.put_roll import (
-    REALIZED_VOL_CAP,
-    REALIZED_VOL_FLOOR,
     TRADING_DAYS_PER_WEEK,
+    clamp_realized_vol,
 )
 from tail_lab.research.backtest.strike_rule import ByDelta, put_delta
 from tail_lab.research.option_pricer import BlackScholesPricer
@@ -131,7 +130,7 @@ def _model_side(
     vol = realized_vol.dropna()
     if vol.empty:
         return None
-    sigma = float(min(max(float(vol.iloc[-1]), REALIZED_VOL_FLOOR), REALIZED_VOL_CAP))
+    sigma = clamp_realized_vol(float(vol.iloc[-1]))
     day = vol.index[-1]
     spot = float(prices.loc[day])
     strike = rule.strike(spot=spot, sigma=sigma, t_years=t_years, r=r, q=q)

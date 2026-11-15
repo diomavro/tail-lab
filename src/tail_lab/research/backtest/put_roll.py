@@ -659,28 +659,12 @@ def _roll_model_cycles(
     first_entry: int,
     n: int,
     tenor_days: int,
-    basis: PricingBasis,
-    rate: float,
-    notional: float,
-    rule: StrikeRule,
-    tenor_weeks: float,
-    commission_per_contract: float,
-    spread_scale: float,
+    terms: RollTerms,
 ) -> _CycleAccumulation:
     """The model-priced roll loop, moved out of ``run_put_roll`` (see
     ``_CycleAccumulation``'s docstring for why). Each entry is priced with the
-    underlying's dividend yield on that date when ``basis.dividends`` is set,
-    else at ``q = 0`` labelled ``unknown``."""
-    terms = RollTerms(
-        basis=basis,
-        rate=rate,
-        notional=notional,
-        rule=rule,
-        tenor_weeks=tenor_weeks,
-        t_years=tenor_days / 252.0,
-        commission_per_contract=commission_per_contract,
-        spread_scale=spread_scale,
-    )
+    underlying's dividend yield on that date when ``terms.basis.dividends`` is
+    set, else at ``q = 0`` labelled ``unknown``."""
     acc = _CycleAccumulation(last_expiry_idx=first_entry)
     i = first_entry
     while i + tenor_days < n:
@@ -696,7 +680,7 @@ def _roll_model_cycles(
             expiry_idx=i + tenor_days,
             dates=dates,
             facts=facts,
-            notional=notional,
+            notional=terms.notional,
         )
         i += tenor_days
     return acc
@@ -726,7 +710,7 @@ def _roll_market_cycles(
         if not np.isfinite(sigma_raw):  # not enough trailing history yet — step forward
             i += 1
             continue
-        sigma = float(min(max(sigma_raw, REALIZED_VOL_FLOOR), REALIZED_VOL_CAP))
+        sigma = clamp_realized_vol(float(sigma_raw))
         spot = px[i]
         entry_date = dates[i]
 
@@ -917,13 +901,16 @@ def run_put_roll(
             first_entry=first_entry,
             n=n,
             tenor_days=tenor_days,
-            basis=basis,
-            rate=rate,
-            notional=notional,
-            rule=rule,
-            tenor_weeks=tenor_weeks,
-            commission_per_contract=commission_per_contract,
-            spread_scale=spread_scale,
+            terms=RollTerms(
+                basis=basis,
+                rate=rate,
+                notional=notional,
+                rule=rule,
+                tenor_weeks=tenor_weeks,
+                t_years=tenor_days / 252.0,
+                commission_per_contract=commission_per_contract,
+                spread_scale=spread_scale,
+            ),
         )
 
     cycles = acc.cycles
@@ -1208,7 +1195,7 @@ def _mark_open_leg(
             open_mark,
             open_mark_pos,
         )  # intrinsic at expiry (guards T=0)
-    sigma = float(min(max(realized_vol[k], REALIZED_VOL_FLOOR), REALIZED_VOL_CAP))
+    sigma = clamp_realized_vol(float(realized_vol[k]))
     # The entry's dividend yield: q moves slowly, and re-reading it daily
     # would only re-label a mark the entry already priced.
     mark = pricer.price_put(
