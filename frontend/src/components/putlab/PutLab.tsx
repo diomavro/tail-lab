@@ -45,13 +45,6 @@ import {
   type RankSort,
   STRIP_SIGNAL_TEST,
 } from './types'
-import { BakeOffView } from './views/BakeOffView'
-import { GlossaryView } from './views/GlossaryView'
-import { PortfolioView } from './views/PortfolioView'
-import { MarksView } from './views/MarksView'
-import { RegimeView } from './views/RegimeView'
-import { OverlayView } from './views/OverlayView'
-import { SurfaceView } from './views/SurfaceView'
 import { WorkspaceView } from './views/WorkspaceView'
 
 /* The workspace shell.
@@ -77,6 +70,15 @@ import { WorkspaceView } from './views/WorkspaceView'
 /** The Pitch carries its whole study (content/pitch_evidence.json) in its
  *  chunk, so only a visitor who opens the tab downloads it. */
 const PitchView = lazy(() => import('./views/PitchView').then((m) => ({ default: m.PitchView })))
+// Every tab but the opening Workspace is its own chunk, so the first plot
+// waits only on the code that draws it.
+const BakeOffView = lazy(() => import('./views/BakeOffView').then((m) => ({ default: m.BakeOffView })))
+const GlossaryView = lazy(() => import('./views/GlossaryView').then((m) => ({ default: m.GlossaryView })))
+const PortfolioView = lazy(() => import('./views/PortfolioView').then((m) => ({ default: m.PortfolioView })))
+const MarksView = lazy(() => import('./views/MarksView').then((m) => ({ default: m.MarksView })))
+const RegimeView = lazy(() => import('./views/RegimeView').then((m) => ({ default: m.RegimeView })))
+const OverlayView = lazy(() => import('./views/OverlayView').then((m) => ({ default: m.OverlayView })))
+const SurfaceView = lazy(() => import('./views/SurfaceView').then((m) => ({ default: m.SurfaceView })))
 
 /** A chunk that fails to load (a deploy replaced its hashed file while the
  *  page was open, or the network dropped) throws out of Suspense; without a
@@ -89,7 +91,7 @@ class ChunkBoundary extends Component<{ children: ReactNode }, { failed: boolean
   render() {
     return this.state.failed ? (
       <p className="pl-note" role="alert">
-        The Pitch could not load. Reload the page.
+        This tab could not load. Reload the page.
       </p>
     ) : (
       this.props.children
@@ -648,6 +650,10 @@ export function PutLab() {
                 onSelectAsset={selectAsset}
               />
             )}
+            {tab !== 'workspace' && (
+              // Keyed on the tab: one chunk that failed to load must not blank the others.
+              <ChunkBoundary key={tab}>
+                <Suspense fallback={<p className="pl-note">Loading…</p>}>
             {tab === 'portfolio' && <PortfolioView universe={universe} controls={controls} />}
             {tab === 'book' && <OverlayView narrow={narrow} />}
             {tab === 'bakeoff' && <BakeOffView controls={controls} headline={signalHeadline} />}
@@ -655,10 +661,7 @@ export function PutLab() {
             {tab === 'marks' && <MarksView asset={controls.asset} regimes={regimes} />}
             {tab === 'surface' && <SurfaceView surface={surface} smile={smile} controls={controls} narrow={narrow} />}
             {tab === 'glossary' && <GlossaryView />}
-            {tab === 'pitch' && (
-              <ChunkBoundary>
-                <Suspense fallback={<p className="pl-note">Loading the Pitch…</p>}>
-                  <PitchView />
+            {tab === 'pitch' && <PitchView />}
                 </Suspense>
               </ChunkBoundary>
             )}

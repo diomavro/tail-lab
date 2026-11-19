@@ -47,6 +47,9 @@ test('hatches what was never collected, and leaves held-but-unquoted blank', asy
 })
 
 test('says so when the lake holds nothing for the name', async ({ page }) => {
+  // The first name's read must land before the lake goes empty: the view is a
+  // lazy chunk, so its fetch would otherwise race the re-mock below.
+  await expect(page.getByTestId('marks-hero')).toBeVisible()
   await mockPutLabApi(page, { noData: ['/api/putlab/marks'] })
   await page.getByLabel('Name').selectOption('qqq')
   await expect(page.getByRole('alert')).toContainText('no put quotes for QQQ')

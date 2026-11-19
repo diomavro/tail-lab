@@ -231,15 +231,23 @@ const PX1 = 544
 const PY0 = 14
 const PY1 = 240
 
-/** x for each rung by strike, descending left to right (deeper is right), with
- *  half a step of air at each end; and the column each rung owns for hover. */
-function strikeAxis(rungs: SurfaceRung[]) {
-  const ks = rungs.map((r) => r.strike)
+/** The ladder's x axis: the strike, or log-moneyness k = ln(K/S) against
+ *  the session's spot (the ladder carries spot, not a forward). */
+type LadderAxis = 'strike' | 'logk'
+const logK = (strike: number, spot: number) => Math.log(strike / spot)
+const axisValue = (axis: LadderAxis, spot: number) => (strike: number) =>
+  axis === 'logk' ? logK(strike, spot) : strike
+
+/** x for each rung, descending left to right (deeper is right), with half a
+ *  step of air at each end; and the column each rung owns for hover. */
+function strikeAxis(rungs: SurfaceRung[], v: (strike: number) => number) {
+  const ks = rungs.map((r) => v(r.strike))
   const kmax = Math.max(...ks)
   const kmin = Math.min(...ks)
   const pad = rungs.length > 1 ? (kmax - kmin) / (2 * (rungs.length - 1)) : 1
-  const X = (k: number) => PX0 + ((kmax + pad - k) / (kmax - kmin + 2 * pad)) * (PX1 - PX0)
-  const xs = ks.map(X)
+  const toX = (k: number) => PX0 + ((kmax + pad - k) / (kmax - kmin + 2 * pad)) * (PX1 - PX0)
+  const X = (strike: number) => toX(v(strike))
+  const xs = ks.map(toX)
   const cols = xs.map((x, i) => {
     const left = i === 0 ? PX0 : (xs[i - 1]! + x) / 2
     const right = i === xs.length - 1 ? PX1 : (x + xs[i + 1]!) / 2
@@ -255,9 +263,9 @@ const insideSpread = (r: SurfaceRung) =>
 
 const money = (x: number | null) => (x == null ? 'none' : x.toFixed(2))
 
-function LadderChart({ rungs }: { rungs: SurfaceRung[] }) {
+function LadderChart({ rungs, axis, spot }: { rungs: SurfaceRung[]; axis: LadderAxis; spot: number }) {
   const [hover, setHover] = useState<number | null>(null)
-  const { X, xs, cols } = strikeAxis(rungs)
+  const { X, xs, cols } = strikeAxis(rungs, axisValue(axis, spot))
   const prices = rungs
     .flatMap((r) => [r.bid, r.ask, r.paretan_price, r.black_scholes_price])
     .filter(finitePositive)
@@ -293,7 +301,11 @@ function LadderChart({ rungs }: { rungs: SurfaceRung[] }) {
 
   const labels: Label[] = [
     ...yt.map((p) => ({ x: PX0 - 8, y: PY(p), text: `$${tickText(p)}`, align: 'end' as const })),
-    ...rungs.map((r, i) => ({ x: xs[i]!, y: 256, text: r.strike.toFixed(0) })),
+    ...rungs.map((r, i) => ({
+      x: xs[i]!,
+      y: 256,
+      text: axis === 'logk' ? logK(r.strike, spot).toFixed(3) : r.strike.toFixed(0),
+    })),
   ]
   const shown = hover != null && hover < rungs.length ? hover : 0
   const r = rungs[shown]!
@@ -304,7 +316,7 @@ function LadderChart({ rungs }: { rungs: SurfaceRung[] }) {
         <svg
           viewBox={`0 0 ${LW} ${LH}`}
           role="img"
-          aria-label="Tail ladder: put price by strike, Paretan and Black-Scholes against the market's bid-ask"
+          aria-label={`Tail ladder: put price by ${axis === 'logk' ? 'log-moneyness' : 'strike'}, Paretan and Black-Scholes against the market's bid-ask`}
           onPointerLeave={() => setHover(null)}
         >
           <path d={yt.map((p) => `M${PX0},${PY(p).toFixed(1)}H${PX1}`).join('') + `M${PX0},${PY1}H${PX1}`} className="pl-c-grid" />
@@ -332,10 +344,13 @@ function LadderChart({ rungs }: { rungs: SurfaceRung[] }) {
         </svg>
         <ChartLabels labels={labels} w={LW} h={LH} />
       </div>
-      <div className="pl-axis-title">strike → deeper</div>
+      <div className="pl-axis-title">{axis === 'logk' ? 'k = ln(K/S) → deeper' : 'strike → deeper'}</div>
       <div className="pl-readout" data-testid="ladder-readout">
         <span>
           <StatK concept="strike_price" variant="readout">Strike</StatK> <strong>{r.strike.toFixed(0)}</strong>
+        </span>
+        <span>
+          k <strong>{logK(r.strike, spot).toFixed(3)}</strong>
         </span>
         <span>
           <StatK concept="bid_ask" variant="readout">Bid–ask</StatK>{' '}
@@ -359,8 +374,8 @@ function LadderChart({ rungs }: { rungs: SurfaceRung[] }) {
 const IW = 560
 const IH = 110
 
-function IvRatioStrip({ rungs }: { rungs: SurfaceRung[] }) {
-  const { X } = strikeAxis(rungs)
+function IvRatioStrip({ rungs, axis, spot }: { rungs: SurfaceRung[]; axis: LadderAxis; spot: number }) {
+  const { X } = strikeAxis(rungs, axisValue(axis, spot))
   const vals = rungs.map((r) => r.iv_ratio).filter((v): v is number => v != null && Number.isFinite(v))
   const span = Math.max(0.01, ...vals.map((v) => Math.abs(v - 1))) * 1.25
   // A ratio of two vols is never negative: the axis floors at 0.
@@ -406,6 +421,7 @@ function IvRatioStrip({ rungs }: { rungs: SurfaceRung[] }) {
 
 function TailLadder({ s }: { s: SurfaceReading }) {
   const rungs: SurfaceRung[] = s.ladder.slice(0, MAX_RUNGS)
+  const [axis, setAxis] = useState<LadderAxis>('strike')
   return (
     <section aria-label="Tail ladder" className="pl-surface-pane">
       <div>
@@ -421,10 +437,23 @@ function TailLadder({ s }: { s: SurfaceReading }) {
             <span><i className="pl-key pl-key-dash" />Black&ndash;Scholes</span>
             <span><i className="pl-key pl-key-spread" />Market bid&ndash;ask, cut at the mid</span>
           </div>
+          <fieldset className="pl-marks-field">
+            <legend className="pl-kicker">Axis</legend>
+            <div className="pl-seg">
+              <label className="pl-seg-opt">
+                <input type="radio" name="ladder-axis" checked={axis === 'strike'} onChange={() => setAxis('strike')} />
+                Strike
+              </label>
+              <label className="pl-seg-opt">
+                <input type="radio" name="ladder-axis" checked={axis === 'logk'} onChange={() => setAxis('logk')} />
+                Log-moneyness
+              </label>
+            </div>
+          </fieldset>
           {/* Keyed on the strikes: a rung picked on one ladder is not an index
               into the next (a cached switch never passes through loading). */}
-          <LadderChart key={rungs.map((r) => r.strike).join(',')} rungs={rungs} />
-          <IvRatioStrip rungs={rungs} />
+          <LadderChart key={rungs.map((r) => r.strike).join(',')} rungs={rungs} axis={axis} spot={s.spot} />
+          <IvRatioStrip rungs={rungs} axis={axis} spot={s.spot} />
         </>
       )}
     </section>
