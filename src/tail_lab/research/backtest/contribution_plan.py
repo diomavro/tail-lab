@@ -43,7 +43,6 @@ import pandas as pd
 from pydantic import BaseModel
 from scipy.optimize import brentq
 
-from tail_lab.contracts.cboe_strategy import DATASET as CBOE_STRATEGY_DATASET
 from tail_lab.contracts.cboe_strategy import STRATEGY_INDEX_CATALOGUE
 from tail_lab.contracts.rates import DATASET as RATES_DATASET
 from tail_lab.lake.store import LakeStore
@@ -54,6 +53,7 @@ from tail_lab.research.backtest.hedge_overlay import (
     OverlayDataMissing,
     blend_nav,
     outcome,
+    read_cboe_closes,
 )
 from tail_lab.research.backtest.index_leg import (
     BILL_SERIES,
@@ -68,8 +68,6 @@ from tail_lab.research.backtest.index_leg import (
 from tail_lab.research.backtest.index_replication import (
     DAYS_PER_YEAR,
     DEFAULT_DIVIDEND_YIELD,
-    UNDERLYING_SYMBOL,
-    series_from,
 )
 
 #: Cboe indices offered as "something else": real-quote NAVs that are not a
@@ -684,21 +682,7 @@ def compute_book_plan(store: LakeStore, request: PlanRequest, *, as_of: dt.date)
     leg's row; a missing ``tiingo_eod`` falls back to the labelled assumed
     yield.
     """
-    try:
-        bronze = store.read_bronze_as_of(CBOE_STRATEGY_DATASET, as_of)
-    except KeyError:
-        raise
-    except LookupError as exc:
-        raise OverlayDataMissing(
-            f"no Cboe strategy indices known as of {as_of.isoformat()}"
-        ) from exc
-    cboe = {
-        str(sym): series_from(rows, date_col="trade_date", value_col="close")
-        for sym, rows in bronze.groupby("index_symbol")
-    }
-    spx = cboe.pop(UNDERLYING_SYMBOL, None)
-    if spx is None:
-        raise OverlayDataMissing(f"no {UNDERLYING_SYMBOL} rows in the snapshot known as of {as_of}")
+    spx, cboe = read_cboe_closes(store, as_of)
     try:
         rates: pd.DataFrame | None = store.read_bronze_as_of(RATES_DATASET, as_of)
     except KeyError:

@@ -449,12 +449,11 @@ def run_hedge_overlay(
     )
 
 
-def compute_hedge_overlay(store: LakeStore, *, as_of: dt.date) -> HedgeOverlayResult:
-    """Read SPX and the programs point-in-time as of ``as_of`` and run the test.
+def read_cboe_closes(store: LakeStore, as_of: dt.date) -> tuple[pd.Series, dict[str, pd.Series]]:
+    """SPX's close and every other Cboe index's, by symbol, known as of ``as_of``.
 
     Raises :class:`OverlayDataMissing` when there is no Cboe snapshot or no
-    SPX in it. A program missing from the snapshot does not fail the others;
-    it is listed in ``missing`` with the reason.
+    SPX in it.
     """
     try:
         bronze = store.read_bronze_as_of(CBOE_STRATEGY_DATASET, as_of)
@@ -465,16 +464,24 @@ def compute_hedge_overlay(store: LakeStore, *, as_of: dt.date) -> HedgeOverlayRe
         raise OverlayDataMissing(
             f"no Cboe strategy indices known as of {as_of.isoformat()}"
         ) from exc
-
-    def series(symbol: str) -> pd.Series | None:
-        rows = bronze[bronze["index_symbol"] == symbol]
-        if rows.empty:
-            return None
-        return series_from(rows, date_col="trade_date", value_col="close")
-
-    spx = series(UNDERLYING_SYMBOL)
+    cboe = {
+        str(sym): series_from(rows, date_col="trade_date", value_col="close")
+        for sym, rows in bronze.groupby("index_symbol")
+    }
+    spx = cboe.pop(UNDERLYING_SYMBOL, None)
     if spx is None:
         raise OverlayDataMissing(f"no {UNDERLYING_SYMBOL} rows in the snapshot known as of {as_of}")
-    programs = {s: p for s in OVERLAY_PROGRAMS if (p := series(s)) is not None}
+    return spx, cboe
+
+
+def compute_hedge_overlay(store: LakeStore, *, as_of: dt.date) -> HedgeOverlayResult:
+    """Read SPX and the programs point-in-time as of ``as_of`` and run the test.
+
+    Raises :class:`OverlayDataMissing` when there is no Cboe snapshot or no
+    SPX in it. A program missing from the snapshot does not fail the others;
+    it is listed in ``missing`` with the reason.
+    """
+    spx, cboe = read_cboe_closes(store, as_of)
+    programs = {s: cboe[s] for s in OVERLAY_PROGRAMS if s in cboe}
     leg = build_index_leg(store, as_of, spx=spx)
     return run_hedge_overlay(spx, programs, as_of=as_of, leg=leg)
