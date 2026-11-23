@@ -125,8 +125,8 @@ def test_the_budget_marker_states_both_possibilities_and_no_reading(tmp_path: Pa
     assert "re-run the check" in body
 
 
-def test_the_budget_toast_states_both_possibilities_and_no_reading(tmp_path: Path) -> None:
-    """The toast is what a human actually sees."""
+def _toast(context: str, tmp_path: Path) -> list[str]:
+    """The toast's title and body, as `notify-send` received them."""
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir()
     sent = tmp_path / "toast.txt"
@@ -134,7 +134,7 @@ def test_the_budget_toast_states_both_possibilities_and_no_reading(tmp_path: Pat
     stub.write_text(f'#!/bin/sh\nprintf "%s\\n" "$@" > {sent}\n')
     stub.chmod(0o755)
     subprocess.run(
-        [str(SCRIPT), "budget"],
+        [str(SCRIPT), context],
         env={
             "PATH": f"{bin_dir}:/usr/bin:/bin",
             "HOME": str(tmp_path),
@@ -145,4 +145,22 @@ def test_the_budget_toast_states_both_possibilities_and_no_reading(tmp_path: Pat
         timeout=60,
     )
     # notify-send -u <urgency> <title> <body>
-    assert sent.read_text().splitlines()[2:] == BUDGET_TOAST
+    return sent.read_text().splitlines()[2:]
+
+
+def test_the_budget_toast_states_both_possibilities_and_no_reading(tmp_path: Path) -> None:
+    """The toast is what a human actually sees."""
+    assert _toast("budget", tmp_path) == BUDGET_TOAST
+
+
+def test_the_chain_toast_does_not_claim_the_puts_were_lost(tmp_path: Path) -> None:
+    """Either wing can fail alone (ADR 0031): the sweep's "calls only; puts
+    landed" and the verifier's `calls:` gaps fire this same alert, so a toast
+    saying the chain was not captured would be false about the puts."""
+    title, body = _toast("chain", tmp_path)
+    assert title == "tail-lab: chain sweep FAILED"
+    assert "(puts, calls or both) was NOT fully captured" in body
+    assert FORBIDDEN in body
+    marker = (tmp_path / ".chain-sweep-FAILED").read_text()
+    assert "calls only; puts landed" in marker
+    assert "Neither proves" in marker  # a calls-only log is never an all-clear for the puts

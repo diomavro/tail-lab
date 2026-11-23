@@ -2849,6 +2849,22 @@ with the evidence — never the implementation.
       `bake-provenance`) onto `provenanceLine`. They were left alone here
       because open PRs #212 and #214 edit those files.
 
+## Design-review advisories not yet acted on (logged 2026-11-14)
+
+From the PASS review of #215, re-checked on main on 2026-11-14.
+
+- [ ] **One read for the benchmark hurdle and its citations (#215):**
+      `api/putlab_routes.putlab_backtest` asks the lake twice about
+      `(BENCHMARK, as_of)`: `_benchmark_buy_and_hold` for the numbers and
+      `put_roll.price_snapshot_ids` for the citation, each catching its own
+      `LookupError`; `walk_forward.py` cites the benchmark a third way. If a
+      third caller needs "hurdle plus citations", have one function return
+      both so what was read and what is cited cannot drift.
+- [ ] **Cite the quote snapshot when a route passes `quotes=` (#215):**
+      `PutBacktestResult`'s comment says a quote source is not cited because
+      no route passes one. The route that first does must cite it in the
+      same change.
+
 ## Design-review advisories not yet acted on (logged 2026-11-12)
 
 Advisory notes from the PASS reviews of #207, #209, #210 and #213, re-checked
@@ -3401,17 +3417,20 @@ the number to move.
       **Status route done 2026-10-28:** `GET /api/ingest/option-chain/status`
       now carries the call wing under `calls` (same fields, read from
       `option_chain_call_snapshot` alone); the put fields stay at the top
-      level, so existing readers are unchanged. Still OPEN below: the
-      verifier and the toast; and (guarded, human) ADR 0031 §7 still says
-      there is no call freshness route, while the daily-agent prompt and
-      `AGENT_MISSION.md` do not yet check `calls.stale_days`.
-      `chain_sweep_verify.sh` covers
-      puts only, so on the local path a calls-only loss shows only as a red
-      `daily-chain-snapshot` run and in the status route's `calls`. `chain_sweep_alert.sh` fires its "option
-      chain was NOT captured" toast on any non-zero `--local` exit, which is
-      false about the puts when only the calls failed; it must quote the
-      script's `calls only; puts landed` line. Then extend the daily agent's
-      health check (`docs/AGENT_MISSION.md`, guarded) to the call dataset.
+      level, so existing readers are unchanged. (Guarded, human:) ADR 0031
+      §7 still says there is no call freshness route, and the daily-agent
+      prompt and `AGENT_MISSION.md` do not yet check `calls.stale_days`.
+      **Verifier and toast done 2026-11-14:** `chain_sweep_verify.sh` walks
+      `option_chain_call_snapshot` beside the puts through checks A, B and C,
+      each wing judged on its own partitions, the calls' lines and failures
+      labelled `calls:`. `.chain-known-gaps` acknowledges a call gap as
+      `calls:<symbol>` (`calls:*` for a whole session); an unlabelled line
+      still covers the puts only. The chain toast now reads "(puts, calls or
+      both) was NOT fully captured" and the marker tells the reader how to tell
+      a calls-only loss from the logs. The alert still cannot name the wing in
+      the toast itself: it does not know which unit fired it. Still OPEN
+      (guarded, human): extend the daily agent's health check
+      (`docs/AGENT_MISSION.md`) and ADR 0031 §7 to `calls.stale_days`.
 - [ ] **The screen optimises toward untradeable contracts, and this is the
       deep one.** All 3 collected legs came back `illiquid` — KRE bid 0.00 / OI
       0, XLE bid 0.01 ask 0.20 (a 190%-of-mid spread), XLF bid 0.00. That is

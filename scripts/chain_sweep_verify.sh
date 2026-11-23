@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Dead-man's switch for the chain sweep. Reads the lake back and asks the two
-# questions nothing else on this machine asks.
+# questions nothing else on this machine asks -- of both wings, puts and calls
+# (docs/adr/0031), each from its own dataset.
 #
 # Why `OnFailure=` cannot replace it: that fires only when the sweep RUNS and
 # FAILS. Three ways to lose a session produce no failure at all --
@@ -95,6 +96,7 @@ from tail_lab.config import get_lake_store
 import requests
 
 from tail_lab.contracts.option_chain import (
+    CALL_DATASET,
     CHIP_COHORT_SINCE,
     WHOLE_SESSION,
     expected_symbols,
@@ -163,36 +165,63 @@ def symbols_at(frame, session):
 # expected from CHIP_COHORT_SINCE on (contracts.option_chain
 # .expected_symbols), so older partitions are not reported as missing it.
 lookback = int(os.environ["CHAIN_VERIFY_LOOKBACK"])
-seen: set[dt.date] = set()
-walked: list[tuple[dt.date, dt.date, set[str]]] = []
-probe = dt.date.today()
-while len(seen) < lookback:
-    # Resolve the PARTITION (ingest_date) and step from that, not from the
-    # session the rows carry. An earlier version stepped by
-    # `session - 1 day`, which is only the same thing while every partition's
-    # ingest_date equals its max quote_date. Give one partition a lagging
-    # session and the next probe jumps BEHIND every partition in between, so
-    # they are never inspected: measured on a synthetic lake of six
-    # partitions -- two of them incomplete -- it examined exactly one and
-    # reported everything healthy.
-    try:
-        snapshot_id = store.bronze_snapshot_id(DATASET, probe)
-    except LookupError:
-        break
-    except OSError as exc:
-        # A transport fault mid-walk is the same class as the DNS gate above:
-        # it means we could not look, not that something is missing.
-        print(f"NOTE: lake unreachable partway through the backward check ({exc.__class__.__name__}).")
-        print("      Stopping the walk; this is not evidence of a gap.")
-        break
-    resolved = dt.date.fromisoformat(snapshot_id.split("@", 1)[1].split("#", 1)[0])
-    if resolved in seen:
-        break
-    seen.add(resolved)
-    frame = store.read_bronze_as_of(DATASET, resolved)
-    session = frame["quote_date"].max().date()
-    walked.append((resolved, session, symbols_at(frame, session)))
-    probe = resolved - dt.timedelta(days=1)
+
+
+def walk(dataset):
+    """The newest `lookback` partitions of one wing, newest first, as
+    (ingest_date, session, symbols at that session)."""
+    seen: set[dt.date] = set()
+    walked: list[tuple[dt.date, dt.date, set[str]]] = []
+    probe = dt.date.today()
+    while len(seen) < lookback:
+        # Resolve the PARTITION (ingest_date) and step from that, not from the
+        # session the rows carry. An earlier version stepped by
+        # `session - 1 day`, which is only the same thing while every
+        # partition's ingest_date equals its max quote_date. Give one partition
+        # a lagging session and the next probe jumps BEHIND every partition in
+        # between, so they are never inspected: measured on a synthetic lake of
+        # six partitions -- two of them incomplete -- it examined exactly one
+        # and reported everything healthy.
+        try:
+            snapshot_id = store.bronze_snapshot_id(dataset, probe)
+        except LookupError:
+            break
+        except OSError as exc:
+            # A transport fault mid-walk is the same class as the DNS gate
+            # above: it means we could not look, not that something is missing.
+            print(f"NOTE: lake unreachable partway through the backward check ({exc.__class__.__name__}).")
+            print("      Stopping the walk; this is not evidence of a gap.")
+            break
+        resolved = dt.date.fromisoformat(snapshot_id.split("@", 1)[1].split("#", 1)[0])
+        if resolved in seen:
+            break
+        seen.add(resolved)
+        frame = store.read_bronze_as_of(dataset, resolved)
+        session = frame["quote_date"].max().date()
+        walked.append((resolved, session, symbols_at(frame, session)))
+        probe = resolved - dt.timedelta(days=1)
+    return walked
+
+
+# Both wings (docs/adr/0031), each its own dataset and judged on its own: a
+# session can land its puts and lose its calls (chain_snapshot.py's "calls
+# only; puts landed"), and while this checked the puts alone, that loss
+# passed as "every checked session is complete". The calls' lines, failures
+# and `.chain-known-gaps` entries carry a "calls" label; the puts' stay
+# unlabelled, so every existing acknowledgement keeps meaning what it says.
+WINGS = {"": DATASET, "calls": CALL_DATASET}
+walks = {label: walk(dataset) for label, dataset in WINGS.items()}
+
+
+def tag(label):
+    """Prefix for a wing's report lines: nothing for the puts."""
+    return f"{label}: " if label else ""
+
+
+def ack_symbol(label, symbol):
+    """The symbol column `.chain-known-gaps` uses for this wing's gap."""
+    return f"{label}:{symbol}" if label else symbol
+
 
 print(f"chip cohort expected from {CHIP_COHORT_SINCE}")
 
@@ -226,44 +255,49 @@ if os.environ["CHAIN_VERIFY_FORWARD"] == "1":
     else:
         session = df["quote_date"].max().date()
         print(f"Cboe's current session: {session}")
-        try:
-            have = store.read_bronze_as_of(DATASET, session)
-        except LookupError:
-            failures.append(f"bronze has NO partition at or before {session}")
-        else:
+        # SPY's put chain elects the session for both wings: the sweep posts
+        # them from one fetch, so they share it.
+        for label, dataset in WINGS.items():
+            try:
+                have = store.read_bronze_as_of(dataset, session)
+            except LookupError:
+                failures.append(f"{tag(label)}bronze has NO partition at or before {session}")
+                continue
             landed = have["quote_date"].max().date()
             if landed != session:
                 failures.append(
-                    f"newest captured session is {landed} but Cboe is serving {session}"
-                    f" -- {session} was NOT captured"
+                    f"{tag(label)}newest captured session is {landed} but Cboe is serving"
+                    f" {session} -- {session} was NOT captured"
                 )
-            else:
-                expected = expected_symbols(session)
-                missing = sorted(expected - symbols_at(have, session))
-                print(f"symbols at {session}: {len(expected) - len(missing)}/{len(expected)}")
-                if missing:
-                    failures.append(f"no {session} quotes for: {', '.join(missing)}")
+                continue
+            expected = expected_symbols(session)
+            missing = sorted(expected - symbols_at(have, session))
+            print(f"{tag(label)}symbols at {session}: {len(expected) - len(missing)}/{len(expected)}")
+            if missing:
+                failures.append(f"{tag(label)}no {session} quotes for: {', '.join(missing)}")
 
 # ---- B. backward: are the recent partitions symbol-complete? --------------
-sessions = {session for _, session, _ in walked}
-newest_session = walked[0][1] if walked else None
-for resolved, session, present in walked:
-    expected = expected_symbols(session)
-    missing = sorted(expected - present)
-    # Never let an acknowledgement silence the NEWEST session: while Cboe is
-    # still serving it a re-run can still capture it, so that gap is not
-    # permanent and the file's own header forbids acknowledging it. Nothing
-    # enforced that before.
-    ackable = session != newest_session
-    unacked = [
-        m for m in missing if not (ackable and (session.isoformat(), m) in ACKNOWLEDGED)
-    ]
-    mark = "OK " if not missing else ("ack" if not unacked else "GAP")
-    note = f"  ({len(missing) - len(unacked)} acknowledged)" if missing and not unacked else ""
-    drift = f"  [ingest_date={resolved}]" if resolved != session else ""
-    print(f"  {mark} {session}: {len(expected) - len(missing)}/{len(expected)}{note}{drift}")
-    if unacked:
-        failures.append(f"{session} is missing: {', '.join(unacked)}")
+for label, walked in walks.items():
+    newest_session = walked[0][1] if walked else None
+    for resolved, session, present in walked:
+        expected = expected_symbols(session)
+        missing = sorted(expected - present)
+        # Never let an acknowledgement silence the NEWEST session: while Cboe
+        # is still serving it a re-run can still capture it, so that gap is
+        # not permanent and the file's own header forbids acknowledging it.
+        # Nothing enforced that before.
+        ackable = session != newest_session
+        unacked = [
+            m
+            for m in missing
+            if not (ackable and (session.isoformat(), ack_symbol(label, m)) in ACKNOWLEDGED)
+        ]
+        mark = "OK " if not missing else ("ack" if not unacked else "GAP")
+        note = f"  ({len(missing) - len(unacked)} acknowledged)" if missing and not unacked else ""
+        drift = f"  [ingest_date={resolved}]" if resolved != session else ""
+        print(f"  {mark} {tag(label)}{session}: {len(expected) - len(missing)}/{len(expected)}{note}{drift}")
+        if unacked:
+            failures.append(f"{tag(label)}{session} is missing: {', '.join(unacked)}")
 
 # ---- C. whole sessions: is any trading day missing a partition entirely? --
 # B only inspects partitions that EXIST, so a session with none was invisible:
@@ -283,21 +317,29 @@ if trading_days is not None and not trading_days:
     # unreachable Nasdaq is noted in the except above instead. Either way C
     # cannot look, and silence would switch the check off invisibly.
     print("NOTE: no usable trading days; whole-session check skipped.")
-whole_ack: set[dt.date] = set()
+# Matched whole ("*" or "calls:*"), so a stray label such as ":*" or "put:*"
+# acknowledges nothing rather than being read as some wing's.
+whole_label = {ack_symbol(label, WHOLE_SESSION): label for label in WINGS}
+whole_ack: dict[str, set[dt.date]] = {label: set() for label in WINGS}
 for day, symbol in ACKNOWLEDGED:
-    if symbol != WHOLE_SESSION:
+    if symbol not in whole_label:
         continue
     try:
-        whole_ack.add(dt.date.fromisoformat(day))
+        whole_ack[whole_label[symbol]].add(dt.date.fromisoformat(day))
     except ValueError:
         # Same degrade-don't-die rule as _acknowledged(): over-report, never crash.
         print(f"NOTE: ignoring malformed .chain-known-gaps session {day!r}")
-for day in missing_sessions(sessions, trading_days or set(), acknowledged=whole_ack):
-    print(f"  GAP {day}: no partition at all")
-    failures.append(
-        f"{day} has NO partition -- the whole session was lost. If it can never be "
-        f"recovered, acknowledge it with a line '{day}<TAB>*' in .chain-known-gaps"
-    )
+# Each wing's window starts at its own oldest partition, so the calls (first
+# swept weeks after the puts) are never asked for sessions before they existed.
+for label, walked in walks.items():
+    sessions = {session for _, session, _ in walked}
+    for day in missing_sessions(sessions, trading_days or set(), acknowledged=whole_ack[label]):
+        print(f"  GAP {tag(label)}{day}: no partition at all")
+        failures.append(
+            f"{tag(label)}{day} has NO partition -- the whole session was lost. If it can never be "
+            f"recovered, acknowledge it with a line '{day}<TAB>{ack_symbol(label, WHOLE_SESSION)}' "
+            f"in .chain-known-gaps"
+        )
 
 if failures:
     print()

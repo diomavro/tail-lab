@@ -500,7 +500,9 @@ consumer reads it yet.
 the same fields as the put wing at its top level, read from this dataset
 alone. A calls-only failure also shows as a red `daily-chain-snapshot` run,
 whose annotation reads `calls only; puts landed`. The local verifier
-(`scripts/chain_sweep_verify.sh`) still checks puts only.
+(`scripts/chain_sweep_verify.sh`) checks this wing on its own beside the puts,
+labelling its lines `calls:`; a permanent call gap is acknowledged in
+`.chain-known-gaps` as `calls:<symbol>` (or `calls:*` for a whole session).
 
 ### Deltas from the original plan (kept for the record)
 
