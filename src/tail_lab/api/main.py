@@ -15,6 +15,7 @@ from pathlib import Path
 
 from fastapi import Depends, FastAPI, HTTPException, Query, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.staticfiles import StaticFiles
 
 from tail_lab.api.coverage_routes import router as coverage_router
@@ -74,6 +75,10 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# Backtest and vol-surface JSON run 100-200 kB and the SPA bundle 300 kB; Fly's
+# proxy does not compress, so without this every byte crosses the wire raw.
+app.add_middleware(GZipMiddleware, minimum_size=1000)
+
 app.include_router(feedback_router)
 app.include_router(putlab_memory_router)
 app.include_router(putlab_router)
@@ -82,6 +87,14 @@ app.include_router(marks_router)
 app.include_router(coverage_router)
 app.include_router(deribit_router)
 app.include_router(vol_surface_router)
+
+
+def cache_control_for(path: str, status: int) -> str | None:
+    """Vite content-hashes every file under ``/assets/``, so a 200 there never
+    changes and a browser may keep it for good; a new deploy changes the name."""
+    if status == 200 and path.startswith("/assets/"):
+        return "public, max-age=31536000, immutable"
+    return None
 
 
 @app.middleware("http")
@@ -93,6 +106,9 @@ async def security_headers(
     response.headers["X-Content-Type-Options"] = "nosniff"
     response.headers["X-Frame-Options"] = "DENY"
     response.headers["Referrer-Policy"] = "no-referrer"
+    cache = cache_control_for(request.url.path, response.status_code)
+    if cache is not None:
+        response.headers["Cache-Control"] = cache
     return response
 
 

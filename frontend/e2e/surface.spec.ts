@@ -94,6 +94,21 @@ test('the ladder chart has one rung per quoted strike, capped at 8, and a hover 
   await expect(page.getByRole('table', { name: 'Tail ladder rungs' }).locator('tbody tr')).toHaveCount(expected)
 })
 
+test('the ladder axis toggles between strike and log-moneyness ln(K/S)', async ({ page }) => {
+  await page.getByRole('tab', { name: 'Surface' }).click()
+  const s = SURFACE_FITTED.surface
+  const k0 = Math.log(s.ladder[0]!.strike / s.spot).toFixed(3)
+  const ladder = page.getByRole('region', { name: 'Tail ladder' })
+  await expect(ladder.getByTestId('ladder-readout')).toContainText(`k ${k0}`)
+  await expect(ladder.getByText('strike → deeper')).toBeVisible()
+  await ladder.getByText('Log-moneyness', { exact: true }).click()
+  await expect(ladder.getByText('k = ln(K/S) → deeper')).toBeVisible()
+  // The readout always carries k; switching adds it as the axis tick too.
+  await expect(ladder.getByText(k0, { exact: true })).toHaveCount(2)
+  // Same rungs either way: the toggle moves the axis, not the data.
+  await expect(page.getByTestId('ladder-rung')).toHaveCount(Math.min(s.ladder.length, 8))
+})
+
 test('a ladder longer than 8 rungs draws only the first 8', async ({ page }) => {
   const s = structuredClone(SURFACE_FITTED)
   const last = s.surface.ladder[s.surface.ladder.length - 1]!

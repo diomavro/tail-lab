@@ -9,7 +9,7 @@ import pandas as pd
 import pytest
 from fastapi.testclient import TestClient
 
-from tail_lab.api.main import app, get_lake_store
+from tail_lab.api.main import app, cache_control_for, get_lake_store
 from tail_lab.api.schemas import VixStretchResponse
 from tail_lab.lake.store import DeltaLakeStore
 from tail_lab.transforms.vix import STRETCH_WINDOW
@@ -51,6 +51,21 @@ def test_security_headers_present(client: TestClient) -> None:
     assert resp.headers["x-content-type-options"] == "nosniff"
     assert resp.headers["x-frame-options"] == "DENY"
     assert resp.headers["referrer-policy"] == "no-referrer"
+
+
+def test_large_responses_are_gzipped(client: TestClient) -> None:
+    resp = client.get("/openapi.json", headers={"Accept-Encoding": "gzip"})
+    assert resp.headers["content-encoding"] == "gzip"
+
+
+def test_only_hashed_assets_are_cached_for_good() -> None:
+    immutable = "public, max-age=31536000, immutable"
+    assert cache_control_for("/assets/index-D9S-PdkX.js", 200) == immutable
+    # index.html must revalidate, or a deploy would keep serving old chunk names.
+    assert cache_control_for("/", 200) is None
+    assert cache_control_for("/api/putlab/backtest", 200) is None
+    # A miss must not be pinned in a browser for a year.
+    assert cache_control_for("/assets/gone.js", 404) is None
 
 
 def test_vix_stretch_returns_metric(client: TestClient) -> None:

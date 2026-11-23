@@ -354,7 +354,7 @@ test('a Pitch chunk that fails to load leaves the rest of the app standing', asy
   await page.route('**/PitchView*', (route) => route.fulfill({ status: 404, body: '' }))
   await page.goto('/')
   await page.getByRole('tab', { name: 'Pitch' }).click()
-  await expect(page.getByText('The Pitch could not load. Reload the page.')).toBeVisible()
+  await expect(page.getByText('This tab could not load. Reload the page.')).toBeVisible()
   await page.getByRole('tab', { name: 'Glossary' }).click()
   await expect(page.getByRole('tab', { name: 'Workspace' })).toBeVisible()
 })
