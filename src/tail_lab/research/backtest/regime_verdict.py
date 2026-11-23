@@ -68,6 +68,13 @@ class RegimeVerdict(BaseModel):
     slices: list[RegimeSlice]
 
 
+def roll_premium(cycle: PutRollCycle) -> float:
+    """The premium budget one roll spent, brokerage excluded: ``net`` is
+    ``payoff - budget - cost``, so ``payoff - net - cost`` backs the budget out.
+    Every ROI on premium here divides by a sum of these."""
+    return cycle.payoff - cycle.net - cycle.cost
+
+
 def regime_breakdown(
     cycles: list[PutRollCycle], timeline: pd.Series
 ) -> tuple[list[RegimeSlice], Verdict]:
@@ -76,9 +83,7 @@ def regime_breakdown(
 
     A roll is attributed to the regime it was *bought into* (its entry date):
     that is the information available when the position is opened. Premium paid
-    per roll is recovered as ``payoff - net - cost`` (the fixed notional budget;
-    ``net`` is net of brokerage, so the ``cost`` term backs the brokerage out to
-    leave the premium). ROI is on that premium and net of brokerage. A cycle
+    per roll is :func:`roll_premium`. ROI is on that premium and net of brokerage. A cycle
     whose entry predates the regime timeline is skipped (not mislabeled).
     Verdict is ``untested`` only when no cycle could be labeled.
     """
@@ -96,20 +101,15 @@ def regime_breakdown(
         group = buckets.get(regime)
         if not group:
             continue
-        total_premium = sum(c.payoff - c.net - c.cost for c in group)  # == notional budget
+        total_premium = sum(roll_premium(c) for c in group)
         total_net = sum(c.net for c in group)  # net of brokerage
         roi = total_net / total_premium if total_premium > 0 else 0.0
         paid = roi > 0.0
         if paid:
             passing.add(regime)
-        # Per-cycle premium is (payoff - net - cost) == the notional budget; a
-        # cycle "hits" when its net-of-brokerage P&L clears zero.
+        # A cycle "hits" when its net-of-brokerage P&L clears zero.
         wins = sum(1 for c in group if c.net > 0.0)
-        mults = [
-            c.payoff / (c.payoff - c.net - c.cost)
-            for c in group
-            if (c.payoff - c.net - c.cost) > 0.0
-        ]
+        mults = [c.payoff / p for c in group if (p := roll_premium(c)) > 0.0]
         slices.append(
             RegimeSlice(
                 regime=regime,

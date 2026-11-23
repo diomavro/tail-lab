@@ -568,6 +568,10 @@ export interface MetricScreenEntry {
   metric: string
   label: string
   top_k_assets: string[]
+  /** Premium the basket spent over the window: roi_on_premium's denominator
+   *  and the dollars combined_max_drawdown is in. Each pick's rolls are
+   *  rescaled to an equal share of the request's notional, so this is it. */
+  total_premium: number
   roi_on_premium: number
   annualized_return: number
   hit_rate: number
