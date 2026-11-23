@@ -45,6 +45,11 @@ export function fmtPrice(n: number): string {
   return `$${n.toFixed(2)}`
 }
 
+// A convexity ratio, in years of premium one 20% fall repays.
+export function fmtYears(x: number | null | undefined): string {
+  return x == null ? '—' : `${x.toFixed(1)} yrs`
+}
+
 // A difference of two rates (a lift or a spread), signed, in points rather
 // than percent: printing it with a % sign invites reading it as a ratio.
 export function signedPts(x: number): string {

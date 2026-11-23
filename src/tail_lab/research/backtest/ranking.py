@@ -34,9 +34,11 @@ import pandas as pd
 from pydantic import BaseModel, Field
 
 from tail_lab.contracts.hypothesis import Verdict
+from tail_lab.contracts.option_chain import DATASET as OPTION_CHAIN_DATASET
 from tail_lab.contracts.options_calendar import cadence_for
 from tail_lab.lake.store import LakeStore
 from tail_lab.research.backtest.put_roll import (
+    DEFAULT_RATE,
     PricingBasis,
     load_asof_series,
     price_snapshot_ids,
@@ -44,6 +46,7 @@ from tail_lab.research.backtest.put_roll import (
 )
 from tail_lab.research.backtest.regime_verdict import regime_breakdown
 from tail_lab.research.backtest.sizing import SizingMode
+from tail_lab.research.backtest.strike_preview import today_strikes
 from tail_lab.research.backtest.strike_rule import ByMoneyness
 from tail_lab.research.backtest.sweep import (
     MODEL_PRICED_SWEEP_MONEYNESS,
@@ -148,6 +151,15 @@ class RankedAsset(BaseModel):
     # to a market-priced one, and so it flips honestly the day this orchestrator
     # is wired to real quotes.
     priced_from: Literal["model", "market"]
+    # What the screened put costs to hold against what a 20% fall pays
+    # (`strike_preview.convexity_ratio`, docs/PRIOR_ART.md §11), today: on the
+    # model side at the latest realised vol, on the market side at the listed
+    # ask of the strike nearest the screened distance in the latest collected
+    # chain (`None` when the name is not collected or no quote qualifies).
+    # Two fields, never pooled: the model ratio rises as realised vol falls,
+    # so ranking on it alone is drawn to the contracts least like a real fill.
+    convexity_ratio: float | None = None
+    market_convexity_ratio: float | None = None
     # The best this name gets when its parameters are chosen well: the argmax
     # of its own strike x tenor sweep, bounded to the strikes the model can
     # actually price (docs/adr/0018). This is the headline the ranking leads
@@ -194,6 +206,9 @@ class UniverseRanking(BaseModel):
     #: `FRAGILE_HIGH`, served so the client shades each metric column by its
     #: fragility rank without keeping a copy of the directions.
     fragile_high: dict[str, bool] = Field(default_factory=lambda: dict(FRAGILE_HIGH))
+    #: The chain session every ``market_convexity_ratio`` was read from, or
+    #: ``None`` when no collected chain was known as of ``as_of``.
+    chain_session: dt.date | None = None
 
 
 def _returns(prices: pd.Series) -> pd.Series:
@@ -264,6 +279,8 @@ class _RankContext:
     bench_ret: pd.Series | None
     vol_changes: pd.Series
     lookback_days: int
+    #: The latest collected put chain known as of ``as_of`` (empty if none).
+    chain: pd.DataFrame
 
 
 #: The five benchmark-regressed raw sensitivity metrics, in stable display
@@ -380,6 +397,16 @@ def _rank_one(symbol: str, ctx: _RankContext) -> RankedAsset | None:
         lookback_days=ctx.lookback_days,
     )
     _, verdict = regime_breakdown(result.cycles, ctx.timeline)
+    model_today, market_today, _ = today_strikes(
+        ctx.chain,
+        prices,
+        realized_vol_proxy,
+        asset=symbol,
+        rule=ByMoneyness(ctx.moneyness_pct),
+        tenor_weeks=ctx.tenor_weeks,
+        r=DEFAULT_RATE,
+        q=dividends(ctx.as_of).q,
+    )
     # One more roll, at the winning cell, so every ``best_*`` figure comes from
     # the same strategy. ~2% on top of the 55-cell sweep already run.
     best_run = None
@@ -420,6 +447,8 @@ def _rank_one(symbol: str, ctx: _RankContext) -> RankedAsset | None:
         biggest_payoff_mult=result.biggest_payoff_mult,
         n_cycles=result.n_cycles,
         priced_from=result.priced_from,
+        convexity_ratio=model_today.convexity_ratio if model_today else None,
+        market_convexity_ratio=market_today.convexity_ratio if market_today else None,
         best_annualized=best.annualized_return if best else None,
         best_moneyness_pct=best.moneyness_pct if best else None,
         best_tenor_weeks=best.tenor_weeks if best else None,
@@ -493,6 +522,10 @@ def rank_universe(
     # `as_of`, so this cannot raise LookupError here.
     vol_changes = load_vix_close(store, as_of=as_of).pct_change().dropna()
     bench_ret = _load_benchmark_returns(store, as_of)
+    try:
+        chain = store.read_bronze_as_of(OPTION_CHAIN_DATASET, as_of)
+    except LookupError:
+        chain = pd.DataFrame()
     ctx = _RankContext(
         store=store,
         as_of=as_of,
@@ -504,6 +537,7 @@ def rank_universe(
         bench_ret=bench_ret,
         vol_changes=vol_changes,
         lookback_days=lookback_days,
+        chain=chain,
     )
 
     # Each name is an independent lake read + roll; the S3 read releases the
@@ -527,6 +561,8 @@ def rank_universe(
     # cited whenever it was loaded -- even when SPY itself is not a ranked row.
     read = [row.asset for row in rows] + ([BENCHMARK] if bench_ret is not None else [])
     snapshot_ids = snapshot_ids_for(store, as_of, read)
+    if any(row.market_convexity_ratio is not None for row in rows):
+        snapshot_ids.append(store.bronze_snapshot_id(OPTION_CHAIN_DATASET, as_of))
     return UniverseRanking(
         as_of=as_of,
         moneyness_pct=moneyness_pct,
@@ -535,4 +571,5 @@ def rank_universe(
         notional=budget,
         ranked=rows,
         snapshot_ids=snapshot_ids,
+        chain_session=None if chain.empty else pd.Timestamp(chain["quote_date"].max()).date(),
     )
