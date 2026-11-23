@@ -3,9 +3,11 @@
 (``docs/END_STATE.md`` §4 Q6; ``research/vrp.py``).
 
 Read-only: touches no lake writes, so it is safe for an agent to run. Needs the
-licence-limited optionsDX panel (``make ingest-optionsdx``) and the name's
-OHLCV, which never exist on CI; a name missing either is reported and skipped,
-not failed -- an absent panel is not a measurement.
+name's OHLCV and a quote source: by default the licence-limited optionsDX panel
+(``make ingest-optionsdx``, 2010-2023), or with ``--source chain`` the
+forward-collected Cboe chain (2026-08-26 onward). Neither exists on CI; a name
+missing one is reported and skipped, not failed -- an absent source is not a
+measurement.
 """
 
 from __future__ import annotations
@@ -18,7 +20,7 @@ from collections import defaultdict
 import numpy as np
 
 from tail_lab.config import get_lake_store
-from tail_lab.research.vrp import VrpSummary, compute_vrp
+from tail_lab.research.vrp import VrpSummary, compute_chain_vrp, compute_vrp
 
 
 def _report(summary: VrpSummary) -> None:
@@ -49,13 +51,21 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--moneyness", type=float, default=1.0, help="strike / spot target")
     parser.add_argument("--days", type=int, default=30, help="target days to expiry")
     parser.add_argument("--as-of", default=None, help="YYYY-MM-DD (default: today)")
+    parser.add_argument(
+        "--source",
+        choices=["optionsdx", "chain"],
+        default="optionsdx",
+        help="optionsDX panel (vendor IV) or the forward Cboe chain (Cboe IV)",
+    )
     args = parser.parse_args(argv)
 
     as_of = dt.date.fromisoformat(args.as_of) if args.as_of else dt.date.today()
     store = get_lake_store()
+    compute = compute_chain_vrp if args.source == "chain" else compute_vrp
+    print(f"source: {args.source}, as of {as_of}")
     for symbol in args.symbols:
         try:
-            summary = compute_vrp(
+            summary = compute(
                 store,
                 underlying=symbol,
                 as_of=as_of,

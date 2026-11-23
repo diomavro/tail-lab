@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import datetime as dt
 import math
+from collections.abc import Callable
 from pathlib import Path
 
 import numpy as np
@@ -22,6 +23,8 @@ from tail_lab.lake.store import DeltaLakeStore
 from tail_lab.research.vrp import (
     MIN_RETURNS,
     TENOR_TOLERANCE_DAYS,
+    VrpSummary,
+    compute_chain_vrp,
     compute_vrp,
     measure_vrp,
     realised_vol,
@@ -31,6 +34,8 @@ from tail_lab.research.vrp import (
 STEP = 0.01
 RV = STEP * math.sqrt(252)  # 0.158745...
 DAYS = pd.bdate_range("2020-01-01", periods=120)
+
+Compute = Callable[..., VrpSummary]
 
 
 def _zigzag(dates: pd.DatetimeIndex, step: float = STEP, start: float = 100.0) -> pd.Series:
@@ -224,15 +229,26 @@ def test_an_observation_reports_strike_over_that_days_spot() -> None:
     assert summary.moneyness == 0.95
 
 
-@pytest.mark.parametrize(("moneyness", "target_days"), [(0.60, 30), (1.02, 30), (1.0, 120)])
-def test_a_target_at_the_panels_edge_is_accepted(moneyness: float, target_days: int) -> None:
-    """The fixture holds no put there, so the answer is 'nothing measured'
-    -- a LookupError -- never a refusal of the target itself."""
-    quotes = pd.DataFrame([_quote(DAYS[0], 28, strike=50.0)])
+@pytest.mark.parametrize(
+    ("compute", "moneyness", "target_days"),
+    [
+        (compute_vrp, 0.60, 30),
+        (compute_vrp, 1.02, 30),
+        (compute_vrp, 1.0, 120),
+        (compute_chain_vrp, 0.40, 30),
+        (compute_chain_vrp, 1.05, 30),
+        (compute_chain_vrp, 1.0, 180),
+    ],
+)
+def test_a_target_at_the_sources_edge_is_accepted(
+    tmp_path: Path, compute: Compute, moneyness: float, target_days: int
+) -> None:
+    """The empty lake holds nothing, so the answer is 'nothing measured' --
+    a LookupError -- never a refusal of the target itself. The chain's band
+    is wider than the panel's: 0.40 and 180 days are its edge, not 0.60/120."""
     with pytest.raises(LookupError):
-        measure_vrp(
-            quotes,
-            _zigzag(DAYS),
+        compute(
+            DeltaLakeStore(tmp_path),
             underlying="spy",
             as_of=dt.date(2020, 6, 1),
             moneyness=moneyness,
@@ -264,14 +280,26 @@ def test_quote_dates_count_dates_not_rows_and_include_blank_iv_dates() -> None:
 
 
 @pytest.mark.parametrize(
-    ("moneyness", "target_days"), [(1.10, 30), (0.50, 30), (1.0, 0), (1.0, 121)]
+    ("compute", "source", "moneyness", "target_days"),
+    [
+        (compute_vrp, "optionsDX panel", 1.03, 30),
+        (compute_vrp, "optionsDX panel", 0.59, 30),
+        (compute_vrp, "optionsDX panel", 1.0, 0),
+        (compute_vrp, "optionsDX panel", 1.0, 121),
+        (compute_chain_vrp, "option chain", 1.06, 30),
+        (compute_chain_vrp, "option chain", 0.39, 30),
+        (compute_chain_vrp, "option chain", 1.0, 0),
+        (compute_chain_vrp, "option chain", 1.0, 181),
+    ],
 )
-def test_a_target_the_panel_cannot_hold_is_refused(moneyness: float, target_days: int) -> None:
-    quotes = pd.DataFrame([_quote(DAYS[0], 28)])
-    with pytest.raises(ValueError, match="outside the panel"):
-        measure_vrp(
-            quotes,
-            _zigzag(DAYS),
+def test_a_target_the_source_cannot_hold_is_refused_before_any_read(
+    tmp_path: Path, compute: Compute, source: str, moneyness: float, target_days: int
+) -> None:
+    """A ValueError, not the empty lake's LookupError: the target is checked
+    first, against the band its own source keeps."""
+    with pytest.raises(ValueError, match=f"outside the {source}'s"):
+        compute(
+            DeltaLakeStore(tmp_path),
             underlying="spy",
             as_of=dt.date(2020, 6, 1),
             moneyness=moneyness,
@@ -398,16 +426,10 @@ def test_the_summary_does_not_depend_on_row_order(ivs: list[float], seed: int) -
 # ---- the lake ---------------------------------------------------------------
 
 
-def test_compute_vrp_reads_the_panel_and_ohlcv_and_keeps_their_overlap(tmp_path: Path) -> None:
-    """The panel starts before the OHLCV does (as SPY's does: 2010 vs 2016):
-    a quote with no price history under it is not measured, and the months
-    before the first close are not reported as coverage gaps -- the quote a
-    month before the overlap would otherwise put December 2019 in
-    ``missing_months`` (it starts the span at 2019-11)."""
-    store = DeltaLakeStore(tmp_path)
-    ingest = dt.date(2020, 7, 1)
-    prices = DAYS[10:]
-    closes = _zigzag(prices)
+def _write_ohlcv(
+    store: DeltaLakeStore, ingest: dt.date, prices: pd.DatetimeIndex, step: float = STEP
+) -> None:
+    closes = _zigzag(prices, step=step)
     store.write_bronze(
         "ohlcv_spy",
         ingest,
@@ -424,6 +446,17 @@ def test_compute_vrp_reads_the_panel_and_ohlcv_and_keeps_their_overlap(tmp_path:
             }
         ),
     )
+
+
+def test_compute_vrp_reads_the_panel_and_ohlcv_and_keeps_their_overlap(tmp_path: Path) -> None:
+    """The panel starts before the OHLCV does (as SPY's does: 2010 vs 2016):
+    a quote with no price history under it is not measured, and the months
+    before the first close are not reported as coverage gaps -- the quote a
+    month before the overlap would otherwise put December 2019 in
+    ``missing_months`` (it starts the span at 2019-11)."""
+    store = DeltaLakeStore(tmp_path)
+    ingest = dt.date(2020, 7, 1)
+    _write_ohlcv(store, ingest, DAYS[10:])
     panel = pd.DataFrame(
         [
             _quote(pd.Timestamp("2019-11-04"), 28, iv=0.40),
@@ -448,3 +481,115 @@ def test_compute_vrp_reads_the_panel_and_ohlcv_and_keeps_their_overlap(tmp_path:
 def test_compute_vrp_before_any_snapshot_is_a_lookup_error(tmp_path: Path) -> None:
     with pytest.raises(LookupError):
         compute_vrp(DeltaLakeStore(tmp_path), underlying="spy", as_of=dt.date(2020, 7, 1))
+
+
+def _write_session(
+    store: DeltaLakeStore, session: pd.Timestamp, rows: list[dict[str, object]]
+) -> None:
+    """One chain sweep: a partition per session, keyed by that session's date."""
+    chain = pd.DataFrame(rows)
+    chain["bid"], chain["ask"], chain["volume"], chain["open_interest"] = 1.0, 1.1, 10, 100
+    store.write_bronze("option_chain_snapshot", session.date(), chain)
+
+
+def test_compute_chain_vrp_walks_every_session_partition(tmp_path: Path) -> None:
+    """Three sessions, three partitions: each contributes its own observation
+    (the newest partition alone would give one). Another name's put on the
+    same session is not read, and a zero-filled Cboe IV -- null by the time it
+    is bronze -- leaves its session refused but counted."""
+    store = DeltaLakeStore(tmp_path)
+    as_of = dt.date(2020, 7, 1)
+    _write_ohlcv(store, as_of, DAYS)
+    ivs = {DAYS[0]: 0.25, DAYS[5]: 0.30, DAYS[10]: None}
+    for session, iv in ivs.items():
+        _write_session(
+            store,
+            session,
+            [
+                {**_quote(session, 28, strike=101.0, iv=iv), "underlying": "SPY"},
+                # nearer the target strike: chosen if the name filter slipped
+                {**_quote(session, 28, iv=0.90), "underlying": "QQQ"},
+            ],
+        )
+
+    summary = compute_chain_vrp(store, underlying="spy", as_of=as_of)
+
+    assert [o.quote_date for o in summary.observations] == [DAYS[0].date(), DAYS[5].date()]
+    assert [o.vrp for o in summary.observations] == pytest.approx([0.25 - RV, 0.30 - RV], rel=1e-12)
+    assert (summary.n_observations, summary.n_quote_dates) == (2, 3)
+    assert summary.underlying == "SPY"
+
+
+def test_compute_chain_vrp_measures_the_requested_target(tmp_path: Path) -> None:
+    """A 0.5 x spot, 60-day target -- outside the panel's band, inside the
+    chain's -- picks that put over an at-the-money 28-day decoy, and the
+    summary is labelled with the target asked for."""
+    store = DeltaLakeStore(tmp_path)
+    as_of = dt.date(2020, 7, 1)
+    _write_ohlcv(store, as_of, DAYS)
+    _write_session(
+        store,
+        DAYS[0],
+        [
+            {**_quote(DAYS[0], 28, iv=0.20), "underlying": "SPY"},
+            {**_quote(DAYS[0], 60, strike=50.0, iv=0.70), "underlying": "SPY"},
+        ],
+    )
+
+    summary = compute_chain_vrp(store, underlying="spy", as_of=as_of, moneyness=0.5, target_days=60)
+
+    assert [o.implied_vol for o in summary.observations] == [0.70]
+    assert (summary.moneyness, summary.target_days) == (0.5, 60)
+    assert summary.mean_vrp == pytest.approx(0.70 - RV, rel=1e-12)
+
+
+def test_compute_chain_vrp_never_reads_a_session_ingested_after_as_of(tmp_path: Path) -> None:
+    """A partition written after ``as_of`` is invisible: its session is not
+    counted, even though its option's window closes before ``as_of``-- the
+    quote did not exist yet, as far as ``as_of`` knows. The as-of read, not
+    the quote_date filter, is what excludes it here: the later partition
+    carries an EARLIER quote date (a partition whose ingest date is later
+    than its quote date; the sweep's writer refuses one, the reader must not
+    rely on that)."""
+    store = DeltaLakeStore(tmp_path)
+    as_of = dt.date(2020, 4, 1)
+    _write_ohlcv(store, dt.date(2020, 1, 1), DAYS)
+    _write_session(store, DAYS[5], [{**_quote(DAYS[5], 28, iv=0.30), "underlying": "SPY"}])
+    late = pd.DataFrame([{**_quote(DAYS[0], 28, iv=0.90), "underlying": "SPY"}])
+    late["bid"], late["ask"], late["volume"], late["open_interest"] = 1.0, 1.1, 10, 100
+    store.write_bronze("option_chain_snapshot", dt.date(2020, 4, 2), late)
+
+    summary = compute_chain_vrp(store, underlying="spy", as_of=as_of)
+
+    assert [o.implied_vol for o in summary.observations] == [0.30]
+    assert summary.n_quote_dates == 1
+
+
+def test_compute_chain_vrp_for_a_name_the_sweep_never_quoted_is_a_lookup_error(
+    tmp_path: Path,
+) -> None:
+    store = DeltaLakeStore(tmp_path)
+    as_of = dt.date(2020, 7, 1)
+    _write_ohlcv(store, as_of, DAYS)
+    _write_session(store, DAYS[0], [{**_quote(DAYS[0], 28), "underlying": "QQQ"}])
+    with pytest.raises(LookupError, match="no SPY put"):
+        compute_chain_vrp(store, underlying="spy", as_of=as_of)
+
+
+def test_compute_chain_vrp_reads_ohlcv_as_of_and_waits_for_the_window(tmp_path: Path) -> None:
+    """The realised leg is point-in-time too. A later OHLCV partition with
+    twice the step is invisible, so the premium is ``iv - RV`` from the
+    earlier closes, not ``iv - 2 RV``. And a put whose window closes after
+    ``as_of`` is not measured, even though the partition read as of then
+    already runs past ``as_of`` (a vendor file dated ahead of its stamp)."""
+    store = DeltaLakeStore(tmp_path)
+    as_of = DAYS[60].date()
+    _write_ohlcv(store, DAYS[0].date(), DAYS)
+    _write_ohlcv(store, DAYS[-1].date(), DAYS, step=2 * STEP)
+    _write_session(store, DAYS[0], [{**_quote(DAYS[0], 28, iv=0.25), "underlying": "SPY"}])
+    _write_session(store, DAYS[50], [{**_quote(DAYS[50], 28, iv=0.90), "underlying": "SPY"}])
+
+    summary = compute_chain_vrp(store, underlying="spy", as_of=as_of)
+
+    assert [o.quote_date for o in summary.observations] == [DAYS[0].date()]
+    assert summary.mean_vrp == pytest.approx(0.25 - RV, rel=1e-12)
